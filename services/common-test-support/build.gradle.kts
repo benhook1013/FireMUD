@@ -6,7 +6,9 @@ plugins {
 
 dependencies {
     testImplementation(project(":account-service"))
+    testImplementation(project(":common-platform-core"))
     testFixturesImplementation(project(":account-service"))
+    testFixturesImplementation(project(":common-platform-core"))
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.spring.boot.starter.webflux)
     testFixturesImplementation(libs.spring.boot.starter.websocket)

@@ -20,13 +20,11 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         accountId:
           type: integer
         friendAccountId:
           type: integer
-        accountLevel:
-          type: boolean
       required:
         - tenantId
         - accountId
@@ -37,7 +35,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         accountId:
           type: integer
         friendAccountId:
@@ -58,7 +56,7 @@ components:
           type: integer
         playableStateScope:
           type: string
-          enum: [SHARED, ISOLATED]
+          enum: [SHARED, ISOLATED, UNSPECIFIED_SCOPE]
         worldSlug:
           type: string
         worldDisplayName:
@@ -67,16 +65,147 @@ components:
           type: string
         realmDisplayName:
           type: string
+        pointerVersion:
+          type: integer
         characterId:
           type: integer
         characterName:
           type: string
+        visibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
         activityState:
           type: string
           enum: [ACTIVE, AUTO_AFK, EXPLICIT_AFK]
         lastSeenAt:
           type: string
           format: date-time
+        recentDisposition:
+          type: string
+          enum: [TRANSPORT_LOSS, LOGOUT, TAKEOVER]
+    FriendPresenceViewDto:
+      type: object
+      properties:
+        filter:
+          type: string
+          enum:
+            [
+              ALL,
+              ONLINE,
+              OFFLINE,
+              RECENT,
+              PUBLIC,
+              FRIENDS_ONLY,
+              PRIVATE,
+              HIDDEN_STAFF,
+              UNSPECIFIED_VISIBILITY,
+              SHARED,
+              ISOLATED,
+              UNSPECIFIED_SCOPE,
+            ]
+        totalCount:
+          type: integer
+        matchCount:
+          type: integer
+        presences:
+          type: array
+          items:
+            $ref: '#/components/schemas/FriendPresenceDto'
+    FriendPresencePolicyViewDto:
+      type: object
+      properties:
+        currentPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+    UpdateFriendPresencePolicyRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        visibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+      required:
+        - tenantId
+        - accountId
+        - visibilityPolicy
+    FriendRosterEntryDto:
+      type: object
+      properties:
+        ordinal:
+          type: integer
+        friendLinkId:
+          type: integer
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        friendAccountId:
+          type: integer
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        presence:
+          $ref: '#/components/schemas/FriendPresenceDto'
+    FriendRosterViewDto:
+      type: object
+      properties:
+        filter:
+          type: string
+          enum:
+            [
+              ALL,
+              ONLINE,
+              OFFLINE,
+              RECENT,
+              PUBLIC,
+              FRIENDS_ONLY,
+              PRIVATE,
+              HIDDEN_STAFF,
+              UNSPECIFIED_VISIBILITY,
+              SHARED,
+              ISOLATED,
+              UNSPECIFIED_SCOPE,
+            ]
+        totalCount:
+          type: integer
+        matchCount:
+          type: integer
+        friends:
+          type: array
+          items:
+            $ref: '#/components/schemas/FriendRosterEntryDto'
+    FriendRosterSummaryDto:
+      type: object
+      properties:
+        totalCount:
+          type: integer
+        onlineCount:
+          type: integer
+        offlineCount:
+          type: integer
+        recentCount:
+          type: integer
+        publicCount:
+          type: integer
+        friendsOnlyCount:
+          type: integer
+        privateCount:
+          type: integer
+        hiddenStaffCount:
+          type: integer
+        unspecifiedVisibilityCount:
+          type: integer
+        sharedCount:
+          type: integer
+        isolatedCount:
+          type: integer
+        unspecifiedScopeCount:
+          type: integer
     SendMailRequest:
       type: object
       properties:
@@ -331,6 +460,52 @@ paths:
         '400':
           description: Invalid request
   /friends:
+    get:
+      summary: List friend roster with embedded presence
+      operationId: listFriends
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: filter
+          required: false
+          schema:
+            type: string
+            enum:
+              [
+                ALL,
+                ONLINE,
+                OFFLINE,
+                RECENT,
+                PUBLIC,
+                FRIENDS_ONLY,
+                PRIVATE,
+                HIDDEN_STAFF,
+                UNSPECIFIED_VISIBILITY,
+                SHARED,
+                ISOLATED,
+                UNSPECIFIED_SCOPE,
+              ]
+      responses:
+        '200':
+          description: Friend roster list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendRosterViewDto'
+        '400':
+          description: Invalid request
     post:
       summary: Create a friend link
       operationId: addFriend
@@ -352,6 +527,150 @@ paths:
                     $ref: '#/components/schemas/FriendLinkDto'
         '400':
           description: Invalid request
+  /friends/{friendAccountId}:
+    get:
+      summary: Get one friend roster entry with embedded presence
+      operationId: getFriend
+      parameters:
+        - in: path
+          name: friendAccountId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend roster entry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendRosterEntryDto'
+        '404':
+          description: Friend not found
+    delete:
+      summary: Remove an account-scoped friend link
+      operationId: removeFriend
+      parameters:
+        - in: path
+          name: friendAccountId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend link removed
+        '400':
+          description: Invalid request
+  /friends/entry/{ordinal}:
+    get:
+      summary: Get one friend roster entry by canonical ordinal
+      operationId: getFriendByOrdinal
+      parameters:
+        - in: path
+          name: ordinal
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend roster entry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendRosterEntryDto'
+        '404':
+          description: Friend not found
+    delete:
+      summary: Remove one friend roster entry by canonical ordinal
+      operationId: removeFriendByOrdinal
+      parameters:
+        - in: path
+          name: ordinal
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Removed friend roster entry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendRosterEntryDto'
+        '404':
+          description: Friend not found
+  /friends/summary:
+    get:
+      summary: Get canonical friend roster counts
+      operationId: getFriendRosterSummary
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend roster summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendRosterSummaryDto'
   /friends/presence:
     get:
       summary: List account-scoped friend presence
@@ -367,6 +686,26 @@ paths:
           required: true
           schema:
             type: integer
+        - in: query
+          name: filter
+          required: false
+          schema:
+            type: string
+            enum:
+              [
+                ALL,
+                ONLINE,
+                OFFLINE,
+                RECENT,
+                PUBLIC,
+                FRIENDS_ONLY,
+                PRIVATE,
+                HIDDEN_STAFF,
+                UNSPECIFIED_VISIBILITY,
+                SHARED,
+                ISOLATED,
+                UNSPECIFIED_SCOPE,
+              ]
       responses:
         '200':
           description: Friend presence list
@@ -376,11 +715,59 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/FriendPresenceDto'
+                    $ref: '#/components/schemas/FriendPresenceViewDto'
         '400':
           description: Invalid request
+  /friends/visibility:
+    get:
+      summary: Get account-scoped friend presence visibility policy
+      operationId: getFriendPresencePolicy
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend presence visibility policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendPresencePolicyViewDto'
+        '503':
+          description: Policy authority unavailable
+    put:
+      summary: Update account-scoped friend presence visibility policy
+      operationId: updateFriendPresencePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFriendPresencePolicyRequest'
+      responses:
+        '200':
+          description: Updated friend presence visibility policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FriendPresencePolicyViewDto'
+        '400':
+          description: Invalid request
+        '503':
+          description: Policy authority unavailable
   /mail:
     post:
       summary: Send in-game mail

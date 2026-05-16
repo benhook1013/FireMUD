@@ -20,7 +20,10 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.UpdateProfileRequest;
+import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -30,8 +33,6 @@ import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolic
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /** gRPC client for the Account Service login endpoint. */
 @Component
@@ -40,7 +41,6 @@ public final class AccountClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
-  private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
@@ -306,8 +306,48 @@ public final class AccountClient
 
   public AccountPresenceVisibilityPolicy getPresenceVisibilityPolicy(
       long tenantId, long accountId) {
+    return getProfileSnapshot(tenantId, accountId)
+        .map(AccountProfileSnapshot::presenceVisibilityPolicy)
+        .orElse(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
+  }
+
+  public boolean updatePresenceVisibilityPolicy(
+      long tenantId, long accountId, AccountPresenceVisibilityPolicy visibilityPolicy) {
+    if (stub() == null || visibilityPolicy == null) {
+      return false;
+    }
+    try {
+      AccountProfileSnapshot snapshot = getProfileSnapshot(tenantId, accountId).orElse(null);
+      if (snapshot == null) {
+        return false;
+      }
+      UpdateProfileResponse response =
+          callStub()
+              .updateProfile(
+                  UpdateProfileRequest.newBuilder()
+                      .setTenantId(Long.toString(tenantId))
+                      .setAccountId(Long.toString(accountId))
+                      .setProfileJson(
+                          new AccountProfileJson(
+                                  snapshot.displayName(), snapshot.bio(), visibilityPolicy.name())
+                              .toJson())
+                      .build());
+      return response.getSuccess() && !response.hasError();
+    } catch (Exception ex) {
+      logger.warn(
+          "Failed to update account presence visibility policy tenantId={} accountId={} policy={}",
+          tenantId,
+          accountId,
+          visibilityPolicy,
+          ex);
+      return false;
+    }
+  }
+
+  private java.util.Optional<AccountProfileSnapshot> getProfileSnapshot(
+      long tenantId, long accountId) {
     if (stub() == null) {
-      return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+      return java.util.Optional.empty();
     }
     GetProfileRequest request =
         GetProfileRequest.newBuilder()
@@ -317,20 +357,22 @@ public final class AccountClient
     try {
       GetProfileResponse response = callStub().getProfile(request);
       if (response.hasError() || response.getProfileJson().isBlank()) {
-        return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+        return java.util.Optional.empty();
       }
-      JsonNode node = JSON_MAPPER.readTree(response.getProfileJson());
-      String value = node.path("presenceVisibilityPolicy").asText("");
-      return value.isBlank()
-          ? AccountPresenceVisibilityPolicy.FRIENDS_ONLY
-          : AccountPresenceVisibilityPolicy.valueOf(value);
+      AccountProfileJson profile =
+          AccountProfileJson.parse(
+              response.getProfileJson(), AccountPresenceVisibilityPolicy.FRIENDS_ONLY.name());
+      AccountPresenceVisibilityPolicy resolvedPolicy =
+          AccountPresenceVisibilityPolicy.valueOf(profile.presenceVisibilityPolicy());
+      return java.util.Optional.of(
+          new AccountProfileSnapshot(profile.displayName(), profile.bio(), resolvedPolicy));
     } catch (Exception ex) {
       logger.warn(
           "Failed to resolve account presence visibility policy tenantId={} accountId={}",
           tenantId,
           accountId,
           ex);
-      return AccountPresenceVisibilityPolicy.FRIENDS_ONLY;
+      return java.util.Optional.empty();
     }
   }
 
@@ -353,4 +395,7 @@ public final class AccountClient
   private AccountServiceGrpc.AccountServiceBlockingStub callStub() {
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
+
+  private record AccountProfileSnapshot(
+      String displayName, String bio, AccountPresenceVisibilityPolicy presenceVisibilityPolicy) {}
 }

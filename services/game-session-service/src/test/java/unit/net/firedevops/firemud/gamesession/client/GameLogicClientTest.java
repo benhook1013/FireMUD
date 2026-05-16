@@ -337,6 +337,32 @@ class GameLogicClientTest {
         .hasMessageContaining("Missing admitted playableStateScope");
   }
 
+  @Test
+  void queryInventoryFailsClosedWhenSessionContextDropsPartOfAdmittedRoutingBundle() {
+    GameLogicClient client = newClient();
+    SessionContext partialRouting =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            SESSION_CONTEXT.roomInstanceId(),
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            0L,
+            SESSION_CONTEXT.playableStateScope());
+
+    assertThatThrownBy(() -> client.queryInventory(partialRouting))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Incomplete admitted routing bundle");
+  }
+
   private static GameLogicClient newClient() {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);

@@ -418,23 +418,31 @@ class LookWebSocketCrossServiceTest {
   }
 
   private List<String> runPlayAfterReconnect(long sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
-      client.login("demo@example.com", "swordfish");
-      client.send("PLAY demo");
-      client.awaitMatching(
-          response ->
-              response.startsWith("OK PLAY") || response.startsWith("ERROR WORLD_ACCESS_DENIED"),
-          "play acceptance or admission denial");
-      return client.responses();
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            ignored -> openSessionClient(sessionId),
+            "session-" + sessionId + "-reconnect-play",
+            GameplayWebSocketScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            client ->
+                client.awaitMatching(
+                    response ->
+                        response.startsWith("OK PLAY")
+                            || response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                    "play acceptance or admission denial"))) {
+      return scenario.responses();
     }
   }
 
   private List<String> runPlayAfterReconnectExpectingFreshLook(long sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
-      client.login("demo@example.com", "swordfish");
-      client.send("PLAY demo");
-      client.awaitCanonicalLook();
-      return client.responses();
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            ignored -> openSessionClient(sessionId),
+            "session-" + sessionId + "-reconnect-fresh-play",
+            GameplayWebSocketScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayWebSocketDriver::awaitCanonicalLook)) {
+      return scenario.responses();
     }
   }
 

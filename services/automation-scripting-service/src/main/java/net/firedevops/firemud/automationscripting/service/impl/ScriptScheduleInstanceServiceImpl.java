@@ -206,6 +206,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     for (ScriptPatchPinProjection projection :
         pinProjectionRepository.findByTenantIdAndObservedPinnedScriptPatchVersion(
             tenantId, scriptPatchVersion)) {
+      RoutingBundleSupport.RoutingBundle routingBundle =
+          RoutingBundleSupport.normalize(
+              projection.getWorldSlug(), projection.getRealmSlug(), projection.getPointerVersion());
       GameInstanceRuntimeState runtimeState =
           GameInstanceRuntimeState.newBuilder()
               .setTenantId(projection.getTenantId())
@@ -214,9 +217,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
-              .setWorldSlug(blankToEmpty(projection.getWorldSlug()))
-              .setRealmSlug(blankToEmpty(projection.getRealmSlug()))
-              .setPointerVersion(parsePointerVersion(projection.getPointerVersion()))
+              .setWorldSlug(routingBundle.worldSlug())
+              .setRealmSlug(routingBundle.realmSlug())
+              .setPointerVersion(routingBundle.parsedPointerVersion())
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli())
@@ -448,15 +451,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       GameInstanceRuntimeState runtimeState,
       Instant pinObservedAt,
       Instant now) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            runtimeState.getWorldSlug(),
+            runtimeState.getRealmSlug(),
+            runtimeState.getPointerVersion());
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
-    instance.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
-    instance.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
-    instance.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
+    instance.setWorldSlug(routingBundle.worldSlug());
+    instance.setRealmSlug(routingBundle.realmSlug());
+    instance.setPointerVersion(routingBundle.pointerVersion());
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setEventType(definition.getEventType());
@@ -647,6 +655,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     ScriptScheduleInstance instance = candidate.instance();
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
     if (eventAuditRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
@@ -655,9 +666,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
-            blankToEmpty(instance.getWorldSlug()),
-            blankToEmpty(instance.getRealmSlug()),
-            blankToEmpty(instance.getPointerVersion()),
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion(),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -673,9 +684,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(entityId);
     audit.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
-    audit.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
-    audit.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
-    audit.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
+    audit.setWorldSlug(routingBundle.worldSlug());
+    audit.setRealmSlug(routingBundle.realmSlug());
+    audit.setPointerVersion(routingBundle.pointerVersion());
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(instance.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -766,6 +777,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     ScriptScheduleInstance instance = candidate.instance();
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
     if (workItemRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             instance.getTenantId(),
@@ -774,9 +788,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             candidate.regionEpoch(),
             entityId,
             blankToEmpty(instance.getPlayableStateScope()),
-            blankToEmpty(instance.getWorldSlug()),
-            blankToEmpty(instance.getRealmSlug()),
-            blankToEmpty(instance.getPointerVersion()),
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion(),
             instance.getScriptId(),
             instance.getEventType(),
             DEFAULT_SCHEMA_VERSION,
@@ -795,9 +809,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setRegionEpoch(candidate.regionEpoch());
     item.setEntityId(entityId);
     item.setPlayableStateScope(blankToEmpty(instance.getPlayableStateScope()));
-    item.setWorldSlug(blankToEmpty(instance.getWorldSlug()));
-    item.setRealmSlug(blankToEmpty(instance.getRealmSlug()));
-    item.setPointerVersion(blankToEmpty(instance.getPointerVersion()));
+    item.setWorldSlug(routingBundle.worldSlug());
+    item.setRealmSlug(routingBundle.realmSlug());
+    item.setPointerVersion(routingBundle.pointerVersion());
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
@@ -836,6 +850,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private void persistTimerAudit(
       TimerFiringCandidate candidate, ScriptWorkItem workItem, Instant now) {
     ScriptScheduleInstance instance = candidate.instance();
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(instance.getTenantId());
     audit.setGameInstanceId(instance.getGameInstanceId());
@@ -843,9 +860,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setRegionEpoch(candidate.regionEpoch());
     audit.setEntityId(workItem.getEntityId());
     audit.setPlayableStateScope(blankToEmpty(workItem.getPlayableStateScope()));
-    audit.setWorldSlug(blankToEmpty(workItem.getWorldSlug()));
-    audit.setRealmSlug(blankToEmpty(workItem.getRealmSlug()));
-    audit.setPointerVersion(blankToEmpty(workItem.getPointerVersion()));
+    audit.setWorldSlug(routingBundle.worldSlug());
+    audit.setRealmSlug(routingBundle.realmSlug());
+    audit.setPointerVersion(routingBundle.pointerVersion());
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(workItem.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
@@ -1124,15 +1141,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private ScheduleInstanceSummary toSummary(ScriptScheduleInstance instance) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
     return new ScheduleInstanceSummary(
         instance.getTenantId(),
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
         instance.getScriptId(),
         blankToEmpty(instance.getPlayableStateScope()),
-        blankToEmpty(instance.getWorldSlug()),
-        blankToEmpty(instance.getRealmSlug()),
-        blankToEmpty(instance.getPointerVersion()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         instance.getPluginId(),
         instance.getPluginVersionId(),
         instance.getEventType(),
@@ -1206,10 +1226,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
     };
-  }
-
-  private static String normalizePointerVersion(long pointerVersion) {
-    return pointerVersion > 0 ? Long.toString(pointerVersion) : "";
   }
 
   private static long parsePointerVersion(String pointerVersion) {

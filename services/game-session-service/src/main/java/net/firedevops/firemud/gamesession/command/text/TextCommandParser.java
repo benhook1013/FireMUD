@@ -57,7 +57,8 @@ public class TextCommandParser {
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case FRIENDS ->
-              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("FRIENDS"));
+              new ParsedCommandData(
+                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("FRIENDS"));
           case AUTHORED ->
               new ParsedCommandData(
                   parseRemainingTokens(tokens),

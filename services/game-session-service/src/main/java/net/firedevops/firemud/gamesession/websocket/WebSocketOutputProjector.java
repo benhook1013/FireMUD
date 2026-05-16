@@ -10,7 +10,11 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretation
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
+import net.firedevops.firemud.gamesession.presentation.FriendDetailViewOutput;
+import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutput;
+import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
+import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -133,6 +137,7 @@ public final class WebSocketOutputProjector {
       case TextMessageOutput ignored -> "text_message";
       case PromptOutput ignored -> "prompt";
       case NoticeOutput ignored -> "notice";
+      case FriendMutationResultOutput ignored -> "friend_mutation_result";
       case ErrorOutput ignored -> "error";
       case LookViewOutput ignored -> "look_view";
       case WorldsViewOutput ignored -> "worlds_view";
@@ -140,6 +145,9 @@ public final class WebSocketOutputProjector {
       case CharacterBrowseViewOutput ignored -> "characters_view";
       case WhoViewOutput ignored -> "who_view";
       case FriendPresenceViewOutput ignored -> "friends_view";
+      case FriendDetailViewOutput ignored -> "friend_detail_view";
+      case FriendRosterSummaryViewOutput ignored -> "friend_roster_summary_view";
+      case FriendPresencePolicyViewOutput ignored -> "friend_presence_policy_view";
       default -> "unknown";
     };
   }

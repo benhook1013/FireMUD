@@ -745,6 +745,11 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
+      RoutingBundle filterRoutingBundle =
+          normalizeRoutingBundle(
+              blankToEmpty(request.getWorldSlug()),
+              blankToEmpty(request.getRealmSlug()),
+              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
       ListRemoteCommandCoordinatorsResponse.Builder response =
           ListRemoteCommandCoordinatorsResponse.newBuilder();
       List<RemoteCommandCoordinator> coordinators =
@@ -769,9 +774,9 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getScriptPatchVersion()),
               blankToEmpty(request.getPluginVersionId()),
               normalizePlayableStateScope(request.getPlayableStateScope()),
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
+              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
+              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
               blankToEmpty(request.getTargetEntityId()),
               blankToEmpty(request.getClaimTargetAggregate()),
               blankToEmpty(request.getEffectKey()),
@@ -853,6 +858,11 @@ public final class GameSessionControlPlaneGrpcService
       if (remoteFollowupRuntimeService == null) {
         throw new IllegalStateException("Remote followup runtime service is not configured");
       }
+      RoutingBundle requestRoutingBundle =
+          normalizeRoutingBundle(
+              normalizeBlank(request.getWorldSlug()),
+              normalizeBlank(request.getRealmSlug()),
+              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
       RemoteFollowupRuntimeService.ScheduleOutcome outcome =
           remoteFollowupRuntimeService.scheduleFollowup(
               new RemoteFollowupRuntimeService.ScheduleRequest(
@@ -877,9 +887,9 @@ public final class GameSessionControlPlaneGrpcService
                   normalizeBlank(request.getRequestedCommand()),
                   request.getRequiresSoloTick(),
                   normalizePlayableStateScope(request.getPlayableStateScope()),
-                  normalizeBlank(request.getWorldSlug()),
-                  normalizeBlank(request.getRealmSlug()),
-                  request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+                  requestRoutingBundle == null ? null : requestRoutingBundle.worldSlug(),
+                  requestRoutingBundle == null ? null : requestRoutingBundle.realmSlug(),
+                  requestRoutingBundle == null ? null : requestRoutingBundle.pointerVersion(),
                   normalizeBlank(request.getScriptPatchVersion()),
                   normalizeBlank(request.getPluginId()),
                   normalizeBlank(request.getPluginVersionId()),
@@ -931,6 +941,11 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
+      RoutingBundle filterRoutingBundle =
+          normalizeRoutingBundle(
+              blankToEmpty(request.getWorldSlug()),
+              blankToEmpty(request.getRealmSlug()),
+              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
       java.util.List<RemoteFollowup> followups =
           remoteFollowupRepository.findForControlPlane(
               tenantId,
@@ -953,9 +968,9 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getScriptPatchVersion()),
               blankToEmpty(request.getPluginVersionId()),
               normalizePlayableStateScope(request.getPlayableStateScope()),
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
+              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
+              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
               blankToEmpty(request.getPayloadKind()),
               blankToEmpty(request.getOriginSourceKind()),
               blankToEmpty(request.getOriginSourceState()),
@@ -1029,6 +1044,11 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
+      RoutingBundle filterRoutingBundle =
+          normalizeRoutingBundle(
+              blankToEmpty(request.getWorldSlug()),
+              blankToEmpty(request.getRealmSlug()),
+              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
       java.util.List<RemoteFollowupResult> results =
           remoteFollowupResultRepository.findForControlPlane(
               tenantId,
@@ -1052,9 +1072,9 @@ public final class GameSessionControlPlaneGrpcService
               blankToEmpty(request.getScriptPatchVersion()),
               blankToEmpty(request.getPluginVersionId()),
               normalizePlayableStateScope(request.getPlayableStateScope()),
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
+              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
+              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
               blankToEmpty(request.getResultErrorCode()),
               blankToEmpty(request.getAutomationWorkItemId()),
               blankToEmpty(request.getResultCommandId()),
@@ -2807,14 +2827,21 @@ public final class GameSessionControlPlaneGrpcService
             ownership -> {
               GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
               GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
+              RoutingBundle normalizedRoutingBundle =
+                  normalizeRoutingBundle(
+                      routingBundle.worldSlug(),
+                      routingBundle.realmSlug(),
+                      routingBundle.pointerVersion());
               return new CurrentRuntimeBoundary(
                   ownership.getGameInstanceId(),
                   ownership.getRegionId(),
                   ownership.getRegionEpoch(),
                   routingBundle.playableStateScope(),
-                  routingBundle.worldSlug(),
-                  routingBundle.realmSlug(),
-                  routingBundle.pointerVersion());
+                  normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.worldSlug(),
+                  normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.realmSlug(),
+                  normalizedRoutingBundle == null
+                      ? null
+                      : normalizedRoutingBundle.pointerVersion());
             });
   }
 
@@ -2843,27 +2870,33 @@ public final class GameSessionControlPlaneGrpcService
       String persistedRealmSlug,
       Long persistedPointerVersion,
       CurrentRuntimeBoundary currentBoundary) {
+    RoutingBundle persistedRoutingBundle =
+        normalizeRoutingBundle(persistedWorldSlug, persistedRealmSlug, persistedPointerVersion);
+    RoutingBundle currentRoutingBundle =
+        normalizeRoutingBundle(
+            currentBoundary.worldSlug(),
+            currentBoundary.realmSlug(),
+            currentBoundary.pointerVersion());
     String normalizedPersistedPlayableStateScope =
         persistedPlayableStateScope == null || persistedPlayableStateScope.isBlank()
             ? ""
             : persistedPlayableStateScope;
-    String normalizedPersistedWorldSlug =
-        persistedWorldSlug == null || persistedWorldSlug.isBlank() ? "" : persistedWorldSlug;
-    String normalizedPersistedRealmSlug =
-        persistedRealmSlug == null || persistedRealmSlug.isBlank() ? "" : persistedRealmSlug;
     String currentPlayableStateScope =
         normalizePlayableStateScope(currentBoundary.playableStateScope());
-    String currentWorldSlug =
-        currentBoundary.worldSlug() == null ? "" : currentBoundary.worldSlug();
-    String currentRealmSlug =
-        currentBoundary.realmSlug() == null ? "" : currentBoundary.realmSlug();
+    String normalizedPersistedWorldSlug =
+        persistedRoutingBundle == null ? "" : persistedRoutingBundle.worldSlug();
+    String normalizedPersistedRealmSlug =
+        persistedRoutingBundle == null ? "" : persistedRoutingBundle.realmSlug();
+    long normalizedPersistedPointerVersion =
+        persistedRoutingBundle == null ? 0L : persistedRoutingBundle.pointerVersion();
+    String currentWorldSlug = currentRoutingBundle == null ? "" : currentRoutingBundle.worldSlug();
+    String currentRealmSlug = currentRoutingBundle == null ? "" : currentRoutingBundle.realmSlug();
     long currentPointerVersion =
-        currentBoundary.pointerVersion() == null ? 0L : currentBoundary.pointerVersion();
+        currentRoutingBundle == null ? 0L : currentRoutingBundle.pointerVersion();
     return !normalizedPersistedPlayableStateScope.equals(currentPlayableStateScope)
         || !normalizedPersistedWorldSlug.equals(currentWorldSlug)
         || !normalizedPersistedRealmSlug.equals(currentRealmSlug)
-        || (persistedPointerVersion == null ? 0L : persistedPointerVersion)
-            != currentPointerVersion;
+        || normalizedPersistedPointerVersion != currentPointerVersion;
   }
 
   private void applyDirectCommandProvenance(
@@ -3043,14 +3076,11 @@ public final class GameSessionControlPlaneGrpcService
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    if (worldSlug != null) {
-      builder.setWorldSlug(worldSlug);
-    }
-    if (realmSlug != null) {
-      builder.setRealmSlug(realmSlug);
-    }
-    if (pointerVersion != null) {
-      builder.setPointerVersion(pointerVersion);
+    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle != null) {
+      builder.setWorldSlug(routingBundle.worldSlug());
+      builder.setRealmSlug(routingBundle.realmSlug());
+      builder.setPointerVersion(routingBundle.pointerVersion());
     }
   }
 
@@ -3143,14 +3173,11 @@ public final class GameSessionControlPlaneGrpcService
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    if (worldSlug != null) {
-      builder.setWorldSlug(worldSlug);
-    }
-    if (realmSlug != null) {
-      builder.setRealmSlug(realmSlug);
-    }
-    if (pointerVersion != null) {
-      builder.setPointerVersion(pointerVersion);
+    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle != null) {
+      builder.setWorldSlug(routingBundle.worldSlug());
+      builder.setRealmSlug(routingBundle.realmSlug());
+      builder.setPointerVersion(routingBundle.pointerVersion());
     }
   }
 
@@ -3233,15 +3260,23 @@ public final class GameSessionControlPlaneGrpcService
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    if (worldSlug != null) {
-      builder.setWorldSlug(worldSlug);
+    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle != null) {
+      builder.setWorldSlug(routingBundle.worldSlug());
+      builder.setRealmSlug(routingBundle.realmSlug());
+      builder.setPointerVersion(routingBundle.pointerVersion());
     }
-    if (realmSlug != null) {
-      builder.setRealmSlug(realmSlug);
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
+    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (hasWorld && hasRealm && hasPointer) {
+      return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
     }
-    if (pointerVersion != null) {
-      builder.setPointerVersion(pointerVersion);
-    }
+    return null;
   }
 
   private static void applyTargetCommandStatus(
@@ -3692,14 +3727,13 @@ public final class GameSessionControlPlaneGrpcService
     if (command.getEnqueueSeq() != null) {
       builder.setEnqueueSeq(command.getEnqueueSeq());
     }
-    if (command.getWorldSlug() != null) {
-      builder.setWorldSlug(command.getWorldSlug());
-    }
-    if (command.getRealmSlug() != null) {
-      builder.setRealmSlug(command.getRealmSlug());
-    }
-    if (command.getPointerVersion() != null) {
-      builder.setPointerVersion(command.getPointerVersion());
+    RoutingBundle routingBundle =
+        normalizeRoutingBundle(
+            command.getWorldSlug(), command.getRealmSlug(), command.getPointerVersion());
+    if (routingBundle != null) {
+      builder.setWorldSlug(routingBundle.worldSlug());
+      builder.setRealmSlug(routingBundle.realmSlug());
+      builder.setPointerVersion(routingBundle.pointerVersion());
     }
     if (command.getOriginSourceKind() != null) {
       builder.setOriginSourceKind(command.getOriginSourceKind());
@@ -4214,4 +4248,6 @@ public final class GameSessionControlPlaneGrpcService
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
 }

@@ -6,7 +6,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -17,6 +16,7 @@ import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHe
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
+import net.firedevops.firemud.test.TestAsyncAssertions;
 import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -79,7 +79,10 @@ class GatewayGameplayBridgeIntegrationTest {
       probe.send("LOOK");
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
       probe.send("FORCE_DROP");
-      assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
+      TestAsyncAssertions.assertEventually(
+          "gateway upstream reconnection after forced drop",
+          Duration.ofSeconds(5),
+          () -> TEST_UPSTREAM_STATE.get().connectionCount() >= 2);
       assertThat(probe.downstreamClosed()).isFalse();
       probe.send("LOOK");
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
@@ -107,7 +110,10 @@ class GatewayGameplayBridgeIntegrationTest {
       probe.awaitStartsWith("OK LOOK", Duration.ofSeconds(5));
 
       UPSTREAM.restart();
-      assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
+      TestAsyncAssertions.assertEventually(
+          "gateway upstream reconnection after upstream restart",
+          Duration.ofSeconds(30),
+          () -> TEST_UPSTREAM_STATE.get().connectionCount() >= 2);
       assertThat(probe.downstreamClosed()).isFalse();
 
       probe.send("LOOK");
@@ -194,17 +200,6 @@ class GatewayGameplayBridgeIntegrationTest {
 
     String websocketUrl() {
       return "ws://localhost:" + port + "/ws/game";
-    }
-
-    boolean awaitConnections(int count, long timeout, TimeUnit unit) throws InterruptedException {
-      long deadline = System.nanoTime() + unit.toNanos(timeout);
-      while (System.nanoTime() < deadline) {
-        if (TEST_UPSTREAM_STATE.get().connectionCount() >= count) {
-          return true;
-        }
-        Thread.sleep(50);
-      }
-      return TEST_UPSTREAM_STATE.get().connectionCount() >= count;
     }
 
     List<String> seenTransportSessionIds() {

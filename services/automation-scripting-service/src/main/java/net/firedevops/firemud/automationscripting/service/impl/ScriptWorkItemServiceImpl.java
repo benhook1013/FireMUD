@@ -460,6 +460,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       int limit) {
     requireText(tenantId, "tenant_id");
     int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(worldSlug, realmSlug, pointerVersion);
     return handoffEventRepository
         .findEvents(
             tenantId,
@@ -478,9 +480,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             blankToEmpty(gameSessionCommandId),
             blankToEmpty(targetEntityId),
             blankToEmpty(playableStateScope),
-            blankToEmpty(worldSlug),
-            blankToEmpty(realmSlug),
-            blankToEmpty(pointerVersion),
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion(),
             blankToEmpty(sourceKind),
             blankToEmpty(sourceState),
             changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
@@ -827,6 +829,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static DeadLetterSummary toDeadLetterSummary(ScriptWorkItem item) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            item.getWorldSlug(), item.getRealmSlug(), item.getPointerVersion());
     return new DeadLetterSummary(
         item.getId().toString(),
         item.getTenantId(),
@@ -835,9 +840,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getRegionEpoch(),
         item.getEntityId(),
         blankToEmpty(item.getPlayableStateScope()),
-        blankToEmpty(item.getWorldSlug()),
-        blankToEmpty(item.getRealmSlug()),
-        blankToEmpty(item.getPointerVersion()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         blankToEmpty(item.getSourceKind()),
         blankToEmpty(item.getSourceState()),
         zeroIfNull(item.getSourceOrdinal()),
@@ -858,6 +863,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static HandoffEventSummary toHandoffSummary(ScriptHandoffEvent event) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            event.getWorldSlug(), event.getRealmSlug(), event.getPointerVersion());
     return new HandoffEventSummary(
         event.getEventId(),
         event.getTenantId(),
@@ -877,9 +885,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(event.getRemoteFollowupId()),
         event.getTargetEntityId(),
         blankToEmpty(event.getPlayableStateScope()),
-        blankToEmpty(event.getWorldSlug()),
-        blankToEmpty(event.getRealmSlug()),
-        blankToEmpty(event.getPointerVersion()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         blankToEmpty(event.getSourceKind()),
         blankToEmpty(event.getSourceState()),
         zeroIfNull(event.getSourceOrdinal()),

@@ -183,6 +183,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private EnqueueAutomationCommandIfAbsentRequest toRequest(
       ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     return EnqueueAutomationCommandIfAbsentRequest.newBuilder()
         .setTenantId(workItem.getTenantId())
         .setGameInstanceId(workItem.getGameInstanceId())
@@ -196,9 +199,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
-        .setWorldSlug(normalize(workItem.getWorldSlug()))
-        .setRealmSlug(normalize(workItem.getRealmSlug()))
-        .setPointerVersion(normalize(workItem.getPointerVersion()))
+        .setWorldSlug(routingBundle.worldSlug())
+        .setRealmSlug(routingBundle.realmSlug())
+        .setPointerVersion(routingBundle.pointerVersion())
         .setOriginSourceKind(normalize(workItem.getSourceKind()))
         .setOriginSourceState(normalize(workItem.getSourceState()))
         .setOriginSourceOrdinal(zeroIfNull(workItem.getSourceOrdinal()))
@@ -214,6 +217,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
       ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
     long targetDueTickId = command.dueTickId() > 0 ? command.dueTickId() : 0L;
     long originDeadlineTickId = originDeadlineTickId(workItem, command);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     return ScheduleRemoteFollowupRequest.newBuilder()
         .setTenantId(workItem.getTenantId())
         .setCommandId(dispatchId)
@@ -235,9 +241,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setRequestedCommand(command.commandText())
         .setRequiresSoloTick(command.requiresSoloTick())
         .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
-        .setWorldSlug(normalize(workItem.getWorldSlug()))
-        .setRealmSlug(normalize(workItem.getRealmSlug()))
-        .setPointerVersion(parsePointerVersion(workItem.getPointerVersion()))
+        .setWorldSlug(routingBundle.worldSlug())
+        .setRealmSlug(routingBundle.realmSlug())
+        .setPointerVersion(routingBundle.parsedPointerVersion())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
@@ -303,6 +309,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
       Instant now) {
     String outcome = result.outcome().toLowerCase(Locale.ROOT);
     String reason = handoffReason(result);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     ScriptHandoffEvent event = new ScriptHandoffEvent();
     event.setEventId("she-" + UUID.randomUUID());
     event.setTenantId(workItem.getTenantId());
@@ -322,9 +331,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setTargetRegionId(normalize(command.targetRegionId()));
     event.setTargetRegionEpoch(zeroIfNull(command.targetRegionEpoch()));
     event.setPlayableStateScope(normalize(workItem.getPlayableStateScope()));
-    event.setWorldSlug(normalize(workItem.getWorldSlug()));
-    event.setRealmSlug(normalize(workItem.getRealmSlug()));
-    event.setPointerVersion(normalize(workItem.getPointerVersion()));
+    event.setWorldSlug(routingBundle.worldSlug());
+    event.setRealmSlug(routingBundle.realmSlug());
+    event.setPointerVersion(routingBundle.pointerVersion());
     event.setSourceKind(normalize(workItem.getSourceKind()));
     event.setSourceState(normalize(workItem.getSourceState()));
     event.setSourceOrdinal(workItem.getSourceOrdinal());
@@ -369,13 +378,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static long zeroIfNull(Long value) {
     return value == null ? 0L : value;
-  }
-
-  private static long parsePointerVersion(String pointerVersion) {
-    if (pointerVersion == null || pointerVersion.isBlank()) {
-      return 0L;
-    }
-    return Long.parseLong(pointerVersion);
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {

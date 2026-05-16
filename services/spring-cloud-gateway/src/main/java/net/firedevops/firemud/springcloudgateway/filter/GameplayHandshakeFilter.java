@@ -89,6 +89,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     }
 
     if (isTrustedTcpProxy(exchange)) {
+      if (!trustedProxyRoutingBundleIsCoherent(exchange)) {
+        return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
+      }
       return chain.filter(
           mutate(
               exchange,
@@ -224,6 +227,16 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
       ServerWebExchange exchange, String headerName, String expected) {
     String actual = exchange.getRequest().getHeaders().getFirst(headerName);
     return StringUtils.hasText(actual) && !Objects.equals(actual, expected);
+  }
+
+  private boolean trustedProxyRoutingBundleIsCoherent(ServerWebExchange exchange) {
+    String worldSlug = exchange.getRequest().getHeaders().getFirst(WORLD_SLUG_HEADER);
+    String realmSlug = exchange.getRequest().getHeaders().getFirst(REALM_SLUG_HEADER);
+    String pointerVersion = exchange.getRequest().getHeaders().getFirst(POINTER_VERSION_HEADER);
+    boolean hasWorld = StringUtils.hasText(worldSlug);
+    boolean hasRealm = StringUtils.hasText(realmSlug);
+    boolean hasPointer = StringUtils.hasText(pointerVersion);
+    return (hasWorld == hasRealm) && (hasRealm == hasPointer);
   }
 
   private ServerWebExchange mutate(

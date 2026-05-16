@@ -45,6 +45,17 @@ public final class GameplayTelnetScenarios {
     }
   }
 
+  public record LoginThenPlayScenario(GameplayTelnetDriver driver) implements AutoCloseable {
+    public List<String> responses() {
+      return driver.responses();
+    }
+
+    @Override
+    public void close() throws Exception {
+      driver.close();
+    }
+  }
+
   public record TakeoverScenario(
       List<String> firstResponses, GameplayTelnetDriver first, GameplayTelnetDriver takeover)
       implements AutoCloseable {
@@ -235,6 +246,22 @@ public final class GameplayTelnetScenarios {
     }
   }
 
+  public static LoginThenPlayScenario loginThenAttemptPlay(
+      DriverFactory factory, Admission admission, DriverExercise playOutcomeAssertion)
+      throws Exception {
+    GameplayTelnetDriver driver = factory.open();
+    try {
+      driver.awaitInitialGuidance();
+      driver.login(admission.email(), admission.password());
+      attemptPlay(driver, admission);
+      playOutcomeAssertion.accept(driver);
+      return new LoginThenPlayScenario(driver);
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   private static void enterReady(GameplayTelnetDriver driver, Admission admission)
       throws Exception {
     driver.awaitInitialGuidance();
@@ -249,6 +276,15 @@ public final class GameplayTelnetScenarios {
         admission.world(),
         admission.characterName(),
         admission.readyText());
+  }
+
+  private static void attemptPlay(GameplayTelnetDriver driver, Admission admission)
+      throws Exception {
+    if (admission.characterName() == null || admission.characterName().isBlank()) {
+      driver.sendLine("PLAY " + admission.world());
+      return;
+    }
+    driver.sendLine("PLAY " + admission.world() + " " + admission.characterName());
   }
 
   private static void closeQuietly(

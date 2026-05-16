@@ -161,16 +161,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (admission.admitted()) {
       admission = admissionWithHandlers(request, schemaVersion, sourceService);
     }
+    HandlerScopeValues requestScopeValues = requestScopeValues(request);
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
     audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
     audit.setRegionId(normalize(request.getRegionId()));
     audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
-    audit.setEntityId(normalize(request.getEntityId()));
-    audit.setPlayableStateScope(normalizePlayableStateScope(request.getPlayableStateScope()));
-    audit.setWorldSlug(normalize(request.getWorldSlug()));
-    audit.setRealmSlug(normalize(request.getRealmSlug()));
-    audit.setPointerVersion(normalize(request.getPointerVersion()));
+    audit.setEntityId(requestScopeValues.entityId());
+    audit.setPlayableStateScope(requestScopeValues.playableStateScope());
+    audit.setWorldSlug(requestScopeValues.worldSlug());
+    audit.setRealmSlug(requestScopeValues.realmSlug());
+    audit.setPointerVersion(requestScopeValues.pointerVersion());
     audit.setScriptId(normalize(request.getScriptId()));
     audit.setPluginId(normalize(request.getPluginId()));
     audit.setPluginVersionId(normalize(request.getPluginVersionId()));
@@ -690,6 +691,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         || request.getScriptEventId().isBlank()) {
       return null;
     }
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
     var existing =
         repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
@@ -699,9 +703,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
                 normalize(request.getEntityId()),
                 normalizePlayableStateScope(request.getPlayableStateScope()),
-                normalize(request.getWorldSlug()),
-                normalize(request.getRealmSlug()),
-                normalize(request.getPointerVersion()),
+                routingBundle.worldSlug(),
+                routingBundle.realmSlug(),
+                routingBundle.pointerVersion(),
                 request.getEventType(),
                 schemaVersion,
                 request.getScriptPatchVersion(),
@@ -766,21 +770,27 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static HandlerScopeValues requestScopeValues(TriggerScriptEventRequest request) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
     return new HandlerScopeValues(
         normalize(request.getEntityId()),
         normalizePlayableStateScope(request.getPlayableStateScope()),
-        normalize(request.getWorldSlug()),
-        normalize(request.getRealmSlug()),
-        normalize(request.getPointerVersion()));
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion());
   }
 
   private static HandlerScopeValues workItemScopeValues(ScriptWorkItem workItem) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     return new HandlerScopeValues(
         normalize(workItem.getEntityId()),
         normalize(workItem.getPlayableStateScope()),
-        normalize(workItem.getWorldSlug()),
-        normalize(workItem.getRealmSlug()),
-        normalize(workItem.getPointerVersion()));
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion());
   }
 
   private record HandlerScopeValues(

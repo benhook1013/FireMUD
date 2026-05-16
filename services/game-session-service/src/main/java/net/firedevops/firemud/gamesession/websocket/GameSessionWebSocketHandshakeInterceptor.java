@@ -82,7 +82,7 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
       String bootstrapGameInstanceId,
       String connectContext) {
     if (transportSessionId != null && !transportSessionId.isBlank()) {
-      return transportSessionId;
+      return normalizeSessionId(transportSessionId);
     }
     if (proxyConnectionId != null && !proxyConnectionId.isBlank()) {
       return Long.toUnsignedString(stablePositiveLong(proxyConnectionId));
@@ -91,6 +91,14 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
       return Long.toUnsignedString(stablePositiveLong(connectContext));
     }
     return bootstrapGameInstanceId;
+  }
+
+  private String normalizeSessionId(String candidate) {
+    String trimmed = candidate.trim();
+    if (trimmed.chars().allMatch(Character::isDigit)) {
+      return trimmed;
+    }
+    return Long.toUnsignedString(stablePositiveLong(trimmed));
   }
 
   private long stablePositiveLong(String value) {

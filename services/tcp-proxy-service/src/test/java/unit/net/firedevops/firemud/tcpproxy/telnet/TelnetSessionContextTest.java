@@ -32,4 +32,16 @@ class TelnetSessionContextTest {
     assertEquals(null, sessionContext.realmSlug());
     assertEquals(null, sessionContext.pointerVersion());
   }
+
+  @Test
+  void bootstrap_dropsPartialRoutingBundle() {
+    sessionContext.bootstrap("sess-2", "tenant-beta", "demo", "production", "");
+
+    assertTrue(sessionContext.isReady());
+    assertEquals("sess-2", sessionContext.gameInstanceId());
+    assertEquals("tenant-beta", sessionContext.tenantId());
+    assertEquals(null, sessionContext.worldSlug());
+    assertEquals(null, sessionContext.realmSlug());
+    assertEquals(null, sessionContext.pointerVersion());
+  }
 }

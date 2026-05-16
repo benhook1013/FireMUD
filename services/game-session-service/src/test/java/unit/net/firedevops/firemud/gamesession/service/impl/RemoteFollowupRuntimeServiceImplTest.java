@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -191,6 +192,152 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "demo".equals(followup.getWorldSlug())
                         && "production".equals(followup.getRealmSlug())
                         && Long.valueOf(17L).equals(followup.getPointerVersion())));
+  }
+
+  @Test
+  void scheduleFollowupDropsPartialRoutingBundle() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(
+            new RemoteFollowupRuntimeService.ScheduleRequest(
+                1L,
+                "cmd-1",
+                "coord-1",
+                7L,
+                "region-a",
+                4L,
+                8L,
+                "region-b",
+                8L,
+                22L,
+                4L,
+                25L,
+                "late_result_safe_to_ignore",
+                "followup-1",
+                "effect-1",
+                "entity-9",
+                "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                "enqueue_automation_command",
+                "LOOK",
+                false,
+                "SHARED",
+                "demo",
+                "production",
+                null,
+                "patch-1",
+                "plugin-1",
+                "plugin-v1",
+                "dispatch-1",
+                "work-1",
+                "script-1",
+                "REMOTE_FOLLOWUP",
+                "TARGET_REGION_EXECUTED",
+                44L,
+                22L,
+                1700L));
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(coordinatorRepository)
+        .save(
+            argThat(
+                coordinator ->
+                    coordinator.getWorldSlug() == null
+                        && coordinator.getRealmSlug() == null
+                        && coordinator.getPointerVersion() == null));
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    followup.getWorldSlug() == null
+                        && followup.getRealmSlug() == null
+                        && followup.getPointerVersion() == null));
+  }
+
+  @Test
+  void scheduleFollowupAllowsRetryWhenPartialRequestCollapsedToStoredAbsentRoutingBundle() {
+    AtomicReference<RemoteCommandCoordinator> storedCoordinator = new AtomicReference<>();
+    AtomicReference<RemoteFollowup> storedFollowup = new AtomicReference<>();
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(storedCoordinator.get()));
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(storedFollowup.get()));
+    when(coordinatorRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              RemoteCommandCoordinator coordinator = invocation.getArgument(0);
+              storedCoordinator.set(coordinator);
+              return coordinator;
+            });
+    when(followupRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              RemoteFollowup followup = invocation.getArgument(0);
+              storedFollowup.set(followup);
+              return followup;
+            });
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleRequest request =
+        new RemoteFollowupRuntimeService.ScheduleRequest(
+            1L,
+            "cmd-1",
+            "coord-1",
+            7L,
+            "region-a",
+            4L,
+            8L,
+            "region-b",
+            8L,
+            22L,
+            4L,
+            25L,
+            "late_result_safe_to_ignore",
+            "followup-1",
+            "effect-1",
+            "entity-9",
+            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+            "enqueue_automation_command",
+            "LOOK",
+            true,
+            "SHARED",
+            "demo",
+            null,
+            null,
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "dispatch-1",
+            "work-1",
+            "script-1",
+            "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
+            44L,
+            22L,
+            1700L);
+
+    RemoteFollowupRuntimeService.ScheduleOutcome firstOutcome = service.scheduleFollowup(request);
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome = service.scheduleFollowup(request);
+
+    assertTrue(firstOutcome.coordinatorCreated());
+    assertTrue(firstOutcome.followupCreated());
+    assertFalse(outcome.coordinatorCreated());
+    assertFalse(outcome.followupCreated());
+    assertEquals("coord-1", outcome.coordinatorId());
+    assertEquals("followup-1", outcome.followupId());
+    assertEquals(null, storedCoordinator.get().getWorldSlug());
+    assertEquals(null, storedCoordinator.get().getRealmSlug());
+    assertEquals(null, storedCoordinator.get().getPointerVersion());
+    assertEquals(null, storedFollowup.get().getWorldSlug());
+    assertEquals(null, storedFollowup.get().getRealmSlug());
+    assertEquals(null, storedFollowup.get().getPointerVersion());
   }
 
   @Test
@@ -826,6 +973,34 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
     verify(coordinatorRepository, never()).save(any());
+  }
+
+  @Test
+  void recordResultDropsPartialStoredRoutingBundleFromResultProjection() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setWorldSlug("demo");
+    coordinator.setRealmSlug("production");
+    coordinator.setPointerVersion(null);
+    RemoteFollowup followup = followup();
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(null);
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1")).thenReturn(Optional.empty());
+
+    service.recordResult(resultRequest("APPLIED"));
+
+    verify(resultRepository)
+        .save(
+            argThat(
+                result ->
+                    result.getWorldSlug() == null
+                        && result.getRealmSlug() == null
+                        && result.getPointerVersion() == null));
   }
 
   @Test

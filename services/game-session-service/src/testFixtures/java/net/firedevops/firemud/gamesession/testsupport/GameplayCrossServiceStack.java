@@ -175,6 +175,29 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     gameSession.bean(SessionContextService.class).save(context);
   }
 
+  public void seedLiveSession(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt) {
+    seedLiveSession(
+        new SessionContext(
+            sessionId,
+            tenantId,
+            accountId,
+            loginName,
+            characterId,
+            characterName,
+            gameInstanceId,
+            roomInstanceId,
+            jwt));
+  }
+
   public long insertRunningGameInstance(
       long tenantId, long accountId, long gameTemplateId, boolean clearExisting) {
     JdbcTemplate jdbc = jdbc();

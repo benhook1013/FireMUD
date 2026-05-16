@@ -237,6 +237,50 @@ class TextCommandParserTest {
   }
 
   @Test
+  void preservesFriendsMutationArguments() {
+    TextCommand command = parser.parse("FRIENDS ADD 77");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertEquals(List.of("ADD", "77"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
+  void preservesFriendsMutationCharacterNameArguments() {
+    TextCommand command = parser.parse("FRIENDS REMOVE Sora");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertEquals(List.of("REMOVE", "Sora"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
+  void preservesFriendsFilterArguments() {
+    TextCommand command = parser.parse("FRIENDS ONLINE");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertEquals(List.of("ONLINE"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
+  void preservesFriendsDetailArguments() {
+    TextCommand command = parser.parse("FRIENDS SHOW #1");
+
+    assertEquals(TextCommandType.FRIENDS, command.type());
+    assertEquals("FRIENDS", command.aliasUsed());
+    assertEquals(List.of("SHOW", "#1"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertEquals("FRIENDS", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesInventoryAsViewRequest() {
     TextCommand command = parser.parse("inv");
 

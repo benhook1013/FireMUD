@@ -64,6 +64,14 @@ public class GameLogicClient
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final GameplayWorldCatalog gameplayWorldCatalog;
 
+  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
+    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
+
+    private boolean isPresent() {
+      return worldSlug != null && realmSlug != null && pointerVersion != null;
+    }
+  }
+
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
@@ -117,20 +125,7 @@ public class GameLogicClient
                     .build())
             .build();
     request =
-        request.toBuilder()
-            .setSessionAttestation(
-                gameplaySessionAttestationService.issueGameplaySessionAttestation(
-                    tenantId,
-                    sessionId,
-                    Long.toString(context.accountId()),
-                    characterId,
-                    gameInstanceId,
-                    roomId,
-                    context.worldSlug(),
-                    context.realmSlug(),
-                    pointerVersionClaim(context),
-                    context.playableStateScope()))
-            .build();
+        request.toBuilder().setSessionAttestation(sessionAttestation(context, roomId)).build();
     return callStub().resolveLook(request);
   }
 
@@ -187,18 +182,7 @@ public class GameLogicClient
             .setGameInstanceId(gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
             .setEffectId(effectId == null ? "" : effectId)
-            .setSessionAttestation(
-                gameplaySessionAttestationService.issueGameplaySessionAttestation(
-                    tenantId,
-                    sessionId,
-                    accountId,
-                    characterId,
-                    gameInstanceId,
-                    roomId,
-                    context.worldSlug(),
-                    context.realmSlug(),
-                    pointerVersionClaim(context),
-                    context.playableStateScope()))
+            .setSessionAttestation(sessionAttestation(context, roomId))
             .build();
     return callStub().sendCommunication(request);
   }
@@ -222,18 +206,7 @@ public class GameLogicClient
                     .setRoomInstanceId(roomId)
                     .build())
             .setDirection(direction)
-            .setSessionAttestation(
-                gameplaySessionAttestationService.issueGameplaySessionAttestation(
-                    tenantId,
-                    sessionId,
-                    Long.toString(context.accountId()),
-                    characterId,
-                    gameInstanceId,
-                    roomId,
-                    context.worldSlug(),
-                    context.realmSlug(),
-                    pointerVersionClaim(context),
-                    context.playableStateScope()))
+            .setSessionAttestation(sessionAttestation(context, roomId))
             .build();
     return callStub().resolveMove(request);
   }
@@ -712,6 +685,7 @@ public class GameLogicClient
   }
 
   private String sessionAttestation(SessionContext context, String roomId) {
+    RoutingBundle routingBundle = routingBundle(context);
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
@@ -719,14 +693,45 @@ public class GameLogicClient
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
         roomId,
-        context.worldSlug(),
-        context.realmSlug(),
-        pointerVersionClaim(context),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         context.playableStateScope());
   }
 
-  private String pointerVersionClaim(SessionContext context) {
-    return context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null;
+  private RoutingBundle routingBundle(SessionContext context) {
+    RoutingBundle routingBundle =
+        normalizeRoutingBundle(
+            context.worldSlug(),
+            context.realmSlug(),
+            context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null);
+    if (!routingBundle.isPresent()
+        && (StringUtils.hasText(context.worldSlug())
+            || StringUtils.hasText(context.realmSlug())
+            || context.pointerVersion() > 0)) {
+      throw new IllegalStateException(
+          "Incomplete admitted routing bundle on session context for Game Logic request");
+    }
+    return routingBundle;
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, String pointerVersion) {
+    String normalizedWorldSlug = StringUtils.hasText(worldSlug) ? worldSlug : null;
+    String normalizedRealmSlug = StringUtils.hasText(realmSlug) ? realmSlug : null;
+    String normalizedPointerVersion = StringUtils.hasText(pointerVersion) ? pointerVersion : null;
+    boolean hasAny =
+        normalizedWorldSlug != null
+            || normalizedRealmSlug != null
+            || normalizedPointerVersion != null;
+    boolean hasAll =
+        normalizedWorldSlug != null
+            && normalizedRealmSlug != null
+            && normalizedPointerVersion != null;
+    if (!hasAny || !hasAll) {
+      return RoutingBundle.EMPTY;
+    }
+    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
   }
 
   private ErrorDetail error(String code, String message) {

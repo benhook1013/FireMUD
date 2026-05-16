@@ -41,7 +41,7 @@ class RedisGameplayPresenceServiceTest {
   @Test
   void registerConnectedStoresPresenceAndIndexesByGameInstance() {
     SessionContext context =
-        new SessionContext(1L, 22L, 2L, "player@example.com", 102L, "Ben", 7L, "R-1", null);
+        new SessionContext(1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", null);
 
     service.registerConnected(context);
 
@@ -56,7 +56,9 @@ class RedisGameplayPresenceServiceTest {
                             .equals("Ben")),
             org.mockito.Mockito.eq(TTL));
     verify(setOperations).add("gameplaypresence:22:7:sessions", "1");
+    verify(setOperations).add("gameplaypresence:22:account:102:sessions", "1");
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
+    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
   }
 
   @Test
@@ -113,8 +115,8 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                2L,
                 102L,
+                202L,
                 "Ben",
                 GameplayPresenceRole.PLAYER,
                 70L,
@@ -126,6 +128,7 @@ class RedisGameplayPresenceServiceTest {
 
     verify(redisTemplate).delete("gameplaypresence:session:3");
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "3");
+    verify(setOperations).remove("gameplaypresence:22:account:102:sessions", "3");
   }
 
   @Test
@@ -165,8 +168,8 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                2L,
                 102L,
+                202L,
                 "Ben",
                 GameplayPresenceRole.PLAYER,
                 80L,
@@ -193,6 +196,7 @@ class RedisGameplayPresenceServiceTest {
                             == null),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
+    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
   }
 
   @Test
@@ -207,8 +211,8 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                2L,
                 102L,
+                202L,
                 "Ben",
                 GameplayPresenceRole.PLAYER,
                 80L,
@@ -232,5 +236,53 @@ class RedisGameplayPresenceServiceTest {
                                     .explicitAfkSinceEpochMs())),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
+    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
+  }
+
+  @Test
+  void findConnectedByAccountIdsUsesAccountIndexAndPrefersMostRecentlyActivePresence() {
+    when(setOperations.members("gameplaypresence:22:account:102:sessions"))
+        .thenReturn(new LinkedHashSet<>(List.of("3", "4")));
+    when(valueOperations.get("gameplaypresence:session:3"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                3L,
+                22L,
+                7L,
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                102L,
+                202L,
+                "Ben",
+                GameplayPresenceRole.PLAYER,
+                80L,
+                null,
+                100L,
+                null));
+    when(valueOperations.get("gameplaypresence:session:4"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                4L,
+                22L,
+                7L,
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                102L,
+                202L,
+                "Ben",
+                GameplayPresenceRole.PLAYER,
+                90L,
+                null,
+                110L,
+                120L));
+
+    var result = service.findConnectedByAccountIds(22L, List.of(102L));
+
+    assertEquals(1, result.size());
+    assertEquals(4L, result.get(102L).sessionId());
   }
 }

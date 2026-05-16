@@ -112,14 +112,19 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       String gameInstanceId,
       GameInstanceRuntimeState runtimeState,
       Instant now) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            runtimeState.getWorldSlug(),
+            runtimeState.getRealmSlug(),
+            runtimeState.getPointerVersion());
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
     projection.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
-    projection.setWorldSlug(blankToEmpty(runtimeState.getWorldSlug()));
-    projection.setRealmSlug(blankToEmpty(runtimeState.getRealmSlug()));
-    projection.setPointerVersion(normalizePointerVersion(runtimeState.getPointerVersion()));
+    projection.setWorldSlug(routingBundle.worldSlug());
+    projection.setRealmSlug(routingBundle.realmSlug());
+    projection.setPointerVersion(routingBundle.pointerVersion());
     projection.setRuntimeRegionId(blankToEmpty(runtimeState.getRegionId()));
     projection.setRuntimeRegionEpoch(Math.max(0L, runtimeState.getRegionEpoch()));
     projection.setLastObservedControlPlaneRequestId(
@@ -135,6 +140,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
   private PinConvergenceSummary toSummary(ScriptPatchPinProjection projection, Instant now) {
     long projectionAsOfMs = projection.getProjectionRefreshedAt().toEpochMilli();
     long projectionLagMs = Math.max(0L, now.toEpochMilli() - projectionAsOfMs);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            projection.getWorldSlug(), projection.getRealmSlug(), projection.getPointerVersion());
     return new PinConvergenceSummary(
         projection.getTenantId(),
         projection.getGameInstanceId(),
@@ -148,9 +156,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         projectionLagMs >= runtimeProperties.getPinProjectionStaleThresholdMs(),
         blankToEmpty(projection.getRuntimeRegionId()),
         projection.getRuntimeRegionEpoch(),
-        blankToEmpty(projection.getWorldSlug()),
-        blankToEmpty(projection.getRealmSlug()),
-        blankToEmpty(projection.getPointerVersion()));
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion());
   }
 
   private boolean isStale(ScriptPatchPinProjection projection, Instant now) {
@@ -173,10 +181,6 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
       case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
     };
-  }
-
-  private static String normalizePointerVersion(long pointerVersion) {
-    return pointerVersion > 0 ? Long.toString(pointerVersion) : "";
   }
 
   private static String blankToEmpty(String value) {

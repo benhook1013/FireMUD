@@ -347,6 +347,58 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getTargetRegionEpoch()).isEqualTo(77L);
   }
 
+  @Test
+  void collapsesPartialRoutingBundleBeforeForwardingOrPersistingHandoff() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("auto-1")
+                .build());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L))
+                .build());
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(new ScriptEventAudit()));
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptWorkItem workItem = workItem();
+    workItem.setRealmSlug("");
+
+    service.handoff(
+        workItem, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+
+    ArgumentCaptor<EnqueueAutomationCommandIfAbsentRequest> requestCaptor =
+        ArgumentCaptor.forClass(EnqueueAutomationCommandIfAbsentRequest.class);
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getWorldSlug()).isBlank();
+    assertThat(requestCaptor.getValue().getRealmSlug()).isBlank();
+    assertThat(requestCaptor.getValue().getPointerVersion()).isBlank();
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getWorldSlug()).isBlank();
+    assertThat(handoffCaptor.getValue().getRealmSlug()).isBlank();
+    assertThat(handoffCaptor.getValue().getPointerVersion()).isBlank();
+  }
+
   private static ScriptGameplayCommandHandoffService.EmittedCommand emittedCommand(
       String commandText,
       String targetEntityId,

@@ -70,3 +70,13 @@ Entry format:
   - Context: after splitting `compose build` from `compose up`, the same `dev-tools/verify-fresh-bootstrap.sh` proof still stalled inside `docker compose build` on WSL/Docker Desktop while multiple service contexts were building in parallel.
   - Observation: the local failure mode is not limited to `up --build`; parallel compose builds themselves can wedge after partial progress even when the service Dockerfiles and jars are valid.
   - Expected pattern: canonical source-built smoke scripts should build compose services one-by-one instead of relying on a single multi-service `docker compose build` invocation.
+
+- `2026-05-11`: Shared proto modules need non-incremental Java compilation after message-shape expansion
+  - Context: extending `social_groups_service.proto` with new friend roster request/response messages and visibility-policy fields generated the expected Java message classes, but `:common-saga:compileJava` still failed on the regenerated gRPC stub during incremental compilation until the module was cleaned.
+  - Observation: in this repo's shared-proto modules, Gradle incremental Java compilation can miss freshly generated protobuf source files even when `generateProto` itself succeeded, which makes proto-surface expansion look like a random compile break.
+  - Expected pattern: protobuf-bearing modules should favor deterministic full Java recompilation after `generateProto` rather than incremental compilation, or CI/local conventions should otherwise force compile inputs to refresh whenever new generated message files appear.
+
+- `2026-05-15`: Shared smoke command catalogs do not prevent drift if each transport still owns its own socket loop
+  - Context: reviewing gameplay proof convergence across `services/game-session-service/websocket-login-look-smoke.sh`, `services/tcp-proxy-service/telnet-login-look-smoke.sh`, and `dev-tools/hosted/shared/hosted-login-look-smoke.sh`.
+  - Observation: the repo now shares command-step catalogs and readiness/account checks through `dev-tools/smoke/smoke_common.py`, but the telnet hosted smoke, local telnet smoke, and local websocket smoke still carry separate transport read/drain/send loops and partial retry behavior, so smoke proof can still drift one layer below the shared step definitions.
+  - Expected pattern: when a smoke flow is canonical across environments, share both the command plan and the transport executor semantics so hosted and local smoke paths do not fork on timeout, draining, or partial-response handling.

@@ -86,6 +86,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
     requireText(request.targetEntityId(), "target_entity_id is required");
     requireText(request.command(), "command is required");
+    requireCoherentRoutingBundle(
+        request.worldSlug(), request.realmSlug(), request.pointerVersion());
   }
 
   private static Optional<GameplayCommand> findExistingCommand(
@@ -159,6 +161,8 @@ final class AutomationGameplayCommandAdmissionSupport {
 
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
     Instant now = Instant.now();
+    RoutingBundle routingBundle =
+        normalizeRoutingBundle(request.worldSlug(), request.realmSlug(), request.pointerVersion());
     GameplayCommand command = new GameplayCommand();
     command.setCommandId(commandId(request));
     command.setTenantId(request.tenantId());
@@ -181,9 +185,9 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setPluginId(blankToNull(request.pluginId()));
     command.setPluginVersionId(blankToNull(request.pluginVersionId()));
     command.setPlayableStateScope(blankToNull(request.playableStateScope()));
-    command.setWorldSlug(blankToNull(request.worldSlug()));
-    command.setRealmSlug(blankToNull(request.realmSlug()));
-    command.setPointerVersion(request.pointerVersion());
+    command.setWorldSlug(routingBundle.worldSlug());
+    command.setRealmSlug(routingBundle.realmSlug());
+    command.setPointerVersion(routingBundle.pointerVersion());
     command.setOriginSourceKind(blankToNull(request.originSourceKind()));
     command.setOriginSourceState(blankToNull(request.originSourceState()));
     command.setOriginSourceOrdinal(request.originSourceOrdinal());
@@ -251,6 +255,31 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
   }
 
+  private static void requireCoherentRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
+    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (hasWorld == hasRealm && hasRealm == hasPointer) {
+      return;
+    }
+    throw new IllegalArgumentException(
+        "world_slug, realm_slug, and pointer_version must be provided together");
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    String normalizedWorld = blankToNull(worldSlug);
+    String normalizedRealm = blankToNull(realmSlug);
+    if (normalizedWorld == null
+        || normalizedRealm == null
+        || pointerVersion == null
+        || pointerVersion <= 0) {
+      return RoutingBundle.EMPTY;
+    }
+    return new RoutingBundle(normalizedWorld, normalizedRealm, pointerVersion);
+  }
+
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
   }
@@ -263,6 +292,10 @@ final class AutomationGameplayCommandAdmissionSupport {
     int firstSpace = trimmed.indexOf(' ');
     String token = firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
     return token.toUpperCase(java.util.Locale.ROOT);
+  }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
   }
 
   record AdmissionRequest(

@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -667,6 +668,46 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void partialDefaultRoutingBundleIsDroppedBeforeGatewayBootstrap() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    RecordingConnector connector = new RecordingConnector();
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            "demo",
+            "production",
+            "",
+            lookCacheService);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+
+    assertEquals("1", connector.getSessionId());
+    assertEquals("1", connector.getTenantId());
+    assertNull(connector.getWorldSlug());
+    assertNull(connector.getRealmSlug());
+    assertNull(connector.getPointerVersion());
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void disconnectNotificationSentWhenSessionKnown() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
@@ -717,7 +758,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void shutdownPathSuppressesExpectedDisconnectNotifyTransportNoise() {
+  void shutdownPathSuppressesExpectedDisconnectNotifyTransportNoise() throws InterruptedException {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     Mockito.when(eventService.notifyDisconnect(eq("1"), eq("1"), anyString(), anyLong()))
@@ -764,10 +805,17 @@ class TelnetServerHandlerTest {
     handler.channelRead0(ctx, "look");
     handler.channelInactive(ctx);
 
-    awaitCounter(
-        registry,
-        "tcpproxy.disconnect.notify.expected_shutdown_transport_failure",
-        Status.Code.UNAVAILABLE.name());
+    TestAsyncAssertions.assertEventually(
+        "expected shutdown disconnect notify metric",
+        Duration.ofSeconds(1),
+        () ->
+            registry
+                    .counter(
+                        "tcpproxy.disconnect.notify.expected_shutdown_transport_failure",
+                        "status",
+                        Status.Code.UNAVAILABLE.name())
+                    .count()
+                >= 1.0);
     assertEquals(
         0.0,
         registry
@@ -1216,23 +1264,6 @@ class TelnetServerHandlerTest {
   @SuppressWarnings("unchecked")
   private static <V> ScheduledFuture<V> mockScheduledFutureTyped() {
     return mock(ScheduledFuture.class);
-  }
-
-  private static void awaitCounter(
-      SimpleMeterRegistry registry, String meterName, String statusTag) {
-    long deadline = System.currentTimeMillis() + 1_000L;
-    while (System.currentTimeMillis() < deadline) {
-      if (registry.counter(meterName, "status", statusTag).count() >= 1.0) {
-        return;
-      }
-      try {
-        Thread.sleep(25L);
-      } catch (InterruptedException ex) {
-        Thread.currentThread().interrupt();
-        throw new AssertionError("Interrupted while waiting for counter " + meterName, ex);
-      }
-    }
-    throw new AssertionError("Counter did not advance: " + meterName + " status=" + statusTag);
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {

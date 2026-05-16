@@ -1240,6 +1240,104 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void collapsesPartialRoutingBundleWhenProjectingScriptHandoffEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listHandoffEvents(
+                "1", "", "", "", "", "game-2", "", 0L, "", "", "", "", "", "", "", "", "", "", "",
+                "", "", 0L, 0L, 50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.HandoffEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "script-1",
+                    "",
+                    "",
+                    "99",
+                    0,
+                    "",
+                    "",
+                    "game-2",
+                    "region-2",
+                    17L,
+                    "",
+                    "",
+                    "target-1",
+                    "SHARED",
+                    "demo",
+                    "",
+                    "17",
+                    "",
+                    "",
+                    0L,
+                    0L,
+                    0L,
+                    "LOOK",
+                    "enqueued",
+                    "game_session_accepted",
+                    15L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""),
+                    null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-2")
+                        .setRegionId("region-live")
+                        .setRegionEpoch(22L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo-next")
+                        .build())
+                .build());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
+    AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptHandoffEvents(
+        ListScriptHandoffEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setTargetGameInstanceId("game-2")
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getWorldSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getRealmSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getPointerVersion()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeWorldSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRealmSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePointerVersion()).isBlank();
+    assertThat(ref.get().getEvents(0).getIsTargetRoutingBundleStale()).isFalse();
+  }
+
+  @Test
   void listsScriptDeadLettersFromWorkItemReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -1345,6 +1443,97 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
     assertThat(ref.get().getDeadLetters(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
+  }
+
+  @Test
+  void collapsesPartialRoutingBundleWhenProjectingScriptDeadLetters() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.listDeadLetters("1", "game-1", "patch-1", 25))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.DeadLetterSummary(
+                    "99",
+                    "1",
+                    "game-1",
+                    "region-1",
+                    12L,
+                    "entity-1",
+                    "SHARED",
+                    "demo",
+                    "",
+                    "17",
+                    "GAMEPLAY_EVENT",
+                    "WORK_ITEM_PERSISTED",
+                    0L,
+                    0L,
+                    0L,
+                    "script-1",
+                    "",
+                    "",
+                    "onCommand",
+                    "patch-1",
+                    "event-1",
+                    "DEAD_LETTERED",
+                    "STALE_TIMELINE",
+                    100L,
+                    200L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        18L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""),
+                    null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(99L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo-next")
+                        .build())
+                .build());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
+    AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
+
+    service.listScriptDeadLetters(
+        ListScriptDeadLettersRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getDeadLettersList()).hasSize(1);
+    assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeWorldSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRealmSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePointerVersion()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getIsRoutingBundleStale()).isFalse();
   }
 
   @Test

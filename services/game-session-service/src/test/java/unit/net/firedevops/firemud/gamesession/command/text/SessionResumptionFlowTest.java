@@ -47,6 +47,8 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -56,6 +58,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -97,6 +100,8 @@ class SessionResumptionFlowTest {
       Mockito.mock(AccountRecentPresenceService.class);
   private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
+  private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+      Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
@@ -115,6 +120,10 @@ class SessionResumptionFlowTest {
   void setUp() {
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(pointerAuthorityService.findPointer("sandbox", "production"))
+        .thenReturn(Optional.of(pointer("sandbox", "production", 22L, 2L, 1L)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -155,13 +164,23 @@ class SessionResumptionFlowTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(entityManagementClient.listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.class)))
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+                .addCharacters(
+                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                        .setId("7001")
+                        .setName("Emberline")
+                        .setLevel(12)
+                        .build())
+                .build());
     sessionAuthenticationService =
-        new SessionAuthenticationService(sessionContextService, properties, instanceRepository);
-    net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
-        pointerAuthorityService =
-            Mockito.mock(
-                net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
-                    .class);
+        new SessionAuthenticationService(
+            sessionContextService, properties, instanceRepository, pointerAuthorityService);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             instanceRepository,
@@ -241,7 +260,10 @@ class SessionResumptionFlowTest {
                 gameplayPresenceService,
                 new GameplayPresenceActivityResolver(new PresenceProperties()),
                 scriptEventPublisher),
-            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class), scriptEventPublisher),
+            new FriendsCommandHandler(
+                Mockito.mock(SocialGroupsClient.class),
+                entityManagementClient,
+                scriptEventPublisher),
             new InventoryCommandHandler(gameLogicClient),
             new EquipmentCommandHandler(gameLogicClient),
             new ContainerCommandHandler(gameLogicClient),
@@ -349,6 +371,90 @@ class SessionResumptionFlowTest {
   }
 
   @Test
+  void deniedReconnectPlayClearsStaleGameplayBinding() {
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+    TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertTrue(firstLook.commandResult().accepted());
+
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("77")
+                .setTenantId("22")
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipVersion(2L)
+                .setEvaluatedAt("2026-03-30T00:01:00Z")
+                .build());
+
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(secondLogin.commandResult().accepted());
+    TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertFalse(deniedPlay.commandResult().accepted());
+    assertEquals("WORLD_ACCESS_DENIED", deniedPlay.commandResult().errorCode());
+
+    TextCommandInterpretationResult lookAfterDeniedReconnect =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(lookAfterDeniedReconnect.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+  }
+
+  @Test
+  void failedReloginClearsStaleAuthenticatedSessionState() {
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+    TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertTrue(firstLook.commandResult().accepted());
+
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("UNAUTHENTICATED")
+                        .setMessage("Invalid credentials")
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult failedLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertFalse(failedLogin.commandResult().accepted());
+    assertEquals("INVALID_CREDENTIALS", failedLogin.commandResult().errorCode());
+
+    TextCommandInterpretationResult lookAfterFailedRelogin =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(lookAfterFailedRelogin.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", lookAfterFailedRelogin.commandResult().errorCode());
+  }
+
+  @Test
+  void activeGameplaySessionFallsBackToPlayRequiredWhenPointerAdvances() {
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+    TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertTrue(firstLook.commandResult().accepted());
+
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+
+    TextCommandInterpretationResult lookAfterCutover =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(lookAfterCutover.commandResult().accepted());
+    assertEquals("PLAY_REQUIRED", lookAfterCutover.commandResult().errorCode());
+
+    TextCommandInterpretationResult charsAfterCutover =
+        interpreter.interpret("1", "CHARS demo", false);
+    assertTrue(charsAfterCutover.commandResult().accepted());
+  }
+
+  @Test
   void staleIdentityMappingFallsBackToFreshSession() {
     TextCommand command =
         new TextCommand(
@@ -394,6 +500,23 @@ class SessionResumptionFlowTest {
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;
+  }
+
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldSlug,
+        realmSlug,
+        realmSlug,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW");
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

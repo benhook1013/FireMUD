@@ -173,6 +173,47 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void reconcileObservedRuntimeStateCollapsesPartialRoutingBundle() {
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(millisecondsDefinition()));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false)));
+
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .build());
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(captor.capture());
+    assertThat(captor.getValue())
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getWorldSlug()).isBlank();
+              assertThat(instance.getRealmSlug()).isBlank();
+              assertThat(instance.getPointerVersion()).isBlank();
+            });
+  }
+
+  @Test
   void reconcilePinnedPatchInstancesReusesObservedPins() {
     ScriptPatchPinProjection projection = new ScriptPatchPinProjection();
     projection.setTenantId("1");
@@ -489,6 +530,50 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueTickId()).isEqualTo(160L);
               assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
             });
+  }
+
+  @Test
+  void observeRuntimeTickProgressCollapsesPartialScheduleRoutingBundleBeforePersistingWorkItem() {
+    ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
+    tickInstance.setTenantId("1");
+    tickInstance.setGameInstanceId("game-1");
+    tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptId("npc-guard");
+    tickInstance.setEventType("onInterval");
+    tickInstance.setScheduleDefinitionId("guard.patrol.v1");
+    tickInstance.setScheduleKind("INTERVAL");
+    tickInstance.setCadenceUnit("TICKS");
+    tickInstance.setCadenceValue(30L);
+    tickInstance.setPriorityTag("high");
+    tickInstance.setTargetScopeType("ENTITY");
+    tickInstance.setTargetScopeId("guard-1");
+    tickInstance.setPlayableStateScope("SHARED");
+    tickInstance.setWorldSlug("demo");
+    tickInstance.setRealmSlug("");
+    tickInstance.setPointerVersion("17");
+    tickInstance.setMaterializationStatus("READY");
+    tickInstance.setRuntimeRegionId("region-1");
+    tickInstance.setRuntimeRegionEpoch(12L);
+    tickInstance.setLastObservedTickId(100L);
+    tickInstance.setNextDueTickId(130L);
+    tickInstance.setScheduleMetadataJson("{}");
+    tickInstance.setScheduleSemanticsHash("hash-ticks");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(tickInstance));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    service.observeRuntimeTickProgress(
+        new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+            "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).saveAndFlush(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getWorldSlug()).isBlank();
+    assertThat(workItemCaptor.getValue().getRealmSlug()).isBlank();
+    assertThat(workItemCaptor.getValue().getPointerVersion()).isBlank();
   }
 
   @Test

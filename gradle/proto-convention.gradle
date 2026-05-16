@@ -41,6 +41,11 @@ protobuf {
 // Ensure that the Java compilation runs after Protobuf code generation.
 tasks.named('compileJava') {
     dependsOn('generateProto')
+    // New proto message types can appear between builds. Gradle's incremental
+    // Java compiler has been missing those freshly generated sources in this
+    // repo's shared proto modules, so disable incremental compilation anywhere
+    // this convention applies and favor deterministic full recompiles.
+    options.incremental = false
 }
 
 // Spotless needs generated sources available when formatting runs

@@ -33,10 +33,8 @@ echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
 "$PYTHON" - <<'PYTHON'
-import json
 import os
 import sys
-import time
 from pathlib import Path
 
 repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
@@ -44,8 +42,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
     gameplay_item_container_equipment_steps,
-    run_command_plan,
-    wait_for_incremental_response,
+    run_websocket_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -75,58 +72,6 @@ timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
-
-def recv_text(ws, label, timeout):
-    deadline = time.time() + timeout
-    last_error = None
-    while time.time() < deadline:
-        remaining = deadline - time.time()
-        ws.settimeout(min(1.0, max(0.1, remaining)))
-        try:
-            return ws.recv()
-        except Exception as exc:
-            if exc.__class__.__name__ != "WebSocketTimeoutException" and not isinstance(
-                exc, TimeoutError
-            ):
-                raise
-            last_error = exc
-    raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
-
-
-def recv_optional_chunk(ws, label, timeout):
-    try:
-        return recv_text(ws, label, timeout).strip()
-    except RuntimeError:
-        return ""
-
-
-def drain_available(ws, responses, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
-    while time.time() < deadline:
-        remaining = max(0.05, deadline - time.time())
-        chunk = recv_optional_chunk(ws, "drain chunk", remaining)
-        if not chunk:
-            return
-        responses.append(chunk)
-
-def send_and_expect(ws, line, expected_substrings, label, timeout=timeout_seconds):
-    if not hasattr(ws, "_smoke_responses"):
-        ws._smoke_responses = []
-    start_index = len(ws._smoke_responses)
-    ws.send(line)
-    response = wait_for_incremental_response(
-        lambda: recv_optional_chunk(ws, f"{label} response chunk", min(0.5, timeout)),
-        ws._smoke_responses,
-        start_index,
-        expected_substrings,
-        timeout,
-        lambda parts: "\n".join(chunk for chunk in parts if chunk),
-        lambda: drain_available(ws, ws._smoke_responses),
-    )
-    print(f"=== {label} response ===")
-    print(response.strip() or "<empty>")
-    return response
-
 def websocket_smoke():
     ws = websocket.create_connection(
         websocket_url,
@@ -136,7 +81,6 @@ def websocket_smoke():
             f"X-Tenant-Id: {tenant_id}",
         ],
     )
-    ws._smoke_responses = []
     try:
         steps = gameplay_item_container_equipment_steps(
             username,
@@ -145,18 +89,10 @@ def websocket_smoke():
             login_expect,
             play_expect,
             look_expect,
+            "demo",
             look_timeout_seconds,
         )
-        run_command_plan(
-            steps,
-            lambda line, expected_substrings, label, timeout: send_and_expect(
-                ws,
-                line,
-                expected_substrings,
-                label,
-                timeout=timeout_seconds if timeout is None else timeout,
-            ),
-        )
+        run_websocket_command_plan(ws, steps, timeout_seconds)
     finally:
         ws.close()
 

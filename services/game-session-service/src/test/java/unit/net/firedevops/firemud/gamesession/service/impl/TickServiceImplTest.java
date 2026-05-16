@@ -939,6 +939,40 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickDropsPartialRoutingBundleFromSelectedWorkManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|say hello"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("demo");
+    command.setRealmSlug("production");
+    command.setPointerVersion(null);
+    command.setEnqueueSeq(77L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
+  }
+
+  @Test
   void processTickPersistsRetryClaimMetadataInSelectedWorkManifest() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
@@ -1145,6 +1179,72 @@ class TickServiceImplTest {
             .counter()
             .count(),
         0.001);
+  }
+
+  @Test
+  void processTickDropsPartialRoutingBundleFromRemoteFollowupManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup followup =
+        new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("followup-1");
+    followup.setCommandId("cmd-1");
+    followup.setOriginRegionId("origin-region");
+    followup.setOriginRegionEpoch(4L);
+    followup.setTargetRegionId("target-region");
+    followup.setTargetRegionEpoch(8L);
+    followup.setDueTickId(10L);
+    followup.setQueueSourceKind("REMOTE_FOLLOWUP");
+    followup.setQueueSourceState("REDIS_PENDING_CLAIMED");
+    followup.setQueueSourceOrdinal(1L);
+    followup.setTargetEntityId("entity-1");
+    followup.setClaimTargetAggregate("entity:entity-1");
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(null);
+    followup.setPayloadKind("noop");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
+    followup.setPayloadJson("{\"kind\":\"noop\"}");
+    when(remoteFollowupDrainService.claimDueFollowups(
+            eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
+                List.of("followup-1"), 1));
+    when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
+        .thenReturn(List.of(followup));
+    when(durableRemoteFollowupExecutionService.execute(any()))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService
+                .DurableRemoteFollowupExecutionResult(
+                "ABANDONED", "REMOTE_FOLLOWUP_KIND_UNSUPPORTED", "unsupported"));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "REMOTE_FOLLOWUP_DRAIN".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
   }
 
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(

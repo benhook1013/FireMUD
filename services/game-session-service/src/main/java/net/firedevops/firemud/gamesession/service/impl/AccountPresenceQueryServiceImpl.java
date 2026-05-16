@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
@@ -23,7 +22,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryService {
-  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayPresenceService gameplayPresenceService;
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
@@ -34,13 +32,11 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       value = "EI_EXPOSE_REP2",
       justification = "Injected collaborators are retained only for internal query composition")
   public AccountPresenceQueryServiceImpl(
-      GameInstanceRepository gameInstanceRepository,
       GameplayPresenceService gameplayPresenceService,
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
       AccountRecentPresenceService accountRecentPresenceService,
       AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
       GameplayWorldCatalog gameplayWorldCatalog) {
-    this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
     this.accountRecentPresenceService = accountRecentPresenceService;
@@ -69,12 +65,11 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
     }
 
-    var runningInstances =
-        gameInstanceRepository.findByTenantIdAndOwnerAccountIdInAndStatus(
-            tenantId, requestedIds, "RUNNING");
-    for (var instance : runningInstances) {
-      GameplayPresence presence =
-          gameplayPresenceService.findConnectedBySessionId(instance.getId()).orElse(null);
+    Map<Long, GameplayPresence> activePresences =
+        gameplayPresenceService.findConnectedByAccountIds(tenantId, requestedIds);
+    for (Map.Entry<Long, GameplayPresence> entry : activePresences.entrySet()) {
+      Long accountId = entry.getKey();
+      GameplayPresence presence = entry.getValue();
       if (presence == null) {
         continue;
       }
@@ -89,9 +84,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                           tenantId, presence.gameInstanceId()))
               .orElse(null);
       results.put(
-          instance.getOwnerAccountId(),
+          accountId,
           new AccountPresenceSnapshot(
-              instance.getOwnerAccountId(),
+              accountId,
               true,
               presence.gameInstanceId(),
               presence.playableStateScope(),
@@ -107,17 +102,15 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               presence.characterId(),
               presence.characterName(),
               activityState,
-              recentStates.containsKey(instance.getOwnerAccountId())
-                  ? Instant.ofEpochMilli(
-                      recentStates.get(instance.getOwnerAccountId()).lastSeenAtEpochMs())
+              recentStates.containsKey(accountId)
+                  ? Instant.ofEpochMilli(recentStates.get(accountId).lastSeenAtEpochMs())
                   : null,
-              recentStates.containsKey(instance.getOwnerAccountId())
-                  ? recentStates.get(instance.getOwnerAccountId()).disposition()
+              recentStates.containsKey(accountId)
+                  ? recentStates.get(accountId).disposition()
                   : null,
-              recentStates.containsKey(instance.getOwnerAccountId())
-                  ? recentStates.get(instance.getOwnerAccountId()).visibilityPolicy()
-                  : visibilityPolicyResolver.resolve(
-                      tenantId, instance.getOwnerAccountId(), presence.role())));
+              recentStates.containsKey(accountId)
+                  ? recentStates.get(accountId).visibilityPolicy()
+                  : visibilityPolicyResolver.resolve(tenantId, accountId, presence.role())));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }

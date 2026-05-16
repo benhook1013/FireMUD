@@ -200,6 +200,89 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void trustedTcpProxyHandshakePreservesCompleteRoutingBundle() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
+    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "42")
+            .header("X-Proxy-Tenant-Id", "1")
+            .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, "demo")
+            .header(GameplayHandshakeFilter.REALM_SLUG_HEADER, "production")
+            .header(GameplayHandshakeFilter.POINTER_VERSION_HEADER, "17")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(
+            filter, filterThroughChain(headerTrustFilter, MockServerWebExchange.from(request)));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_TRUSTED_TCP_PROXY);
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.WORLD_SLUG_HEADER))
+        .isEqualTo("demo");
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.REALM_SLUG_HEADER))
+        .isEqualTo("production");
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.POINTER_VERSION_HEADER))
+        .isEqualTo("17");
+    assertThat(mutatedExchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
+  void trustedTcpProxyHandshakeRejectsPartialRoutingBundle() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
+    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "42")
+            .header("X-Proxy-Tenant-Id", "1")
+            .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, "demo")
+            .header(GameplayHandshakeFilter.REALM_SLUG_HEADER, "production")
+            .build();
+
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    ServerWebExchange trustedExchange = filterThroughChain(headerTrustFilter, exchange);
+    filter.filter(trustedExchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_SCOPE_MISMATCH);
+  }
+
+  @Test
   void rejectsExpiredConnectToken() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(

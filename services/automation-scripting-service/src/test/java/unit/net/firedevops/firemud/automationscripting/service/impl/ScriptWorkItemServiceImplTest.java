@@ -886,6 +886,47 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void collapsesPartialRoutingBundleInDeadLetterSummary() {
+    ScriptWorkItem deadLetter = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    deadLetter.setId(99L);
+    deadLetter.setTenantId("1");
+    deadLetter.setGameInstanceId("game-1");
+    deadLetter.setRegionId("region-1");
+    deadLetter.setRegionEpoch(12L);
+    deadLetter.setEntityId("entity-1");
+    deadLetter.setPlayableStateScope("SHARED");
+    deadLetter.setWorldSlug("demo");
+    deadLetter.setPointerVersion("17");
+    deadLetter.setScriptId("script-1");
+    deadLetter.setEventType("onCommand");
+    deadLetter.setScriptEventId("event-1");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+            "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of(deadLetter));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    List<ScriptWorkItemService.DeadLetterSummary> deadLetters =
+        service.listDeadLetters("1", "game-1", "patch-1", 25);
+
+    assertThat(deadLetters).hasSize(1);
+    assertThat(deadLetters.get(0).worldSlug()).isBlank();
+    assertThat(deadLetters.get(0).realmSlug()).isBlank();
+    assertThat(deadLetters.get(0).pointerVersion()).isBlank();
+  }
+
+  @Test
   void listsHandoffEventsWithBoundedFilters() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -996,6 +1037,96 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).emittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(events.get(0).handoffOutcome()).isEqualTo("enqueued");
     assertThat(events.get(0).publication().versionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void normalizesPartialRoutingBundleFilterAndSummaryForHandoffEvents() {
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setEventId("event-1");
+    event.setTenantId("1");
+    event.setGameInstanceId("game-1");
+    event.setScriptPatchVersion("patch-1");
+    event.setScriptId("script-1");
+    event.setWorkItemId(99L);
+    event.setTargetEntityId("target-1");
+    event.setPlayableStateScope("SHARED");
+    event.setWorldSlug("demo");
+    event.setPointerVersion("17");
+    event.setHandoffOutcome("enqueued");
+    event.setHandoffReason("game_session_accepted");
+    event.setObservedAt(Instant.ofEpochMilli(300L));
+    when(handoffEventRepository.findEvents(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.eq("patch-1"),
+            Mockito.eq(99L),
+            Mockito.eq("enqueued"),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq(0L),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq("script-1"),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq("target-1"),
+            Mockito.eq("SHARED"),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.eq(""),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(List.of(event));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            handoffEventRepository,
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    List<ScriptWorkItemService.HandoffEventSummary> events =
+        service.listHandoffEvents(
+            "1",
+            "game-1",
+            "patch-1",
+            "99",
+            "enqueued",
+            "",
+            "",
+            0L,
+            "",
+            "",
+            "script-1",
+            "",
+            "",
+            "",
+            "target-1",
+            "SHARED",
+            "demo",
+            "",
+            "17",
+            "",
+            "",
+            10L,
+            20L,
+            25);
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).worldSlug()).isBlank();
+    assertThat(events.get(0).realmSlug()).isBlank();
+    assertThat(events.get(0).pointerVersion()).isBlank();
   }
 
   @Test

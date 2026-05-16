@@ -1,16 +1,14 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
@@ -26,7 +24,6 @@ import org.mockito.Mockito;
 class AccountPresenceQueryServiceImplTest {
   @Test
   void queryAccountPresenceReturnsOnlineAndOfflineSnapshotsInRequestOrder() {
-    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
@@ -38,26 +35,15 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            repository,
             presenceService,
             resolver,
             recentPresenceService,
             visibilityPolicyResolver,
             gameplayWorldCatalog);
-
-    GameInstance running = new GameInstance();
-    running.setId(11L);
-    running.setTenantId(1L);
-    running.setOwnerAccountId(3L);
-    running.setStatus("RUNNING");
-    when(repository.findByTenantIdAndOwnerAccountIdInAndStatus(
-            org.mockito.Mockito.eq(1L),
-            argThat(ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2),
-            org.mockito.Mockito.eq("RUNNING")))
-        .thenReturn(List.of(running));
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
-            argThat(ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2)))
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2)))
         .thenReturn(
             java.util.Map.of(
                 4L,
@@ -72,11 +58,15 @@ class AccountPresenceQueryServiceImplTest {
                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
                     AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.PRIVATE)));
-    when(presenceService.findConnectedBySessionId(11L))
+    when(presenceService.findConnectedByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2)))
         .thenReturn(
-            java.util.Optional.of(
+            Map.of(
+                3L,
                 new GameplayPresence(
-                    11L,
+                    97L,
                     1L,
                     2L,
                     "SHARED",

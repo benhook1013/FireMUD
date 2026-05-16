@@ -1114,6 +1114,9 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static ScriptDeadLetterEntry toProto(
       ScriptWorkItemService.DeadLetterSummary summary, CurrentRuntimeScope currentScope) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            summary.worldSlug(), summary.realmSlug(), summary.pointerVersion());
     ScriptDeadLetterEntry.Builder builder =
         ScriptDeadLetterEntry.newBuilder()
             .setWorkItemId(summary.workItemId())
@@ -1123,9 +1126,9 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setRegionEpoch(summary.regionEpoch())
             .setEntityId(summary.entityId())
             .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-            .setWorldSlug(summary.worldSlug())
-            .setRealmSlug(summary.realmSlug())
-            .setPointerVersion(summary.pointerVersion())
+            .setWorldSlug(routingBundle.worldSlug())
+            .setRealmSlug(routingBundle.realmSlug())
+            .setPointerVersion(routingBundle.pointerVersion())
             .setSourceKind(summary.sourceKind())
             .setSourceState(summary.sourceState())
             .setSourceOrdinal(summary.sourceOrdinal())
@@ -1202,6 +1205,9 @@ public final class AutomationScriptingControlPlaneGrpcService
   private ScriptScheduleInstanceEntry toProto(
       ScriptScheduleInstanceService.ScheduleInstanceSummary summary,
       CurrentRuntimeScope currentScope) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            summary.worldSlug(), summary.realmSlug(), summary.pointerVersion());
     ScriptScheduleInstanceEntry.Builder builder =
         ScriptScheduleInstanceEntry.newBuilder()
             .setTenantId(summary.tenantId())
@@ -1209,9 +1215,9 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setScriptPatchVersion(summary.scriptPatchVersion())
             .setScriptId(summary.scriptId())
             .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-            .setWorldSlug(summary.worldSlug())
-            .setRealmSlug(summary.realmSlug())
-            .setPointerVersion(summary.pointerVersion())
+            .setWorldSlug(routingBundle.worldSlug())
+            .setRealmSlug(routingBundle.realmSlug())
+            .setPointerVersion(routingBundle.pointerVersion())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())
             .setEventType(summary.eventType())
@@ -1270,6 +1276,9 @@ public final class AutomationScriptingControlPlaneGrpcService
   private static ScriptTimerAuditEventEntry toProto(
       ScriptScheduleInstanceService.TimerAuditEventSummary summary,
       CurrentRuntimeScope currentScope) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            summary.worldSlug(), summary.realmSlug(), summary.pointerVersion());
     ScriptTimerAuditEventEntry.Builder builder =
         ScriptTimerAuditEventEntry.newBuilder()
             .setTenantId(summary.tenantId())
@@ -1278,9 +1287,9 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setRegionEpoch(summary.regionEpoch())
             .setEntityId(summary.entityId())
             .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-            .setWorldSlug(summary.worldSlug())
-            .setRealmSlug(summary.realmSlug())
-            .setPointerVersion(summary.pointerVersion())
+            .setWorldSlug(routingBundle.worldSlug())
+            .setRealmSlug(routingBundle.realmSlug())
+            .setPointerVersion(routingBundle.pointerVersion())
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())
@@ -1331,6 +1340,9 @@ public final class AutomationScriptingControlPlaneGrpcService
       ScriptWorkItemService.HandoffEventSummary summary,
       CurrentTargetRuntimeScope currentScope,
       GameplayCommandStatusView commandStatus) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            summary.worldSlug(), summary.realmSlug(), summary.pointerVersion());
     ScriptHandoffEventEntry.Builder builder =
         ScriptHandoffEventEntry.newBuilder()
             .setEventId(summary.eventId())
@@ -1351,9 +1363,9 @@ public final class AutomationScriptingControlPlaneGrpcService
             .setRemoteFollowupId(summary.remoteFollowupId())
             .setTargetEntityId(summary.targetEntityId())
             .setPlayableStateScope(toPlayableStateScope(summary.playableStateScope()))
-            .setWorldSlug(summary.worldSlug())
-            .setRealmSlug(summary.realmSlug())
-            .setPointerVersion(summary.pointerVersion())
+            .setWorldSlug(routingBundle.worldSlug())
+            .setRealmSlug(routingBundle.realmSlug())
+            .setPointerVersion(routingBundle.pointerVersion())
             .setSourceKind(summary.sourceKind())
             .setSourceState(summary.sourceState())
             .setSourceOrdinal(summary.sourceOrdinal())
@@ -1410,6 +1422,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           || emptyIfNull(runtime.getRuntimeState().getGameInstanceId()).isBlank()) {
         continue;
       }
+      RoutingBundleSupport.RoutingBundle routingBundle =
+          RoutingBundleSupport.normalize(
+              runtime.getRuntimeState().getWorldSlug(),
+              runtime.getRuntimeState().getRealmSlug(),
+              runtime.getRuntimeState().getPointerVersion());
       scopes.put(
           targetGameInstanceId,
           new CurrentTargetRuntimeScope(
@@ -1417,9 +1434,9 @@ public final class AutomationScriptingControlPlaneGrpcService
               emptyIfNull(runtime.getRuntimeState().getRegionId()),
               runtime.getRuntimeState().getRegionEpoch(),
               normalizePlayableStateScope(runtime.getRuntimeState().getPlayableStateScope()),
-              emptyIfNull(runtime.getRuntimeState().getWorldSlug()),
-              emptyIfNull(runtime.getRuntimeState().getRealmSlug()),
-              Long.toString(runtime.getRuntimeState().getPointerVersion())));
+              routingBundle.worldSlug(),
+              routingBundle.realmSlug(),
+              routingBundle.pointerVersion()));
     }
     return scopes;
   }
@@ -1443,6 +1460,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           || emptyIfNull(runtime.getRuntimeState().getGameInstanceId()).isBlank()) {
         continue;
       }
+      RoutingBundleSupport.RoutingBundle routingBundle =
+          RoutingBundleSupport.normalize(
+              runtime.getRuntimeState().getWorldSlug(),
+              runtime.getRuntimeState().getRealmSlug(),
+              runtime.getRuntimeState().getPointerVersion());
       scopes.put(
           gameInstanceId,
           new CurrentRuntimeScope(
@@ -1450,9 +1472,9 @@ public final class AutomationScriptingControlPlaneGrpcService
               emptyIfNull(runtime.getRuntimeState().getRegionId()),
               runtime.getRuntimeState().getRegionEpoch(),
               normalizePlayableStateScope(runtime.getRuntimeState().getPlayableStateScope()),
-              emptyIfNull(runtime.getRuntimeState().getWorldSlug()),
-              emptyIfNull(runtime.getRuntimeState().getRealmSlug()),
-              Long.toString(runtime.getRuntimeState().getPointerVersion())));
+              routingBundle.worldSlug(),
+              routingBundle.realmSlug(),
+              routingBundle.pointerVersion()));
     }
     return scopes;
   }
@@ -1541,21 +1563,24 @@ public final class AutomationScriptingControlPlaneGrpcService
     if (currentScope == null) {
       return false;
     }
+    RoutingBundleSupport.RoutingBundle persistedRoutingBundle =
+        RoutingBundleSupport.normalize(
+            persistedWorldSlug, persistedRealmSlug, persistedPointerVersion);
     String playableStateScope = normalize(persistedPlayableStateScope);
     if (!playableStateScope.isBlank()
         && !playableStateScope.equals(normalize(currentScope.playableStateScope()))) {
       return true;
     }
-    String worldSlug = emptyIfNull(persistedWorldSlug);
-    if (!worldSlug.isBlank() && !worldSlug.equals(currentScope.worldSlug())) {
+    if (!persistedRoutingBundle.isPresent()) {
+      return false;
+    }
+    if (!persistedRoutingBundle.worldSlug().equals(currentScope.worldSlug())) {
       return true;
     }
-    String realmSlug = emptyIfNull(persistedRealmSlug);
-    if (!realmSlug.isBlank() && !realmSlug.equals(currentScope.realmSlug())) {
+    if (!persistedRoutingBundle.realmSlug().equals(currentScope.realmSlug())) {
       return true;
     }
-    String pointerVersion = emptyIfNull(persistedPointerVersion);
-    return !pointerVersion.isBlank() && !pointerVersion.equals(currentScope.pointerVersion());
+    return !persistedRoutingBundle.pointerVersion().equals(currentScope.pointerVersion());
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {

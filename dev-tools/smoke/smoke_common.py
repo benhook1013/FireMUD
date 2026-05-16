@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import subprocess
 import time
 import urllib.error
@@ -114,6 +115,30 @@ def run_command_plan(steps, executor):
         executor(line, expected_substrings, label, timeout)
 
 
+def login_play_look_steps(
+    username,
+    password,
+    world,
+    worlds_expect,
+    login_expect,
+    play_expect,
+    look_expect,
+    look_timeout=None,
+):
+    steps = [
+        ("WORLDS", [worlds_expect], "WORLDS"),
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        (f"PLAY {world}", [play_expect], "PLAY"),
+        ("LOOK", [look_expect], "LOOK"),
+    ]
+    if look_timeout is None:
+        return steps
+    return [
+        (line, expected, label, look_timeout) if label == "LOOK" else (line, expected, label)
+        for (line, expected, label) in steps
+    ]
+
+
 def wait_for_incremental_response(
     next_chunk,
     responses,
@@ -162,13 +187,18 @@ def gameplay_item_container_equipment_steps(
     login_expect,
     play_expect,
     look_expect,
+    world="demo",
     look_timeout=None,
 ):
-    steps = [
-        ("WORLDS", [worlds_expect], "WORLDS"),
-        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
-        ("PLAY demo", [play_expect], "PLAY"),
-        ("LOOK", [look_expect], "LOOK"),
+    steps = login_play_look_steps(
+        username,
+        password,
+        world,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+    ) + [
         ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
         ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
         (
@@ -207,3 +237,160 @@ def gameplay_item_container_equipment_steps(
         else (line, expected, label)
         for (line, expected, label) in steps
     ]
+
+
+def recv_until_socket(sock, expected_substring, timeout):
+    deadline = time.time() + timeout
+    chunks = []
+    while time.time() < deadline:
+        try:
+            sock.settimeout(deadline - time.time())
+            data = sock.recv(4096)
+        except (socket.timeout, BlockingIOError):
+            break
+        if not data:
+            break
+        chunks.append(data.decode("iso-8859-1", errors="ignore"))
+        joined = "".join(chunks)
+        if expected_substring in joined:
+            return joined
+    return "".join(chunks)
+
+
+def drain_available_socket(sock, quiet_timeout=0.25):
+    deadline = time.time() + quiet_timeout
+    chunks = []
+    while time.time() < deadline:
+        try:
+            sock.settimeout(max(0.05, deadline - time.time()))
+            data = sock.recv(4096)
+        except (socket.timeout, BlockingIOError):
+            break
+        if not data:
+            break
+        chunks.append(data.decode("iso-8859-1", errors="ignore"))
+    return "".join(chunks)
+
+
+def send_telnet_command_and_expect(
+    sock,
+    responses,
+    line,
+    expected_substrings,
+    label,
+    timeout_seconds,
+    drain_timeout=0.25,
+):
+    start_index = len(responses)
+    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    response = wait_for_incremental_response(
+        lambda: recv_until_socket(sock, "", 0.5),
+        responses,
+        start_index,
+        expected_substrings,
+        timeout_seconds,
+        "".join,
+        lambda: drain_available_socket(sock, drain_timeout),
+    )
+    print(f"=== {label} response ===")
+    print(response.strip() or "<no data>")
+    return response
+
+
+def run_telnet_command_plan(
+    sock,
+    steps,
+    timeout_seconds,
+    play_drain_timeout=1.0,
+    default_drain_timeout=0.25,
+):
+    responses = []
+    run_command_plan(
+        steps,
+        lambda line, expected_substrings, label, timeout: send_telnet_command_and_expect(
+            sock,
+            responses,
+            line,
+            expected_substrings,
+            label,
+            timeout_seconds if timeout is None else timeout,
+            play_drain_timeout if label == "PLAY" else default_drain_timeout,
+        ),
+    )
+    return responses
+
+
+def recv_text_websocket(ws, label, timeout):
+    deadline = time.time() + timeout
+    last_error = None
+    while time.time() < deadline:
+        remaining = deadline - time.time()
+        ws.settimeout(min(1.0, max(0.1, remaining)))
+        try:
+            return ws.recv()
+        except Exception as exc:
+            if exc.__class__.__name__ != "WebSocketTimeoutException" and not isinstance(
+                exc, TimeoutError
+            ):
+                raise
+            last_error = exc
+    raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
+
+
+def recv_optional_websocket_chunk(ws, label, timeout):
+    try:
+        return recv_text_websocket(ws, label, timeout).strip()
+    except RuntimeError:
+        return ""
+
+
+def drain_available_websocket(ws, responses, quiet_timeout=0.25):
+    deadline = time.time() + quiet_timeout
+    while time.time() < deadline:
+        remaining = max(0.05, deadline - time.time())
+        chunk = recv_optional_websocket_chunk(ws, "drain chunk", remaining)
+        if not chunk:
+            return
+        responses.append(chunk)
+
+
+def send_websocket_command_and_expect(
+    ws,
+    responses,
+    line,
+    expected_substrings,
+    label,
+    timeout_seconds,
+):
+    start_index = len(responses)
+    ws.send(line)
+    response = wait_for_incremental_response(
+        lambda: recv_optional_websocket_chunk(
+            ws, f"{label} response chunk", min(0.5, timeout_seconds)
+        ),
+        responses,
+        start_index,
+        expected_substrings,
+        timeout_seconds,
+        lambda parts: "\n".join(chunk for chunk in parts if chunk),
+        lambda: drain_available_websocket(ws, responses),
+    )
+    print(f"=== {label} response ===")
+    print(response.strip() or "<empty>")
+    return response
+
+
+def run_websocket_command_plan(ws, steps, timeout_seconds):
+    responses = []
+    run_command_plan(
+        steps,
+        lambda line, expected_substrings, label, timeout: send_websocket_command_and_expect(
+            ws,
+            responses,
+            line,
+            expected_substrings,
+            label,
+            timeout_seconds if timeout is None else timeout,
+        ),
+    )
+    return responses

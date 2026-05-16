@@ -1554,10 +1554,11 @@ public class TickServiceImpl implements TickService {
           command == null ? null : command.getOriginSourceDueAtMs());
       appendJsonStringField(
           builder, "playableStateScope", command == null ? null : command.getPlayableStateScope());
-      appendJsonStringField(builder, "worldSlug", command == null ? null : command.getWorldSlug());
-      appendJsonStringField(builder, "realmSlug", command == null ? null : command.getRealmSlug());
-      appendJsonNumberField(
-          builder, "pointerVersion", command == null ? null : command.getPointerVersion());
+      appendRoutingBundleFields(
+          builder,
+          command == null ? null : command.getWorldSlug(),
+          command == null ? null : command.getRealmSlug(),
+          command == null ? null : command.getPointerVersion());
       builder
           .append(",\"requiresSoloTick\":")
           .append(entry.requiresSoloTick())
@@ -1612,9 +1613,8 @@ public class TickServiceImpl implements TickService {
       appendJsonStringField(builder, "pluginId", followup.getPluginId());
       appendJsonStringField(builder, "pluginVersionId", followup.getPluginVersionId());
       appendJsonStringField(builder, "playableStateScope", followup.getPlayableStateScope());
-      appendJsonStringField(builder, "worldSlug", followup.getWorldSlug());
-      appendJsonStringField(builder, "realmSlug", followup.getRealmSlug());
-      appendJsonNumberField(builder, "pointerVersion", followup.getPointerVersion());
+      appendRoutingBundleFields(
+          builder, followup.getWorldSlug(), followup.getRealmSlug(), followup.getPointerVersion());
       appendJsonStringField(builder, "originSourceKind", followup.getOriginSourceKind());
       appendJsonStringField(builder, "originSourceState", followup.getOriginSourceState());
       appendJsonNumberField(builder, "originSourceOrdinal", followup.getOriginSourceOrdinal());
@@ -1644,6 +1644,49 @@ public class TickServiceImpl implements TickService {
     return followup.getQueueSourceKind() == null || followup.getQueueSourceKind().isBlank()
         ? RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND
         : followup.getQueueSourceKind();
+  }
+
+  private static void appendRoutingBundleFields(
+      StringBuilder builder, String worldSlug, String realmSlug, Long pointerVersion) {
+    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    if (!routingBundle.isPresent()) {
+      return;
+    }
+    appendJsonStringField(builder, "worldSlug", routingBundle.worldSlug());
+    appendJsonStringField(builder, "realmSlug", routingBundle.realmSlug());
+    appendJsonNumberField(builder, "pointerVersion", routingBundle.pointerVersion());
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    String normalizedWorldSlug = blankToNull(worldSlug);
+    String normalizedRealmSlug = blankToNull(realmSlug);
+    Long normalizedPointerVersion =
+        pointerVersion != null && pointerVersion > 0L ? pointerVersion : null;
+    boolean hasAny =
+        normalizedWorldSlug != null
+            || normalizedRealmSlug != null
+            || normalizedPointerVersion != null;
+    boolean hasAll =
+        normalizedWorldSlug != null
+            && normalizedRealmSlug != null
+            && normalizedPointerVersion != null;
+    if (!hasAny || !hasAll) {
+      return RoutingBundle.EMPTY;
+    }
+    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
+
+    private boolean isPresent() {
+      return worldSlug != null && realmSlug != null && pointerVersion != null;
+    }
   }
 
   private String remoteFollowupQueueSourceState(

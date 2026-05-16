@@ -10,4 +10,7 @@ import org.springframework.stereotype.Repository;
 public interface AccountFriendLinkRepository extends JpaRepository<AccountFriendLink, Long> {
   List<AccountFriendLink> findByTenantIdAndAccountIdAndStatus(
       Long tenantId, Long accountId, String status);
+
+  java.util.Optional<AccountFriendLink> findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
+      Long tenantId, Long accountId, Long friendAccountId, String status);
 }

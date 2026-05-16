@@ -136,6 +136,8 @@ class LoginCommandHandlerTest {
   @Test
   void missingCredentialsReturnsPromptError() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(staleGameplayContext(7L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, true);
 
@@ -151,6 +153,9 @@ class LoginCommandHandlerTest {
             + " "
             + LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
         joinedOutputText(result.outputs()));
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertClearedSessionContext(captor.getValue(), 7L);
   }
 
   @Test
@@ -185,6 +190,8 @@ class LoginCommandHandlerTest {
   void bareLoginRejectsStalePointerVersion() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(staleGameplayContext(1L)));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
@@ -206,6 +213,9 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertClearedSessionContext(captor.getValue(), 1L);
   }
 
   @Test
@@ -285,7 +295,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void invalidCredentialsDoesNotSaveContext() {
+  void invalidCredentialsClearsStaleAuthenticatedSessionState() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
@@ -301,14 +311,17 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(staleGameplayContext(3L)));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    verify(sessionContextService, never())
-        .save(any(net.firedevops.firemud.gamesession.service.SessionContext.class));
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertClearedSessionContext(captor.getValue(), 3L);
   }
 
   @Test
@@ -320,6 +333,8 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(staleGameplayContext(4L)));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
@@ -331,8 +346,9 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR ACCOUNT_MISMATCH " + LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE,
         joinedOutputText(result.outputs()));
-    verify(sessionContextService, never())
-        .save(any(net.firedevops.firemud.gamesession.service.SessionContext.class));
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertClearedSessionContext(captor.getValue(), 4L);
   }
 
   @Test
@@ -532,5 +548,42 @@ class LoginCommandHandlerTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext staleGameplayContext(long pointerVersion) {
+    return new SessionContext(
+        1L,
+        22L,
+        77L,
+        "demo@example.com",
+        88L,
+        "Sora",
+        1L,
+        "room-2045",
+        AUTH_TOKEN,
+        "en-NZ",
+        1L,
+        "demo",
+        "production",
+        pointerVersion,
+        "LIVE");
+  }
+
+  private static void assertClearedSessionContext(SessionContext context, long pointerVersion) {
+    assertEquals(1L, context.sessionId());
+    assertEquals(22L, context.tenantId());
+    assertEquals(0L, context.accountId());
+    assertNull(context.loginName());
+    assertEquals(0L, context.characterId());
+    assertNull(context.characterName());
+    assertEquals(0L, context.gameInstanceId());
+    assertNull(context.roomInstanceId());
+    assertNull(context.jwt());
+    assertEquals("en-NZ", context.localeTag());
+    assertEquals(1L, context.bootstrapGameInstanceId());
+    assertEquals("demo", context.worldSlug());
+    assertEquals("production", context.realmSlug());
+    assertEquals(pointerVersion, context.pointerVersion());
+    assertNull(context.playableStateScope());
   }
 }

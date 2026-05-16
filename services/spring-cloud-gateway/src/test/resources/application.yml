@@ -1,3 +1,12 @@
+spring:
+  cloud:
+    discovery:
+      enabled: false
+    inetutils:
+      timeout-seconds: 1
+      default-hostname: localhost
+      default-ip-address: 127.0.0.1
+
 FIREMUD_GRPC_CERT_CHAIN_PATH: classpath:certs/dev-cert.pem
 FIREMUD_GRPC_PRIVATE_KEY_PATH: classpath:certs/dev-key.pem
 FIREMUD_GRPC_CA_CERT_PATH: classpath:certs/dev-ca.pem

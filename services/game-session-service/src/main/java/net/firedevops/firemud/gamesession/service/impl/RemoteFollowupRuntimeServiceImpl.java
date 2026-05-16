@@ -549,11 +549,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       String automationWorkItemId,
       String scriptId,
       ScheduleRequest request) {
+    RoutingBundle requestRoutingBundle =
+        routingBundleFromStoredValues(
+            request.worldSlug(), request.realmSlug(), request.pointerVersion(), null, null, null);
     return normalized(blankToNull(request.playableStateScope()))
             .equals(normalized(playableStateScope))
-        && normalized(blankToNull(request.worldSlug())).equals(normalized(worldSlug))
-        && normalized(blankToNull(request.realmSlug())).equals(normalized(realmSlug))
-        && sameLong(pointerVersion, request.pointerVersion())
+        && normalized(requestRoutingBundle.worldSlug()).equals(normalized(worldSlug))
+        && normalized(requestRoutingBundle.realmSlug()).equals(normalized(realmSlug))
+        && sameLong(pointerVersion, requestRoutingBundle.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
@@ -720,16 +723,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getPlayableStateScope() != null
                 ? coordinator.getPlayableStateScope()
                 : followup == null ? null : followup.getPlayableStateScope()));
-    result.setWorldSlug(
-        blankToNull(
-            coordinator != null && coordinator.getWorldSlug() != null
-                ? coordinator.getWorldSlug()
-                : followup == null ? null : followup.getWorldSlug()));
-    result.setRealmSlug(
-        blankToNull(
-            coordinator != null && coordinator.getRealmSlug() != null
-                ? coordinator.getRealmSlug()
-                : followup == null ? null : followup.getRealmSlug()));
+    RoutingBundle resultRoutingBundle =
+        routingBundleFromStoredValues(
+            coordinator != null ? coordinator.getWorldSlug() : null,
+            coordinator != null ? coordinator.getRealmSlug() : null,
+            coordinator != null ? coordinator.getPointerVersion() : null,
+            followup == null ? null : followup.getWorldSlug(),
+            followup == null ? null : followup.getRealmSlug(),
+            followup == null ? null : followup.getPointerVersion());
+    result.setWorldSlug(resultRoutingBundle.worldSlug());
+    result.setRealmSlug(resultRoutingBundle.realmSlug());
     result.setScriptPatchVersion(
         blankToNull(
             coordinator != null && coordinator.getScriptPatchVersion() != null
@@ -765,26 +768,27 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getScriptId() != null
                 ? coordinator.getScriptId()
                 : followup == null ? null : followup.getScriptId()));
-    result.setPointerVersion(
-        coordinator != null && coordinator.getPointerVersion() != null
-            ? coordinator.getPointerVersion()
-            : followup == null ? null : followup.getPointerVersion());
+    result.setPointerVersion(resultRoutingBundle.pointerVersion());
     result.setObservedAt(now);
   }
 
   private static void applySchedulingMetadata(
       RemoteCommandCoordinator coordinator, ScheduleRequest request, GameplayCommand command) {
+    RoutingBundle routingBundle =
+        routingBundleFromRequestAndCommand(
+            request.worldSlug(),
+            request.realmSlug(),
+            request.pointerVersion(),
+            command == null ? null : command.getWorldSlug(),
+            command == null ? null : command.getRealmSlug(),
+            command == null ? null : command.getPointerVersion());
     coordinator.setPlayableStateScope(
         metadataValue(
             request.playableStateScope(),
             command == null ? null : command.getPlayableStateScope()));
-    coordinator.setWorldSlug(
-        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
-    coordinator.setRealmSlug(
-        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
-    coordinator.setPointerVersion(
-        metadataLong(
-            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    coordinator.setWorldSlug(routingBundle.worldSlug());
+    coordinator.setRealmSlug(routingBundle.realmSlug());
+    coordinator.setPointerVersion(routingBundle.pointerVersion());
     coordinator.setScriptPatchVersion(
         metadataValue(
             request.scriptPatchVersion(),
@@ -808,17 +812,21 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static void applySchedulingMetadata(
       RemoteFollowup followup, ScheduleRequest request, GameplayCommand command) {
+    RoutingBundle routingBundle =
+        routingBundleFromRequestAndCommand(
+            request.worldSlug(),
+            request.realmSlug(),
+            request.pointerVersion(),
+            command == null ? null : command.getWorldSlug(),
+            command == null ? null : command.getRealmSlug(),
+            command == null ? null : command.getPointerVersion());
     followup.setPlayableStateScope(
         metadataValue(
             request.playableStateScope(),
             command == null ? null : command.getPlayableStateScope()));
-    followup.setWorldSlug(
-        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
-    followup.setRealmSlug(
-        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
-    followup.setPointerVersion(
-        metadataLong(
-            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    followup.setWorldSlug(routingBundle.worldSlug());
+    followup.setRealmSlug(routingBundle.realmSlug());
+    followup.setPointerVersion(routingBundle.pointerVersion());
     followup.setScriptPatchVersion(
         metadataValue(
             request.scriptPatchVersion(),
@@ -1120,6 +1128,45 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return requestValue != null ? requestValue : commandValue;
   }
 
+  private static RoutingBundle routingBundleFromRequestAndCommand(
+      String requestWorldSlug,
+      String requestRealmSlug,
+      Long requestPointerVersion,
+      String commandWorldSlug,
+      String commandRealmSlug,
+      Long commandPointerVersion) {
+    return normalizeRoutingBundle(
+        metadataValue(requestWorldSlug, commandWorldSlug),
+        metadataValue(requestRealmSlug, commandRealmSlug),
+        metadataLong(requestPointerVersion, commandPointerVersion));
+  }
+
+  private static RoutingBundle routingBundleFromStoredValues(
+      String primaryWorldSlug,
+      String primaryRealmSlug,
+      Long primaryPointerVersion,
+      String fallbackWorldSlug,
+      String fallbackRealmSlug,
+      Long fallbackPointerVersion) {
+    return normalizeRoutingBundle(
+        metadataValue(primaryWorldSlug, fallbackWorldSlug),
+        metadataValue(primaryRealmSlug, fallbackRealmSlug),
+        metadataLong(primaryPointerVersion, fallbackPointerVersion));
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    String normalizedWorld = blankToNull(worldSlug);
+    String normalizedRealm = blankToNull(realmSlug);
+    boolean hasWorld = normalizedWorld != null;
+    boolean hasRealm = normalizedRealm != null;
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (hasWorld && hasRealm && hasPointer) {
+      return new RoutingBundle(normalizedWorld, normalizedRealm, pointerVersion);
+    }
+    return RoutingBundle.EMPTY;
+  }
+
   private static void applyTerminalResult(
       RemoteCommandCoordinator coordinator,
       String outcome,
@@ -1222,6 +1269,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       return value;
     }
     return value.substring(0, 500);
+  }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
   }
 
   private static Long positiveLong(JsonNode node) {

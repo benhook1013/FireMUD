@@ -358,6 +358,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String realmSlug = firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug());
       Long pointerVersion =
           firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion());
+      RoutingBundle routingBundle = resolveRoutingBundle(worldSlug, realmSlug, pointerVersion);
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequest.newBuilder()
               .setTenantId(Long.toString(followup.getTenantId()))
@@ -390,14 +391,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
       if (pluginVersionId != null) {
         request.setPluginVersionId(pluginVersionId);
       }
-      if (worldSlug != null) {
-        request.setWorldSlug(worldSlug);
-      }
-      if (realmSlug != null) {
-        request.setRealmSlug(realmSlug);
-      }
-      if (pointerVersion != null) {
-        request.setPointerVersion(Long.toString(pointerVersion));
+      if (routingBundle != null) {
+        request.setWorldSlug(routingBundle.worldSlug());
+        request.setRealmSlug(routingBundle.realmSlug());
+        request.setPointerVersion(Long.toString(routingBundle.pointerVersion()));
       }
       Long dueTickId = optionalLong(root, "dueTickId", followup.getDueTickId());
       if (dueTickId != null) {
@@ -545,6 +542,21 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return primary != null ? primary : fallback;
   }
 
+  private static RoutingBundle resolveRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
+    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (!hasWorld && !hasRealm && !hasPointer) {
+      return null;
+    }
+    if (hasWorld && hasRealm && hasPointer) {
+      return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
+    }
+    throw new IllegalArgumentException(
+        "worldSlug, realmSlug, and pointerVersion must be provided together");
+  }
+
   private static String jsonStringField(String fieldName, String value) {
     if (value == null || value.isBlank()) {
       return "";
@@ -570,4 +582,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String resultCommandId,
       String resultErrorCode,
       String resultMessage) {}
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
 }

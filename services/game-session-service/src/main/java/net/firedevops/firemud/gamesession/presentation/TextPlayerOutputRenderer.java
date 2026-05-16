@@ -69,13 +69,21 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof FriendPresenceViewOutput friendsView) {
           yield renderFriendsView(friendsView);
         }
+        if (output.payload() instanceof FriendDetailViewOutput friendDetailView) {
+          yield renderFriendDetailView(friendDetailView);
+        }
+        if (output.payload() instanceof FriendRosterSummaryViewOutput friendRosterSummaryView) {
+          yield renderFriendRosterSummaryView(friendRosterSummaryView);
+        }
+        if (output.payload() instanceof FriendPresencePolicyViewOutput friendPresencePolicyView) {
+          yield renderFriendPresencePolicyView(friendPresencePolicyView);
+        }
         throw new IllegalArgumentException(
             "Unsupported view payload: " + output.payload().getClass().getName());
       }
       case PROMPT -> renderPrompt((PromptOutput) output.payload(), effectivePresentationProperties);
       case ERROR -> renderError((ErrorOutput) output.payload(), localeTag);
-      case NOTICE ->
-          renderNotice((NoticeOutput) output.payload(), localeTag, effectivePresentationProperties);
+      case NOTICE -> renderNotice(output.payload(), localeTag, effectivePresentationProperties);
     };
   }
 
@@ -362,34 +370,159 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendsView(FriendPresenceViewOutput output) {
-    if (output.friends().isEmpty()) {
-      return "Friends [0]: no linked friends.";
+    if (output.friends().isEmpty() && "ALL".equalsIgnoreCase(output.filter())) {
+      return "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>.";
     }
-    return output.friends().stream()
-        .map(
-            entry ->
-                entry.ordinal() + ") " + entry.displayName() + " - " + renderFriendStatus(entry))
-        .collect(Collectors.joining("\n"));
+    if (output.friends().isEmpty()) {
+      return "Friends "
+          + output.filter().toUpperCase(java.util.Locale.ROOT)
+          + " [0/"
+          + output.totalCount()
+          + "]: no matching friends.";
+    }
+    String body =
+        output.friends().stream()
+            .map(
+                entry ->
+                    entry.ordinal()
+                        + ") "
+                        + entry.displayName()
+                        + " [acct #"
+                        + entry.friendAccountId()
+                        + "]"
+                        + renderFriendStatusSuffix(entry)
+                        + " - "
+                        + renderFriendStatus(entry))
+            .collect(Collectors.joining("\n"));
+    if ("ALL".equalsIgnoreCase(output.filter())) {
+      return body;
+    }
+    return "Friends "
+        + output.filter().toUpperCase(java.util.Locale.ROOT)
+        + " ["
+        + output.matchCount()
+        + "/"
+        + output.totalCount()
+        + "]:\n"
+        + body;
+  }
+
+  private String renderFriendDetailView(FriendDetailViewOutput output) {
+    FriendPresenceViewOutput.Entry entry = output.friend();
+    StringBuilder body =
+        new StringBuilder()
+            .append("Friend ")
+            .append(entry.displayName())
+            .append(" [acct #")
+            .append(entry.friendAccountId())
+            .append("]");
+    if (entry.friendLinkId() != null) {
+      body.append("\nLink: #").append(entry.friendLinkId());
+    }
+    if (StringUtils.hasText(entry.status())) {
+      body.append("\nStatus: ").append(entry.status().trim().toLowerCase(java.util.Locale.ROOT));
+    }
+    if (entry.linkedAtEpochMs() != null) {
+      body.append("\nLinked: ").append(java.time.Instant.ofEpochMilli(entry.linkedAtEpochMs()));
+    }
+    body.append("\nPresence: ").append(renderFriendStatus(entry));
+    if (StringUtils.hasText(entry.visibilityPolicy())) {
+      body.append("\nVisibility: ").append(entry.visibilityPolicy());
+    }
+    String location = renderFriendLocation(entry);
+    if (StringUtils.hasText(location)) {
+      body.append("\nLocation: ").append(location);
+    }
+    if (StringUtils.hasText(entry.characterName())) {
+      body.append("\nCharacter: ").append(entry.characterName());
+    }
+    String activity = renderFriendActivity(entry.activityState());
+    if (StringUtils.hasText(activity)) {
+      body.append("\nActivity: ").append(activity);
+    }
+    if (StringUtils.hasText(entry.playableStateScope())) {
+      body.append("\nState scope: ")
+          .append(entry.playableStateScope().toLowerCase(java.util.Locale.ROOT));
+    }
+    if (entry.pointerVersion() != null) {
+      body.append("\nPointer version: ").append(entry.pointerVersion());
+    }
+    if (entry.ordinal() > 0) {
+      body.append("\nRoster entry: #").append(entry.ordinal());
+    }
+    return body.toString();
+  }
+
+  private String renderFriendRosterSummaryView(FriendRosterSummaryViewOutput output) {
+    return "Friend roster summary:"
+        + "\nLinked: "
+        + output.totalCount()
+        + "\nOnline: "
+        + output.onlineCount()
+        + "\nOffline: "
+        + output.offlineCount()
+        + "\nRecent offline: "
+        + output.recentCount()
+        + "\nVisibility public: "
+        + output.publicCount()
+        + "\nVisibility friends-only: "
+        + output.friendsOnlyCount()
+        + "\nVisibility private: "
+        + output.privateCount()
+        + "\nVisibility hidden-staff: "
+        + output.hiddenStaffCount()
+        + "\nVisibility unspecified: "
+        + output.unspecifiedVisibilityCount()
+        + "\nScope shared: "
+        + output.sharedCount()
+        + "\nScope isolated: "
+        + output.isolatedCount()
+        + "\nScope unspecified: "
+        + output.unspecifiedScopeCount();
+  }
+
+  private String renderFriendPresencePolicyView(FriendPresencePolicyViewOutput output) {
+    StringBuilder body =
+        new StringBuilder()
+            .append("Friend presence visibility: ")
+            .append(output.currentPolicy())
+            .append('\n');
+    for (FriendPresencePolicyViewOutput.Option option : output.options()) {
+      body.append(option.policy());
+      if (option.current()) {
+        body.append(" (current)");
+      }
+      if (!option.selectable()) {
+        body.append(" [reserved]");
+      }
+      body.append(": ").append(option.description()).append('\n');
+    }
+    body.append("Use FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE>.");
+    return body.toString();
+  }
+
+  private String renderFriendStatusSuffix(FriendPresenceViewOutput.Entry entry) {
+    if (!StringUtils.hasText(entry.status()) || "active".equalsIgnoreCase(entry.status())) {
+      return "";
+    }
+    return " {" + entry.status().trim().toLowerCase(java.util.Locale.ROOT) + "}";
   }
 
   private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
     if (entry.online()) {
       StringBuilder line = new StringBuilder("online");
-      if (StringUtils.hasText(entry.worldDisplayName())) {
-        line.append(" in ").append(entry.worldDisplayName());
-        if (StringUtils.hasText(entry.realmDisplayName())) {
-          line.append(" / ").append(entry.realmDisplayName());
-        }
+      String location = renderFriendLocation(entry);
+      if (StringUtils.hasText(location)) {
+        line.append(" in ").append(location);
       }
       if (StringUtils.hasText(entry.characterName())
           && !entry.characterName().equals(entry.displayName())) {
         line.append(" as ").append(entry.characterName());
       }
       if (StringUtils.hasText(entry.activityState())) {
-        switch (entry.activityState()) {
-          case "AUTO_AFK" -> line.append(" (idle)");
-          case "EXPLICIT_AFK" -> line.append(" (AFK)");
-          default -> {}
+        String activity = renderFriendActivity(entry.activityState());
+        if (activity != null) {
+          line.append(" (").append(activity).append(")");
         }
       }
       return line.toString();
@@ -405,6 +538,26 @@ public class TextPlayerOutputRenderer {
       return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
     }
     return "offline";
+  }
+
+  private String renderFriendLocation(FriendPresenceViewOutput.Entry entry) {
+    if (StringUtils.hasText(entry.worldDisplayName())
+        && StringUtils.hasText(entry.realmDisplayName())) {
+      return entry.worldDisplayName() + " / " + entry.realmDisplayName();
+    }
+    if (StringUtils.hasText(entry.worldDisplayName())) {
+      return entry.worldDisplayName();
+    }
+    return StringUtils.hasText(entry.realmDisplayName()) ? entry.realmDisplayName() : null;
+  }
+
+  private String renderFriendActivity(String activityState) {
+    return switch (activityState) {
+      case "AUTO_AFK" -> "idle";
+      case "EXPLICIT_AFK" -> "AFK";
+      case "ACTIVE" -> "active";
+      default -> null;
+    };
   }
 
   private String renderInventoryView(
@@ -436,13 +589,35 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderNotice(
-      NoticeOutput output,
+      PlayerOutputPayload payload,
       String localeTag,
       PresentationProperties effectivePresentationProperties) {
-    return colorizeNotice(
-        presentationMessageCatalog.render(
-            output.text(), output.messageKey(), output.arguments(), localeTag),
-        effectivePresentationProperties);
+    if (payload instanceof NoticeOutput output) {
+      return colorizeNotice(
+          presentationMessageCatalog.render(
+              output.text(), output.messageKey(), output.arguments(), localeTag),
+          effectivePresentationProperties);
+    }
+    if (payload instanceof FriendMutationResultOutput result) {
+      return colorizeNotice(renderFriendMutationResult(result), effectivePresentationProperties);
+    }
+    throw new IllegalArgumentException(
+        "Unsupported notice payload: " + payload.getClass().getName());
+  }
+
+  private String renderFriendMutationResult(FriendMutationResultOutput result) {
+    if (StringUtils.hasText(result.characterName())) {
+      return result.displayName()
+          + " [acct #"
+          + result.friendAccountId()
+          + "] "
+          + friendMutationVerb(result.action());
+    }
+    return result.displayName() + " " + friendMutationVerb(result.action());
+  }
+
+  private String friendMutationVerb(String action) {
+    return "ADD".equals(action) ? "added." : "removed.";
   }
 
   private String renderNoticeWithCommand(
