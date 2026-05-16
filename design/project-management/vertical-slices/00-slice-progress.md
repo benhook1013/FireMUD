@@ -58,6 +58,8 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 16. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
+17. [02.18.19 Orchestration Decomposition and Pre-v1 Simplification](./02.18.19-task-list-orchestration-decomposition-and-pre-v1-simplification-vertical-slice.md)
+   Remaining: the latest repo audit is now captured as a bounded slice instead of loose notes; the verified follow-through is to decompose oversized orchestrator services, remove test-only production constructor overloads, flatten pre-v1 compatibility branches into one current model, simplify shared saga/data-runtime ownership, review whether Game Session still needs its HTTP command shim beside gRPC/WebSocket/text-command ingress, and narrow Game Session test-fixture dependency blast radius, while coordinating any migration squashes with `02.17.1` and explicitly not opening a vague repo-wide helper-style cleanup pass.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 
