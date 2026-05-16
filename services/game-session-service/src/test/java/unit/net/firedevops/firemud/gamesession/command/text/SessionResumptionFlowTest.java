@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
+import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -116,6 +117,12 @@ class SessionResumptionFlowTest {
           accountRecentPresenceService,
           sessionContextService,
           scriptEventPublisher);
+  private final AuthoredActionCommandHandler authoredActionHandler =
+      new AuthoredActionCommandHandler(
+          new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+  private final TextCommandRegistry registry =
+      new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
+  private final TextCommandParser parser = new TextCommandParser();
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
@@ -267,6 +274,7 @@ class SessionResumptionFlowTest {
                 Mockito.mock(SocialGroupsClient.class),
                 entityManagementClient,
                 scriptEventPublisher),
+            authoredActionHandler,
             new InventoryCommandHandler(gameLogicClient),
             new EquipmentCommandHandler(gameLogicClient),
             new ContainerCommandHandler(gameLogicClient),
@@ -275,8 +283,9 @@ class SessionResumptionFlowTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
-            new TextCommandParser());
+            registry,
+            parser,
+            meterRegistry);
   }
 
   @Test

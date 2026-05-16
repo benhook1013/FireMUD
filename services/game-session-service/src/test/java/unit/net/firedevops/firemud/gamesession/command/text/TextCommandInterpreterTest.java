@@ -44,6 +44,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
+import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -133,6 +134,12 @@ class TextCommandInterpreterTest {
           accountRecentPresenceService,
           sessionContextService,
           scriptEventPublisher);
+  private final AuthoredActionCommandHandler authoredActionHandler =
+      new AuthoredActionCommandHandler(
+          new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+  private final TextCommandRegistry registry =
+      new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
+  private final TextCommandParser parser = new TextCommandParser();
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -449,6 +456,7 @@ class TextCommandInterpreterTest {
                 Mockito.mock(SocialGroupsClient.class),
                 entityManagementClient,
                 scriptEventPublisher),
+            authoredActionHandler,
             inventoryHandler,
             equipmentHandler,
             containerHandler,
@@ -457,8 +465,9 @@ class TextCommandInterpreterTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
-            new TextCommandParser());
+            registry,
+            parser,
+            meterRegistry);
   }
 
   @Test

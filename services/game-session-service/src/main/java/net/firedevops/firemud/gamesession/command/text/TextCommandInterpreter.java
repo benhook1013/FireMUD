@@ -1,12 +1,10 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
@@ -71,146 +69,6 @@ public class TextCommandInterpreter {
                 equipmentHandler,
                 containerHandler,
                 meterRegistry,
-                scriptEventPublisher),
-            scriptEventPublisher,
-            communicationHandler,
-            worldsHandler));
-  }
-
-  TextCommandInterpreter(
-      CommandService commandService,
-      LookCommandHandler lookHandler,
-      LoginCommandHandler loginHandler,
-      LogoutCommandHandler logoutHandler,
-      PlayCommandHandler playHandler,
-      MoveCommandHandler moveHandler,
-      AfkCommandHandler afkHandler,
-      HelpCommandHandler helpHandler,
-      WhoCommandHandler whoHandler,
-      FriendsCommandHandler friendsHandler,
-      InventoryCommandHandler inventoryHandler,
-      EquipmentCommandHandler equipmentHandler,
-      ContainerCommandHandler containerHandler,
-      SessionAuthenticationService sessionAuthenticationService,
-      ScriptEventPublisher scriptEventPublisher,
-      CommunicationCommandHandler communicationHandler,
-      WorldsCommandHandler worldsHandler,
-      PromptComposer promptComposer,
-      TextCommandRegistry registry,
-      TextCommandParser parser) {
-    this(
-        commandService,
-        lookHandler,
-        loginHandler,
-        logoutHandler,
-        playHandler,
-        moveHandler,
-        afkHandler,
-        helpHandler,
-        whoHandler,
-        friendsHandler,
-        new AuthoredActionCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties())),
-        inventoryHandler,
-        equipmentHandler,
-        containerHandler,
-        sessionAuthenticationService,
-        scriptEventPublisher,
-        communicationHandler,
-        worldsHandler,
-        promptComposer,
-        registry,
-        parser,
-        new SimpleMeterRegistry());
-  }
-
-  TextCommandInterpreter(
-      CommandService commandService,
-      LookCommandHandler lookHandler,
-      LoginCommandHandler loginHandler,
-      LogoutCommandHandler logoutHandler,
-      PlayCommandHandler playHandler,
-      MoveCommandHandler moveHandler,
-      AfkCommandHandler afkHandler,
-      HelpCommandHandler helpHandler,
-      WhoCommandHandler whoHandler,
-      FriendsCommandHandler friendsHandler,
-      InventoryCommandHandler inventoryHandler,
-      EquipmentCommandHandler equipmentHandler,
-      ContainerCommandHandler containerHandler,
-      SessionAuthenticationService sessionAuthenticationService,
-      ScriptEventPublisher scriptEventPublisher,
-      CommunicationCommandHandler communicationHandler,
-      WorldsCommandHandler worldsHandler,
-      PromptComposer promptComposer,
-      TextCommandParser parser) {
-    this(
-        commandService,
-        lookHandler,
-        loginHandler,
-        logoutHandler,
-        playHandler,
-        moveHandler,
-        afkHandler,
-        helpHandler,
-        whoHandler,
-        friendsHandler,
-        new AuthoredActionCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties())),
-        inventoryHandler,
-        equipmentHandler,
-        containerHandler,
-        sessionAuthenticationService,
-        scriptEventPublisher,
-        communicationHandler,
-        worldsHandler,
-        promptComposer,
-        parser);
-  }
-
-  TextCommandInterpreter(
-      CommandService commandService,
-      LookCommandHandler lookHandler,
-      LoginCommandHandler loginHandler,
-      LogoutCommandHandler logoutHandler,
-      PlayCommandHandler playHandler,
-      MoveCommandHandler moveHandler,
-      AfkCommandHandler afkHandler,
-      HelpCommandHandler helpHandler,
-      WhoCommandHandler whoHandler,
-      FriendsCommandHandler friendsHandler,
-      AuthoredActionCommandHandler authoredActionHandler,
-      InventoryCommandHandler inventoryHandler,
-      EquipmentCommandHandler equipmentHandler,
-      ContainerCommandHandler containerHandler,
-      SessionAuthenticationService sessionAuthenticationService,
-      ScriptEventPublisher scriptEventPublisher,
-      CommunicationCommandHandler communicationHandler,
-      WorldsCommandHandler worldsHandler,
-      PromptComposer promptComposer,
-      TextCommandParser parser) {
-    this(
-        sessionAuthenticationService,
-        promptComposer,
-        parser,
-        new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
-        buildDispatcher(
-            commandService,
-            lookHandler,
-            loginHandler,
-            logoutHandler,
-            playHandler,
-            moveHandler,
-            afkHandler,
-            helpHandler,
-            whoHandler,
-            friendsHandler,
-            authoredActionHandler,
-            new ItemCommandHandler(
-                inventoryHandler,
-                equipmentHandler,
-                containerHandler,
-                new SimpleMeterRegistry(),
                 scriptEventPublisher),
             scriptEventPublisher,
             communicationHandler,

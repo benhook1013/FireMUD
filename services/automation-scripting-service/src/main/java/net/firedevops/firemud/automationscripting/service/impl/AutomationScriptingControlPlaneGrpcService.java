@@ -106,27 +106,6 @@ public final class AutomationScriptingControlPlaneGrpcService
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
 
-  public AutomationScriptingControlPlaneGrpcService(
-      ScriptEventRegistryService eventRegistryService,
-      ScriptWorkItemService workItemService,
-      PluginRuntimeStateService pluginRuntimeStateService,
-      AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
-    this(
-        eventRegistryService,
-        workItemService,
-        pluginRuntimeStateService,
-        automationAdmissionStateService,
-        scriptPatchPinProjectionService,
-        scriptScheduleInstanceService,
-        gameDesignControlPlaneClient,
-        gameSessionControlPlaneClient,
-        new ScriptRuntimeProperties());
-  }
-
   @org.springframework.beans.factory.annotation.Autowired
   public AutomationScriptingControlPlaneGrpcService(
       ScriptEventRegistryService eventRegistryService,
