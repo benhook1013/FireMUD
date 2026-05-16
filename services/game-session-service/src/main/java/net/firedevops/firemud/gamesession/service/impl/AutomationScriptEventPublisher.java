@@ -150,7 +150,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   }
 
   @Override
-  public void publishRegionExitEvent(SessionContext context, String scriptEventId) {
+  public void publishRegionExitEvent(
+      SessionContext context, String scriptEventId, String exitReason) {
     submitBestEffort(
         () -> {
           if (context == null || !StringUtils.hasText(scriptEventId)) {
@@ -174,7 +175,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                   + scope.regionEpoch()
                   + ":"
                   + scriptEventId,
-              regionTransitionPayload(previousRoomId, ""));
+              regionExitPayload(previousRoomId, exitReason));
         });
   }
 
@@ -302,6 +303,19 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         + "\",\"toRegionId\":\""
         + escape(toRegionId)
         + "\"}";
+  }
+
+  private static String regionExitPayload(String fromRegionId, String exitReason) {
+    StringBuilder payload =
+        new StringBuilder()
+            .append("{\"fromRegionId\":\"")
+            .append(escape(fromRegionId))
+            .append("\",\"toRegionId\":\"\"}");
+    if (StringUtils.hasText(exitReason)) {
+      payload.setLength(payload.length() - 1);
+      payload.append(",\"exitReason\":\"").append(escape(exitReason)).append("\"}");
+    }
+    return payload.toString();
   }
 
   private static String spawnPayload(String spawnReason) {

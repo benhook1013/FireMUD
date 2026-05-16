@@ -69,9 +69,6 @@ public final class LogoutCommandHandler {
       if (context.gameInstanceId() > 0 && context.characterId() > 0) {
         scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
       }
-      if (context.gameInstanceId() > 0 && context.characterId() > 0) {
-        scriptEventPublisher.publishRegionExitEvent(context, logoutEventId(context));
-      }
       if (context.gameInstanceId() > 0) {
         gameInstanceService.stopSession(context.gameInstanceId());
       }
@@ -100,15 +97,6 @@ public final class LogoutCommandHandler {
     return new LogoutCommandHandlingResult(
         CommandEnqueueResult.failure(code, message),
         List.of(PlayerOutput.error(code, message, messageKey, arguments)));
-  }
-
-  private static String logoutEventId(SessionContext context) {
-    return "logout:"
-        + context.sessionId()
-        + ":"
-        + context.gameInstanceId()
-        + ":"
-        + context.characterId();
   }
 
   private static GameplayCommand logoutCommand(SessionContext context) {

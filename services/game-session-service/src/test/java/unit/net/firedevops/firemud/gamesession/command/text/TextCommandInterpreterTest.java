@@ -129,7 +129,10 @@ class TextCommandInterpreterTest {
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
-          gameplayPresenceService, accountRecentPresenceService);
+          gameplayPresenceService,
+          accountRecentPresenceService,
+          sessionContextService,
+          scriptEventPublisher);
   private TextCommandInterpreter interpreter;
 
   @BeforeEach

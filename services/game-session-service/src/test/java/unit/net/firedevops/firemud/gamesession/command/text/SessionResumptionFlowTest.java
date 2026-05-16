@@ -112,7 +112,10 @@ class SessionResumptionFlowTest {
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
-          gameplayPresenceService, accountRecentPresenceService);
+          gameplayPresenceService,
+          accountRecentPresenceService,
+          sessionContextService,
+          scriptEventPublisher);
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
@@ -335,6 +338,16 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
+    verify(scriptEventPublisher)
+        .publishRegionExitEvent(
+            Mockito.argThat(
+                context ->
+                    context.sessionId() == 1L
+                        && context.gameInstanceId() == 1L
+                        && context.characterId() == 77L
+                        && "1021".equals(context.roomInstanceId())),
+            Mockito.eq("disconnect:takeover:1:1:77"),
+            Mockito.eq("TAKEOVER"));
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -351,6 +364,16 @@ class SessionResumptionFlowTest {
     assertTrue(sessionContextService.findByTenantAndSessionId(22L, 1L).isEmpty());
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.LOGOUT);
+    verify(scriptEventPublisher)
+        .publishRegionExitEvent(
+            Mockito.argThat(
+                context ->
+                    context.sessionId() == 1L
+                        && context.gameInstanceId() == 1L
+                        && context.characterId() == 77L
+                        && "1021".equals(context.roomInstanceId())),
+            Mockito.eq("logout:1:1:77"),
+            Mockito.eq("LOGOUT"));
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());

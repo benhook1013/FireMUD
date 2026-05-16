@@ -177,7 +177,7 @@ Minimum payload contract:
 
 - `fromRegionId`
 - `toRegionId` when known
-- optional producer-owned movement metadata needed by the owning service contract
+- optional producer-owned movement metadata needed by the owning service contract, such as `exitReason` for canonical gameplay disconnect teardown
 
 ### `onTimerExpire` payload `v1`
 
