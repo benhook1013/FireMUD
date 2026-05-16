@@ -1,6 +1,6 @@
 [versions]
 spring-boot = "4.0.6"
-flyway = "12.6.0"
+flyway = "12.6.1"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
@@ -71,13 +71,13 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.3" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.11" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.44.4" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.44.7" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
 stripe-java = { module = "com.stripe:stripe-java", version = "32.1.0" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }
-slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.17" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.18" }
 spring-cloud-gateway = { module = "org.springframework.cloud:spring-cloud-starter-gateway-server-webflux", version = "5.0.1" }
 
 testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version = "1.21.4" }
@@ -86,5 +86,5 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "12.6.0" }
+flyway = { id = "org.flywaydb.flyway", version = "12.6.1" }
 protobuf = { id = "com.google.protobuf", version = "0.10.0" }
