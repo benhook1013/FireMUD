@@ -114,24 +114,30 @@ class TickServiceImplTest {
     automationScriptingClient = mock(AutomationScriptingClient.class);
     when(automationScriptingClient.observeRuntimeTickProgress(any()))
         .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
+    TickQueueControlService tickQueueControlService =
+        new TickQueueControlService(
+            redisTemplate,
+            repository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            runtimeIdentity,
+            sessionContextService);
     service =
         new TickServiceImpl(
             redisTemplate,
             meterRegistry,
             conflictTracker,
-            repository,
             gameplayCommandRepository,
-            runtimeIdentity,
-            runtimeRegionStatusRepository,
             remoteFollowupRepository,
+            runtimeRegionStatusRepository,
             tickBatchRepository,
             tickEffectRepository,
-            sessionContextService,
             durableGameplayCommandExecutionService,
             durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             remoteFollowupRuntimeService,
-            automationScriptingClient);
+            automationScriptingClient,
+            tickQueueControlService);
     ((TickServiceImpl) service).init();
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
@@ -177,67 +183,6 @@ class TickServiceImplTest {
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
                 List.of(), 0));
-  }
-
-  @Test
-  void enqueueCommandPushesToQueue() {
-    service.enqueueCommand(1L, 2L, "cmd-123", "look", false);
-    ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-    verify(listOps).rightPush(eq("gamesession:tick:queue:1:2"), payloadCaptor.capture());
-    org.junit.jupiter.api.Assertions.assertEquals("N|cmd-123|look", payloadCaptor.getValue());
-  }
-
-  @Test
-  void enqueueCommandRejectsMissingCommandId() {
-    org.junit.jupiter.api.Assertions.assertThrows(
-        IllegalArgumentException.class, () -> service.enqueueCommand(1L, 2L, null, "look", true));
-  }
-
-  @Test
-  void purgeQueuedAutomationCommandsForScriptPatchRemovesRedisPayloadAndMarksTerminal() {
-    var command = gameplayCommand("cmd-1");
-    command.setTenantId(1L);
-    command.setGameInstanceId(2L);
-    command.setSourceType("AUTOMATION");
-    command.setScriptPatchVersion("patch-1");
-    command.setCommandText("say hello");
-    command.setRequiresSoloTick(false);
-    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
-            1L, 2L, "region-1", "patch-1"))
-        .thenReturn(List.of(command));
-
-    long purged =
-        service.purgeQueuedAutomationCommandsForScriptPatch(
-            1L, 2L, "region-1", "patch-1", "rollback");
-
-    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
-    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-1|say hello");
-    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
-    org.junit.jupiter.api.Assertions.assertEquals("NOT_APPLIED", command.getGameplayResult());
-    org.junit.jupiter.api.Assertions.assertEquals("ROLLBACK_PURGED", command.getFailureCode());
-    org.junit.jupiter.api.Assertions.assertEquals("rollback", command.getFailureMessage());
-    org.junit.jupiter.api.Assertions.assertNotNull(command.getCompletedAt());
-    verify(gameplayCommandRepository).saveAll(List.of(command));
-  }
-
-  @Test
-  void purgeQueuedAutomationCommandsForPluginVersionUsesPluginProvenance() {
-    var command = gameplayCommand("cmd-2");
-    command.setCommandText("emote waves");
-    command.setPluginId("plugin-1");
-    command.setPluginVersionId("plugin-v1");
-    when(gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
-            1L, 2L, "", "plugin-1", "plugin-v1"))
-        .thenReturn(List.of(command));
-
-    long purged =
-        service.purgeQueuedAutomationCommandsForPluginVersion(
-            1L, 2L, "", "plugin-1", "plugin-v1", "plugin rollback");
-
-    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
-    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-2|emote waves");
-    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
-    org.junit.jupiter.api.Assertions.assertEquals("plugin rollback", command.getFailureMessage());
   }
 
   @Test

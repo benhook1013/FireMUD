@@ -19,7 +19,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
@@ -27,14 +26,12 @@ import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressR
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
-import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
@@ -44,8 +41,6 @@ import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutio
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
-import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -66,24 +61,21 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
-  private static final String PURGED_FAILURE_CODE = "ROLLBACK_PURGED";
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
-  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
-  private final RuntimeIdentity runtimeIdentity;
-  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
+  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final TickBatchRepository tickBatchRepository;
   private final TickEffectRepository tickEffectRepository;
-  private final SessionContextService sessionContextService;
   private final DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
   private final DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final AutomationScriptingClient automationScriptingClient;
+  private final TickQueueControlService tickQueueControlService;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Value("${game.tick-duration-ms:1000}")
@@ -116,9 +108,6 @@ public class TickServiceImpl implements TickService {
   private final StringRedisSerializer scriptArgsSerializer = new StringRedisSerializer();
   private final GenericToStringSerializer<Long> scriptResultSerializer =
       new GenericToStringSerializer<>(Long.class);
-  private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
-  private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
-  private final AtomicInteger activeTicks = new AtomicInteger();
   private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
   private final AtomicLong retryQueueDepthTotal = new AtomicLong();
   private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
@@ -130,13 +119,6 @@ public class TickServiceImpl implements TickService {
   private final AtomicLong remoteFollowupDrainLagMax = new AtomicLong();
   private Counter remoteFollowupBacklogOverBudgetCounter;
 
-  private record OwnershipSnapshot(
-      String regionId,
-      long regionEpoch,
-      String executorFence,
-      boolean paused,
-      long lastCommittedTickId) {}
-
   private record QueuedCommandEnvelope(
       boolean requiresSoloTick, String commandId, String command) {}
 
@@ -146,12 +128,6 @@ public class TickServiceImpl implements TickService {
       long sourceOrdinal,
       String effectKey,
       String commandDigest) {}
-
-  private static final class StaleOwnershipException extends RuntimeException {
-    private StaleOwnershipException(String message) {
-      super(message);
-    }
-  }
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -240,10 +216,8 @@ public class TickServiceImpl implements TickService {
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      String value = queuePayload(requiresSoloTick, commandId, command);
-      redisTemplate
-          .opsForList()
-          .rightPush(queueKey(normalizedTenantId, normalizedQueueTargetId), value);
+      tickQueueControlService.enqueueCommand(
+          normalizedTenantId, normalizedQueueTargetId, commandId, command, requiresSoloTick);
       enqueueCounter.increment();
       logger.debug(
           "Queued command for {}:{} commandId={}",
@@ -260,13 +234,8 @@ public class TickServiceImpl implements TickService {
       String regionId,
       String scriptPatchVersion,
       String reason) {
-    requirePositive(tenantId, "tenant_id");
-    requirePositive(gameInstanceId, "game_instance_id");
-    requireText(scriptPatchVersion, "script_patch_version");
-    List<GameplayCommand> commands =
-        gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
-            tenantId, gameInstanceId, normalize(regionId), scriptPatchVersion);
-    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason);
+    return tickQueueControlService.purgeQueuedAutomationCommandsForScriptPatch(
+        tenantId, gameInstanceId, regionId, scriptPatchVersion, reason, logger);
   }
 
   @Override
@@ -277,45 +246,8 @@ public class TickServiceImpl implements TickService {
       String pluginId,
       String pluginVersionId,
       String reason) {
-    requirePositive(tenantId, "tenant_id");
-    requirePositive(gameInstanceId, "game_instance_id");
-    requireText(pluginId, "plugin_id");
-    requireText(pluginVersionId, "plugin_version_id");
-    List<GameplayCommand> commands =
-        gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
-            tenantId, gameInstanceId, normalize(regionId), pluginId, pluginVersionId);
-    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason);
-  }
-
-  private long purgeQueuedCommands(
-      Long tenantId, Long gameInstanceId, List<GameplayCommand> commands, String reason) {
-    if (commands.isEmpty()) {
-      return 0L;
-    }
-    String key = queueKey(tenantId, gameInstanceId);
-    Instant now = Instant.now();
-    for (GameplayCommand command : commands) {
-      redisTemplate
-          .opsForList()
-          .remove(
-              key,
-              0,
-              queuePayload(
-                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
-      command.setExecutionOutcome("PURGED");
-      command.setGameplayResult("NOT_APPLIED");
-      command.setCompletedAt(now);
-      command.setLastAttemptAt(now);
-      command.setFailureCode(PURGED_FAILURE_CODE);
-      command.setFailureMessage(truncate(reason, 500));
-    }
-    gameplayCommandRepository.saveAll(commands);
-    logger.info(
-        "Purged {} queued automation commands tenantId={} gameInstanceId={}",
-        commands.size(),
-        tenantId,
-        gameInstanceId);
-    return commands.size();
+    return tickQueueControlService.purgeQueuedAutomationCommandsForPluginVersion(
+        tenantId, gameInstanceId, regionId, pluginId, pluginVersionId, reason, logger);
   }
 
   @Override
@@ -325,17 +257,16 @@ public class TickServiceImpl implements TickService {
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      OwnershipSnapshot ownership = observeOwnership(normalizedTenantId, normalizedQueueTargetId);
+      TickQueueControlService.OwnershipSnapshot ownership =
+          tickQueueControlService.observeOwnership(normalizedTenantId, normalizedQueueTargetId);
       observeRemoteFollowupBacklog(normalizedTenantId, ownership);
-      if (pauseRequested.get()
-          || pausedGameInstances.contains(normalizedQueueTargetId)
-          || ownership.paused()) {
+      if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
         reconcilePausedRemoteFollowupResults(normalizedTenantId, ownership);
         logger.debug("Tick processing skipped while paused");
         return;
       }
       long start = System.nanoTime();
-      String lockKey = lockKey(normalizedTenantId, normalizedQueueTargetId);
+      String lockKey = tickQueueControlService.lockKey(normalizedTenantId, normalizedQueueTargetId);
       String lockToken = UUID.randomUUID().toString();
       Boolean acquired =
           redisTemplate
@@ -348,7 +279,7 @@ public class TickServiceImpl implements TickService {
         logger.debug("Could not acquire tick lock {}", lockKey);
         return;
       }
-      activeTicks.incrementAndGet();
+      tickQueueControlService.markTickStarted();
       String head = null;
       boolean solo = false;
       TickBatch activeBatch = null;
@@ -361,7 +292,9 @@ public class TickServiceImpl implements TickService {
         Long pending =
             redisTemplate
                 .opsForList()
-                .size(pendingKey(normalizedTenantId, normalizedQueueTargetId));
+                .size(
+                    tickQueueControlService.pendingKey(
+                        normalizedTenantId, normalizedQueueTargetId));
         long depth = pending != null ? pending : 0L;
         updateRetryQueueDepth(normalizedTenantId, normalizedQueueTargetId, depth);
         if (pending != null && pending > 0) {
@@ -378,7 +311,9 @@ public class TickServiceImpl implements TickService {
                     () ->
                         executeScriptWithRetry(
                             commitScript,
-                            List.of(pendingKey(normalizedTenantId, normalizedQueueTargetId))));
+                            List.of(
+                                tickQueueControlService.pendingKey(
+                                    normalizedTenantId, normalizedQueueTargetId))));
               });
           markBatchDrained(replayBatch, replayEntries);
           executeDurableEffects(normalizedTenantId, normalizedQueueTargetId);
@@ -387,7 +322,9 @@ public class TickServiceImpl implements TickService {
         Object headObj =
             redisTemplate
                 .opsForList()
-                .index(queueKey(normalizedTenantId, normalizedQueueTargetId), 0);
+                .index(
+                    tickQueueControlService.queueKey(normalizedTenantId, normalizedQueueTargetId),
+                    0);
         head = headObj != null ? headObj.toString() : null;
         solo = head != null && head.startsWith("S|");
         int max = solo ? 1 : tickMaxCommands;
@@ -400,8 +337,10 @@ public class TickServiceImpl implements TickService {
                           scriptArgsSerializer,
                           scriptResultSerializer,
                           List.of(
-                              queueKey(normalizedTenantId, normalizedQueueTargetId),
-                              pendingKey(normalizedTenantId, normalizedQueueTargetId)),
+                              tickQueueControlService.queueKey(
+                                  normalizedTenantId, normalizedQueueTargetId),
+                              tickQueueControlService.pendingKey(
+                                  normalizedTenantId, normalizedQueueTargetId)),
                           String.valueOf(max)));
             });
         activeBatchEntries = readPendingEntries(normalizedTenantId, normalizedQueueTargetId);
@@ -424,7 +363,9 @@ public class TickServiceImpl implements TickService {
                   () ->
                       executeScriptWithRetry(
                           commitScript,
-                          List.of(pendingKey(normalizedTenantId, normalizedQueueTargetId))));
+                          List.of(
+                              tickQueueControlService.pendingKey(
+                                  normalizedTenantId, normalizedQueueTargetId))));
             });
         if (activeBatch != null) {
           markBatchDrained(activeBatch, activeBatchEntries);
@@ -444,8 +385,10 @@ public class TickServiceImpl implements TickService {
                 executeScriptWithRetry(
                     rollbackScript,
                     List.of(
-                        pendingKey(normalizedTenantId, normalizedQueueTargetId),
-                        queueKey(normalizedTenantId, normalizedQueueTargetId))));
+                        tickQueueControlService.pendingKey(
+                            normalizedTenantId, normalizedQueueTargetId),
+                        tickQueueControlService.queueKey(
+                            normalizedTenantId, normalizedQueueTargetId))));
         if (activeBatch != null) {
           markBatchAbandoned(activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
         }
@@ -458,7 +401,7 @@ public class TickServiceImpl implements TickService {
           logger.debug("Tick budget exceeded: {} ms", elapsed);
         }
         luaTimer.record(() -> executeScriptWithRetry(unlockScript, List.of(lockKey), lockToken));
-        activeTicks.decrementAndGet();
+        tickQueueControlService.markTickFinished();
         if (tickSucceeded) {
           publishRuntimeTickProgress(tickProgressToPublish);
           logger.debug(
@@ -471,13 +414,14 @@ public class TickServiceImpl implements TickService {
   }
 
   private RuntimeRegionStatus advanceRuntimeTickProgress(
-      Long tenantId, Long gameInstanceId, OwnershipSnapshot ownership) {
+      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
     RuntimeRegionStatus status =
-        requireRuntimeOwnership(tenantId, gameInstanceId, ownership.regionId());
+        tickQueueControlService.requireRuntimeOwnership(
+            tenantId, gameInstanceId, ownership.regionId());
     if (status.getRegionEpoch() != ownership.regionEpoch()
         || !status.getExecutorFence().equals(ownership.executorFence())
         || status.isPaused()) {
-      throw new StaleOwnershipException(
+      throw new TickQueueControlService.StaleOwnershipException(
           "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
               .formatted(tenantId, gameInstanceId));
     }
@@ -519,7 +463,8 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private void reconcilePausedRemoteFollowupResults(Long tenantId, OwnershipSnapshot ownership) {
+  private void reconcilePausedRemoteFollowupResults(
+      Long tenantId, TickQueueControlService.OwnershipSnapshot ownership) {
     if (ownership == null || ownership.regionId() == null || ownership.regionId().isBlank()) {
       return;
     }
@@ -577,7 +522,8 @@ public class TickServiceImpl implements TickService {
         });
   }
 
-  private void observeRemoteFollowupBacklog(Long tenantId, OwnershipSnapshot ownership) {
+  private void observeRemoteFollowupBacklog(
+      Long tenantId, TickQueueControlService.OwnershipSnapshot ownership) {
     long dueCount =
         remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
             tenantId,
@@ -638,7 +584,7 @@ public class TickServiceImpl implements TickService {
   }
 
   private void drainRemoteFollowups(
-      Long tenantId, Long gameInstanceId, OwnershipSnapshot ownership) {
+      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
     String tickBatchId = "tb-" + UUID.randomUUID();
     RemoteFollowupDrainService.ClaimOutcome claimOutcome =
         remoteFollowupDrainService.claimDueFollowups(
@@ -673,7 +619,9 @@ public class TickServiceImpl implements TickService {
 
   private List<QueuedCommandEnvelope> readPendingEntries(Long tenantId, Long queueTargetId) {
     List<Object> rawEntries =
-        redisTemplate.opsForList().range(pendingKey(tenantId, queueTargetId), 0, -1);
+        redisTemplate
+            .opsForList()
+            .range(tickQueueControlService.pendingKey(tenantId, queueTargetId), 0, -1);
     if (rawEntries == null || rawEntries.isEmpty()) {
       return List.of();
     }
@@ -701,7 +649,7 @@ public class TickServiceImpl implements TickService {
       Long tenantId,
       Long gameInstanceId,
       List<QueuedCommandEnvelope> replayEntries,
-      OwnershipSnapshot ownership) {
+      TickQueueControlService.OwnershipSnapshot ownership) {
     Optional<TickBatch> existing =
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
@@ -735,7 +683,7 @@ public class TickServiceImpl implements TickService {
       Long tenantId,
       Long gameInstanceId,
       boolean requiresSoloTick,
-      OwnershipSnapshot ownership,
+      TickQueueControlService.OwnershipSnapshot ownership,
       List<QueuedCommandEnvelope> entries) {
     Instant now = Instant.now();
     requireDurableCommandIdentifiers(entries);
@@ -866,14 +814,15 @@ public class TickServiceImpl implements TickService {
           false);
       recordRequeuedActions(redisOnlyEntries);
     }
-    String pendingKey = pendingKey(tenantId, gameInstanceId);
+    String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
     redisTemplate.delete(pendingKey);
     for (QueuedCommandEnvelope entry : sealedEntries) {
       redisTemplate
           .opsForList()
           .rightPush(
               pendingKey,
-              queuePayload(entry.requiresSoloTick(), entry.commandId(), entry.command()));
+              tickQueueControlService.queuePayload(
+                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
     }
   }
 
@@ -903,7 +852,7 @@ public class TickServiceImpl implements TickService {
       String tickBatchId,
       Long tenantId,
       Long gameInstanceId,
-      OwnershipSnapshot ownership,
+      TickQueueControlService.OwnershipSnapshot ownership,
       List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
     Instant now = Instant.now();
     TickBatch batch = new TickBatch();
@@ -1118,7 +1067,7 @@ public class TickServiceImpl implements TickService {
     for (TickBatch batch : drainedBatches) {
       try {
         requireCurrentOwnership(batch, false);
-      } catch (StaleOwnershipException ex) {
+      } catch (TickQueueControlService.StaleOwnershipException ex) {
         abandonStaleDrainedBatch(batch, ex.getMessage());
         continue;
       }
@@ -1192,8 +1141,8 @@ public class TickServiceImpl implements TickService {
       redisTemplate
           .opsForList()
           .leftPush(
-              queueKey(tenantId, gameInstanceId),
-              queuePayload(
+              tickQueueControlService.queueKey(tenantId, gameInstanceId),
+              tickQueueControlService.queuePayload(
                   command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
     }
   }
@@ -1205,8 +1154,9 @@ public class TickServiceImpl implements TickService {
       redisTemplate
           .opsForList()
           .leftPush(
-              queueKey(tenantId, gameInstanceId),
-              queuePayload(entry.requiresSoloTick(), entry.commandId(), entry.command()));
+              tickQueueControlService.queueKey(tenantId, gameInstanceId),
+              tickQueueControlService.queuePayload(
+                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
     }
   }
 
@@ -1328,12 +1278,12 @@ public class TickServiceImpl implements TickService {
   private Optional<RuntimeRegionStatus> requireCurrentOwnership(
       TickBatch batch, boolean allowPausedOwner) {
     RuntimeRegionStatus status =
-        requireRuntimeOwnership(
+        tickQueueControlService.requireRuntimeOwnership(
             batch.getTenantId(), batch.getGameInstanceId(), batch.getRegionId());
     if (status.getRegionEpoch() != batch.getRegionEpoch()
         || !status.getExecutorFence().equals(batch.getExecutorFence())
         || (!allowPausedOwner && status.isPaused())) {
-      throw new StaleOwnershipException(
+      throw new TickQueueControlService.StaleOwnershipException(
           "Stale runtime ownership for tickBatchId=%s expected=(epoch=%d,fence=%s) actual=(epoch=%d,fence=%s,paused=%s)"
               .formatted(
                   batch.getTickBatchId(),
@@ -1467,7 +1417,9 @@ public class TickServiceImpl implements TickService {
   }
 
   private String failureCode(Exception ex) {
-    return ex instanceof StaleOwnershipException ? "STALE_EXECUTOR_FENCE" : "ROLLBACK_REQUEUED";
+    return ex instanceof TickQueueControlService.StaleOwnershipException
+        ? "STALE_EXECUTOR_FENCE"
+        : "ROLLBACK_REQUEUED";
   }
 
   private String effectKey(QueuedCommandEnvelope entry, int index) {
@@ -1801,167 +1753,34 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private OwnershipSnapshot observeOwnership(Long tenantId, Long gameInstanceId) {
-    Instant now = Instant.now();
-    RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseGet(
-                () -> {
-                  RuntimeRegionStatus created = new RuntimeRegionStatus();
-                  created.setTenantId(tenantId);
-                  created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-                  created.setRegionEpoch(1L);
-                  created.setExecutorFence("fence-" + UUID.randomUUID());
-                  created.setPaused(false);
-                  return created;
-                });
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setUpdatedAt(now);
-    RuntimeRegionStatus saved = runtimeRegionStatusRepository.save(status);
-    return new OwnershipSnapshot(
-        saved.getRegionId(),
-        saved.getRegionEpoch(),
-        saved.getExecutorFence(),
-        saved.isPaused(),
-        saved.getLastCommittedTickId());
-  }
-
   @Override
   @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
-    Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
-    Long tenantId =
-        maybeContext.map(SessionContext::tenantId).orElseGet(() -> findTenantId(sessionId));
-    try (GameplayLoggingContext ignored =
-        maybeContext
-            .<GameplayLoggingContext>map(GameplayLoggingContext::from)
-            .orElseGet(
-                () ->
-                    GameplayLoggingContext.open(
-                        tenantId != null ? Long.toString(tenantId) : null, null, null, null))) {
-      Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
-      return state != null ? state.toString() : "{}";
-    }
+    return tickQueueControlService.queryState(sessionId);
   }
 
   @Override
   public void pauseTicks(String reason) {
-    pauseRequested.set(true);
-    logger.info("Tick pause requested: {}", reason);
+    tickQueueControlService.pauseTicks(reason, logger);
   }
 
   @Override
   public void resumeTicks(String reason) {
-    pauseRequested.set(false);
-    logger.info("Tick resume requested: {}", reason);
+    tickQueueControlService.resumeTicks(reason, logger);
   }
 
   @Override
   public void pauseTicksForGameInstance(Long gameInstanceId, String reason) {
-    if (gameInstanceId == null) {
-      throw new IllegalArgumentException("gameInstanceId is required");
-    }
-    pausedGameInstances.add(gameInstanceId);
-    gameInstanceRepository
-        .findById(gameInstanceId)
-        .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, true));
-    logger.info("Tick pause requested for game instance {}: {}", gameInstanceId, reason);
+    tickQueueControlService.pauseTicksForGameInstance(gameInstanceId, reason, logger);
   }
 
   @Override
   public void resumeTicksForGameInstance(Long gameInstanceId, String reason) {
-    if (gameInstanceId == null) {
-      throw new IllegalArgumentException("gameInstanceId is required");
-    }
-    pausedGameInstances.remove(gameInstanceId);
-    gameInstanceRepository
-        .findById(gameInstanceId)
-        .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, false));
-    logger.info("Tick resume requested for game instance {}: {}", gameInstanceId, reason);
+    tickQueueControlService.resumeTicksForGameInstance(gameInstanceId, reason, logger);
   }
 
   @Override
   public net.firedevops.firemud.gamesession.v1.TickStatus getTickStatus() {
-    return pauseRequested.get() && activeTicks.get() == 0
-        ? net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_PAUSED
-        : net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_RUNNING;
-  }
-
-  private Long findTenantId(Long sessionId) {
-    Optional<SessionContext> context = sessionContextService.findBySessionId(sessionId);
-    if (context.isPresent()) {
-      return context.get().tenantId();
-    }
-    return gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
-  }
-
-  private String queueKey(Long tenantId, Long sessionId) {
-    return "gamesession:tick:queue:" + tenantId + ":" + sessionId;
-  }
-
-  private String queuePayload(boolean requiresSoloTick, String commandId, String command) {
-    String mode = requiresSoloTick ? "S" : "N";
-    String durableCommandId = commandId == null || commandId.isBlank() ? "-" : commandId;
-    return mode + "|" + durableCommandId + "|" + command;
-  }
-
-  private String lockKey(Long tenantId, Long sessionId) {
-    return "gamesession:tick:lock:" + tenantId + ":" + sessionId;
-  }
-
-  private String stateKey(Long tenantId, Long sessionId) {
-    return "session:" + tenantId + ":" + sessionId;
-  }
-
-  private String pendingKey(Long tenantId, Long sessionId) {
-    return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
-  }
-
-  private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {
-    Instant now = Instant.now();
-    RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseGet(
-                () -> {
-                  RuntimeRegionStatus created = new RuntimeRegionStatus();
-                  created.setTenantId(tenantId);
-                  created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-                  created.setRegionEpoch(0L);
-                  return created;
-                });
-    status.setRegionEpoch(status.getRegionEpoch() + 1L);
-    status.setExecutorFence("fence-" + UUID.randomUUID());
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setPaused(paused);
-    status.setUpdatedAt(now);
-    runtimeRegionStatusRepository.save(status);
-  }
-
-  private RuntimeRegionStatus requireRuntimeOwnership(
-      Long tenantId, Long gameInstanceId, String regionId) {
-    if (regionId != null && !regionId.isBlank()) {
-      Optional<RuntimeRegionStatus> byRegionId =
-          runtimeRegionStatusRepository.findByTenantIdAndRegionId(tenantId, regionId);
-      if (byRegionId.isPresent()) {
-        return byRegionId.orElseThrow();
-      }
-    }
-    return runtimeRegionStatusRepository
-        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .orElseThrow(
-            () ->
-                new StaleOwnershipException(
-                    "Missing runtime ownership for tenantId=%d gameInstanceId=%d regionId=%s"
-                        .formatted(tenantId, gameInstanceId, regionId)));
-  }
-
-  private String defaultCurrentBoundaryRegionId(Long gameInstanceId) {
-    return Long.toString(gameInstanceId);
+    return tickQueueControlService.getTickStatus();
   }
 }
