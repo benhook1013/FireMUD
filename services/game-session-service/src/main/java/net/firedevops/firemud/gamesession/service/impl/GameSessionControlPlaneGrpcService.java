@@ -53,7 +53,6 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentReq
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
-import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
@@ -128,9 +127,6 @@ public final class GameSessionControlPlaneGrpcService
 
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
-  private static final List<String> ACTIVE_GAMEPLAY_COMMAND_OUTCOMES =
-      List.of("ACCEPTED", "STAGED", "RETRY_QUEUED", "DRAINED");
-
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
@@ -138,6 +134,7 @@ public final class GameSessionControlPlaneGrpcService
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
+  private final GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -150,186 +147,16 @@ public final class GameSessionControlPlaneGrpcService
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs = 1000L;
 
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        null,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry);
-  }
-
   @Autowired
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      GameDesignClient gameDesignClient,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        null,
-        null,
-        null,
-        null,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry,
-        new GameSessionProperties());
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry,
-      GameSessionProperties gameSessionProperties) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        null,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry,
-        gameSessionProperties);
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      GameDesignClient gameDesignClient,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry,
-      GameSessionProperties gameSessionProperties) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        null,
-        null,
-        null,
-        null,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry,
-        gameSessionProperties);
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
-        remoteFollowupRuntimeService,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        null,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry);
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      RemoteFollowupRepository remoteFollowupRepository,
-      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      GameDesignClient gameDesignClient,
-      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
-        remoteFollowupRuntimeService,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry,
-        new GameSessionProperties());
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      RemoteFollowupRepository remoteFollowupRepository,
-      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -345,6 +172,7 @@ public final class GameSessionControlPlaneGrpcService
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
     this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
+    this.runtimeControlPlaneReadService = runtimeControlPlaneReadService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
@@ -353,118 +181,6 @@ public final class GameSessionControlPlaneGrpcService
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.gameSessionProperties = gameSessionProperties;
-  }
-
-  public GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        (GameDesignClient) null,
-        tickService,
-        meterRegistry);
-  }
-
-  GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      GameDesignClient gameDesignClient,
-      TickService tickService,
-      MeterRegistry meterRegistry) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        null,
-        null,
-        null,
-        null,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        tickService,
-        meterRegistry,
-        new GameSessionProperties());
-  }
-
-  GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      RemoteFollowupRepository remoteFollowupRepository,
-      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      TickService tickService,
-      MeterRegistry meterRegistry,
-      GameSessionProperties gameSessionProperties) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
-        null,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        null,
-        BuiltInTextCommandAliasResolver.unsupported(),
-        tickService,
-        meterRegistry,
-        gameSessionProperties);
-  }
-
-  GameSessionControlPlaneGrpcService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayCommandRepository gameplayCommandRepository,
-      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
-      RemoteFollowupRepository remoteFollowupRepository,
-      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
-      RemoteFollowupResultRepository remoteFollowupResultRepository,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
-      VersionUpgradePreparationService versionUpgradePreparationService,
-      GameDesignClient gameDesignClient,
-      TickService tickService,
-      MeterRegistry meterRegistry,
-      GameSessionProperties gameSessionProperties) {
-    this(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
-        remoteFollowupRuntimeService,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        BuiltInTextCommandAliasResolver.unsupported(),
-        tickService,
-        meterRegistry,
-        gameSessionProperties);
   }
 
   private long parseTenantId(String tenantId) {
@@ -655,9 +371,11 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      RuntimeRegionStatus status = findRuntimeOwnershipStatus(request, tenantId);
+      RuntimeOwnershipStatus status =
+          runtimeControlPlaneReadService.getRuntimeOwnershipStatus(
+              tenantId, request, tickDurationMs);
       GetRuntimeOwnershipStatusResponse response =
-          GetRuntimeOwnershipStatusResponse.newBuilder().setOwnership(toStatus(status)).build();
+          GetRuntimeOwnershipStatusResponse.newBuilder().setOwnership(status).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -1143,40 +861,6 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private RuntimeRegionStatus findRuntimeOwnershipStatus(
-      GetRuntimeOwnershipStatusRequest request, long tenantId) {
-    if (!request.getRegionId().isBlank()) {
-      return runtimeRegionStatusRepository
-          .findByTenantIdAndRegionId(tenantId, request.getRegionId())
-          .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
-    }
-    long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-    return runtimeRegionStatusRepository
-        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
-  }
-
-  private RuntimeRegionStatus resolveRuntimeStateOwnership(
-      long tenantId, String requestedGameInstanceId, String requestedRegionId) {
-    if (!requestedRegionId.isBlank()) {
-      RuntimeRegionStatus status =
-          runtimeRegionStatusRepository
-              .findByTenantIdAndRegionId(tenantId, requestedRegionId)
-              .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
-      if (!requestedGameInstanceId.isBlank()) {
-        long requestedGameInstance = parseGameInstanceId(requestedGameInstanceId);
-        if (!Long.valueOf(requestedGameInstance).equals(status.getGameInstanceId())) {
-          throw new IllegalArgumentException("region_id does not match game_instance_id");
-        }
-      }
-      return status;
-    }
-    long gameInstanceId = parseGameInstanceId(requestedGameInstanceId);
-    return runtimeRegionStatusRepository
-        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .orElseThrow(() -> new IllegalArgumentException("Runtime ownership not found"));
-  }
-
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.setAdmissionPointer")
   public void setAdmissionPointer(
@@ -1502,71 +1186,10 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAdminRole();
       long tenantId = parseTenantId(request.getTenantId());
-      RuntimeRegionStatus runtimeStatus =
-          resolveRuntimeStateOwnership(
-              tenantId,
-              normalizeBlank(request.getGameInstanceId()),
-              normalizeBlank(request.getRegionId()));
-      long gameInstanceId = runtimeStatus.getGameInstanceId();
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-      GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
-                  GameInstanceRuntimeState.newBuilder()
-                      .setTenantId(Long.toString(instance.getTenantId()))
-                      .setGameInstanceId(Long.toString(instance.getId()))
-                      .setRuntimeVersionId(instance.getRuntimeVersion())
-                      .setPinnedScriptPatchVersion(
-                          instance.getScriptPatchVersion() == null
-                              ? ""
-                              : instance.getScriptPatchVersion())
-                      .setLaunchDescriptorId(
-                          instance.getLaunchDescriptorId() == null
-                              ? ""
-                              : instance.getLaunchDescriptorId())
-                      .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
-                      .setVersionId(
-                          instance.getVersionId() == null
-                              ? ""
-                              : Long.toString(instance.getVersionId()))
-                      .setReleaseBundleId(
-                          instance.getReleaseBundleId() == null
-                              ? ""
-                              : Long.toString(instance.getReleaseBundleId()))
-                      .setVersionStateEpoch(
-                          instance.getVersionStateEpoch() == null
-                              ? 0L
-                              : instance.getVersionStateEpoch())
-                      .setScriptPatchPinnedAtMs(
-                          instance.getScriptPatchPinnedAt() == null
-                              ? 0L
-                              : instance.getScriptPatchPinnedAt().toEpochMilli())
-                      .setScriptPatchPinnedBy(
-                          instance.getScriptPatchPinnedBy() == null
-                              ? ""
-                              : instance.getScriptPatchPinnedBy())
-                      .setScriptPatchPinnedReason(
-                          instance.getScriptPatchPinnedReason() == null
-                              ? ""
-                              : instance.getScriptPatchPinnedReason())
-                      .setScriptPatchPinnedControlPlaneRequestId(
-                          instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                              ? ""
-                              : instance.getScriptPatchPinnedControlPlaneRequestId())
-                      .setPlayableStateScope(routingBundle.playableStateScope())
-                      .setWorldSlug(routingBundle.worldSlug())
-                      .setRealmSlug(routingBundle.realmSlug())
-                      .setPointerVersion(routingBundle.pointerVersion())
-                      .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
-                      .setRegionEpoch(runtimeStatus.getRegionEpoch())
-                      .setPublication(
-                          scriptPatchPublicationLink(
-                              instance.getTenantId(), instance.getScriptPatchVersion()))
-                      .build())
+                  runtimeControlPlaneReadService.getGameInstanceRuntimeState(tenantId, request))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -2273,55 +1896,6 @@ public final class GameSessionControlPlaneGrpcService
     if (instance.getTenantId() != tenantId) {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
-  }
-
-  private RuntimeOwnershipStatus toStatus(RuntimeRegionStatus status) {
-    long pendingGameplayCommandCount =
-        gameplayCommandRepository
-            .countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
-                status.getTenantId(), status.getGameInstanceId(), ACTIVE_GAMEPLAY_COMMAND_OUTCOMES);
-    long dueRemoteFollowupCount =
-        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-            status.getTenantId(),
-            status.getRegionId(),
-            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-            status.getLastCommittedTickId() + 1L);
-    long oldestDueRemoteFollowupTickId =
-        remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                status.getTenantId(),
-                status.getRegionId(),
-                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-                status.getLastCommittedTickId() + 1L)
-            .map(RemoteFollowup::getDueTickId)
-            .orElse(0L);
-    long remoteFollowupDrainLagMs =
-        oldestDueRemoteFollowupTickId == 0L
-            ? 0L
-            : Math.max(
-                0L,
-                (status.getLastCommittedTickId() + 1L - oldestDueRemoteFollowupTickId)
-                    * tickDurationMs);
-    return RuntimeOwnershipStatus.newBuilder()
-        .setTenantId(Long.toString(status.getTenantId()))
-        .setGameInstanceId(Long.toString(status.getGameInstanceId()))
-        .setRegionId(status.getRegionId() == null ? "" : status.getRegionId())
-        .setRegionEpoch(status.getRegionEpoch())
-        .setExecutorFence(status.getExecutorFence())
-        .setOwnerService(status.getOwnerService())
-        .setOwnerInstanceId(status.getOwnerInstanceId())
-        .setPaused(status.isPaused())
-        .setLastCommittedTickBatchId(
-            status.getLastCommittedTickBatchId() == null
-                ? ""
-                : status.getLastCommittedTickBatchId())
-        .setLastCommittedTickId(status.getLastCommittedTickId())
-        .setUpdatedAtMs(status.getUpdatedAt() == null ? 0L : status.getUpdatedAt().toEpochMilli())
-        .setPendingGameplayCommandCount(pendingGameplayCommandCount)
-        .setDueRemoteFollowupCount(dueRemoteFollowupCount)
-        .setOldestDueRemoteFollowupTickId(oldestDueRemoteFollowupTickId)
-        .setRemoteFollowupDrainLagMs(remoteFollowupDrainLagMs)
-        .build();
   }
 
   private RemoteCommandCoordinatorEntry toRemoteCoordinatorEntry(
