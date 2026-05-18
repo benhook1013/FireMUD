@@ -43,7 +43,6 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
-import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
@@ -113,7 +112,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -133,7 +131,7 @@ public final class GameSessionControlPlaneGrpcService
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
-  private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
+  private final GameSessionRemoteControlPlaneService remoteControlPlaneService;
   private final GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
@@ -155,7 +153,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameSessionRemoteControlPlaneService remoteControlPlaneService,
       GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
@@ -171,7 +169,7 @@ public final class GameSessionControlPlaneGrpcService
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
-    this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
+    this.remoteControlPlaneService = remoteControlPlaneService;
     this.runtimeControlPlaneReadService = runtimeControlPlaneReadService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
@@ -410,28 +408,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetRemoteCommandCoordinatorResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      requireText(request.getCoordinatorId(), "coordinator_id is required");
-      RemoteCommandCoordinator coordinator =
-          remoteCommandCoordinatorRepository
-              .findByTenantIdAndCoordinatorId(tenantId, request.getCoordinatorId())
-              .orElseThrow(
-                  () -> new IllegalArgumentException("Remote command coordinator not found"));
-      RemoteFollowup followup =
-          remoteFollowupRepository
-              .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())
-              .orElse(null);
       responseObserver.onNext(
-          GetRemoteCommandCoordinatorResponse.newBuilder()
-              .setCoordinator(
-                  toRemoteCoordinatorEntry(
-                      coordinator,
-                      followup,
-                      latestRemoteResult(tenantId, coordinator.getCoordinatorId()),
-                      followup == null
-                          ? null
-                          : linkedTargetCommand(tenantId, followup.getFollowupId())))
-              .build());
+          remoteControlPlaneService.getRemoteCommandCoordinator(
+              parseTenantId(request.getTenantId()), request.getCoordinatorId()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -462,88 +441,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ListRemoteCommandCoordinatorsResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      RoutingBundle filterRoutingBundle =
-          normalizeRoutingBundle(
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
-      ListRemoteCommandCoordinatorsResponse.Builder response =
-          ListRemoteCommandCoordinatorsResponse.newBuilder();
-      List<RemoteCommandCoordinator> coordinators =
-          remoteCommandCoordinatorRepository.findForControlPlane(
-              tenantId,
-              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
-              blankToEmpty(request.getOriginRegionId()),
-              request.getOriginRegionEpoch(),
-              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
-              blankToEmpty(request.getTargetRegionId()),
-              request.getTargetRegionEpoch(),
-              blankToEmpty(request.getCurrentOriginRuntimeRegionId()),
-              request.getCurrentOriginRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentOriginRuntimeGameInstanceId()),
-              blankToEmpty(request.getCurrentTargetRuntimeRegionId()),
-              request.getCurrentTargetRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentTargetRuntimeGameInstanceId()),
-              blankToEmpty(request.getState()),
-              blankToEmpty(request.getFollowupId()),
-              blankToEmpty(request.getScriptId()),
-              blankToEmpty(request.getPluginId()),
-              blankToEmpty(request.getScriptPatchVersion()),
-              blankToEmpty(request.getPluginVersionId()),
-              normalizePlayableStateScope(request.getPlayableStateScope()),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
-              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
-              blankToEmpty(request.getTargetEntityId()),
-              blankToEmpty(request.getClaimTargetAggregate()),
-              blankToEmpty(request.getEffectKey()),
-              blankToEmpty(request.getPayloadKind()),
-              blankToEmpty(request.getOriginSourceKind()),
-              blankToEmpty(request.getFollowupOriginSourceState()),
-              blankToEmpty(request.getAutomationWorkItemId()),
-              blankToEmpty(request.getEventType()),
-              blankToEmpty(request.getScriptEventId()),
-              blankToEmpty(request.getLateResultPolicy()),
-              blankToEmpty(request.getExecutionOutcome()),
-              blankToEmpty(request.getGameplayResult()),
-              blankToEmpty(request.getFollowupStatus()),
-              blankToEmpty(request.getFollowupClaimedTickBatchId()),
-              request.getFollowupRequiresSoloTick() ? Boolean.TRUE : null,
-              blankToEmpty(request.getFollowupQueueSourceKind()),
-              blankToEmpty(request.getFollowupQueueSourceState()),
-              request.getFollowupQueueSourceOrdinal(),
-              request.getFollowupQueueSourceDueTickId(),
-              request.getFollowupQueueSourceDueAtMs(),
-              blankToEmpty(request.getAutomationDispatchId()),
-              blankToEmpty(request.getCommandId()),
-              blankToEmpty(request.getTargetCommandId()),
-              blankToEmpty(request.getTargetCommandExecutionOutcome()),
-              blankToEmpty(request.getTargetCommandGameplayResult()),
-              blankToEmpty(request.getLatestResultOutcome()),
-              blankToEmpty(request.getLatestResultErrorCode()),
-              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
-      Map<String, RemoteFollowup> followupsById =
-          followupMap(
-              tenantId,
-              coordinators.stream().map(RemoteCommandCoordinator::getFollowupId).toList());
-      Map<String, RemoteFollowupResult> latestResultsByCoordinatorId =
-          latestResultMap(
-              tenantId,
-              coordinators.stream().map(RemoteCommandCoordinator::getCoordinatorId).toList());
-      Map<String, GameplayCommand> targetCommandsByFollowupId =
-          targetCommandMap(
-              tenantId,
-              followupsById.values().stream().map(RemoteFollowup::getFollowupId).toList());
-      coordinators.forEach(
-          coordinator ->
-              response.addCoordinators(
-                  toRemoteCoordinatorEntry(
-                      coordinator,
-                      followupsById.get(coordinator.getFollowupId()),
-                      latestResultsByCoordinatorId.get(coordinator.getCoordinatorId()),
-                      targetCommandsByFollowupId.get(coordinator.getFollowupId()))));
-      responseObserver.onNext(response.build());
+      responseObserver.onNext(
+          remoteControlPlaneService.listRemoteCommandCoordinators(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -573,67 +473,9 @@ public final class GameSessionControlPlaneGrpcService
       ScheduleRemoteFollowupRequest request,
       StreamObserver<ScheduleRemoteFollowupResponse> responseObserver) {
     try {
-      if (remoteFollowupRuntimeService == null) {
-        throw new IllegalStateException("Remote followup runtime service is not configured");
-      }
-      RoutingBundle requestRoutingBundle =
-          normalizeRoutingBundle(
-              normalizeBlank(request.getWorldSlug()),
-              normalizeBlank(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
-      RemoteFollowupRuntimeService.ScheduleOutcome outcome =
-          remoteFollowupRuntimeService.scheduleFollowup(
-              new RemoteFollowupRuntimeService.ScheduleRequest(
-                  parseTenantId(request.getTenantId()),
-                  request.getCommandId(),
-                  request.getCoordinatorId(),
-                  parseGameInstanceId(request.getOriginGameInstanceId()),
-                  request.getOriginRegionId(),
-                  request.getOriginRegionEpoch(),
-                  parseGameInstanceId(request.getTargetGameInstanceId()),
-                  request.getTargetRegionId(),
-                  request.getTargetRegionEpoch(),
-                  request.getTargetDueTickId(),
-                  request.getOriginDeadlineRegionEpoch(),
-                  request.getOriginDeadlineTickId(),
-                  request.getLateResultPolicy(),
-                  request.getFollowupId(),
-                  request.getEffectKey(),
-                  request.getTargetEntityId(),
-                  request.getPayloadJson(),
-                  normalizeBlank(request.getPayloadKind()),
-                  normalizeBlank(request.getRequestedCommand()),
-                  request.getRequiresSoloTick(),
-                  normalizePlayableStateScope(request.getPlayableStateScope()),
-                  requestRoutingBundle == null ? null : requestRoutingBundle.worldSlug(),
-                  requestRoutingBundle == null ? null : requestRoutingBundle.realmSlug(),
-                  requestRoutingBundle == null ? null : requestRoutingBundle.pointerVersion(),
-                  normalizeBlank(request.getScriptPatchVersion()),
-                  normalizeBlank(request.getPluginId()),
-                  normalizeBlank(request.getPluginVersionId()),
-                  normalizeBlank(request.getAutomationDispatchId()),
-                  normalizeBlank(request.getAutomationWorkItemId()),
-                  normalizeBlank(request.getScriptId()),
-                  normalizeBlank(request.getOriginSourceKind()),
-                  normalizeBlank(request.getOriginSourceState()),
-                  request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null,
-                  request.getOriginSourceDueTickId() > 0
-                      ? request.getOriginSourceDueTickId()
-                      : null,
-                  request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
-                  normalizeBlank(request.getEventType()),
-                  normalizeBlank(request.getEventSchemaVersion()),
-                  normalizeBlank(request.getScriptEventId()),
-                  normalizeBlank(request.getTriggerMode()),
-                  normalizeBlank(request.getReadSnapshotToken()),
-                  normalizeBlank(request.getEventPayloadJson())));
       responseObserver.onNext(
-          ScheduleRemoteFollowupResponse.newBuilder()
-              .setCoordinatorId(outcome.coordinatorId())
-              .setFollowupId(outcome.followupId())
-              .setCoordinatorCreated(outcome.coordinatorCreated())
-              .setFollowupCreated(outcome.followupCreated())
-              .build());
+          remoteControlPlaneService.scheduleRemoteFollowup(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -658,79 +500,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ListRemoteFollowupsResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      RoutingBundle filterRoutingBundle =
-          normalizeRoutingBundle(
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
-      java.util.List<RemoteFollowup> followups =
-          remoteFollowupRepository.findForControlPlane(
-              tenantId,
-              blankToEmpty(request.getTargetRegionId()),
-              blankToEmpty(request.getStatus()),
-              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
-              blankToEmpty(request.getOriginRegionId()),
-              request.getOriginRegionEpoch(),
-              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
-              request.getTargetRegionEpoch(),
-              blankToEmpty(request.getCurrentOriginRuntimeRegionId()),
-              request.getCurrentOriginRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentOriginRuntimeGameInstanceId()),
-              blankToEmpty(request.getCurrentTargetRuntimeRegionId()),
-              request.getCurrentTargetRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentTargetRuntimeGameInstanceId()),
-              blankToEmpty(request.getFollowupId()),
-              blankToEmpty(request.getScriptId()),
-              blankToEmpty(request.getPluginId()),
-              blankToEmpty(request.getScriptPatchVersion()),
-              blankToEmpty(request.getPluginVersionId()),
-              normalizePlayableStateScope(request.getPlayableStateScope()),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
-              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
-              blankToEmpty(request.getPayloadKind()),
-              blankToEmpty(request.getOriginSourceKind()),
-              blankToEmpty(request.getOriginSourceState()),
-              blankToEmpty(request.getAutomationWorkItemId()),
-              blankToEmpty(request.getTargetEntityId()),
-              blankToEmpty(request.getClaimTargetAggregate()),
-              blankToEmpty(request.getEffectKey()),
-              blankToEmpty(request.getFailureCode()),
-              request.getRequiresSoloTick() ? Boolean.TRUE : null,
-              blankToEmpty(request.getClaimedTickBatchId()),
-              blankToEmpty(request.getQueueSourceKind()),
-              blankToEmpty(request.getQueueSourceState()),
-              request.getQueueSourceOrdinal(),
-              request.getQueueSourceDueTickId(),
-              request.getQueueSourceDueAtMs(),
-              blankToEmpty(request.getRequestedCommand()),
-              blankToEmpty(request.getEventType()),
-              blankToEmpty(request.getScriptEventId()),
-              request.getOriginDeadlineRegionEpoch(),
-              request.getOriginDeadlineTickId(),
-              blankToEmpty(request.getLateResultPolicy()),
-              blankToEmpty(request.getAutomationDispatchId()),
-              blankToEmpty(request.getCommandId()),
-              blankToEmpty(request.getTargetCommandId()),
-              blankToEmpty(request.getTargetCommandExecutionOutcome()),
-              blankToEmpty(request.getTargetCommandGameplayResult()),
-              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
-      Map<String, GameplayCommand> targetCommandsByFollowupId =
-          targetCommandMap(
-              tenantId, followups.stream().map(RemoteFollowup::getFollowupId).toList());
-      Map<String, RemoteCommandCoordinator> coordinatorsByFollowupId =
-          coordinatorByFollowupMap(
-              tenantId, followups.stream().map(RemoteFollowup::getFollowupId).toList());
-      ListRemoteFollowupsResponse.Builder response = ListRemoteFollowupsResponse.newBuilder();
-      followups.forEach(
-          followup ->
-              response.addFollowups(
-                  toRemoteFollowupEntry(
-                      followup,
-                      targetCommandsByFollowupId.get(followup.getFollowupId()),
-                      coordinatorsByFollowupId.get(followup.getFollowupId()))));
-      responseObserver.onNext(response.build());
+      responseObserver.onNext(
+          remoteControlPlaneService.listRemoteFollowups(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -761,83 +533,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ListRemoteFollowupResultsResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      RoutingBundle filterRoutingBundle =
-          normalizeRoutingBundle(
-              blankToEmpty(request.getWorldSlug()),
-              blankToEmpty(request.getRealmSlug()),
-              request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
-      java.util.List<RemoteFollowupResult> results =
-          remoteFollowupResultRepository.findForControlPlane(
-              tenantId,
-              blankToEmpty(request.getCoordinatorId()),
-              blankToEmpty(request.getFollowupId()),
-              parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
-              blankToEmpty(request.getOriginRegionId()),
-              request.getOriginRegionEpoch(),
-              parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
-              blankToEmpty(request.getTargetRegionId()),
-              request.getTargetRegionEpoch(),
-              blankToEmpty(request.getCurrentOriginRuntimeRegionId()),
-              request.getCurrentOriginRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentOriginRuntimeGameInstanceId()),
-              blankToEmpty(request.getCurrentTargetRuntimeRegionId()),
-              request.getCurrentTargetRuntimeRegionEpoch(),
-              parseOptionalGameInstanceId(request.getCurrentTargetRuntimeGameInstanceId()),
-              blankToEmpty(request.getOutcome()),
-              blankToEmpty(request.getScriptId()),
-              blankToEmpty(request.getPluginId()),
-              blankToEmpty(request.getScriptPatchVersion()),
-              blankToEmpty(request.getPluginVersionId()),
-              normalizePlayableStateScope(request.getPlayableStateScope()),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.worldSlug(),
-              filterRoutingBundle == null ? "" : filterRoutingBundle.realmSlug(),
-              filterRoutingBundle == null ? null : filterRoutingBundle.pointerVersion(),
-              blankToEmpty(request.getResultErrorCode()),
-              blankToEmpty(request.getAutomationWorkItemId()),
-              blankToEmpty(request.getResultCommandId()),
-              blankToEmpty(request.getResultCommandExecutionOutcome()),
-              blankToEmpty(request.getResultCommandGameplayResult()),
-              blankToEmpty(request.getTargetEntityId()),
-              blankToEmpty(request.getClaimTargetAggregate()),
-              blankToEmpty(request.getEffectKey()),
-              blankToEmpty(request.getFailureCode()),
-              blankToEmpty(request.getPayloadKind()),
-              blankToEmpty(request.getOriginSourceKind()),
-              blankToEmpty(request.getOriginSourceState()),
-              blankToEmpty(request.getEventType()),
-              blankToEmpty(request.getScriptEventId()),
-              blankToEmpty(request.getResultMessage()),
-              request.getRequiresSoloTick() ? Boolean.TRUE : null,
-              blankToEmpty(request.getQueueSourceKind()),
-              blankToEmpty(request.getQueueSourceState()),
-              request.getQueueSourceOrdinal(),
-              request.getQueueSourceDueTickId(),
-              request.getQueueSourceDueAtMs(),
-              blankToEmpty(request.getLateResultPolicy()),
-              blankToEmpty(request.getClaimedTickBatchId()),
-              blankToEmpty(request.getAutomationDispatchId()),
-              blankToEmpty(request.getCommandId()),
-              PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
-      Map<String, RemoteCommandCoordinator> coordinatorsById =
-          coordinatorMap(
-              tenantId, results.stream().map(RemoteFollowupResult::getCoordinatorId).toList());
-      Map<String, RemoteFollowup> followupsById =
-          followupMap(tenantId, results.stream().map(RemoteFollowupResult::getFollowupId).toList());
-      Map<String, GameplayCommand> targetCommandsByFollowupId =
-          targetCommandMap(
-              tenantId, results.stream().map(RemoteFollowupResult::getFollowupId).toList());
-      ListRemoteFollowupResultsResponse.Builder response =
-          ListRemoteFollowupResultsResponse.newBuilder();
-      results.forEach(
-          result ->
-              response.addResults(
-                  toRemoteFollowupResultEntry(
-                      result,
-                      coordinatorsById.get(result.getCoordinatorId()),
-                      followupsById.get(result.getFollowupId()),
-                      targetCommandsByFollowupId.get(result.getFollowupId()))));
-      responseObserver.onNext(response.build());
+      responseObserver.onNext(
+          remoteControlPlaneService.listRemoteFollowupResults(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
