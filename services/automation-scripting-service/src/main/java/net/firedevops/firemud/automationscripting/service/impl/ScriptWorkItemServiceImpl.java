@@ -4,11 +4,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -243,22 +241,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     requireText(scriptPatchVersion, "script_patch_version");
     if (readinessProjectionService != null) {
-      Optional<PatchStatusSummary> projectionSummary =
-          readinessProjectionService
-              .getProjection(tenantId, scriptPatchVersion)
-              .map(
-                  readiness -> {
-                    PublicationMetadata metadata =
-                        publicationMetadata(tenantId, scriptPatchVersion);
-                    return PatchStatusSummary.fromProjection(
-                        readiness,
-                        metadata.baseVersionId(),
-                        metadata.abilitySchemaDigest(),
-                        metadata.publication());
-                  });
-      if (projectionSummary.isPresent()) {
-        return projectionSummary;
-      }
+      return readinessProjectionService
+          .getProjection(tenantId, scriptPatchVersion)
+          .map(
+              readiness -> {
+                PublicationMetadata metadata = publicationMetadata(tenantId, scriptPatchVersion);
+                return PatchStatusSummary.fromProjection(
+                    readiness,
+                    metadata.baseVersionId(),
+                    metadata.abilitySchemaDigest(),
+                    metadata.publication());
+              });
     }
     return summarize(
         scriptPatchVersion,
@@ -271,34 +264,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
     if (readinessProjectionService != null) {
-      List<PatchStatusSummary> projectionSummaries =
-          readinessProjectionService.listProjections(tenantId).stream()
-              .map(
-                  readiness -> {
-                    PublicationMetadata metadata =
-                        publicationMetadata(tenantId, readiness.scriptPatchVersion());
-                    return PatchStatusSummary.fromProjection(
-                        readiness,
-                        metadata.baseVersionId(),
-                        metadata.abilitySchemaDigest(),
-                        metadata.publication());
-                  })
-              .toList();
-      LinkedHashSet<String> projectedPatchVersions =
-          projectionSummaries.stream()
-              .map(PatchStatusSummary::scriptPatchVersion)
-              .collect(Collectors.toCollection(LinkedHashSet::new));
-      Stream<PatchStatusSummary> legacySummaries =
-          workItemRepository.findDistinctScriptPatchVersionsByTenantId(tenantId).stream()
-              .filter(patchVersion -> !projectedPatchVersions.contains(patchVersion))
-              .map(
-                  patchVersion ->
-                      summarize(
-                          patchVersion,
-                          workItemRepository.findByTenantIdAndScriptPatchVersion(
-                              tenantId, patchVersion)))
-              .flatMap(Optional::stream);
-      return Stream.concat(projectionSummaries.stream(), legacySummaries)
+      return readinessProjectionService.listProjections(tenantId).stream()
+          .map(
+              readiness -> {
+                PublicationMetadata metadata =
+                    publicationMetadata(tenantId, readiness.scriptPatchVersion());
+                return PatchStatusSummary.fromProjection(
+                    readiness,
+                    metadata.baseVersionId(),
+                    metadata.abilitySchemaDigest(),
+                    metadata.publication());
+              })
           .filter(
               summary ->
                   status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED

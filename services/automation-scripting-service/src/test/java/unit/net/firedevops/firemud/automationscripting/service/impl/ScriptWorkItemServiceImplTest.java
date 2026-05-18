@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -477,9 +478,7 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void listsProjectedAndLegacyPatchStatusesTogetherWhenProjectionCoverageIsPartial() {
-    ScriptWorkItem legacyFailed =
-        workItem("patch-legacy", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+  void listsOnlyProjectedPatchStatusesWhenReadinessProjectionServiceIsPresent() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
@@ -494,10 +493,6 @@ class ScriptWorkItemServiceImplTest {
                     "ready_for_tenant",
                     "",
                     500L)));
-    when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
-        .thenReturn(List.of("patch-projected", "patch-legacy"));
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-legacy"))
-        .thenReturn(List.of(legacyFailed));
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
             workItemRepository,
@@ -515,16 +510,48 @@ class ScriptWorkItemServiceImplTest {
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
         service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED, 0L, 0L);
 
-    assertThat(statuses).hasSize(2);
+    assertThat(statuses).hasSize(1);
     assertThat(statuses)
         .extracting(ScriptWorkItemService.PatchStatusSummary::scriptPatchVersion)
-        .containsExactly("patch-projected", "patch-legacy");
+        .containsExactly("patch-projected");
     assertThat(statuses)
         .extracting(ScriptWorkItemService.PatchStatusSummary::status)
-        .containsExactly(
-            ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
-            ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
-    verify(workItemRepository).findByTenantIdAndScriptPatchVersion("1", "patch-legacy");
+        .containsExactly(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY);
+    verify(workItemRepository, never()).findDistinctScriptPatchVersionsByTenantId("1");
+    verify(workItemRepository, never()).findByTenantIdAndScriptPatchVersion("1", "patch-legacy");
+  }
+
+  @Test
+  void returnsEmptyPatchStatusWhenProjectionServiceHasNoProjectionForPatch() {
+    ScriptWorkItem legacyFailed =
+        workItem("patch-legacy", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.getProjection("1", "patch-legacy"))
+        .thenReturn(Optional.empty());
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-legacy"))
+        .thenReturn(List.of(legacyFailed));
+    ScriptWorkItemService service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService);
+
+    Optional<ScriptWorkItemService.PatchStatusSummary> status =
+        service.getPatchStatus("1", "patch-legacy");
+
+    assertThat(status).isEmpty();
+    verify(workItemRepository, never()).findByTenantIdAndScriptPatchVersion("1", "patch-legacy");
   }
 
   @Test
