@@ -4548,6 +4548,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupRuntimeService,
             gameplayAdmissionPointerAuthorityService,
             gameDesignClient);
+    GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService =
+        new GameSessionAdmissionPointerControlPlaneService(
+            gameInstanceRepository,
+            gameplayAdmissionPointerAuthorityService,
+            versionUpgradePreparationService);
     return new GameSessionControlPlaneGrpcService(
         gameInstanceRepository,
         gameplayCommandRepository,
@@ -4557,6 +4562,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         remoteFollowupResultRepository,
         remoteControlPlaneService,
         runtimeControlPlaneReadService,
+        admissionPointerControlPlaneService,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,

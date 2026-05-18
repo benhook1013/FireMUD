@@ -24,7 +24,6 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -38,14 +37,10 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
-import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
 import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
@@ -133,6 +128,7 @@ public final class GameSessionControlPlaneGrpcService
   private final RemoteFollowupResultRepository remoteFollowupResultRepository;
   private final GameSessionRemoteControlPlaneService remoteControlPlaneService;
   private final GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService;
+  private final GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -155,6 +151,7 @@ public final class GameSessionControlPlaneGrpcService
       RemoteFollowupResultRepository remoteFollowupResultRepository,
       GameSessionRemoteControlPlaneService remoteControlPlaneService,
       GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService,
+      GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -171,6 +168,7 @@ public final class GameSessionControlPlaneGrpcService
     this.remoteFollowupResultRepository = remoteFollowupResultRepository;
     this.remoteControlPlaneService = remoteControlPlaneService;
     this.runtimeControlPlaneReadService = runtimeControlPlaneReadService;
+    this.admissionPointerControlPlaneService = admissionPointerControlPlaneService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
@@ -232,20 +230,7 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ListAdmissionPointersResponse> responseObserver) {
     try {
       requireAdminRole();
-      ListAdmissionPointersResponse response =
-          ListAdmissionPointersResponse.newBuilder()
-              .addAllPointers(
-                  gameplayAdmissionPointerAuthorityService.listPointers().stream()
-                      .flatMap(
-                          pointer ->
-                              gameplayAdmissionPointerAuthorityService
-                                  .listPointerAudit(pointer.worldSlug(), pointer.realmSlug())
-                                  .stream()
-                                  .limit(1)
-                                  .map(this::toEntry))
-                      .toList())
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ListAdmissionPointersResponse response =
@@ -272,16 +257,8 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ListAdmissionPointerAuditResponse> responseObserver) {
     try {
       requireAdminRole();
-      ListAdmissionPointerAuditResponse response =
-          ListAdmissionPointerAuditResponse.newBuilder()
-              .addAllAudit(
-                  gameplayAdmissionPointerAuthorityService
-                      .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
-                      .stream()
-                      .map(this::toEntry)
-                      .toList())
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          admissionPointerControlPlaneService.listAdmissionPointerAudit(request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ListAdmissionPointerAuditResponse response =
@@ -566,37 +543,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<SetAdmissionPointerResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      validatePreparedUpgradeForPointerChange(request, tenantId, gameInstanceId);
-      gameplayAdmissionPointerAuthorityService.upsertPointer(
-          new GameplayAdmissionPointerMutation(
-              request.getWorldSlug(),
-              request.getWorldDisplayName(),
-              request.getRealmSlug(),
-              request.getRealmDisplayName(),
-              tenantId,
-              gameInstanceId,
-              request.getVisible(),
-              request.getPublicProductionRealm(),
-              request.getRequiresCharacterSelection(),
-              request.getStateScope(),
-              request.getCharacterCreationPolicy(),
-              request.getActorPrincipal(),
-              request.getReason(),
-              request.getControlPlaneRequestId(),
-              request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-              normalizeBlank(request.getPreparedVersionUpgradeId())));
-      AdmissionPointerControlPlaneEntry entry =
-          gameplayAdmissionPointerAuthorityService
-              .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
-              .stream()
-              .findFirst()
-              .map(this::toEntry)
-              .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
-      SetAdmissionPointerResponse response =
-          SetAdmissionPointerResponse.newBuilder().setPointer(entry).build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          admissionPointerControlPlaneService.setAdmissionPointer(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       SetAdmissionPointerResponse response =
@@ -647,76 +598,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ExecutePreparedVersionCutoverResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long targetGameInstanceId = parseGameInstanceId(request.getTargetGameInstanceId());
-      requireText(request.getWorldSlug(), "world_slug is required");
-      requireText(request.getRealmSlug(), "realm_slug is required");
-      requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
-      requireText(request.getActorPrincipal(), "actor_principal is required");
-      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
-      GameplayAdmissionPointerSnapshot currentPointer =
-          gameplayAdmissionPointerAuthorityService
-              .findPointer(request.getWorldSlug(), request.getRealmSlug())
-              .orElseThrow(() -> new IllegalArgumentException("Admission pointer not found"));
-      if (currentPointer.tenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own admission pointer");
-      }
-      if (currentPointer.gameInstanceId() == targetGameInstanceId) {
-        AdmissionPointerControlPlaneEntry idempotentEntry =
-            currentExecutedCutoverEntryIfSameRequest(
-                request.getWorldSlug(),
-                request.getRealmSlug(),
-                tenantId,
-                targetGameInstanceId,
-                request.getPreparedVersionUpgradeId(),
-                request.getControlPlaneRequestId());
-        ExecutePreparedVersionCutoverResponse response =
-            ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(idempotentEntry).build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
-        return;
-      }
-      validatePreparedUpgradeForPointerChange(
-          request.getWorldSlug(),
-          request.getRealmSlug(),
-          tenantId,
-          targetGameInstanceId,
-          request.getPreparedVersionUpgradeId(),
-          currentPointer);
-      gameplayAdmissionPointerAuthorityService.upsertPointer(
-          new GameplayAdmissionPointerMutation(
-              currentPointer.worldSlug(),
-              currentPointer.worldDisplayName(),
-              currentPointer.realmSlug(),
-              currentPointer.realmDisplayName(),
-              tenantId,
-              targetGameInstanceId,
-              currentPointer.visible(),
-              currentPointer.publicProductionRealm(),
-              currentPointer.requiresCharacterSelection(),
-              currentPointer.stateScope(),
-              currentPointer.characterCreationPolicy(),
-              request.getActorPrincipal(),
-              request.getReason(),
-              request.getControlPlaneRequestId(),
-              request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-              request.getPreparedVersionUpgradeId()));
-      AdmissionPointerControlPlaneEntry entry =
-          gameplayAdmissionPointerAuthorityService
-              .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
-              .stream()
-              .findFirst()
-              .map(this::toEntry)
-              .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
-      versionUpgradePreparationService.markPreparedVersionUpgradeExecuted(
-          tenantId,
-          request.getPreparedVersionUpgradeId(),
-          targetGameInstanceId,
-          entry.getPointerVersion(),
-          request.getControlPlaneRequestId());
-      ExecutePreparedVersionCutoverResponse response =
-          ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(entry).build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          admissionPointerControlPlaneService.executePreparedVersionCutover(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getTargetGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ExecutePreparedVersionCutoverResponse response =
@@ -1291,125 +1177,6 @@ public final class GameSessionControlPlaneGrpcService
     return builder.build();
   }
 
-  private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
-    AdmissionPointerControlPlaneEntry.Builder builder =
-        AdmissionPointerControlPlaneEntry.newBuilder()
-            .setWorldSlug(entry.worldSlug())
-            .setWorldDisplayName(entry.worldDisplayName())
-            .setRealmSlug(entry.realmSlug())
-            .setRealmDisplayName(entry.realmDisplayName())
-            .setTenantId(Long.toString(entry.tenantId()))
-            .setGameInstanceId(Long.toString(entry.gameInstanceId()))
-            .setPointerVersion(entry.pointerVersion())
-            .setVisible(entry.visible())
-            .setPublicProductionRealm(entry.publicProductionRealm())
-            .setRequiresCharacterSelection(entry.requiresCharacterSelection())
-            .setStateScope(entry.stateScope())
-            .setCharacterCreationPolicy(entry.characterCreationPolicy())
-            .setActorPrincipal(entry.actorPrincipal())
-            .setReason(entry.reason())
-            .setControlPlaneRequestId(entry.controlPlaneRequestId())
-            .setOccurredAtMs(entry.occurredAt().toEpochMilli());
-    if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
-      builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
-    }
-    return builder.build();
-  }
-
-  private void validatePreparedUpgradeForPointerChange(
-      SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
-  }
-
-  private void validatePreparedUpgradeForPointerChange(
-      String worldSlug,
-      String realmSlug,
-      long tenantId,
-      long targetGameInstanceId,
-      String preparedVersionUpgradeId,
-      GameplayAdmissionPointerSnapshot currentPointer) {
-    GameInstance targetInstance = getInstanceOrThrow(targetGameInstanceId);
-    if (!Long.valueOf(tenantId).equals(targetInstance.getTenantId())) {
-      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-    }
-    if (currentPointer == null
-        || currentPointer.gameInstanceId() == targetGameInstanceId
-        || currentPointer.tenantId() != tenantId) {
-      return;
-    }
-    if (preparedVersionUpgradeId == null || preparedVersionUpgradeId.isBlank()) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id is required when changing admission pointer target");
-    }
-    PreparedVersionUpgradeDto preparation =
-        versionUpgradePreparationService.getPreparedVersionUpgrade(
-            tenantId, preparedVersionUpgradeId);
-    if (!"COMPATIBLE".equals(preparation.result())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id must reference a COMPATIBLE preparation");
-    }
-    if (!Long.valueOf(currentPointer.gameInstanceId()).equals(preparation.sourceGameInstanceId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id does not match the current admission-pointer source instance");
-    }
-    if (!Long.valueOf(targetGameInstanceId).equals(targetInstance.getId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id target does not match game_instance_id");
-    }
-    if (!Long.valueOf(preparation.targetVersionId()).equals(targetInstance.getVersionId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id targetVersionId does not match target instance version");
-    }
-    if (!normalizeBlank(preparation.targetLaunchDescriptorId())
-        .equals(normalizeBlank(targetInstance.getLaunchDescriptorId()))) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id targetLaunchDescriptorId does not match target instance");
-    }
-    if (!normalizeBlank(preparation.remapSetId())
-        .equals(normalizeBlank(targetInstance.getRemapSetId()))) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id remapSetId does not match target instance");
-    }
-  }
-
-  private AdmissionPointerControlPlaneEntry currentExecutedCutoverEntryIfSameRequest(
-      String worldSlug,
-      String realmSlug,
-      long tenantId,
-      long targetGameInstanceId,
-      String preparedVersionUpgradeId,
-      String controlPlaneRequestId) {
-    PreparedVersionUpgradeDto preparation =
-        versionUpgradePreparationService.getPreparedVersionUpgrade(
-            tenantId, preparedVersionUpgradeId);
-    if (!Long.valueOf(targetGameInstanceId).equals(preparation.executedTargetGameInstanceId())
-        || !controlPlaneRequestId.equals(preparation.executionControlPlaneRequestId())) {
-      throw new IllegalArgumentException(
-          "target_game_instance_id must differ from the current admission pointer target");
-    }
-    AdmissionPointerControlPlaneEntry entry =
-        gameplayAdmissionPointerAuthorityService.listPointerAudit(worldSlug, realmSlug).stream()
-            .findFirst()
-            .map(this::toEntry)
-            .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
-    if (preparation.executedPointerVersion() != null
-        && entry.getPointerVersion() != preparation.executedPointerVersion()) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id execution state does not match current admission pointer");
-    }
-    return entry;
-  }
-
   private String normalizeBlank(String value) {
     return value == null || value.isBlank() ? "" : value;
   }
@@ -1478,12 +1245,6 @@ public final class GameSessionControlPlaneGrpcService
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(message);
-    }
-  }
-
-  private static final class CutoverPreparationValidationException extends RuntimeException {
-    private CutoverPreparationValidationException(String message) {
-      super(message);
     }
   }
 
