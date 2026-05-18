@@ -73,12 +73,18 @@ import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchResponse;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
@@ -207,6 +213,42 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("patch-1", responseRef.get().getPreviousScriptPatchVersion());
     assertEquals("patch-2", responseRef.get().getPinnedScriptPatchVersion());
     assertEquals("req-1", instance.getScriptPatchPinnedControlPlaneRequestId());
+    Mockito.verify(repository).save(Mockito.any(GameInstance.class));
+  }
+
+  @Test
+  void rollbackScriptPatchVersionAllowsAdminCaller() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<RollbackScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.rollbackScriptPatchVersion(
+        RollbackScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setTargetScriptPatchVersion("patch-1")
+            .setActorPrincipal("tester")
+            .setReason("rollback")
+            .setControlPlaneRequestId("req-rollback-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(RollbackScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("patch-2", responseRef.get().getPreviousScriptPatchVersion());
+    assertEquals("patch-1", responseRef.get().getPinnedScriptPatchVersion());
+    assertEquals("req-rollback-1", instance.getScriptPatchPinnedControlPlaneRequestId());
     Mockito.verify(repository).save(Mockito.any(GameInstance.class));
   }
 
@@ -2370,6 +2412,82 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals(2L, responseRef.get().getPurgedCount());
+  }
+
+  @Test
+  void pauseTicksForScopeDelegatesToTickService() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<PauseTicksForScopeResponse> responseRef = new AtomicReference<>();
+    service.pauseTicksForScope(
+        PauseTicksForScopeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setReason("pause for operator action")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(PauseTicksForScopeResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertTrue(responseRef.get().getSuccess());
+    Mockito.verify(tickService).pauseTicksForGameInstance(7L, "pause for operator action");
+  }
+
+  @Test
+  void resumeTicksForScopeDelegatesToTickService() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ResumeTicksForScopeResponse> responseRef = new AtomicReference<>();
+    service.resumeTicksForScope(
+        ResumeTicksForScopeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setReason("resume after operator action")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ResumeTicksForScopeResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertTrue(responseRef.get().getSuccess());
+    Mockito.verify(tickService).resumeTicksForGameInstance(7L, "resume after operator action");
   }
 
   @Test
@@ -4553,6 +4671,12 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             gameplayAdmissionPointerAuthorityService,
             versionUpgradePreparationService);
+    GameSessionOperatorControlPlaneService operatorControlPlaneService =
+        new GameSessionOperatorControlPlaneService(
+            gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+    GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService =
+        new GameSessionVersionUpgradeControlPlaneService(
+            instanceCutoverCompatibilityService, versionUpgradePreparationService);
     return new GameSessionControlPlaneGrpcService(
         gameInstanceRepository,
         gameplayCommandRepository,
@@ -4563,6 +4687,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         remoteControlPlaneService,
         runtimeControlPlaneReadService,
         admissionPointerControlPlaneService,
+        operatorControlPlaneService,
+        versionUpgradeControlPlaneService,
         gameplayAdmissionPointerAuthorityService,
         instanceCutoverCompatibilityService,
         versionUpgradePreparationService,

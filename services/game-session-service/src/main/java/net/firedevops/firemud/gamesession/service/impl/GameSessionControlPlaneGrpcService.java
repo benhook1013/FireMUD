@@ -41,8 +41,6 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
-import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
-import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
@@ -78,7 +76,6 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PluginPublicationLink;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
-import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
@@ -129,6 +126,8 @@ public final class GameSessionControlPlaneGrpcService
   private final GameSessionRemoteControlPlaneService remoteControlPlaneService;
   private final GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService;
   private final GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService;
+  private final GameSessionOperatorControlPlaneService operatorControlPlaneService;
+  private final GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final InstanceCutoverCompatibilityService instanceCutoverCompatibilityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -152,6 +151,8 @@ public final class GameSessionControlPlaneGrpcService
       GameSessionRemoteControlPlaneService remoteControlPlaneService,
       GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService,
       GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService,
+      GameSessionOperatorControlPlaneService operatorControlPlaneService,
+      GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
       VersionUpgradePreparationService versionUpgradePreparationService,
@@ -169,6 +170,8 @@ public final class GameSessionControlPlaneGrpcService
     this.remoteControlPlaneService = remoteControlPlaneService;
     this.runtimeControlPlaneReadService = runtimeControlPlaneReadService;
     this.admissionPointerControlPlaneService = admissionPointerControlPlaneService;
+    this.operatorControlPlaneService = operatorControlPlaneService;
+    this.versionUpgradeControlPlaneService = versionUpgradeControlPlaneService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.instanceCutoverCompatibilityService = instanceCutoverCompatibilityService;
     this.versionUpgradePreparationService = versionUpgradePreparationService;
@@ -653,33 +656,10 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetPinnedScriptPatchVersionResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-      GetPinnedScriptPatchVersionResponse response =
-          GetPinnedScriptPatchVersionResponse.newBuilder()
-              .setPinnedScriptPatchVersion(
-                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-              .setPinnedAtMs(
-                  instance.getScriptPatchPinnedAt() == null
-                      ? 0
-                      : instance.getScriptPatchPinnedAt().toEpochMilli())
-              .setPinnedBy(
-                  instance.getScriptPatchPinnedBy() == null
-                      ? ""
-                      : instance.getScriptPatchPinnedBy())
-              .setControlPlaneRequestId(
-                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                      ? ""
-                      : instance.getScriptPatchPinnedControlPlaneRequestId())
-              .setPublication(
-                  scriptPatchPublicationLink(
-                      instance.getTenantId(), instance.getScriptPatchVersion()))
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.getPinnedScriptPatchVersion(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId())));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       GetPinnedScriptPatchVersionResponse response =
@@ -713,29 +693,10 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetGameSessionPinConvergenceResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-      GetGameSessionPinConvergenceResponse response =
-          GetGameSessionPinConvergenceResponse.newBuilder()
-              .setTenantId(Long.toString(instance.getTenantId()))
-              .setGameInstanceId(Long.toString(instance.getId()))
-              .setObservedPinnedScriptPatchVersion(
-                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-              .setLastObservedControlPlaneRequestId(
-                  instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                      ? ""
-                      : instance.getScriptPatchPinnedControlPlaneRequestId())
-              .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
-              .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
-              .setPublication(
-                  scriptPatchPublicationLink(
-                      instance.getTenantId(), instance.getScriptPatchVersion()))
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.getGameSessionPinConvergence(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId())));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       GetGameSessionPinConvergenceResponse response =
@@ -857,29 +818,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<SetPinnedScriptPatchVersionResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-
-      String previous = instance.getScriptPatchVersion();
-      instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
-      instance.setScriptPatchPinnedAt(Instant.now());
-      instance.setScriptPatchPinnedBy(request.getActorPrincipal());
-      instance.setScriptPatchPinnedReason(request.getReason());
-      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
-      gameInstanceRepository.save(instance);
-
-      SetPinnedScriptPatchVersionResponse response =
-          SetPinnedScriptPatchVersionResponse.newBuilder()
-              .setPreviousScriptPatchVersion(previous == null ? "" : previous)
-              .setPinnedScriptPatchVersion(
-                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-              .setControlPlaneRequestId(request.getControlPlaneRequestId())
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.setPinnedScriptPatchVersion(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       SetPinnedScriptPatchVersionResponse response =
@@ -913,29 +856,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<RollbackScriptPatchVersionResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-
-      String previous = instance.getScriptPatchVersion();
-      instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
-      instance.setScriptPatchPinnedAt(Instant.now());
-      instance.setScriptPatchPinnedBy(request.getActorPrincipal());
-      instance.setScriptPatchPinnedReason(request.getReason());
-      instance.setScriptPatchPinnedControlPlaneRequestId(request.getControlPlaneRequestId());
-      gameInstanceRepository.save(instance);
-
-      RollbackScriptPatchVersionResponse response =
-          RollbackScriptPatchVersionResponse.newBuilder()
-              .setPreviousScriptPatchVersion(previous == null ? "" : previous)
-              .setPinnedScriptPatchVersion(
-                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-              .setControlPlaneRequestId(request.getControlPlaneRequestId())
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.rollbackScriptPatchVersion(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       RollbackScriptPatchVersionResponse response =
@@ -969,23 +894,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ValidateInstanceCutoverCompatibilityResponse> responseObserver) {
     try {
       requireAdminRole();
-      var validation =
-          instanceCutoverCompatibilityService.validateInstanceCutoverCompatibility(
+      responseObserver.onNext(
+          versionUpgradeControlPlaneService.validateInstanceCutoverCompatibility(
               parseTenantId(request.getTenantId()),
               parseGameInstanceId(request.getSourceGameInstanceId()),
-              parseGameInstanceId(request.getTargetVersionId()));
-      ValidateInstanceCutoverCompatibilityResponse.Builder response =
-          ValidateInstanceCutoverCompatibilityResponse.newBuilder()
-              .setResult(toCutoverCompatibilityResult(validation.result()))
-              .addAllReasons(validation.reasons())
-              .addAllCheckedParticipants(validation.checkedParticipants())
-              .setCheckedAtMs(validation.checkedAt().toEpochMilli())
-              .addAllParticipantResults(
-                  validation.participantResults().stream().map(this::toParticipantResult).toList());
-      if (validation.remapSetId() != null) {
-        response.setRemapSetId(validation.remapSetId());
-      }
-      responseObserver.onNext(response.build());
+              parseGameInstanceId(request.getTargetVersionId())));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ValidateInstanceCutoverCompatibilityResponse response =
@@ -1019,16 +932,12 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<PrepareVersionUpgradeResponse> responseObserver) {
     try {
       requireAdminRole();
-      var preparation =
-          versionUpgradePreparationService.prepareVersionUpgrade(
+      responseObserver.onNext(
+          versionUpgradeControlPlaneService.prepareVersionUpgrade(
               parseTenantId(request.getTenantId()),
               parseGameInstanceId(request.getSourceGameInstanceId()),
               parseGameInstanceId(request.getTargetVersionId()),
-              request.getControlPlaneRequestId());
-      responseObserver.onNext(
-          PrepareVersionUpgradeResponse.newBuilder()
-              .setPreparation(toPreparedVersionUpgrade(preparation))
-              .build());
+              request.getControlPlaneRequestId()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       PrepareVersionUpgradeResponse response =
@@ -1062,13 +971,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<GetPreparedVersionUpgradeResponse> responseObserver) {
     try {
       requireAdminRole();
-      var preparation =
-          versionUpgradePreparationService.getPreparedVersionUpgrade(
-              parseTenantId(request.getTenantId()), request.getPreparationId());
       responseObserver.onNext(
-          GetPreparedVersionUpgradeResponse.newBuilder()
-              .setPreparation(toPreparedVersionUpgrade(preparation))
-              .build());
+          versionUpgradeControlPlaneService.getPreparedVersionUpgrade(
+              parseTenantId(request.getTenantId()), request.getPreparationId()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       GetPreparedVersionUpgradeResponse response =
@@ -1255,22 +1160,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<PurgeQueuedTickCommandsForScriptPatchResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      requireText(request.getScriptPatchVersion(), "script_patch_version is required");
-      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
-      requireText(request.getActorPrincipal(), "actor_principal is required");
-      requireInstanceOwner(tenantId, gameInstanceId);
-      long purged =
-          tickService.purgeQueuedAutomationCommandsForScriptPatch(
-              tenantId,
-              gameInstanceId,
-              normalizeBlank(request.getRegionId()),
-              request.getScriptPatchVersion(),
-              request.getReason());
-      PurgeQueuedTickCommandsForScriptPatchResponse response =
-          PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder().setPurgedCount(purged).build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.purgeQueuedTickCommandsForScriptPatch(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       PurgeQueuedTickCommandsForScriptPatchResponse response =
@@ -1304,26 +1198,11 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<PurgeQueuedTickCommandsForPluginVersionResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      requireText(request.getPluginId(), "plugin_id is required");
-      requireText(request.getPluginVersionId(), "plugin_version_id is required");
-      requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
-      requireText(request.getActorPrincipal(), "actor_principal is required");
-      requireInstanceOwner(tenantId, gameInstanceId);
-      long purged =
-          tickService.purgeQueuedAutomationCommandsForPluginVersion(
-              tenantId,
-              gameInstanceId,
-              normalizeBlank(request.getRegionId()),
-              request.getPluginId(),
-              request.getPluginVersionId(),
-              request.getReason());
-      PurgeQueuedTickCommandsForPluginVersionResponse response =
-          PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
-              .setPurgedCount(purged)
-              .build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.purgeQueuedTickCommandsForPluginVersion(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()),
+              request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       PurgeQueuedTickCommandsForPluginVersionResponse response =
@@ -1347,13 +1226,6 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    }
-  }
-
-  private void requireInstanceOwner(long tenantId, long gameInstanceId) {
-    GameInstance instance = getInstanceOrThrow(gameInstanceId);
-    if (instance.getTenantId() != tenantId) {
-      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
   }
 
@@ -2617,63 +2489,6 @@ public final class GameSessionControlPlaneGrpcService
     return value == null || value.isBlank() ? "" : value;
   }
 
-  private CutoverParticipantResult toParticipantResult(
-      net.firedevops.firemud.gamesession.dto.CutoverParticipantCompatibilityDto result) {
-    return CutoverParticipantResult.newBuilder()
-        .setParticipant(result.participant())
-        .addAllStateClassesChecked(result.stateClassesChecked())
-        .addAllCheckedFamilies(result.checkedFamilies())
-        .setHasS2Rows(result.hasS2Rows())
-        .setResult(toCutoverCompatibilityResult(result.result()))
-        .addAllReasons(result.reasons())
-        .build();
-  }
-
-  private PreparedVersionUpgrade toPreparedVersionUpgrade(
-      net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto preparation) {
-    PreparedVersionUpgrade.Builder builder =
-        PreparedVersionUpgrade.newBuilder()
-            .setPreparationId(preparation.preparationId())
-            .setControlPlaneRequestId(preparation.controlPlaneRequestId())
-            .setTenantId(Long.toString(preparation.tenantId()))
-            .setSourceGameInstanceId(Long.toString(preparation.sourceGameInstanceId()))
-            .setSourceVersionId(Long.toString(preparation.sourceVersionId()))
-            .setTargetVersionId(Long.toString(preparation.targetVersionId()))
-            .setTargetLaunchDescriptorId(preparation.targetLaunchDescriptorId())
-            .setResult(toCutoverCompatibilityResult(preparation.result()))
-            .addAllReasons(preparation.reasons())
-            .addAllCheckedParticipants(preparation.checkedParticipants())
-            .setCheckedAtMs(preparation.checkedAt().toEpochMilli())
-            .addAllParticipantResults(
-                preparation.participantResults().stream().map(this::toParticipantResult).toList());
-    if (preparation.remapSetId() != null) {
-      builder.setRemapSetId(preparation.remapSetId());
-    }
-    if (preparation.executedTargetGameInstanceId() != null) {
-      builder.setExecutedTargetGameInstanceId(
-          Long.toString(preparation.executedTargetGameInstanceId()));
-    }
-    if (preparation.executedPointerVersion() != null) {
-      builder.setExecutedPointerVersion(preparation.executedPointerVersion());
-    }
-    if (preparation.executedAt() != null) {
-      builder.setExecutedAtMs(preparation.executedAt().toEpochMilli());
-    }
-    if (preparation.executionControlPlaneRequestId() != null) {
-      builder.setExecutionControlPlaneRequestId(preparation.executionControlPlaneRequestId());
-    }
-    return builder.build();
-  }
-
-  private CutoverCompatibilityResult toCutoverCompatibilityResult(String result) {
-    return switch (result) {
-      case "COMPATIBLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE;
-      case "INCOMPATIBLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_INCOMPATIBLE;
-      case "UNAVAILABLE" -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_UNAVAILABLE;
-      default -> CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_UNSPECIFIED;
-    };
-  }
-
   private GameplayCommandStatus toStatus(GameplayCommand command) {
     RemoteCommandCoordinator remoteCoordinator = resolveRemoteCoordinator(command);
     RemoteFollowup remoteFollowup = resolveRemoteFollowup(command, remoteCoordinator);
@@ -3111,14 +2926,6 @@ public final class GameSessionControlPlaneGrpcService
     return instant == null ? 0L : instant.toEpochMilli();
   }
 
-  private boolean isPinConvergenceStale(Instant pinnedAt) {
-    if (pinnedAt == null) {
-      return true;
-    }
-    long ageMs = Instant.now().toEpochMilli() - pinnedAt.toEpochMilli();
-    return ageMs > gameSessionProperties.getPinConvergenceStaleThresholdMs();
-  }
-
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       long tenantId, String scriptPatchVersion) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
@@ -3182,19 +2989,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<PauseTicksForScopeResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      if (!request.getRegionId().isBlank()) {
-        throw new IllegalArgumentException("region_id is not supported; set it empty");
-      }
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-      tickService.pauseTicksForGameInstance(gameInstanceId, request.getReason());
-      PauseTicksForScopeResponse response =
-          PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.pauseTicksForScope(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       PauseTicksForScopeResponse response =
@@ -3231,19 +3028,9 @@ public final class GameSessionControlPlaneGrpcService
       StreamObserver<ResumeTicksForScopeResponse> responseObserver) {
     try {
       requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
-      if (!request.getRegionId().isBlank()) {
-        throw new IllegalArgumentException("region_id is not supported; set it empty");
-      }
-      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(gameInstanceId);
-      if (instance.getTenantId() != tenantId) {
-        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-      }
-      tickService.resumeTicksForGameInstance(gameInstanceId, request.getReason());
-      ResumeTicksForScopeResponse response =
-          ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
-      responseObserver.onNext(response);
+      responseObserver.onNext(
+          operatorControlPlaneService.resumeTicksForScope(
+              parseTenantId(request.getTenantId()), request));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ResumeTicksForScopeResponse response =
