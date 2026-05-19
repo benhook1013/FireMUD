@@ -1,7 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
@@ -10,33 +8,14 @@ import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
-import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
-import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
-import net.firedevops.firemud.gamesession.entity.TickEffect;
-import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
-import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
-import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
-import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
-import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
-import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
-import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,17 +40,10 @@ public class TickServiceImpl implements TickService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
-  private final GameplayCommandRepository gameplayCommandRepository;
-  private final RemoteFollowupRepository remoteFollowupRepository;
-  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
-  private final TickBatchRepository tickBatchRepository;
-  private final TickEffectRepository tickEffectRepository;
-  private final RemoteFollowupDrainService remoteFollowupDrainService;
-  private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
-  private final AutomationScriptingClient automationScriptingClient;
   private final TickQueueControlService tickQueueControlService;
   private final TickBatchExecutionService tickBatchExecutionService;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final TickStagingService tickStagingService;
+  private final TickRuntimeProgressService tickRuntimeProgressService;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -102,23 +74,6 @@ public class TickServiceImpl implements TickService {
   private final StringRedisSerializer scriptArgsSerializer = new StringRedisSerializer();
   private final GenericToStringSerializer<Long> scriptResultSerializer =
       new GenericToStringSerializer<>(Long.class);
-  private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
-  private final AtomicLong retryQueueDepthTotal = new AtomicLong();
-  private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
-  private final Map<String, Long> remoteFollowupDueByTarget = new ConcurrentHashMap<>();
-  private final Map<String, Long> remoteFollowupDrainLagByTarget = new ConcurrentHashMap<>();
-  private final Map<String, Long> remoteFollowupDuePresenceByTarget = new ConcurrentHashMap<>();
-  private final AtomicInteger remoteFollowupTargetsWithDue = new AtomicInteger();
-  private final AtomicLong remoteFollowupDueTotal = new AtomicLong();
-  private final AtomicLong remoteFollowupDrainLagMax = new AtomicLong();
-  private Counter remoteFollowupBacklogOverBudgetCounter;
-
-  private record CommandSelection(
-      TickQueuedCommandEnvelope entry,
-      GameplayCommand command,
-      long sourceOrdinal,
-      String effectKey,
-      String commandDigest) {}
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -153,15 +108,6 @@ public class TickServiceImpl implements TickService {
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
     this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
-    this.remoteFollowupBacklogOverBudgetCounter =
-        meterRegistry.counter("remote_followups_backlog_over_budget_total");
-    meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
-    meterRegistry.gauge(
-        "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
-    meterRegistry.gauge("remote_followups_due_total", remoteFollowupDueTotal);
-    meterRegistry.gauge("remote_followups_drain_lag_ms", remoteFollowupDrainLagMax);
-    meterRegistry.gauge(
-        "game_session_remote_followups_targets_with_due", remoteFollowupTargetsWithDue);
     ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
     ResourceScriptSource stageSrc =
@@ -249,9 +195,10 @@ public class TickServiceImpl implements TickService {
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
       TickQueueControlService.OwnershipSnapshot ownership =
           tickQueueControlService.observeOwnership(normalizedTenantId, normalizedQueueTargetId);
-      observeRemoteFollowupBacklog(normalizedTenantId, ownership);
+      tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
       if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
-        reconcilePausedRemoteFollowupResults(normalizedTenantId, ownership);
+        tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
+            normalizedTenantId, ownership);
         logger.debug("Tick processing skipped while paused");
         return;
       }
@@ -279,7 +226,8 @@ public class TickServiceImpl implements TickService {
       try {
         tickBatchExecutionService.executeDurableEffects(
             normalizedTenantId, normalizedQueueTargetId);
-        drainRemoteFollowups(normalizedTenantId, normalizedQueueTargetId, ownership);
+        tickStagingService.drainRemoteFollowups(
+            normalizedTenantId, normalizedQueueTargetId, ownership);
         Long pending =
             redisTemplate
                 .opsForList()
@@ -287,12 +235,13 @@ public class TickServiceImpl implements TickService {
                     tickQueueControlService.pendingKey(
                         normalizedTenantId, normalizedQueueTargetId));
         long depth = pending != null ? pending : 0L;
-        updateRetryQueueDepth(normalizedTenantId, normalizedQueueTargetId, depth);
+        tickRuntimeProgressService.updateRetryQueueDepth(
+            normalizedTenantId, normalizedQueueTargetId, depth);
         if (pending != null && pending > 0) {
           List<TickQueuedCommandEnvelope> replayEntries =
-              readPendingEntries(normalizedTenantId, normalizedQueueTargetId);
+              tickStagingService.readPendingEntries(normalizedTenantId, normalizedQueueTargetId);
           TickBatch replayBatch =
-              resolveReplayBatch(
+              tickStagingService.resolveReplayBatch(
                   normalizedTenantId, normalizedQueueTargetId, replayEntries, ownership);
           tickBatchExecutionService.requireCurrentOwnership(replayBatch, false);
           logger.info("Replaying {} pending commands for {}", pending, normalizedQueueTargetId);
@@ -335,10 +284,11 @@ public class TickServiceImpl implements TickService {
                                   normalizedTenantId, normalizedQueueTargetId)),
                           String.valueOf(max)));
             });
-        activeBatchEntries = readPendingEntries(normalizedTenantId, normalizedQueueTargetId);
+        activeBatchEntries =
+            tickStagingService.readPendingEntries(normalizedTenantId, normalizedQueueTargetId);
         if (!activeBatchEntries.isEmpty()) {
           activeBatch =
-              createBatch(
+              tickStagingService.createBatch(
                   "FRESH_STAGE",
                   normalizedTenantId,
                   normalizedQueueTargetId,
@@ -365,8 +315,9 @@ public class TickServiceImpl implements TickService {
               normalizedTenantId, normalizedQueueTargetId);
         }
         tickProgressToPublish =
-            advanceRuntimeTickProgress(normalizedTenantId, normalizedQueueTargetId, ownership);
-        reconcileRemoteFollowupTimeouts(tickProgressToPublish);
+            tickRuntimeProgressService.advanceRuntimeTickProgress(
+                normalizedTenantId, normalizedQueueTargetId, ownership);
+        tickRuntimeProgressService.reconcileRemoteFollowupTimeouts(tickProgressToPublish);
         tickSucceeded = true;
         awaitReplication();
       } catch (Exception ex) {
@@ -397,7 +348,7 @@ public class TickServiceImpl implements TickService {
         luaTimer.record(() -> executeScriptWithRetry(unlockScript, List.of(lockKey), lockToken));
         tickQueueControlService.markTickFinished();
         if (tickSucceeded) {
-          publishRuntimeTickProgress(tickProgressToPublish);
+          tickRuntimeProgressService.publishRuntimeTickProgress(tickProgressToPublish);
           logger.debug(
               "Tick completed tenantId={} gameInstanceId={}",
               normalizedTenantId,
@@ -407,532 +358,11 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private RuntimeRegionStatus advanceRuntimeTickProgress(
-      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
-    RuntimeRegionStatus status =
-        tickQueueControlService.requireRuntimeOwnership(
-            tenantId, gameInstanceId, ownership.regionId());
-    if (status.getRegionEpoch() != ownership.regionEpoch()
-        || !status.getExecutorFence().equals(ownership.executorFence())
-        || status.isPaused()) {
-      throw new TickQueueControlService.StaleOwnershipException(
-          "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
-              .formatted(tenantId, gameInstanceId));
-    }
-    status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
-    status.setUpdatedAt(Instant.now());
-    return runtimeRegionStatusRepository.save(status);
-  }
-
-  private void reconcileRemoteFollowupTimeouts(RuntimeRegionStatus status) {
-    if (status == null) {
-      return;
-    }
-    int resultReconciled =
-        remoteFollowupRuntimeService.reconcileResults(
-            status.getTenantId(), status.getRegionId(), status.getRegionEpoch());
-    if (resultReconciled > 0) {
-      logger.info(
-          "Reconciled remote followup results tenantId={} regionId={} regionEpoch={} tickId={} count={}",
-          status.getTenantId(),
-          status.getRegionId(),
-          status.getRegionEpoch(),
-          status.getLastCommittedTickId(),
-          resultReconciled);
-    }
-    int reconciled =
-        remoteFollowupRuntimeService.reconcileTimeouts(
-            status.getTenantId(),
-            status.getRegionId(),
-            status.getRegionEpoch(),
-            status.getLastCommittedTickId());
-    if (reconciled > 0) {
-      logger.info(
-          "Reconciled remote followup timeouts tenantId={} regionId={} regionEpoch={} tickId={} count={}",
-          status.getTenantId(),
-          status.getRegionId(),
-          status.getRegionEpoch(),
-          status.getLastCommittedTickId(),
-          reconciled);
-    }
-  }
-
-  private void reconcilePausedRemoteFollowupResults(
-      Long tenantId, TickQueueControlService.OwnershipSnapshot ownership) {
-    if (ownership == null || ownership.regionId() == null || ownership.regionId().isBlank()) {
-      return;
-    }
-    int reconciled =
-        remoteFollowupRuntimeService.reconcileResults(
-            tenantId, ownership.regionId(), ownership.regionEpoch());
-    if (reconciled > 0) {
-      logger.info(
-          "Reconciled remote followup results while paused tenantId={} regionId={} regionEpoch={} count={}",
-          tenantId,
-          ownership.regionId(),
-          ownership.regionEpoch(),
-          reconciled);
-    }
-  }
-
-  private void publishRuntimeTickProgress(RuntimeRegionStatus status) {
-    if (status == null) {
-      return;
-    }
-    ObserveRuntimeTickProgressResponse response =
-        automationScriptingClient.observeRuntimeTickProgress(
-            ObserveRuntimeTickProgressRequest.newBuilder()
-                .setTenantId(Long.toString(status.getTenantId()))
-                .setGameInstanceId(Long.toString(status.getGameInstanceId()))
-                .setRegionId(status.getRegionId())
-                .setRegionEpoch(status.getRegionEpoch())
-                .setTickId(status.getLastCommittedTickId())
-                .setObservedAtMs(status.getUpdatedAt().toEpochMilli())
-                .build());
-    if (response.hasError()) {
-      logger.warn(
-          "Automation runtime tick progress was not observed tenantId={} gameInstanceId={} tickId={} code={} message={}",
-          status.getTenantId(),
-          status.getGameInstanceId(),
-          status.getLastCommittedTickId(),
-          response.getError().getCode(),
-          response.getError().getMessage());
-    }
-  }
-
-  private void updateRetryQueueDepth(Long tenantId, Long queueTargetId, long depth) {
-    String gaugeKey = tenantId + ":" + queueTargetId;
-    retryQueueDepthByTarget.compute(
-        gaugeKey,
-        (ignored, previousDepth) -> {
-          long prior = previousDepth != null ? previousDepth : 0L;
-          retryQueueDepthTotal.addAndGet(depth - prior);
-          if (prior == 0L && depth > 0L) {
-            retryQueueTargetsWithPending.incrementAndGet();
-          } else if (prior > 0L && depth == 0L) {
-            retryQueueTargetsWithPending.decrementAndGet();
-          }
-          return depth > 0L ? depth : null;
-        });
-  }
-
-  private void observeRemoteFollowupBacklog(
-      Long tenantId, TickQueueControlService.OwnershipSnapshot ownership) {
-    long dueCount =
-        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-            tenantId,
-            ownership.regionId(),
-            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-            ownership.lastCommittedTickId() + 1L);
-    long drainLagMs =
-        remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                tenantId,
-                ownership.regionId(),
-                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-                ownership.lastCommittedTickId() + 1L)
-            .map(
-                followup ->
-                    Math.max(
-                        0L,
-                        (ownership.lastCommittedTickId() + 1L - followup.getDueTickId())
-                            * tickDurationMs))
-            .orElse(0L);
-    String gaugeKey = tenantId + ":" + ownership.regionId();
-    remoteFollowupDueByTarget.compute(
-        gaugeKey,
-        (ignored, previousDepth) -> {
-          long prior = previousDepth != null ? previousDepth : 0L;
-          remoteFollowupDueTotal.addAndGet(dueCount - prior);
-          return dueCount > 0L ? dueCount : null;
-        });
-    remoteFollowupDrainLagByTarget.compute(
-        gaugeKey,
-        (ignored, previousLag) -> {
-          if (drainLagMs > 0L) {
-            return drainLagMs;
-          }
-          return null;
-        });
-    remoteFollowupDrainLagMax.set(
-        remoteFollowupDrainLagByTarget.values().stream()
-            .mapToLong(Long::longValue)
-            .max()
-            .orElse(0L));
-    remoteFollowupDuePresenceByTarget.compute(
-        gaugeKey,
-        (ignored, previousDepth) -> {
-          long prior = previousDepth != null ? previousDepth : 0L;
-          if (prior == 0L && dueCount > 0L) {
-            remoteFollowupTargetsWithDue.incrementAndGet();
-            return 1L;
-          } else if (prior > 0L && dueCount == 0L) {
-            remoteFollowupTargetsWithDue.decrementAndGet();
-            return 0L;
-          }
-          return prior;
-        });
-    if (dueCount > maxRemoteFollowupsPerTick) {
-      remoteFollowupBacklogOverBudgetCounter.increment();
-    }
-  }
-
-  private void drainRemoteFollowups(
-      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
-    String tickBatchId = "tb-" + UUID.randomUUID();
-    RemoteFollowupDrainService.ClaimOutcome claimOutcome =
-        remoteFollowupDrainService.claimDueFollowups(
-            tenantId,
-            ownership.regionId(),
-            ownership.lastCommittedTickId() + 1L,
-            tickBatchId,
-            maxRemoteFollowupsPerTick);
-    if (claimOutcome.claimedCount() <= 0) {
-      return;
-    }
-    List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> claimedFollowups =
-        remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(tickBatchId);
-    TickBatch batch = null;
-    try {
-      batch =
-          createRemoteFollowupBatch(
-              tickBatchId, tenantId, gameInstanceId, ownership, claimedFollowups);
-      tickBatchExecutionService.requireCurrentOwnership(batch, false);
-      tickBatchExecutionService.markRemoteFollowupBatchDrained(batch);
-      tickBatchExecutionService.executeDurableEffects(tenantId, gameInstanceId);
-    } catch (Exception ex) {
-      if (batch != null) {
-        tickBatchExecutionService.markRemoteFollowupBatchAbandoned(
-            batch, failureCode(ex), ex.getMessage());
-      } else {
-        remoteFollowupDrainService.releaseClaimedFollowups(
-            tickBatchId, failureCode(ex), ex.getMessage());
-      }
-      throw ex;
-    }
-  }
-
-  private List<TickQueuedCommandEnvelope> readPendingEntries(Long tenantId, Long queueTargetId) {
-    List<Object> rawEntries =
-        redisTemplate
-            .opsForList()
-            .range(tickQueueControlService.pendingKey(tenantId, queueTargetId), 0, -1);
-    if (rawEntries == null || rawEntries.isEmpty()) {
-      return List.of();
-    }
-    List<TickQueuedCommandEnvelope> entries = new ArrayList<>(rawEntries.size());
-    for (Object rawEntry : rawEntries) {
-      if (rawEntry == null) {
-        continue;
-      }
-      entries.add(parseQueuedCommand(rawEntry.toString()));
-    }
-    return List.copyOf(entries);
-  }
-
-  private TickQueuedCommandEnvelope parseQueuedCommand(String payload) {
-    String[] parts = payload.split("\\|", 3);
-    if (parts.length < 3) {
-      return new TickQueuedCommandEnvelope(false, null, payload);
-    }
-    boolean requiresSoloTick = "S".equals(parts[0]);
-    String commandId = "-".equals(parts[1]) || parts[1].isBlank() ? null : parts[1];
-    return new TickQueuedCommandEnvelope(requiresSoloTick, commandId, parts[2]);
-  }
-
-  private TickBatch resolveReplayBatch(
-      Long tenantId,
-      Long gameInstanceId,
-      List<TickQueuedCommandEnvelope> replayEntries,
-      TickQueueControlService.OwnershipSnapshot ownership) {
-    Optional<TickBatch> existing =
-        tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
-            tenantId, gameInstanceId, "STAGED");
-    if (existing.isEmpty()) {
-      return createBatch(
-          "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
-    }
-    TickBatch batch = existing.orElseThrow();
-    String replayManifest =
-        selectedWorkManifest(ownership.regionId(), commandSelections(replayEntries));
-    String replayDigest = shortHash(replayManifest);
-    if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
-      return batch;
-    }
-    logger.warn(
-        "Replay manifest mismatch for staged batch tickBatchId={} tenantId={} gameInstanceId={} expectedDigest={} actualDigest={}",
-        batch.getTickBatchId(),
-        tenantId,
-        gameInstanceId,
-        batch.getSelectedWorkManifestDigest(),
-        replayDigest);
-    List<TickQueuedCommandEnvelope> sealedEntries = loadSealedReplayEntries(batch);
-    tickBatchExecutionService.restorePendingProjection(
-        tenantId, gameInstanceId, replayEntries, sealedEntries);
-    tickBatchExecutionService.markBatchManifestMismatch(batch, sealedEntries, replayDigest);
-    return createBatch("PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, sealedEntries);
-  }
-
-  private TickBatch createBatch(
-      String batchSource,
-      Long tenantId,
-      Long gameInstanceId,
-      boolean requiresSoloTick,
-      TickQueueControlService.OwnershipSnapshot ownership,
-      List<TickQueuedCommandEnvelope> entries) {
-    Instant now = Instant.now();
-    requireDurableCommandIdentifiers(entries);
-    List<CommandSelection> selections = commandSelections(entries);
-    TickBatch batch = new TickBatch();
-    batch.setTickBatchId("tb-" + UUID.randomUUID());
-    batch.setTenantId(tenantId);
-    batch.setGameInstanceId(gameInstanceId);
-    batch.setRegionId(ownership.regionId());
-    batch.setRegionEpoch(ownership.regionEpoch());
-    batch.setExecutorFence(ownership.executorFence());
-    batch.setBatchSource(batchSource);
-    batch.setStatus("STAGED");
-    batch.setRequiresSoloTick(requiresSoloTick);
-    batch.setCommandCount(entries.size());
-    batch.setExpectedEffectCount(entries.size());
-    String selectedWorkManifest = selectedWorkManifest(ownership.regionId(), selections);
-    batch.setSelectedWorkManifestJson(selectedWorkManifest);
-    batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
-    batch.setStagedAt(now);
-    TickBatch savedBatch = tickBatchRepository.save(batch);
-    persistEffects(savedBatch, gameInstanceId, now, selections);
-    bumpGameplayCommandAttempts(entries, now);
-    logger.info(
-        "Staged durable tick batch tickBatchId={} tenantId={} gameInstanceId={} source={} commandCount={}",
-        savedBatch.getTickBatchId(),
-        tenantId,
-        gameInstanceId,
-        batchSource,
-        entries.size());
-    return savedBatch;
-  }
-
-  private List<TickQueuedCommandEnvelope> loadSealedReplayEntries(TickBatch batch) {
-    try {
-      JsonNode root = objectMapper.readTree(batch.getSelectedWorkManifestJson());
-      JsonNode items = root.path("items");
-      if (!items.isArray() || items.isEmpty()) {
-        throw new IllegalStateException(
-            "Sealed replay manifest is missing item entries for tickBatchId="
-                + batch.getTickBatchId());
-      }
-      List<String> commandIds = new ArrayList<>();
-      List<Boolean> requiresSoloTicks = new ArrayList<>();
-      for (JsonNode item : items) {
-        String commandId = item.path("commandId").asText("").trim();
-        if (commandId.isBlank()) {
-          throw new IllegalStateException(
-              "Sealed replay manifest requires commandId for tickBatchId="
-                  + batch.getTickBatchId());
-        }
-        commandIds.add(commandId);
-        requiresSoloTicks.add(item.path("requiresSoloTick").asBoolean(false));
-      }
-      Map<String, GameplayCommand> commandsById =
-          gameplayCommandRepository.findByCommandIdIn(commandIds).stream()
-              .collect(
-                  java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
-      List<TickQueuedCommandEnvelope> entries = new ArrayList<>(commandIds.size());
-      for (int index = 0; index < commandIds.size(); index++) {
-        String commandId = commandIds.get(index);
-        GameplayCommand command = commandsById.get(commandId);
-        if (command == null) {
-          throw new IllegalStateException(
-              "Sealed replay manifest references missing gameplay command "
-                  + commandId
-                  + " for tickBatchId="
-                  + batch.getTickBatchId());
-        }
-        entries.add(
-            new TickQueuedCommandEnvelope(
-                requiresSoloTicks.get(index), commandId, command.getCommandText()));
-      }
-      return List.copyOf(entries);
-    } catch (java.io.IOException ex) {
-      throw new IllegalStateException(
-          "Failed to restore sealed replay manifest for tickBatchId=" + batch.getTickBatchId(), ex);
-    }
-  }
-
-  private void persistEffects(
-      TickBatch batch, Long gameInstanceId, Instant stagedAt, List<CommandSelection> selections) {
-    if (selections.isEmpty()) {
-      return;
-    }
-    List<TickEffect> effects = new ArrayList<>(selections.size());
-    for (CommandSelection selection : selections) {
-      TickQueuedCommandEnvelope entry = selection.entry();
-      TickEffect effect = new TickEffect();
-      effect.setEffectId(effectId(batch.getTickBatchId(), selection.effectKey()));
-      effect.setTickBatchId(batch.getTickBatchId());
-      effect.setCommandId(entry.commandId());
-      effect.setEffectKey(selection.effectKey());
-      effect.setEffectType("GAMEPLAY_COMMAND");
-      effect.setTargetAggregate(effectTargetAggregate(gameInstanceId, selection.command()));
-      effect.setStatus("STAGED");
-      effect.setStagedAt(stagedAt);
-      effects.add(effect);
-    }
-    tickEffectRepository.saveAll(effects);
-  }
-
-  private TickBatch createRemoteFollowupBatch(
-      String tickBatchId,
-      Long tenantId,
-      Long gameInstanceId,
-      TickQueueControlService.OwnershipSnapshot ownership,
-      List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
-    Instant now = Instant.now();
-    TickBatch batch = new TickBatch();
-    batch.setTickBatchId(tickBatchId);
-    batch.setTenantId(tenantId);
-    batch.setGameInstanceId(gameInstanceId);
-    batch.setRegionId(ownership.regionId());
-    batch.setRegionEpoch(ownership.regionEpoch());
-    batch.setExecutorFence(ownership.executorFence());
-    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
-    batch.setStatus("STAGED");
-    batch.setRequiresSoloTick(false);
-    batch.setCommandCount(0);
-    batch.setExpectedEffectCount(followups.size());
-    String selectedWorkManifest = selectedRemoteFollowupManifest(ownership.regionId(), followups);
-    batch.setSelectedWorkManifestJson(selectedWorkManifest);
-    batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
-    batch.setStagedAt(now);
-    TickBatch savedBatch = tickBatchRepository.save(batch);
-    persistRemoteFollowupEffects(savedBatch, now, followups);
-    logger.info(
-        "Staged durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={} followupCount={}",
-        savedBatch.getTickBatchId(),
-        tenantId,
-        gameInstanceId,
-        followups.size());
-    return savedBatch;
-  }
-
-  private void persistRemoteFollowupEffects(
-      TickBatch batch,
-      Instant stagedAt,
-      List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
-    if (followups.isEmpty()) {
-      return;
-    }
-    List<TickEffect> effects = new ArrayList<>(followups.size());
-    for (net.firedevops.firemud.gamesession.entity.RemoteFollowup followup : followups) {
-      TickEffect effect = new TickEffect();
-      effect.setEffectId(effectId(batch.getTickBatchId(), followup.getFollowupId()));
-      effect.setTickBatchId(batch.getTickBatchId());
-      effect.setCommandId(null);
-      effect.setEffectKey(followup.getFollowupId());
-      effect.setEffectType("REMOTE_FOLLOWUP");
-      effect.setTargetAggregate(remoteFollowupTargetAggregate(followup));
-      effect.setStatus("STAGED");
-      effect.setStagedAt(stagedAt);
-      effects.add(effect);
-    }
-    tickEffectRepository.saveAll(effects);
-  }
-
-  private static String remoteFollowupTargetAggregate(
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    if (followup.getClaimTargetAggregate() != null
-        && !followup.getClaimTargetAggregate().isBlank()) {
-      return followup.getClaimTargetAggregate();
-    }
-    if (followup.getTargetEntityId() != null && !followup.getTargetEntityId().isBlank()) {
-      return "entity:" + followup.getTargetEntityId();
-    }
-    return "game-instance:" + followup.getTargetGameInstanceId();
-  }
-
-  private static String effectTargetAggregate(Long gameInstanceId, GameplayCommand command) {
-    if (command != null) {
-      if (command.getCharacterId() != null && command.getCharacterId() > 0) {
-        return "character:" + command.getCharacterId();
-      }
-      if (command.getTargetEntityId() != null && !command.getTargetEntityId().isBlank()) {
-        return "entity:" + command.getTargetEntityId();
-      }
-    }
-    return "game-instance:" + gameInstanceId;
-  }
-
-  private void bumpGameplayCommandAttempts(
-      List<TickQueuedCommandEnvelope> entries, Instant attemptedAt) {
-    List<GameplayCommand> commands = loadCommands(entries);
-    if (commands.isEmpty()) {
-      return;
-    }
-    for (GameplayCommand command : commands) {
-      command.setAttemptCount(command.getAttemptCount() + 1);
-      command.setLastAttemptAt(attemptedAt);
-    }
-    gameplayCommandRepository.saveAll(commands);
-  }
-
-  private List<CommandSelection> commandSelections(List<TickQueuedCommandEnvelope> entries) {
-    if (entries.isEmpty()) {
-      return List.of();
-    }
-    requireDurableCommandIdentifiers(entries);
-    Map<String, GameplayCommand> commandsById =
-        loadCommands(entries).stream()
-            .collect(java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
-    List<CommandSelection> selections = new ArrayList<>(entries.size());
-    for (int index = 0; index < entries.size(); index++) {
-      TickQueuedCommandEnvelope entry = entries.get(index);
-      GameplayCommand command =
-          entry.commandId() == null || entry.commandId().isBlank()
-              ? null
-              : commandsById.get(entry.commandId());
-      String effectKey = effectKey(entry, index);
-      selections.add(
-          new CommandSelection(
-              entry,
-              command,
-              selectionSourceOrdinal(command, index),
-              effectKey,
-              shortHash(entry.command())));
-    }
-    return List.copyOf(selections);
-  }
-
-  private long selectionSourceOrdinal(GameplayCommand command, int fallbackIndex) {
-    if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
-      return command.getEnqueueSeq();
-    }
-    return fallbackIndex;
-  }
-
-  private List<GameplayCommand> loadCommands(List<TickQueuedCommandEnvelope> entries) {
-    List<String> commandIds =
-        entries.stream()
-            .map(TickQueuedCommandEnvelope::commandId)
-            .filter(commandId -> commandId != null && !commandId.isBlank())
-            .distinct()
-            .toList();
-    if (commandIds.isEmpty()) {
-      return List.of();
-    }
-    return gameplayCommandRepository.findByCommandIdIn(commandIds);
-  }
-
   private String truncate(String value, int maxLength) {
     if (value == null || value.length() <= maxLength) {
       return value;
     }
     return value.substring(0, maxLength);
-  }
-
-  private void requirePositive(Long value, String fieldName) {
-    if (value == null || value <= 0) {
-      throw new IllegalArgumentException(fieldName + " must be positive");
-    }
   }
 
   private void requireText(String value, String fieldName) {
@@ -941,336 +371,10 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private void requireDurableCommandIdentifiers(List<TickQueuedCommandEnvelope> entries) {
-    for (TickQueuedCommandEnvelope entry : entries) {
-      if (entry.commandId() == null || entry.commandId().isBlank()) {
-        throw new IllegalStateException(
-            "Durable tick batching requires linked command ids for all queued commands");
-      }
-    }
-  }
-
   private String failureCode(Exception ex) {
     return ex instanceof TickQueueControlService.StaleOwnershipException
         ? "STALE_EXECUTOR_FENCE"
         : "ROLLBACK_REQUEUED";
-  }
-
-  private String effectKey(TickQueuedCommandEnvelope entry, int index) {
-    if (entry.commandId() != null && !entry.commandId().isBlank()) {
-      return "command:" + entry.commandId();
-    }
-    return "command-text:" + shortHash(entry.command()) + ":slot:" + index;
-  }
-
-  private String effectId(String tickBatchId, String effectKey) {
-    return "tfx-" + shortHash(tickBatchId + "|" + effectKey);
-  }
-
-  private String selectedWorkManifest(String regionId, List<CommandSelection> selections) {
-    StringBuilder builder = new StringBuilder();
-    builder
-        .append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"")
-        .append(jsonEscape(regionId))
-        .append("\",\"items\":[");
-    for (int index = 0; index < selections.size(); index++) {
-      if (index > 0) {
-        builder.append(',');
-      }
-      CommandSelection selection = selections.get(index);
-      TickQueuedCommandEnvelope entry = selection.entry();
-      GameplayCommand command = selection.command();
-      builder
-          .append("{\"sourceKind\":\"")
-          .append(selectionSourceKind(command))
-          .append("\",\"sourceOrdinal\":")
-          .append(selection.sourceOrdinal())
-          .append(",\"sourceState\":\"")
-          .append(selectionSourceState(command))
-          .append("\"")
-          .append(",\"effectKey\":\"")
-          .append(jsonEscape(selection.effectKey()))
-          .append("\",\"commandId\":");
-      if (entry.commandId() == null || entry.commandId().isBlank()) {
-        builder.append("null");
-      } else {
-        builder.append('"').append(jsonEscape(entry.commandId())).append('"');
-      }
-      appendJsonStringField(
-          builder, "sourceType", command == null ? null : command.getSourceType());
-      appendJsonStringField(
-          builder,
-          "automationDispatchId",
-          command == null ? null : command.getAutomationDispatchId());
-      appendJsonStringField(
-          builder,
-          "automationWorkItemId",
-          command == null ? null : command.getAutomationWorkItemId());
-      appendJsonStringField(builder, "scriptId", command == null ? null : command.getScriptId());
-      appendJsonStringField(
-          builder, "scriptPatchVersion", command == null ? null : command.getScriptPatchVersion());
-      appendJsonStringField(builder, "pluginId", command == null ? null : command.getPluginId());
-      appendJsonStringField(
-          builder, "pluginVersionId", command == null ? null : command.getPluginVersionId());
-      appendJsonStringField(
-          builder, "targetEntityId", command == null ? null : command.getTargetEntityId());
-      appendJsonStringField(builder, "regionId", command == null ? null : command.getRegionId());
-      appendJsonNumberField(
-          builder, "regionEpoch", command == null ? null : command.getRegionEpoch());
-      appendJsonNumberField(
-          builder, "enqueueSeq", command == null ? null : command.getEnqueueSeq());
-      appendJsonNumberField(builder, "dueTickId", command == null ? null : command.getDueTickId());
-      appendJsonNumberField(builder, "queueSourceDueTickId", selectionSourceDueTickId(command));
-      appendJsonNumberField(builder, "queueSourceDueAtMs", selectionSourceDueAtMs(command));
-      appendJsonStringField(
-          builder, "originSourceKind", command == null ? null : command.getOriginSourceKind());
-      appendJsonStringField(
-          builder, "originSourceState", command == null ? null : command.getOriginSourceState());
-      appendJsonNumberField(
-          builder,
-          "originSourceOrdinal",
-          command == null ? null : command.getOriginSourceOrdinal());
-      appendJsonNumberField(
-          builder,
-          "originSourceDueTickId",
-          command == null ? null : command.getOriginSourceDueTickId());
-      appendJsonNumberField(
-          builder,
-          "originSourceDueAtMs",
-          command == null ? null : command.getOriginSourceDueAtMs());
-      appendJsonStringField(
-          builder, "playableStateScope", command == null ? null : command.getPlayableStateScope());
-      appendRoutingBundleFields(
-          builder,
-          command == null ? null : command.getWorldSlug(),
-          command == null ? null : command.getRealmSlug(),
-          command == null ? null : command.getPointerVersion());
-      builder
-          .append(",\"requiresSoloTick\":")
-          .append(entry.requiresSoloTick())
-          .append(",\"commandDigest\":\"")
-          .append(selection.commandDigest())
-          .append("\"}");
-    }
-    builder.append("]}");
-    return builder.toString();
-  }
-
-  private String selectedRemoteFollowupManifest(
-      String regionId, List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
-    StringBuilder builder = new StringBuilder();
-    builder
-        .append("{\"version\":1,\"source\":\"REMOTE_FOLLOWUP_QUEUE\",\"regionId\":\"")
-        .append(jsonEscape(regionId))
-        .append("\",\"items\":[");
-    for (int index = 0; index < followups.size(); index++) {
-      if (index > 0) {
-        builder.append(',');
-      }
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup = followups.get(index);
-      builder
-          .append("{\"sourceKind\":\"")
-          .append(jsonEscape(remoteFollowupQueueSourceKind(followup)))
-          .append("\"")
-          .append(",\"sourceOrdinal\":")
-          .append(remoteFollowupSourceOrdinal(followup))
-          .append(",\"sourceState\":\"")
-          .append(jsonEscape(remoteFollowupQueueSourceState(followup)))
-          .append("\"")
-          .append(",\"effectKey\":\"")
-          .append(jsonEscape(followup.getFollowupId()))
-          .append("\"");
-      appendJsonNumberField(
-          builder, "sourceDueTickId", remoteFollowupQueueSourceDueTickId(followup));
-      appendJsonNumberField(builder, "sourceDueAtMs", followup.getQueueSourceDueAtMs());
-      appendJsonStringField(builder, "followupId", followup.getFollowupId());
-      appendJsonStringField(builder, "originRegionId", followup.getOriginRegionId());
-      appendJsonNumberField(builder, "originRegionEpoch", followup.getOriginRegionEpoch());
-      appendJsonStringField(builder, "targetRegionId", followup.getTargetRegionId());
-      appendJsonNumberField(builder, "targetRegionEpoch", followup.getTargetRegionEpoch());
-      appendJsonNumberField(builder, "dueTickId", followup.getDueTickId());
-      appendJsonStringField(builder, "targetEntityId", followup.getTargetEntityId());
-      appendJsonStringField(builder, "claimTargetAggregate", followup.getClaimTargetAggregate());
-      appendJsonStringField(builder, "commandId", followup.getCommandId());
-      appendJsonStringField(builder, "automationDispatchId", followup.getAutomationDispatchId());
-      appendJsonStringField(builder, "automationWorkItemId", followup.getAutomationWorkItemId());
-      appendJsonStringField(builder, "scriptId", followup.getScriptId());
-      appendJsonStringField(builder, "scriptPatchVersion", followup.getScriptPatchVersion());
-      appendJsonStringField(builder, "pluginId", followup.getPluginId());
-      appendJsonStringField(builder, "pluginVersionId", followup.getPluginVersionId());
-      appendJsonStringField(builder, "playableStateScope", followup.getPlayableStateScope());
-      appendRoutingBundleFields(
-          builder, followup.getWorldSlug(), followup.getRealmSlug(), followup.getPointerVersion());
-      appendJsonStringField(builder, "originSourceKind", followup.getOriginSourceKind());
-      appendJsonStringField(builder, "originSourceState", followup.getOriginSourceState());
-      appendJsonNumberField(builder, "originSourceOrdinal", followup.getOriginSourceOrdinal());
-      appendJsonNumberField(builder, "originSourceDueTickId", followup.getOriginSourceDueTickId());
-      appendJsonNumberField(builder, "originSourceDueAtMs", followup.getOriginSourceDueAtMs());
-      appendJsonStringField(builder, "payloadKind", followup.getPayloadKind());
-      appendJsonStringField(builder, "requestedCommand", followup.getRequestedCommand());
-      appendJsonBooleanField(builder, "requiresSoloTick", followup.isRequiresSoloTick());
-      appendJsonStringField(builder, "payloadJson", followup.getPayloadJson());
-      builder.append('}');
-    }
-    builder.append("]}");
-    return builder.toString();
-  }
-
-  private long remoteFollowupSourceOrdinal(
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    return followup.getQueueSourceOrdinal() != null && followup.getQueueSourceOrdinal() > 0L
-        ? followup.getQueueSourceOrdinal()
-        : followup.getClaimOrdinal() == null || followup.getClaimOrdinal() <= 0L
-            ? followup.getDueTickId()
-            : followup.getClaimOrdinal();
-  }
-
-  private String remoteFollowupQueueSourceKind(
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    return followup.getQueueSourceKind() == null || followup.getQueueSourceKind().isBlank()
-        ? RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND
-        : followup.getQueueSourceKind();
-  }
-
-  private static void appendRoutingBundleFields(
-      StringBuilder builder, String worldSlug, String realmSlug, Long pointerVersion) {
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
-    if (!routingBundle.isPresent()) {
-      return;
-    }
-    appendJsonStringField(builder, "worldSlug", routingBundle.worldSlug());
-    appendJsonStringField(builder, "realmSlug", routingBundle.realmSlug());
-    appendJsonNumberField(builder, "pointerVersion", routingBundle.pointerVersion());
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    String normalizedWorldSlug = blankToNull(worldSlug);
-    String normalizedRealmSlug = blankToNull(realmSlug);
-    Long normalizedPointerVersion =
-        pointerVersion != null && pointerVersion > 0L ? pointerVersion : null;
-    boolean hasAny =
-        normalizedWorldSlug != null
-            || normalizedRealmSlug != null
-            || normalizedPointerVersion != null;
-    boolean hasAll =
-        normalizedWorldSlug != null
-            && normalizedRealmSlug != null
-            && normalizedPointerVersion != null;
-    if (!hasAny || !hasAll) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
-  }
-
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
-  }
-
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    private boolean isPresent() {
-      return worldSlug != null && realmSlug != null && pointerVersion != null;
-    }
-  }
-
-  private String remoteFollowupQueueSourceState(
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    return followup.getQueueSourceState() == null || followup.getQueueSourceState().isBlank()
-        ? RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED
-        : followup.getQueueSourceState();
-  }
-
-  private Long remoteFollowupQueueSourceDueTickId(
-      net.firedevops.firemud.gamesession.entity.RemoteFollowup followup) {
-    Long queueSourceDueTickId = followup.getQueueSourceDueTickId();
-    return queueSourceDueTickId != null
-        ? queueSourceDueTickId
-        : Long.valueOf(followup.getDueTickId());
-  }
-
-  private String selectionSourceKind(GameplayCommand command) {
-    if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
-      return "GAMEPLAY_RETRY";
-    }
-    return "GAMEPLAY_COMMAND";
-  }
-
-  private String selectionSourceState(GameplayCommand command) {
-    if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
-      return "REDIS_RETRY_CLAIMED";
-    }
-    return "REDIS_PENDING_CLAIMED";
-  }
-
-  private Long selectionSourceDueTickId(GameplayCommand command) {
-    return command == null ? null : command.getDueTickId();
-  }
-
-  private Long selectionSourceDueAtMs(GameplayCommand command) {
-    return null;
-  }
-
-  private static void appendJsonStringField(StringBuilder builder, String fieldName, String value) {
-    builder.append(",\"").append(fieldName).append("\":");
-    if (value == null || value.isBlank()) {
-      builder.append("null");
-      return;
-    }
-    builder.append('"').append(jsonEscape(value)).append('"');
-  }
-
-  private static void appendJsonNumberField(StringBuilder builder, String fieldName, Number value) {
-    builder.append(",\"").append(fieldName).append("\":");
-    if (value == null) {
-      builder.append("null");
-      return;
-    }
-    builder.append(value);
-  }
-
-  private static void appendJsonBooleanField(
-      StringBuilder builder, String fieldName, boolean value) {
-    builder.append(",\"").append(fieldName).append("\":").append(value);
-  }
-
-  private static String jsonEscape(String value) {
-    StringBuilder builder = new StringBuilder(value.length());
-    for (int index = 0; index < value.length(); index++) {
-      char current = value.charAt(index);
-      switch (current) {
-        case '"' -> builder.append("\\\"");
-        case '\\' -> builder.append("\\\\");
-        case '\b' -> builder.append("\\b");
-        case '\f' -> builder.append("\\f");
-        case '\n' -> builder.append("\\n");
-        case '\r' -> builder.append("\\r");
-        case '\t' -> builder.append("\\t");
-        default -> {
-          if (current < 0x20) {
-            builder.append(String.format("\\u%04x", (int) current));
-          } else {
-            builder.append(current);
-          }
-        }
-      }
-    }
-    return builder.toString();
-  }
-
-  private String shortHash(String value) {
-    try {
-      java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-      StringBuilder builder = new StringBuilder(bytes.length * 2);
-      for (byte current : bytes) {
-        builder.append(String.format("%02x", current));
-      }
-      return builder.substring(0, 60);
-    } catch (java.security.NoSuchAlgorithmException ex) {
-      throw new IllegalStateException("SHA-256 not available", ex);
-    }
   }
 
   @Override

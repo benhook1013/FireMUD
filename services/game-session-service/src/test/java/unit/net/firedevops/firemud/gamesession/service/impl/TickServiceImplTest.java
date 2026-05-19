@@ -57,6 +57,7 @@ class TickServiceImplTest {
       remoteFollowupRuntimeService;
   private AutomationScriptingClient automationScriptingClient;
   private TickService service;
+  private TickStagingService tickStagingService;
 
   @BeforeEach
   @SuppressWarnings("unchecked")
@@ -133,24 +134,39 @@ class TickServiceImplTest {
             durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             tickQueueControlService);
+    tickStagingService =
+        new TickStagingService(
+            redisTemplate,
+            gameplayCommandRepository,
+            remoteFollowupRepository,
+            tickBatchRepository,
+            tickEffectRepository,
+            remoteFollowupDrainService,
+            tickQueueControlService,
+            tickBatchExecutionService);
+    TickRuntimeProgressService tickRuntimeProgressService =
+        new TickRuntimeProgressService(
+            meterRegistry,
+            remoteFollowupRepository,
+            remoteFollowupRuntimeService,
+            automationScriptingClient,
+            tickQueueControlService);
+    tickRuntimeProgressService.init();
     service =
         new TickServiceImpl(
             redisTemplate,
             meterRegistry,
             conflictTracker,
-            gameplayCommandRepository,
-            remoteFollowupRepository,
-            runtimeRegionStatusRepository,
-            tickBatchRepository,
-            tickEffectRepository,
-            remoteFollowupDrainService,
-            remoteFollowupRuntimeService,
-            automationScriptingClient,
             tickQueueControlService,
-            tickBatchExecutionService);
+            tickBatchExecutionService,
+            tickStagingService,
+            tickRuntimeProgressService);
     ((TickServiceImpl) service).init();
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
+    setField(tickStagingService, "maxRemoteFollowupsPerTick", 16);
+    setField(tickRuntimeProgressService, "tickDurationMs", 1000L);
+    setField(tickRuntimeProgressService, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
@@ -534,7 +550,7 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, replayEntries));
+        replayManifestDigest(tickStagingService, replayEntries));
 
     service.processTick(1L, 2L);
 
@@ -1037,10 +1053,10 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(5L);
@@ -1078,10 +1094,10 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
     first.setEnqueueSeq(5L);
@@ -1272,25 +1288,27 @@ class TickServiceImplTest {
     }
   }
 
-  private static String replayManifestDigest(TickServiceImpl service, List<Object> rawEntries) {
+  private static String replayManifestDigest(TickStagingService service, List<Object> rawEntries) {
     String manifest = replayManifestJson(service, rawEntries);
     return shortHash(service, manifest);
   }
 
-  private static String replayManifestJson(TickServiceImpl service, List<Object> rawEntries) {
+  private static String replayManifestJson(TickStagingService service, List<Object> rawEntries) {
     try {
-      var parseMethod = TickServiceImpl.class.getDeclaredMethod("parseQueuedCommand", String.class);
+      var parseMethod =
+          TickStagingService.class.getDeclaredMethod("parseQueuedCommand", String.class);
       parseMethod.setAccessible(true);
       List<Object> entries = new java.util.ArrayList<>();
       for (Object rawEntry : rawEntries) {
         entries.add(parseMethod.invoke(service, rawEntry.toString()));
       }
       var selectionsMethod =
-          TickServiceImpl.class.getDeclaredMethod("commandSelections", List.class);
+          TickStagingService.class.getDeclaredMethod("commandSelections", List.class);
       selectionsMethod.setAccessible(true);
       Object selections = selectionsMethod.invoke(service, entries);
       var manifestMethod =
-          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", String.class, List.class);
+          TickStagingService.class.getDeclaredMethod(
+              "selectedWorkManifest", String.class, List.class);
       manifestMethod.setAccessible(true);
       return (String) manifestMethod.invoke(service, "2", selections);
     } catch (ReflectiveOperationException e) {
@@ -1298,9 +1316,9 @@ class TickServiceImplTest {
     }
   }
 
-  private static String shortHash(TickServiceImpl service, String value) {
+  private static String shortHash(TickStagingService service, String value) {
     try {
-      var hashMethod = TickServiceImpl.class.getDeclaredMethod("shortHash", String.class);
+      var hashMethod = TickStagingService.class.getDeclaredMethod("shortHash", String.class);
       hashMethod.setAccessible(true);
       return (String) hashMethod.invoke(service, value);
     } catch (ReflectiveOperationException e) {
