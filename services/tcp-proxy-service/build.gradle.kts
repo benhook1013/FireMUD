@@ -23,10 +23,13 @@ dependencies {
     testImplementation(libs.spring.boot.starter.data.jpa)
     testImplementation(libs.spring.boot.starter.jdbc)
     testImplementation(testFixtures(project(":common-test-support")))
+    testImplementation(project(":entity-management-service"))
     testImplementation(project(":game-session-service"))
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
+    testImplementation(project(":social-groups-service"))
     testImplementation(project(":spring-cloud-gateway"))
+    testImplementation(project(":world-management-service"))
     testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     testRuntimeOnly(libs.postgresql)
 }

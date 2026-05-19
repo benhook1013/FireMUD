@@ -160,16 +160,21 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+    AutomationEventControlPlaneService eventControlPlaneService =
+        new AutomationEventControlPlaneService(new BuiltInScriptEventRegistryService());
+    AutomationPatchControlPlaneService patchControlPlaneService =
+        new AutomationPatchControlPlaneService(
+            workItemService,
+            automationAdmissionStateService,
+            scriptPatchPinProjectionService,
+            scriptScheduleInstanceService,
+            gameDesignControlPlaneClient,
+            gameSessionControlPlaneClient,
+            runtimeProperties);
+    AutomationPluginControlPlaneService pluginControlPlaneService =
+        new AutomationPluginControlPlaneService(pluginRuntimeStateService, runtimeProperties);
     return new AutomationScriptingControlPlaneGrpcService(
-        new BuiltInScriptEventRegistryService(),
-        workItemService,
-        pluginRuntimeStateService,
-        automationAdmissionStateService,
-        scriptPatchPinProjectionService,
-        scriptScheduleInstanceService,
-        gameDesignControlPlaneClient,
-        gameSessionControlPlaneClient,
-        runtimeProperties);
+        eventControlPlaneService, patchControlPlaneService, pluginControlPlaneService);
   }
 
   @AfterEach
