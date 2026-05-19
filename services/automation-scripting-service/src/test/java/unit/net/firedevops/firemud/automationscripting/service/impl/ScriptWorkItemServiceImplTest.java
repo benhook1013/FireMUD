@@ -86,6 +86,61 @@ class ScriptWorkItemServiceImplTest {
     return client;
   }
 
+  private static ScriptPatchReadinessProjectionService readinessProjectionService() {
+    return Mockito.mock(ScriptPatchReadinessProjectionService.class);
+  }
+
+  private static ScriptWorkItemService service(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
+    return service(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService());
+  }
+
+  private static ScriptWorkItemService service(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService) {
+    return new ScriptWorkItemServiceImpl(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService);
+  }
+
   @Test
   void cancelsPendingPatchWorkAndUpdatesAuditOutcome() {
     ScriptWorkItem item = new ScriptWorkItem();
@@ -103,7 +158,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(42L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -148,7 +203,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(43L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -191,7 +246,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(auditRepository.findByWorkItemId(43L)).thenReturn(Optional.of(audit));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -228,7 +283,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -251,7 +306,7 @@ class ScriptWorkItemServiceImplTest {
   @Test
   void rejectsInvalidClaimLimit() {
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
@@ -279,7 +334,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(List.of(item));
     when(workItemRepository.saveAll(List.of(item))).thenReturn(List.of(item));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -313,7 +368,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(5L);
     when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(100000L);
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -352,7 +407,7 @@ class ScriptWorkItemServiceImplTest {
             "DEAD_LETTERED", PageRequest.of(0, 1)))
         .thenReturn(List.of(old));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -371,15 +426,23 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void summarizesPatchStatusFromDurableWorkItems() {
-    ScriptWorkItem pending = workItem("patch-1", "PENDING_EVALUATION", Instant.ofEpochMilli(100));
-    ScriptWorkItem handedOff = workItem("patch-1", "HANDED_OFF", Instant.ofEpochMilli(200));
+  void summarizesPatchStatusFromReadinessProjection() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
-        .thenReturn(List.of(pending, handedOff));
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.getProjection("1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING,
+                    "tenant_readiness_running",
+                    "",
+                    200L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -389,7 +452,8 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignClient(),
+            readinessProjectionService);
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
         service.getPatchStatus("1", "patch-1");
@@ -397,7 +461,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(status).isPresent();
     assertThat(status.get().status())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING);
-    assertThat(status.get().statusReason()).isEqualTo("runtime_work_active");
+    assertThat(status.get().statusReason()).isEqualTo("tenant_readiness_running");
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
     assertThat(status.get().baseVersionId()).isEqualTo(7L);
     assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
@@ -410,19 +474,29 @@ class ScriptWorkItemServiceImplTest {
 
   @Test
   void listsPatchStatusesWithFilters() {
-    ScriptWorkItem ready = workItem("patch-ready", "HANDED_OFF", Instant.ofEpochMilli(200));
-    ScriptWorkItem failed = workItem("patch-failed", "DEAD_LETTERED", Instant.ofEpochMilli(300));
-    failed.setCancelReason("runtime_region_scope_advanced");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    when(workItemRepository.findDistinctScriptPatchVersionsByTenantId("1"))
-        .thenReturn(List.of("patch-ready", "patch-failed"));
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-ready"))
-        .thenReturn(List.of(ready));
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-failed"))
-        .thenReturn(List.of(failed));
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.listProjections("1"))
+        .thenReturn(
+            List.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-ready",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    200L),
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-failed",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED,
+                    "runtime_region_scope_advanced",
+                    "",
+                    300L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -432,7 +506,8 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignClient(),
+            readinessProjectionService);
 
     List<ScriptWorkItemService.PatchStatusSummary> statuses =
         service.listPatchStatuses("1", ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED, 250L, 0L);
@@ -447,17 +522,23 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
-  void summarizesRolledBackLegacyPatchStatusWithSpecificCancelReason() {
-    ScriptWorkItem canceledA = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(200));
-    canceledA.setCancelReason("rollback_epoch_advanced");
-    ScriptWorkItem canceledB = workItem("patch-rollback", "CANCELED", Instant.ofEpochMilli(300));
-    canceledB.setCancelReason("rollback_epoch_advanced");
+  void summarizesRolledBackProjectedPatchStatusWithSpecificCancelReason() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-rollback"))
-        .thenReturn(List.of(canceledA, canceledB));
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.getProjection("1", "patch-rollback"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-rollback",
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK,
+                    "rollback_epoch_advanced",
+                    "",
+                    300L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -467,7 +548,8 @@ class ScriptWorkItemServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             rolloutProjectionService(),
             Mockito.mock(PluginRuntimeStateService.class),
-            gameDesignClient());
+            gameDesignClient(),
+            readinessProjectionService);
 
     Optional<ScriptWorkItemService.PatchStatusSummary> status =
         service.getPatchStatus("1", "patch-rollback");
@@ -494,7 +576,7 @@ class ScriptWorkItemServiceImplTest {
                     "",
                     500L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -523,18 +605,14 @@ class ScriptWorkItemServiceImplTest {
 
   @Test
   void returnsEmptyPatchStatusWhenProjectionServiceHasNoProjectionForPatch() {
-    ScriptWorkItem legacyFailed =
-        workItem("patch-legacy", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
         Mockito.mock(ScriptPatchReadinessProjectionService.class);
     when(readinessProjectionService.getProjection("1", "patch-legacy"))
         .thenReturn(Optional.empty());
-    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-legacy"))
-        .thenReturn(List.of(legacyFailed));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -579,7 +657,7 @@ class ScriptWorkItemServiceImplTest {
             List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
         .thenReturn(List.of(evaluating, inflight, pending));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -613,7 +691,7 @@ class ScriptWorkItemServiceImplTest {
             "1", "game-1", "", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
         .thenReturn(List.of());
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -677,7 +755,7 @@ class ScriptWorkItemServiceImplTest {
                         "",
                         ""))));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -742,7 +820,7 @@ class ScriptWorkItemServiceImplTest {
                         "",
                         ""))));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -832,7 +910,7 @@ class ScriptWorkItemServiceImplTest {
                         "",
                         ""))));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -886,7 +964,7 @@ class ScriptWorkItemServiceImplTest {
             "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -932,7 +1010,7 @@ class ScriptWorkItemServiceImplTest {
             "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
@@ -1012,7 +1090,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.any()))
         .thenReturn(List.of(event));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -1111,7 +1189,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.any()))
         .thenReturn(List.of(event));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(ScriptEventAuditRepository.class),
             ingressAuditRepository(),
@@ -1210,7 +1288,7 @@ class ScriptWorkItemServiceImplTest {
                 "",
                 ""));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
@@ -1292,7 +1370,7 @@ class ScriptWorkItemServiceImplTest {
                 "",
                 ""));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository,
@@ -1343,7 +1421,7 @@ class ScriptWorkItemServiceImplTest {
                     "",
                     900L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
@@ -1394,7 +1472,7 @@ class ScriptWorkItemServiceImplTest {
                     "patch-new",
                     901L)));
     ScriptWorkItemService service =
-        new ScriptWorkItemServiceImpl(
+        service(
             workItemRepository,
             auditRepository,
             ingressAuditRepository(),
