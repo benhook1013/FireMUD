@@ -5,10 +5,10 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import net.firedevops.firemud.common.saga.persistence.SagaInstance;
+import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
+import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.loggingadmin.dto.SagaInstanceDto;
 import net.firedevops.firemud.loggingadmin.mapper.SagaMapper;
-import net.firedevops.firemud.loggingadmin.repository.SagaInstanceRepository;
-import net.firedevops.firemud.loggingadmin.repository.SagaStepRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
