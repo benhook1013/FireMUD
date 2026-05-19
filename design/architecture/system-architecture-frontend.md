@@ -4,6 +4,11 @@ This document describes the structure and tooling for FireMUD's browser-based us
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
 
+## Implementation Notes
+
+- The current `web-client` still carries a minimal `Redux Toolkit + RTK Query` starter scaffold (`store.ts`, `hooks.ts`, one RTK Query API, and Redux `<Provider>` wiring).
+- That scaffold is not the target house style. [02.21 Frontend Server-State Baseline and Query Convergence](../project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md) tracks the actual convergence to `TanStack Query` plus local feature state before broader admin/editor/browser surfaces grow on the wrong default.
+
 ---
 
 ## Component Hierarchy
@@ -16,12 +21,12 @@ web-client/
     features/
       account/
         AccountPage.tsx
-        accountSlice.ts  # local UI state
-        accountApi.ts    # RTK Query endpoints
+        accountQueries.ts
+        accountState.ts  # local UI/editor state when needed
       gameplay/
         GameplayPage.tsx
-        gameplaySlice.ts
-        gameplayApi.ts
+        gameplayQueries.ts
+        gameplayState.ts
       ...
 ```
 
@@ -31,12 +36,19 @@ web-client/
 
 ## State Management
 
-Application state is handled by **Redux Toolkit**, with **RTK Query** used for data fetching and mutations. RTK Query auto-generates hooks for API access and manages caching, invalidation, and loading/error states declaratively.
+FireMUD's default frontend state model is:
 
-- The global store is created in `src/store.ts` and injected via React's `<Provider>` in `src/main.tsx`.
-- `setupListeners(store.dispatch)` enables automatic refetching on focus and reconnects.
-- Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`) from `src/hooks.ts`.
-- RTK Query hooks expose typed endpoints that components call directly.
+- **TanStack Query** for server state;
+- local component/form/editor state close to the owning feature;
+- shared global client-state layers only when a later slice proves they are needed.
+
+This is deliberate. Large server-backed world or admin datasets are not automatically "complex client state." They are usually a query/caching concern first. FireMUD should add a richer browser-wide state layer only when the browser truly becomes a stateful editor/runtime that needs long-lived cross-screen draft orchestration, collaborative editing state, undo/redo, or similarly heavy client-owned behavior.
+
+- The canonical shared browser data substrate is a `QueryClient` configured in `src/main.tsx`.
+- Shared API/query helpers live under `src/api/` or feature-local query modules and expose typed hooks for reads and mutations.
+- Cache invalidation, background refetching, retry policy, and mutation lifecycle should be expressed through `TanStack Query` rather than a repo-wide Redux default.
+- Local UI state should stay local until a concrete later slice proves a true shared client-state need.
+- Redux Toolkit remains an allowed later tool, but only by explicit exception once a real client-state complexity case exists; it is not the baseline house style.
 
 ## Authentication and Session Handling
 
@@ -57,10 +69,10 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs that represents a **control-plane browser session** for the current account.  
   - Admin JWTs are treated as **internal tokens** and are stored only in in-memory frontend state managed by the auth layer; they must not be written to `localStorage`, session storage, or exposed to third-party origins.  
-  - The frontend sends these tokens on meta/control API calls by setting the `Authorization: Bearer <token>` header for RTK Query requests. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
+  - The frontend sends these tokens on meta/control API calls by setting the `Authorization: Bearer <token>` header on shared query/mutation requests. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
   - Logout clears the in-memory auth state and calls the Account Service `POST /auth/logout` endpoint so server-side auth token sessions are revoked; subsequent requests require re-authentication. Account-wide “logout all devices” uses `POST /auth/logout-all`. Closing a browser tab does not revoke auth token sessions; explicit logout is required to force server-side revocation before TTL expiry.
 
-All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences. In particular, the RTK Query base layer should interpret canonical error codes from backend services as follows:
+All new frontend features that interact with protected APIs should reuse the shared auth utilities and the canonical query/mutation transport helpers so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences. In particular, the shared browser API layer should interpret canonical error codes from backend services as follows:
 
 - `AUTH_TOKEN_EXPIRED` – Clear in-memory auth state, redirect to login, and show a “Session expired” message.
 - `AUTH_SESSION_REVOKED` – Clear in-memory auth state, redirect to login, and show a security-focused message (for example, “You were signed out because your account security changed.”).
@@ -144,16 +156,16 @@ This reconnect flow assumes the player still holds a valid in-memory `player-boo
 
 ## API Usage Patterns
 
-All API communication is handled by **RTK Query** services defined in `src/api/`. Endpoints like login and character retrieval are implemented in `firemudApi.ts`, and additional APIs follow the same pattern.
+All API communication should be handled by **TanStack Query**-backed fetch/mutation helpers defined in `src/api/` or feature-local query modules. Endpoints such as bootstrap discovery, login/logout, world browsing, and admin control-plane reads should follow the same typed-query pattern.
 
-RTK Query automatically handles:
+`TanStack Query` is responsible for:
 
 - Data caching and revalidation
 - Request deduplication
 - Error and loading state tracking
 - Background polling and refetching
 
-WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Integration with RTK Query updates cached data in response to socket events.
+WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Query-backed browser state should react to socket events through targeted cache updates or invalidation rather than an assumed global Redux store.
 
 ## Hosting Direction
 
@@ -184,7 +196,7 @@ See `web-client/README.md` for additional setup tips.
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
-RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing.
+`TanStack Query` should be the default browser server-state substrate for new frontend work. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing. If a future editor/admin slice truly needs a broader client-state layer, that slice should document why local feature state plus `TanStack Query` is no longer sufficient before introducing Redux or another global state tool.
 
 ## Game-Specific Customization
 

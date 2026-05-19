@@ -2,6 +2,11 @@
 
 This document explains how FireMUD manages PostgreSQL schema changes across its microservices. Each service owns its tables and applies migrations independently.
 
+## Implementation Notes
+
+- FireMUD’s SQL target state is `jOOQ + Flyway`, with Flyway as the canonical schema authority and `jOOQ` generation/execution as the intended runtime access model for SQL-backed services.
+- The repo is still in the migration phase for that direction. Some services continue to use JPA/Hibernate today, but new long-term persistence investment should align to the `02.19` convergence family rather than deepening ORM dependence.
+
 ---
 
 ## Migration Tool
@@ -16,6 +21,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
 - Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
+- As the `02.19` persistence-convergence family lands, generated `jOOQ` sources must derive from these migrated schemas rather than from a second hand-maintained SQL model.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.

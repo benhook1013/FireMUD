@@ -135,6 +135,17 @@ These tables live in a shared `saga` schema so migrations only run once across s
 Flyway migrations packaged with the library create these tables automatically.
 `SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
 
+## SQL Persistence Direction
+
+FireMUD’s SQL-backed services are converging on `jOOQ + Flyway` as the canonical persistence stack. Shared-library work in this area should optimize for:
+
+- explicit SQL generation and execution;
+- shared transaction and error-translation helpers where the value is truly cross-service;
+- common pagination, filtering, and mapping conventions for control-plane and runtime SQL reads;
+- one schema authority through Flyway rather than service-local ORM interpretations.
+
+Shared libraries should not deepen long-term Hibernate/JPA dependence while the `02.19` convergence family is active.
+
 ## Related Documentation
 
 - [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)

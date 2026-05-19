@@ -50,6 +50,14 @@ Expected result:
 
 The repository ships with a root Gradle wrapper. In normal use, run tasks with `./gradlew`.
 
+### SQL Persistence Direction
+
+For SQL-backed services, the repo’s target-state persistence stack is `jOOQ + Flyway`. Flyway remains the canonical schema authority, and the `02.19` migration family is the work that will converge current JPA-backed services onto generated/executed explicit SQL. Until that family is complete:
+
+- do not assume JPA/Hibernate is the long-term house style for new persistence work;
+- prefer changes that keep schema authority in Flyway and avoid deepening ORM-specific infrastructure;
+- expect later service migration slices to introduce shared `jOOQ` code generation and runtime helpers rather than one-off service-local approaches.
+
 If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash
@@ -208,6 +216,8 @@ The React client in `web-client` provides npm scripts for linting, formatting, a
 cd web-client
 npm ci
 ```
+
+The canonical frontend baseline is `React + Vite + MUI + TanStack Query`. Do not assume the current lightweight Redux/RTK Query scaffold is long-term house style; that scaffold is migration debt tracked in `02.21`. Introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
 
 Then run these checks:
 
