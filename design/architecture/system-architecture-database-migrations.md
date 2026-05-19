@@ -13,11 +13,12 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   module, which does not run Flyway itself).
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
-- Every service-local module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
 - Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
+- Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.
 - Java-based callbacks are avoided; migrations remain SQL-only for portability.
 
 ## Per-Service Organization
