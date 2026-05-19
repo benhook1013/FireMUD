@@ -88,6 +88,59 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
      - Command and retry queue depths stabilize.
    - Review `tick_effects_pending_total` for the region to ensure the ledger is draining and not accumulating new stuck rows.
 
+## Tick Scheduler Pressure
+
+### Detect (Tick scheduler pressure)
+
+- Alerts fire from the scheduler-pressure family:
+  - `TickSchedulerRejectingWork`
+  - `TickSchedulerQueueDepthHigh`
+  - `TickSchedulerMergeRateHigh`
+- Metrics show the bounded scheduler staying above its configured pressure thresholds rather than only showing a one-off burst:
+  - `game_session_tick_scheduler_rejection_consecutive_cycles`
+  - `game_session_tick_scheduler_merge_consecutive_cycles`
+  - `game_session_tick_scheduler_queue_depth_consecutive_cycles`
+- Compare those gauges with the exported threshold metrics instead of assuming defaults:
+  - `game_session_tick_scheduler_rejection_alert_threshold_cycles`
+  - `game_session_tick_scheduler_merge_alert_threshold_count`
+  - `game_session_tick_scheduler_merge_alert_threshold_cycles`
+  - `game_session_tick_scheduler_queue_depth_alert_threshold_count`
+  - `game_session_tick_scheduler_queue_depth_alert_threshold_cycles`
+- Supporting diagnosis should also inspect:
+  - `game_session_tick_scheduler_executor_queue_depth`
+  - `game_session_tick_scheduler_pending_sessions`
+  - `game_session_tick_scheduler_rejected_total`
+  - `game_session_tick_scheduler_merged_total`
+
+### Decide (Tick scheduler pressure)
+
+- If the consecutive-cycle gauges fall back below threshold quickly and queue depth drains, treat it as a transient burst and keep monitoring.
+- If scheduler-pressure alerts remain active:
+  - treat the issue as capacity/saturation pressure in the current bounded fan-out model, not as a signal to change gameplay timing automatically;
+  - investigate executor saturation, active session count, downstream tick duration, and recent deployment/configuration changes before changing thresholds;
+  - prefer scaling or reducing the pressure source over loosening alert thresholds without evidence.
+- If scheduler pressure is sustained together with stalled-region symptoms, follow the stalled-region flow first for the affected scopes and then revisit scheduler capacity once region health recovers.
+
+### Act (Tick scheduler pressure)
+
+1. **Confirm the pressure shape**
+   - Check whether the alert is driven mainly by rejections, merge cycles, queue depth cycles, or all three together.
+   - Confirm the live threshold values from the exported threshold gauges so you are not triaging against stale defaults.
+2. **Measure capacity pressure**
+   - Inspect `game_session_tick_scheduler_executor_queue_depth` and `game_session_tick_scheduler_pending_sessions`.
+   - Correlate with tick execution duration metrics and any recent increase in active session count.
+3. **Inspect runtime cause**
+   - Review Game Session logs for scheduler-pressure summaries and threshold-reached warnings.
+   - Use traces and dashboards to determine whether pressure is caused by long tick execution, downstream service latency, or unusually high command volume.
+4. **Mitigate**
+   - If pressure is caused by degraded downstream dependencies, handle those dependencies first.
+   - If pressure is caused by sustained player/runtime load, scale the Game Session runtime or reduce the concurrent session load on the affected deployment.
+   - Do not introduce ad hoc gameplay-timing changes during the incident; the current scheduler policy is observability-first rather than auto-throttling.
+5. **Verify recovery**
+   - Confirm the consecutive-cycle gauges return to `0`.
+   - Confirm queue depth returns to a normal envelope and alert counters stop increasing.
+   - Record which metric crossed threshold first so later threshold tuning has real evidence.
+
 ## Tick Replay Storm or Excessive Replays
 
 ### Detect (Tick replay storm)
