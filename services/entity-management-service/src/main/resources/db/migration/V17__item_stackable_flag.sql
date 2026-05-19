@@ -1,1 +1,0 @@
-ALTER TABLE items ADD COLUMN is_stackable BOOLEAN NOT NULL DEFAULT false;

@@ -59,7 +59,7 @@ These are already partly real in code and should continue after the immediate ru
 16. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 17. [02.17.2 Pre-v1 Migration Squash and Baseline Reset](./02.17.2-task-list-pre-v1-migration-squash-and-baseline-reset-vertical-slice.md)
-   Remaining: `02.18.19` is now implemented, including the fresh-schema sentinel cleanup (`genrev:legacy`, `legacy:` effect keys), so the remaining migration-archaeology follow-through is explicitly re-homed here: choose the first destructive squash set, restate the canonical baseline migrations for `game-session-service`, `automation-scripting-service`, and `entity-management-service`, then prove fresh boot plus service-scoped reset/rebuild on the new baselines using the `02.17.1` tooling.
+   Remaining: `entity-management-service` is now the first completed destructive squash target, with one canonical baseline migration replacing its local archaeology chain and the reset tooling widened so saga-backed services drop shared saga tables, wait for Postgres readiness, and export standard Flyway connection variables during local rebuilds. The remaining work is the same destructive baseline restatement for `game-session-service` and `automation-scripting-service`, plus the broader follow-through of migration-history cleanup across the busiest services.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 

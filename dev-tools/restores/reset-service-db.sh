@@ -134,6 +134,26 @@ for table in tables:
 PY
 }
 
+service_uses_saga_migrations() {
+  local project="$1"
+  local application_file="$ROOT_DIR/services/$project/src/main/resources/application.yml"
+  [[ -f "$application_file" ]] && grep -Fq 'classpath:db/migration/saga' "$application_file"
+}
+
+append_unique_tables() {
+  local -n target_ref="$1"
+  shift
+
+  local table
+  for table in "$@"; do
+    [[ -z "$table" ]] && continue
+    if [[ " ${target_ref[*]} " == *" $table "* ]]; then
+      continue
+    fi
+    target_ref+=("$table")
+  done
+}
+
 SERVICE="${1:-}"
 DRY_RUN=0
 
@@ -184,6 +204,10 @@ fi
 
 mapfile -t OWNED_TABLES < <(discover_owned_tables "$MIGRATION_DIR")
 
+if service_uses_saga_migrations "$PROJECT"; then
+  append_unique_tables OWNED_TABLES saga_instance saga_step
+fi
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Service: $SERVICE"
   echo "Gradle project: $PROJECT"
@@ -215,6 +239,9 @@ fi
 : "${FIREMUD_POSTGRES_PASSWORD:=firemud}"
 
 export FIREMUD_POSTGRES_HOST FIREMUD_POSTGRES_PORT FIREMUD_POSTGRES_DB FIREMUD_POSTGRES_USER FIREMUD_POSTGRES_PASSWORD
+export FLYWAY_URL="jdbc:postgresql://${FIREMUD_POSTGRES_HOST}:${FIREMUD_POSTGRES_PORT}/${FIREMUD_POSTGRES_DB}"
+export FLYWAY_USER="$FIREMUD_POSTGRES_USER"
+export FLYWAY_PASSWORD="$FIREMUD_POSTGRES_PASSWORD"
 
 WAS_RUNNING=0
 if [[ -n "$(docker compose "${COMPOSE_FILES[@]}" ps -q "$COMPOSE_SERVICE" 2>/dev/null || true)" ]]; then
@@ -223,6 +250,22 @@ if [[ -n "$(docker compose "${COMPOSE_FILES[@]}" ps -q "$COMPOSE_SERVICE" 2>/dev
 fi
 
 docker compose "${COMPOSE_FILES[@]}" up -d postgres >/dev/null
+
+for _ in {1..30}; do
+  if docker compose "${COMPOSE_FILES[@]}" exec -T postgres pg_isready \
+    -U "$FIREMUD_POSTGRES_USER" \
+    -d "$FIREMUD_POSTGRES_DB" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! docker compose "${COMPOSE_FILES[@]}" exec -T postgres pg_isready \
+  -U "$FIREMUD_POSTGRES_USER" \
+  -d "$FIREMUD_POSTGRES_DB" >/dev/null 2>&1; then
+  echo "Error: postgres did not become ready for $SERVICE reset" >&2
+  exit 1
+fi
 
 SQL="DROP TABLE IF EXISTS $(quote_identifier "$HISTORY_TABLE") CASCADE;"
 for table in "${OWNED_TABLES[@]}"; do
