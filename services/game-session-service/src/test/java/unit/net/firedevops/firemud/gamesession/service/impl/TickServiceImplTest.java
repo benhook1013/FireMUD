@@ -122,6 +122,17 @@ class TickServiceImplTest {
             runtimeRegionStatusRepository,
             runtimeIdentity,
             sessionContextService);
+    TickBatchExecutionService tickBatchExecutionService =
+        new TickBatchExecutionService(
+            meterRegistry,
+            redisTemplate,
+            gameplayCommandRepository,
+            tickBatchRepository,
+            tickEffectRepository,
+            durableGameplayCommandExecutionService,
+            durableRemoteFollowupExecutionService,
+            remoteFollowupDrainService,
+            tickQueueControlService);
     service =
         new TickServiceImpl(
             redisTemplate,
@@ -132,12 +143,11 @@ class TickServiceImplTest {
             runtimeRegionStatusRepository,
             tickBatchRepository,
             tickEffectRepository,
-            durableGameplayCommandExecutionService,
-            durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             remoteFollowupRuntimeService,
             automationScriptingClient,
-            tickQueueControlService);
+            tickQueueControlService,
+            tickBatchExecutionService);
     ((TickServiceImpl) service).init();
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);

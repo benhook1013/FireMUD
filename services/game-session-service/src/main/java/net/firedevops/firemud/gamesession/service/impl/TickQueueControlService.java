@@ -213,6 +213,10 @@ final class TickQueueControlService {
                         .formatted(tenantId, gameInstanceId, regionId)));
   }
 
+  RuntimeRegionStatus saveRuntimeOwnership(RuntimeRegionStatus status) {
+    return runtimeRegionStatusRepository.save(status);
+  }
+
   String queueKey(Long tenantId, Long sessionId) {
     return "gamesession:tick:queue:" + tenantId + ":" + sessionId;
   }
