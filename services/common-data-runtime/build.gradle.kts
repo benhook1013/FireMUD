@@ -5,7 +5,6 @@ plugins {
 
 dependencies {
     api(project(":common-platform-core"))
-    implementation(project(":common-saga"))
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.spring.boot.configuration.processor)
     compileOnly(libs.lombok)

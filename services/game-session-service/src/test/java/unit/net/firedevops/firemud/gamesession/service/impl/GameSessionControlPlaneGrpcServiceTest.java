@@ -4671,6 +4671,19 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             gameplayAdmissionPointerAuthorityService,
             versionUpgradePreparationService);
+    GameSessionCommandControlPlaneService commandControlPlaneService =
+        new GameSessionCommandControlPlaneService(
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            remoteFollowupRepository,
+            remoteCommandCoordinatorRepository,
+            remoteFollowupResultRepository,
+            gameplayAdmissionPointerAuthorityService,
+            gameDesignClient,
+            builtInTextCommandAliasResolver,
+            tickService,
+            meterRegistry);
     GameSessionOperatorControlPlaneService operatorControlPlaneService =
         new GameSessionOperatorControlPlaneService(
             gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
@@ -4678,25 +4691,13 @@ class GameSessionControlPlaneGrpcServiceTest {
         new GameSessionVersionUpgradeControlPlaneService(
             instanceCutoverCompatibilityService, versionUpgradePreparationService);
     return new GameSessionControlPlaneGrpcService(
-        gameInstanceRepository,
-        gameplayCommandRepository,
-        runtimeRegionStatusRepository,
-        remoteFollowupRepository,
-        remoteCommandCoordinatorRepository,
-        remoteFollowupResultRepository,
+        commandControlPlaneService,
         remoteControlPlaneService,
         runtimeControlPlaneReadService,
         admissionPointerControlPlaneService,
         operatorControlPlaneService,
         versionUpgradeControlPlaneService,
-        gameplayAdmissionPointerAuthorityService,
-        instanceCutoverCompatibilityService,
-        versionUpgradePreparationService,
-        gameDesignClient,
-        builtInTextCommandAliasResolver,
-        tickService,
-        meterRegistry,
-        gameSessionProperties);
+        meterRegistry);
   }
 
   private static GameSessionControlPlaneGrpcService controlPlaneService(
