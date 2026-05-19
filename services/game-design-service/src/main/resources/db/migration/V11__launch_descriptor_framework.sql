@@ -1,8 +1,11 @@
 ALTER TABLE published_release_bundle
-    ADD COLUMN generation_config_revision VARCHAR(128) NOT NULL DEFAULT 'genrev:legacy';
+    ADD COLUMN generation_config_revision VARCHAR(128);
 
 UPDATE published_release_bundle
 SET generation_config_revision = CONCAT('genrev:', tenant_id, ':', version_id, ':', manifest_hash);
+
+ALTER TABLE published_release_bundle
+    ALTER COLUMN generation_config_revision SET NOT NULL;
 
 ALTER TABLE game_templates
     ADD COLUMN default_version_id BIGINT,

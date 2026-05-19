@@ -80,3 +80,8 @@ Entry format:
   - Context: reviewing gameplay proof convergence across `services/game-session-service/websocket-login-look-smoke.sh`, `services/tcp-proxy-service/telnet-login-look-smoke.sh`, and `dev-tools/hosted/shared/hosted-login-look-smoke.sh`.
   - Observation: the repo now shares command-step catalogs and readiness/account checks through `dev-tools/smoke/smoke_common.py`, but the telnet hosted smoke, local telnet smoke, and local websocket smoke still carry separate transport read/drain/send loops and partial retry behavior, so smoke proof can still drift one layer below the shared step definitions.
   - Expected pattern: when a smoke flow is canonical across environments, share both the command plan and the transport executor semantics so hosted and local smoke paths do not fork on timeout, draining, or partial-response handling.
+
+- `2026-05-19`: Shared reactive test app bootstraps should disable Spring Cloud discovery and pin InetUtils localhost defaults
+  - Context: a repo-wide `./gradlew check` hung in `:tcp-proxy-service:crossServiceTest` after the test worker finished product work because `ReactiveTestApplicationSupport.startReactiveApp(...)` was starting stub reactive apps with a live `spring.cloud.inetutils` thread still resolving host metadata under heavier test load.
+  - Observation: reactive stub apps in this repo do not need service discovery, and leaving Spring Cloud InetUtils enabled can turn a test bootstrap helper into an intermittent startup hang that looks like a random module teardown stall.
+  - Expected pattern: shared reactive test bootstrap helpers should set `spring.cloud.discovery.enabled=false` and short localhost InetUtils defaults unless a specific test explicitly needs discovery behavior.

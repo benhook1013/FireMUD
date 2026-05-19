@@ -4,7 +4,7 @@ ALTER TABLE tick_effect
 UPDATE tick_effect
 SET effect_key = CASE
     WHEN command_id IS NOT NULL AND command_id <> '' THEN 'command:' || command_id
-    ELSE 'legacy:' || effect_id
+    ELSE 'effect:' || effect_id
 END
 WHERE effect_key IS NULL;
 

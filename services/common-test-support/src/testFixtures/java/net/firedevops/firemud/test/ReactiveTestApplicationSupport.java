@@ -17,6 +17,12 @@ public final class ReactiveTestApplicationSupport {
     Map<String, Object> resolved = new LinkedHashMap<>();
     resolved.put("server.port", "0");
     resolved.put("spring.main.web-application-type", "reactive");
+    // Reactive test apps in this repo do not use service discovery, and letting Spring Cloud
+    // infer local host metadata can hang startup under heavier parallel test load.
+    resolved.put("spring.cloud.discovery.enabled", "false");
+    resolved.put("spring.cloud.inetutils.timeout-seconds", "1");
+    resolved.put("spring.cloud.inetutils.default-hostname", "localhost");
+    resolved.put("spring.cloud.inetutils.default-ip-address", "127.0.0.1");
     resolved.putAll(properties);
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(applicationClasses)
