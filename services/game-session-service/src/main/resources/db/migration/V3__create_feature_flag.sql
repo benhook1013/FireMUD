@@ -1,7 +1,0 @@
-CREATE TABLE IF NOT EXISTS feature_flag (
-    id BIGSERIAL PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    enabled BOOLEAN NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);

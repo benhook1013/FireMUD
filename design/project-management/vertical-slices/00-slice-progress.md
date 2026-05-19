@@ -54,12 +54,12 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: build on the now-live authored `stackVariantKey` plus runtime `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
 14. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next honest gap is later domain-specific effect guards as new owning mutation families land, not another forced proving-ground batch in the current built-in command set.
+
 15. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
+
 16. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
-17. [02.17.2 Pre-v1 Migration Squash and Baseline Reset](./02.17.2-task-list-pre-v1-migration-squash-and-baseline-reset-vertical-slice.md)
-   Remaining: `entity-management-service` and `automation-scripting-service` are now the first completed destructive squash targets, each with one canonical baseline migration replacing its local archaeology chain. The reset tooling now drops shared saga tables for saga-backed services, waits for Postgres readiness, exports standard Flyway connection variables, and preserves the service-local schema plus Flyway history table instead of falling back to `public` / `flyway_schema_history` during local Gradle rebuilds. The remaining work is the same destructive baseline restatement for `game-session-service`, plus the broader follow-through of migration-history cleanup across the busiest services.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 
