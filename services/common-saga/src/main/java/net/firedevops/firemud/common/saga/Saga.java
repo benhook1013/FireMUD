@@ -5,8 +5,8 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Executes a list of {@link SagaStep} instances sequentially. On failure the already executed steps
- * are compensated in reverse order.
+ * Executes a list of {@link SagaStep} instances sequentially for short synchronous orchestration.
+ * On failure the already executed steps are compensated in reverse order.
  */
 public class Saga {
   private final String name;
@@ -25,7 +25,7 @@ public class Saga {
     return Collections.unmodifiableList(steps);
   }
 
-  /** Executes the saga. */
+  /** Executes the synchronous saga inline. */
   public void run() throws SagaException {
     List<SagaStep> executed = new ArrayList<>();
     try {

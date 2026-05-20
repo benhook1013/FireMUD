@@ -8,7 +8,7 @@ This document defines the Social & Groups Service runtime model, persistent data
 - Stores guild and friend relationships in PostgreSQL
 - Integrates with the Logging & Admin Service for moderation events
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a moderation report
-- Guild creation and membership changes participate in Saga workflows so other services remain consistent; see [Transaction Strategies](../../system-architecture-transactions.md)
+- Guild creation and membership changes may participate in short synchronous saga workflows so other services remain consistent; see [Transaction Strategies](../../system-architecture-transactions.md)
 - Chat history and guild data are stored with a `tenantId` so conversations are isolated per game; Redis list keys also include this prefix, as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - Cross-service calls always forward the `tenantId` so features remain isolated; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md) for details
 - APIs require authenticated JWTs from the Account Service for role checks; these tokens are exchanged only between services, and all inter-service communication is encrypted via mutual TLS following the [Security Architecture](../../system-architecture-security.md)

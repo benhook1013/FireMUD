@@ -1,6 +1,6 @@
 package net.firedevops.firemud.common.saga;
 
-/** Single step in a saga workflow. */
+/** Single step in a short synchronous saga flow. */
 public class SagaStep {
   private final String name;
   private final SagaAction action;

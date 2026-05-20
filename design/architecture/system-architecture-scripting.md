@@ -103,7 +103,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - Errors at this stage are shown directly in the editor; scripts cannot be published until they are resolved.
 
 2. **Compile-time validation and persistence (Automation & Scripting Service)**
-   - When designers publish a new script patch, the Game Design Service drives a Saga that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
+   - When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
    - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**

@@ -31,7 +31,7 @@ Canonical producer-to-publisher handoff for derived artifacts:
   - `producerService`;
   - a producer-local lifecycle/status field proving the artifact bytes are finalized for publish.
 - Game Design must obtain derived artifact bytes and metadata through a typed producer-service API backed by that persisted record. Ad hoc filesystem sharing, direct producer writes into the published asset bucket, and convention-based object-key pickup are not allowed.
-- The publish Saga order is: producer materializes and freezes the derived artifact in its own ownership boundary, then Game Design exports those exact bytes into the published version prefix, then attestation records the resulting `manifestHash`.
+- The durable publish workflow order is: producer materializes and freezes the derived artifact in its own ownership boundary, then Game Design exports those exact bytes into the published version prefix, then attestation records the resulting `manifestHash`.
 - Exact-bytes repair for a Published/Active version must re-read the same producer-owned artifact contract or an equivalent immutable repair source capable of reproducing the attested bytes. If the producer can no longer supply the attested bytes, recovery requires publishing a new `versionId`.
 
 Illustrative producer API for derived artifacts:
@@ -47,7 +47,7 @@ Illustrative producer API for derived artifacts:
   - producer-local finalized timestamp or equivalent evidence that publishable bytes are frozen.
 - `READY` means the producer has durably recorded the artifact and guarantees the referenced bytes can be fetched for publish or exact-bytes repair.
 - `NOT_READY` means publish must fail or wait before `ExportAssets`; Game Design must not export placeholder bytes.
-- `FAILED` means the producer could not materialize a publishable artifact and must return structured failure details suitable for Saga diagnostics.
+- `FAILED` means the producer could not materialize a publishable artifact and must return structured failure details suitable for publish-workflow diagnostics.
 
 Illustrative `GetPublishableDerivedArtifact` fragments:
 
@@ -316,7 +316,7 @@ Script-only patches (see `system-architecture-versioning-runtime.md`) do not cha
 
 ### Asset Lifecycle and Publish Workflow
 
-The publish workflow uses a dedicated Saga step to export assets and update
+The publish workflow uses a dedicated workflow step to export assets and update
 manifest metadata:
 
 Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
@@ -353,10 +353,10 @@ Transition enforcement contract:
 
 - Every transition is persisted by updating `version_asset_artifact` with CAS on `state_epoch`.
 - Failed CAS means another workflow already changed state; callers must reload current state and re-evaluate.
-- Publish Saga and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
+- The durable publish workflow and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
 
-- For each `(tenantId, versionId)` the Saga runs an `ExportAssets` step that:
+- For each `(tenantId, versionId)` the durable publish workflow runs an `ExportAssets` step that:
   - Selects assets by joining `version_asset` to `game_assets` for the target
     `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
     exported for that version. In the current first slice, export selects all tenant `game_assets` rows until the normalized `version_asset` mapping table is fully enforced.
@@ -365,7 +365,7 @@ Transition enforcement contract:
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
   - Transitions `version_asset_artifact` from `STAGED` to `EXPORTED_UNATTESTED`.
-  - Fails the Saga step if any asset referenced in `version_asset` for the target
+  - Fails the workflow step if any asset referenced in `version_asset` for the target
     `(tenantId, versionId)` is missing, so partially published versions cannot be
     marked as Published.
 - The step is **idempotent**: rerunning `ExportAssets` for the same
@@ -383,7 +383,7 @@ Transition enforcement contract:
   - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
   - Version metadata and/or the immutable `published_release_bundle` attestation must record `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between metadata mappings and object-store contents.
   - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place by changing attested content; the only allowed repair is an exact-bytes rebuild that reproduces the existing `published_release_bundle` attestation. If that is impossible, recovery requires publishing a new `versionId`.
-- If any downstream publish step fails, the Saga must:
+- If any downstream publish step fails, the durable workflow must:
   - mark the version as **Failed** in the Game Design Service so it cannot be activated, and
   - transition the asset artifact to `FAILED` instead of silently deleting bytes.
 

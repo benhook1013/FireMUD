@@ -58,7 +58,7 @@ See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for 
 - [`procedural-generation-control.md`](./procedural-generation-control.md)
   - generation-input ownership, runtime-default APIs, artifact publication path, and draft-digest implications.
 - [`world-creation-workflow.md`](./world-creation-workflow.md)
-  - per-instance world-creation Saga steps and rollback boundaries.
+  - per-instance world-lifecycle workflow stages and rollback boundaries.
 
 ## Quick Canonical Links
 

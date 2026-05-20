@@ -11,7 +11,7 @@ This document collects the Social & Groups Service operational behavior, readine
 
 ## Saga Participation
 
-Guild creation and membership changes participate in Saga workflows so other services remain consistent. See [Transaction Strategies](../../system-architecture-transactions.md).
+Guild creation and membership changes may participate in short synchronous saga workflows so other services remain consistent. See [Transaction Strategies](../../system-architecture-transactions.md).
 
 ## Chat Slice Status
 

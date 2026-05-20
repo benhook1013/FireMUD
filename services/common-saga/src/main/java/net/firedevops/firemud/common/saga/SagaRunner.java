@@ -12,7 +12,7 @@ import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.slf4j.MDC;
 
-/** Executes sagas with correlation ID handling and metrics. */
+/** Executes short synchronous sagas with correlation ID handling and metrics. */
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Repositories and metrics are injected and immutable")

@@ -20,8 +20,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 ## Utility Packages
 
 - **Logging Utilities** – `LoggingUtil` is a thin SLF4J wrapper. The
-  `LoggingInterceptor` and `SagaRunner` attach a `correlationId` using MDC so logs
-  from different services can be correlated.
+  `LoggingInterceptor`, `SagaRunner`, and Temporal workflow/activity hosts attach
+  correlation-friendly context using MDC so logs from different services can be
+  correlated.
 - **Security Utilities** – `JwtUtil` for verifying tokens (and building them
   within the Account Service only) plus `AuthTokenInterceptor`,
   `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
@@ -119,9 +120,9 @@ private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 
 `JwtUtil` helps verify tokens and is used by the Account Service when issuing new ones.
 
-## Saga Orchestration
+## Short Synchronous Saga Orchestration
 
-The library also provides a lightweight saga engine for multi-step workflows. Flows are defined with `SagaBuilder` and may include compensation actions:
+The shared `common-saga` module provides a lightweight short synchronous orchestration helper for multi-step workflows that can complete in one caller-owned execution path. Flows are defined with `SagaBuilder` and may include compensation actions:
 
 ```java
 new SagaBuilder()
@@ -132,9 +133,11 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
-These tables live in a shared `saga` schema so migrations only run once across services.
-Flyway migrations packaged with the library create these tables automatically.
-`SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
+These tables live in a service-local `saga` schema inside each adopting service database.
+Flyway migrations packaged with the module create these tables automatically.
+`SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
+
+`common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead.
 
 ## SQL Persistence Direction
 

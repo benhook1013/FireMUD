@@ -5,7 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.stereotype.Component;
 
-/** Tracks active saga workflows. */
+/** Tracks active short synchronous saga executions. */
 @Component
 public class SagaMetrics {
   private final AtomicInteger active = new AtomicInteger();

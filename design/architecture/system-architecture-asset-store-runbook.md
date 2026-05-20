@@ -72,7 +72,7 @@ When using a self-hosted MinIO cluster as the asset store:
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
    - If object-store contents drift from the database (for example missing objects for
-     a still-published version), operators should re-run the `ExportAssets` Saga step
+     a still-published version), operators should re-run the `ExportAssets` publish-workflow step
      for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
      from the authoritative repair sources rather than attempting manual repair:
      ordinary binary assets rebuild from the immutable Game Design asset byte rows (`game_assets.data` in the current first slice) plus exported asset-key proof, while derived artifacts rebuild from the producer-owned immutable artifact contracts defined in `asset-storage.md`.

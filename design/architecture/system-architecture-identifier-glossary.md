@@ -51,20 +51,20 @@ Cross-service read composition (for example `LOOK` world + entity joins) must us
   - Fail with `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE`.
 - Composition contract: callers must reject mixed-fence payloads; retries must preserve requested scope and fence semantics.
 
-## Saga Workflow Identity
+## Short Synchronous Saga Identity
 
-Long-running, cross-service workflows (publish, world creation) use sagas and must be idempotent per step:
+Short synchronous `common-saga` orchestration uses persisted step identity and must be idempotent per step when retries are possible:
 
-- `sagaInstanceId` – identifies a specific saga execution.
+- `sagaInstanceId` – identifies a specific synchronous saga execution.
 - `sagaStepName` – stable step name within the saga definition.
-- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope (for example `(tenantId, gameInstanceId, worldCreationRequestId, sagaStepName)`); `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
+- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope; `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
 
 ## Temporal Workflow Identity
 
 Durable Temporal workflows use explicit workflow and step identity independent of one JVM lifetime:
 
 - `workflowId` – the canonical durable workflow identity. FireMUD formats it as `<workflowFamily>:<tenantId>:<scopeKey>:<businessKey>`.
-- `workflowFamily` – the stable workflow class/family name such as `world-lifecycle` or `script-patch-readiness`.
+- `workflowFamily` – the stable workflow class/family name such as `world-lifecycle`, `publish`, or `script-patch-readiness`.
 - `scopeKey` – the narrow business scope for the workflow, such as `world-instance`, `version`, or `game-instance`.
 - `businessKey` – the stable request or domain identity that makes workflow start/retry idempotent.
 - `businessStepKey` – the durable activity/update-side idempotency key. FireMUD formats it as `<workflowId>#<stepName>#<businessKey>`.

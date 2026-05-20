@@ -69,28 +69,26 @@ These are not broad audit topics anymore; they are real future slices with known
 
 1. [02.19 jOOQ and Flyway Persistence Convergence](./02.19-task-list-jooq-and-flyway-persistence-convergence-vertical-slice.md)
    Remaining: the architecture decision and shared foundation are now in place, and both Automation Scripting and Game Session are migrated at the service-repository boundary; the next honest work is the rest of the service-by-service migration family, starting with Game Design while the shared SQL substrate is still fresh.
-2. [02.20 Temporal Control-Plane Workflow Convergence](./02.20-task-list-temporal-control-plane-workflow-convergence-vertical-slice.md)
-   Remaining: the control-plane-only Temporal decision, shared foundation, world-lifecycle adopter, durable publish / release-attestation adopter, and script-patch readiness adopter are now live; the remaining work is the later boundary cleanup in `02.20.4`.
-3. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
+2. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
    Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, with explicit freshness now live across rollout, plugin-policy status, plugin-policy convergence, Automation pin-convergence, Game Session pin-convergence, drain-status, and scheduler-materialization reads, while plugin activation preflight, policy-convergence reads, and schedule materialization now also fail closed against stale same-instance plugin runtime rows by respecting the current observed runtime region, and design-time publication boundaries remain intentionally anchored in `08.4`.
-4. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
-5. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-6. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
-7. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-8. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+3. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
+4. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
+5. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+6. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+7. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
    Remaining: the hot reconnect buffer now stores structured `PlayerOutput` replay metadata alongside classic rendered protocol text for new entries and keeps text-only legacy entries readable; durable transcript history and retention classes remain future work.
-9. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+8. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
    Remaining: build on the structured hot-buffer entry model by adding bounded durable transcript history when product retention policy becomes active.
-10. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+9. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
    Remaining: the first proto contract guard now prevents ambiguous cross-service time fields such as bare `timeout`, `expires`, and `duration`; broader runtime adoption remains future work as timed gameplay systems land.
-11. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-12. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+10. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+11. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
    Remaining: Entity Management now has the first gameplay-attested actor-state read substrate for baseline resources plus persisted resource/condition rows; authored definitions, shared effect evaluation, mutation/expiry, equipment/action contributions, and damage/mitigation remain future work.
-13. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+12. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
    Remaining: the first typed in-process effect evaluation seam now exists for additive/multiplicative/clamp modifiers, granted flags/conditions, scopes, and provenance, and active condition payloads are wired through it for actor-state reads; authored definitions plus equipment/action-state producer wiring remain future work.
-14. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+13. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
    Remaining: equipped item templates can now contribute effect payload modifiers through actor-state reads, and an internal condition/action-state apply/expire seam exists; player command wiring, scheduled expiry execution, and richer scoped combat-facing consumption remain future work.
-15. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+14. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Lower-priority platform/settings expansion
 

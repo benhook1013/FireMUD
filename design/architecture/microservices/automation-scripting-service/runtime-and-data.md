@@ -17,14 +17,14 @@ This document defines the Automation & Scripting Service runtime model, persiste
 - Each game’s scripts live in tables keyed by `tenantId`, ensuring automation for one game cannot access another’s data. Derived Redis coordination and index keys must preserve runtime instance isolation as well, not just tenant isolation.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
-## Saga Participation
+## Workflow Participation
 
-The Automation & Scripting Service uses the shared Saga library as follows:
+The Automation & Scripting Service uses the shared workflow substrates as follows:
 
-- Script patch consumption: when a script-only patch version is published, Game Design drives the Saga and this service participates as a consumer via `NotifyScriptVersionUpdate`, ingesting the patch for tenant readiness without coordinating its own Saga steps. Running instances reload only after a later pin change to that tenant-`READY` patch.
+- Script patch consumption: when a script-only patch version is published, Game Design drives the durable publish workflow and this service participates as a consumer via `NotifyScriptVersionUpdate`, ingesting the patch for tenant readiness without coordinating its own publish-workflow steps. Running instances reload only after a later pin change to that tenant-`READY` patch.
 - Bootstrap and dev-only upload path: if `UpdateScript` exists in an environment, it must be explicitly marked non-production and must not bypass patch lifecycle gates, readiness checks, or control-plane events.
 
-Tick-driven automation and event handling never use Sagas; they follow the Redis and tick contracts described in [System Architecture: Scripting & Automation](../../system-architecture-scripting.md) and [Tick System and Runtime Design](../../system-architecture-ticks.md).
+Tick-driven automation and event handling never use synchronous sagas or Temporal; they follow the Redis and tick contracts described in [System Architecture: Scripting & Automation](../../system-architecture-scripting.md) and [Tick System and Runtime Design](../../system-architecture-ticks.md).
 
 ## Runtime Data Model
 

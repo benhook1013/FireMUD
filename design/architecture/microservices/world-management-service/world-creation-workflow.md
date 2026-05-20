@@ -114,8 +114,9 @@ Illustrative operator-facing workflow status fragment:
 
 ```json
 {
-  "sagaName": "createWorld",
-  "sagaInstanceId": "saga-9001",
+  "workflowFamily": "world-lifecycle",
+  "workflowId": "world-lifecycle:t1:world-instance:g-100",
+  "workflowStatus": "RUNNING",
   "tenantId": "t1",
   "gameInstanceId": "g-100",
   "steps": [
@@ -129,18 +130,18 @@ Illustrative operator-facing workflow status fragment:
 }
 ```
 
-### Saga Step Idempotency
+### Workflow Activity Idempotency
 
 World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
 
 - `(tenantId, gameInstanceId, worldCreationRequestId, stepName, expectedGenerationConfigRevision)`
 
-For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different `sagaInstanceId` values converge on one logical result.
+For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different workflow runs converge on one logical result.
 
-On a retry of the same saga instance:
+On a retry of the same workflow identity:
 
 - If the guard indicates the step has already completed successfully, the step must become a no-op and return success.
-- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the saga can be retried safely after cleanup.
+- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the workflow can be retried safely after cleanup.
 
 If retries are exhausted before admission:
 
@@ -148,34 +149,21 @@ If retries are exhausted before admission:
 - No gameplay admission is permitted for that `gameInstanceId`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; operators must create a new instance with a new `gameInstanceId` for retry.
 
-This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new saga instances resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
+This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new workflow runs resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
 
-```java
-SagaBuilder builder = new SagaBuilder("createWorld");
-builder
-    .step("createStarterRegion", () -> createStarterRegionInstance(
-        tenantId, versionId, gameInstanceId, worldCreationRequestId, expectedGenerationConfigRevision))
-    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
-    .step("materializePopulationSchedules", () -> materializePopulationSchedules(
-        tenantId, versionId, gameInstanceId, generationRequestId, expectedGenerationConfigRevision))
-    .step("activateInstance", () -> activateInstance(
-        tenantId, gameInstanceId, expectedVersionStateEpoch, expectedGenerationConfigRevision));
-sagaRunner.run(builder.build());
-```
-
-The saga state is stored in the `saga_instance` and `saga_step` tables defined in the common library. Operators can inspect progress through the Logging & Admin Service's saga dashboard.
+The durable workflow state is owned by Temporal using the canonical `world-lifecycle` workflow identity. Operators can inspect progress through the normal lifecycle read surface and any Temporal-backed operator tooling that projects the same `workflowId`.
 
 See [World Management Service](README.md) for additional service context.
 
-See [Transaction Strategies](../../system-architecture-transactions.md) for background on how sagas are used across FireMUD.
+See [Transaction Strategies](../../system-architecture-transactions.md) for the canonical boundary between ticks, short synchronous saga orchestration, and durable Temporal workflows.
 
 ## Instance Termination and Cleanup
 
 Instance expiry and operator-driven shutdown must use an explicit cross-service termination workflow rather than independent cleanup jobs.
 
 - Game Session must first mark the target instance non-admissible/draining before World starts termination.
-- World Management starts an `InstanceTermination` Saga and marks the instance `TERMINATING`.
-- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with `sagaInstanceId` as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
+- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and marks the instance `TERMINATING`.
+- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with Temporal `workflowId` / run identity as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion; current world-side cleanup hard-deletes runtime `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows for the terminating instance while retaining the terminal `world_instance` lifecycle row.
 - The current first implementation cut now exposes that contract synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination.
 - If cleanup fails after admission is already closed, the world remains `TERMINATING` and the same termination workflow identity must retry to convergence instead of restoring the instance to live admission.
@@ -202,7 +190,7 @@ instance data derived from that version:
   instance data and no reuse of instance layouts across different
   `gameInstanceId` values.
 - Moving a game to a different version is modeled as starting a **new** game
-  instance with a fresh `gameInstanceId` and running the world-creation Saga
+  instance with a fresh `gameInstanceId` and running the world-lifecycle workflow
   again for the new `(tenantId, versionId)`. Existing instances continue to use
   their original templates until they are shut down.
 - Operational tooling should not attempt to “retarget” an existing

@@ -3,7 +3,7 @@ package net.firedevops.firemud.common.saga;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Fluent builder for defining saga workflows. */
+/** Fluent builder for defining short synchronous saga flows. */
 public class SagaBuilder {
   private final String name;
   private final List<SagaStep> steps = new ArrayList<>();
@@ -30,7 +30,7 @@ public class SagaBuilder {
     return new Saga(name, steps);
   }
 
-  /** Convenience method to build and immediately run the saga. */
+  /** Convenience method to build and immediately run the synchronous saga. */
   public void run() throws SagaException {
     build().run();
   }

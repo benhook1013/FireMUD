@@ -62,7 +62,7 @@ Open or amend the architecture docs before implementation when a change would al
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**system-architecture-tracing.md**](./system-architecture-tracing.md) – Deploying the OpenTelemetry Collector and Jaeger.
-- [**system-architecture-transactions.md**](./system-architecture-transactions.md) – Transaction strategies and sagas for cross-service workflows.
+- [**system-architecture-transactions.md**](./system-architecture-transactions.md) – Transaction strategies, synchronous sagas, and Temporal boundaries for cross-service workflows.
 - [**system-architecture-versioning-runtime.md**](./system-architecture-versioning-runtime.md) – Publishing versions and runtime flags.
 
 ## Operations

@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Transaction Strategies
 
-This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis) and **long-running business workflows** (executed via a Saga pattern using a shared orchestration library). It clarifies when sagas are needed — and when they are not.
+This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis), **short synchronous cross-service orchestration** (executed through the shared `common-saga` helper), and **long-running durable control-plane workflows** (executed through Temporal). It clarifies when each pattern is needed — and when it is not.
 
 ---
 
@@ -11,7 +11,8 @@ This document explains how FireMUD coordinates data consistency across its indep
 | **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained gameplay unit** that may touch multiple services but is coordinated via Redis and idempotent domain handlers. |
 | **Transaction** | A unit of work that must either fully succeed or be rolled back **within a single service boundary** (for example, a PostgreSQL transaction in Entity Management). Gameplay commands are composed of one or more such local transactions plus idempotent retries; there is **no global, cross-service ACID transaction** for a command. |
 | **Tick** | A scheduled gameplay loop slice. Each tick processes at most one command per entity and uses Redis for coordination, staging/cleanup, and fairness. Ticks are not atomic across all commands — each command is executed as an independent composition of local transactions and retries. |
-| **Saga** | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing) or rare tick-adjacent workflows that must coordinate persistent state across services over time. Sagas rely on compensating actions for rollback and eventual consistency. |
+| **Saga** | A short-lived, synchronous cross-service orchestration composed of multiple local transactions plus optional compensation. Used only for **non-gameplay** workflows that can complete in one caller-owned execution path and do not need durable timers, restart-safe continuation, or operator-visible in-flight state independent of one JVM lifetime. |
+| **Temporal workflow** | A long-running, durable control-plane workflow. Used when orchestration must survive restarts, wait durably for time or external events, or expose explicit operator-visible workflow state/history. |
 
 ---
 
@@ -169,29 +170,27 @@ Instead, the recommended pattern is:
   - Performs the external call(s), with its own idempotency and retry strategy.
   - Updates saga and/or outbox state independently of tick replay.
 
-This keeps tick execution fast, bounded, and safely replayable, while sagas and outbox processors own long-running, cross-service workflows. New designs that mix tick-driven state changes with external side effects must explicitly document this boundary and reference both this section and the tick idempotency rules in `system-architecture-tick-failures-and-operations.md`.
+This keeps tick execution fast, bounded, and safely replayable, while synchronous saga steps, Temporal workflows, and outbox processors own longer-running cross-service or external side effects. New designs that mix tick-driven state changes with external side effects must explicitly document this boundary and reference both this section and the tick idempotency rules in `system-architecture-tick-failures-and-operations.md`.
 
 ---
 
-## When Sagas *Are* Used (Out-of-Band Workflows)
+## When Short Synchronous Sagas *Are* Used
 
 Short synchronous sagas are used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis when the orchestration does not need durable workflow execution. These include:
 
 | Use Case | Description |
 | --- | --- |
-| **Account Creation** | Create account → provision default character → initialize world state |
-| **Game Publishing** | Validate and persist design → push to World Service → toggle publish flags |
-| **Instance Termination** | Coordinated shutdown/expiry cleanup across World and Entity services for a `gameInstanceId` |
-| **Admin Operations** | Issue bans, content revocation, or entity cleanup with audit logging |
-| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
+| **Account Creation** | Create account → provision default character → initialize baseline state when the caller can synchronously own retry/failure behavior |
+| **Short admin remediation** | Limited control-plane actions that touch more than one service but still complete in a single caller-driven request/worker pass |
+| **Tick-adjacent outbox follow-through** | Background orchestration around an outbox event when the work is still synchronous and restart-safe continuation is not required |
 
 These workflows:
 
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
-- Require durable coordination and rollback capabilities
+- Require compensation and persisted step status, but not durable workflow execution
 
-If a workflow also needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should move to the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
+If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 
 ### Rollback Boundaries by Operation Class
 
@@ -216,7 +215,8 @@ To keep responsibilities clear across design-time, domain, and runtime services:
 - Domain services such as World Management, Entity Management, and Game Design’s asset storage tables own their respective schemas and all versioned/template rows keyed by `(tenantId, versionId)`. They must be able to load every non-Retired version they own even if Game Design Service is unavailable.
 - Runtime services such as Game Session and Automation & Scripting own transient tick state (primarily in Redis) and any persistent instance data they create via domain-service APIs (for example world instance rows keyed by `(tenantId, gameInstanceId)`), but they must never write template rows directly.
 - All cross-service workflows that change persistent state across more than one service database must either:
-  - execute inside a Saga defined via `firemud-common` (for example account creation, version publish, world creation), or
+  - execute inside a short synchronous `common-saga` flow when caller-owned retry/compensation is sufficient,
+  - execute as a durable Temporal workflow when restart-safe continuation, durable waits, or operator-visible in-flight state matter, or
   - be modeled as tick-adjacent outbox-driven flows when initiated from gameplay commands.
 
 In particular:
@@ -234,9 +234,9 @@ Transactional guarantees for tick execution assume deterministic scripts for the
 
 ---
 
-## FireMUD Saga Architecture
+## FireMUD Short Synchronous Saga Architecture
 
-FireMUD uses a **shared saga orchestration library**, not a separate microservice.
+FireMUD uses a **shared short synchronous saga orchestration library**, not a separate microservice.
 
 ### Characteristics:
 
@@ -245,18 +245,20 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
     `services/common-library`
   - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration/saga`
   - Consuming services run the saga migrations in a dedicated, ordered Flyway pass before their own service-local migrations so saga history does not share a version namespace with `V1__init.sql` service baselines
-  - Hosts define saga flows declaratively using a fluent API or YAML/annotation declarations
-  - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
+  - Hosts define short, synchronous compensation-aware flows declaratively using the fluent API
+  - Saga execution is initiated by services that can own synchronous retry/failure handling, but **coordination logic lives in the library**
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library.
   - These tables reside in a dedicated `saga` schema inside **each service’s own database**. Flyway migrations from `firemud-common` are applied per service database so saga state is local to the service that owns the workflow.
-  - Tracks in-progress, completed, and failed workflows.
+  - Tracks in-progress, completed, and failed synchronous orchestration attempts.
   - Supports compensation.
   - Flyway migrations bundled with the library create these tables automatically when consuming services start.
-  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC.
+  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each orchestration using MDC.
   - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md), which queries saga status via service APIs rather than directly reading every database.
+
+This library is intentionally not FireMUD's durable workflow engine. World lifecycle, publish, and script-patch readiness now use Temporal because they need restart-safe continuation, stable workflow identity, and operator-visible runtime state independent of one service process.
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services

@@ -47,9 +47,9 @@ Example consequence:
    design APIs keyed by `(tenantId, versionId)`. Draft templates in World
    Management and Entity Management are therefore the authoritative snapshots of
    world and entity data for each version.
-4. Revisions are grouped into a **version** and published via the Saga workflow
+4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
-   At publish time, the Saga validates the Draft templates already stored in
+   At publish time, the workflow validates the Draft templates already stored in
    the domain services and transitions the version to Published; it does not
    copy a separate design database into those services.
 5. Domain services accept design-time writes only for **Draft** versions. When
@@ -231,7 +231,7 @@ For end-to-end persistence review, every publish-gate participant must document:
 
 - the version-scoped data it persists;
 - the digest manifest that attests that data;
-- whether it is a digest-only participant or also a saga-step participant during full publish.
+- whether it is a digest-only participant or also a workflow-step participant during full publish.
 
 Publish tooling must fail closed if a required participant lacks this documented persistence contract.
 

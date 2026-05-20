@@ -295,13 +295,13 @@ Because script definitions are stored in the Automation & Scripting Service data
 
 At a high level:
 
-- The **Game Design Service** owns the *authoring* view of versions and drives the publish Saga.
+- The **Game Design Service** owns the *authoring* view of versions and drives the durable `publish` workflow.
 - The **Automation & Scripting Service** owns the *runtime* view of script patch readiness per tenant (for example, whether a patch is `READY` or `FAILED`).
 - The **Game Session Service** owns the *pinned* `scriptPatchVersion` for each game and is responsible for including that version in events sent to the Automation & Scripting Service.
 
 The intended invariants are:
 
-- A script patch may be pinned as the active `scriptPatchVersion` for a game only after the Automation & Scripting Service has loaded and validated that patch for the tenant and marked it `READY` as part of the publish Saga.
+- A script patch may be pinned as the active `scriptPatchVersion` for a game only after the Automation & Scripting Service has loaded and validated that patch for the tenant and marked it `READY` as part of the script-patch readiness workflow that follows publish ingestion.
 - When Game Session emits events, it includes the currently pinned `scriptPatchVersion`. The Automation & Scripting Service must **not** silently substitute a different version; if the supplied patch is unknown or is marked `FAILED` for that tenant, the trigger is rejected.
 
 From the Automation & Scripting Service’s point of view, each `<tenantId, scriptPatchVersion>` follows the lifecycle described in [Script Patch Lifecycle](#script-patch-lifecycle). All script-event audit entries include the effective `scriptPatchVersion` at the time of evaluation so operators can correlate failures with patch lifecycle and publish history.
@@ -348,7 +348,7 @@ The canonical states are:
 
 Typical transitions are:
 
-1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose publish Saga fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
+1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose durable publish workflow fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
 2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; running instances continue using their previously pinned patch.
 4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a newer publish is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work.

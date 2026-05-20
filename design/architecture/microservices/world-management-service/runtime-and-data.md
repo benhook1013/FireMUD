@@ -5,7 +5,7 @@
 World Management owns both version-scoped template topology and runtime world-instance state, but the two surfaces are strictly separated:
 
 - Template tables are keyed by `(tenantId, versionId)` and updated only through design-time workflows coordinated by Game Design.
-- Runtime instance tables are keyed by `(tenantId, gameInstanceId)` and created or mutated only by world-creation Sagas and tick-driven gameplay flows.
+- Runtime instance tables are keyed by `(tenantId, gameInstanceId)` and created or mutated only by the world-lifecycle workflow and tick-driven gameplay flows.
 - Runtime logic must never modify template rows for published versions.
 
 World Management instances are intended to be replaceable workers over authoritative runtime storage. Runtime room/location/ambient state that matters after process loss belongs in the service-owned database rows and documented caches, not as the sole authoritative copy in one JVM. Another World Management instance of the same type should therefore be able to continue serving and mutating runtime world state after restart without that restart itself becoming the player-visible event.
