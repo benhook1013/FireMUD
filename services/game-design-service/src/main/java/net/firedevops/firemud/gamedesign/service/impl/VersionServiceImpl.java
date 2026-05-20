@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -47,6 +48,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repositories and collaborators remain internal service dependencies.")
 public class VersionServiceImpl implements VersionService {
   private static final int DEFAULT_PLUGIN_VERSION_STATUS_LIMIT = 100;
   private static final int MAX_PLUGIN_VERSION_STATUS_LIMIT = 200;

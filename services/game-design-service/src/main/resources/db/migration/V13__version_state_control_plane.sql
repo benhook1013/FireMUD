@@ -12,9 +12,19 @@ WHERE version_state IS NULL
    OR updated_at IS NULL;
 
 ALTER TABLE version
-    ALTER COLUMN version_state SET NOT NULL,
-    ALTER COLUMN version_state SET DEFAULT 'DRAFT',
-    ALTER COLUMN version_state_epoch SET NOT NULL,
-    ALTER COLUMN version_state_epoch SET DEFAULT 1,
-    ALTER COLUMN updated_at SET NOT NULL,
+    ALTER COLUMN version_state SET NOT NULL;
+
+ALTER TABLE version
+    ALTER COLUMN version_state SET DEFAULT 'DRAFT';
+
+ALTER TABLE version
+    ALTER COLUMN version_state_epoch SET NOT NULL;
+
+ALTER TABLE version
+    ALTER COLUMN version_state_epoch SET DEFAULT 1;
+
+ALTER TABLE version
+    ALTER COLUMN updated_at SET NOT NULL;
+
+ALTER TABLE version
     ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;

@@ -129,3 +129,8 @@ Entry format:
   - Context: closing `02.20.4` after the first real Temporal adopters showed that even after product code had converged, the remaining audit drift lived in architecture docs and shared helper comments that still used plain "Saga" as a synonym for durable workflow execution.
   - Observation: when a new shared substrate replaces only part of an older abstraction, leaving the old docs/comments broad guarantees future audits will keep flagging "architecture mismatch" even if the runtime behavior is already canonical.
   - Expected pattern: when a slice narrows an existing shared abstraction, sweep the high-level docs, adopter docs, and the surviving helper/module comments in the same batch so the repo teaches one boundary instead of the old and new stories at once.
+
+- `2026-05-21`: Shared `jOOQ` codegen will force old Flyway DDL into a stricter canonical SQL subset
+  - Context: landing the first `02.19.4` Game Design `jOOQ` repositories surfaced several older migrations that Flyway/Postgres had always accepted but the shared `jOOQ` DDL parser could not interpret, including mixed `ALTER TABLE` statements and an `UPDATE ... FROM`-style data repair.
+  - Observation: once a service adopts shared schema-driven codegen, legacy migration text is no longer inert archaeology; parser-incompatible DDL becomes an immediate blocker for every later repository migration in that service.
+  - Expected pattern: when enabling shared `jOOQ` codegen on an older service, normalize historical migrations into simple parser-friendly statements at the source instead of adding service-local workarounds around codegen or silently treating the schema baseline as “special.”
