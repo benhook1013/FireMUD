@@ -109,3 +109,8 @@ Entry format:
   - Context: landing the first real Temporal adopter in `world-management-service` showed that making `common-temporal` conditional was not enough; app contexts with Temporal disabled still failed because the service-local orchestrator and worker registrar eagerly required `WorkflowClient`.
   - Observation: optional shared runtime modules do not stay optional if adopter-side components assume the shared beans always exist.
   - Expected pattern: when a shared workflow substrate is opt-in, service-local orchestrators, worker registrars, and similar adopter beans must also be conditional on the shared runtime beans instead of relying only on the common module's property gate.
+
+- `2026-05-20`: H2-backed test profiles need lowercase identifier mode once a service starts using generated `jOOQ` table metadata
+  - Context: the first `02.19.3` Game Session `jOOQ` repositories initially passed focused unit proof but failed broad integration startup because the existing H2 test URLs created unquoted uppercase table names while the generated `jOOQ` metadata queried quoted lowercase identifiers like `gameplay_admission_pointer`.
+  - Observation: a service can look fine under JPA/Hibernate and still break the moment generated `jOOQ` code starts issuing explicit identifier SQL if the local H2 profile is not aligned with the repo's canonical lowercase schema naming.
+  - Expected pattern: when migrating a service onto generated `jOOQ` tables while it still uses H2-backed Spring test contexts, make the H2 URLs opt into lowercase identifier behavior (for example `DATABASE_TO_LOWER=TRUE`) before treating the repository conversion as complete.

@@ -1,5 +1,6 @@
 plugins {
     `java-test-fixtures`
+    id("net.firedevops.firemud.jooq-conventions")
     id("net.firedevops.firemud.stateful-service-conventions")
 }
 

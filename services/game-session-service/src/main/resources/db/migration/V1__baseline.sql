@@ -442,33 +442,33 @@ CREATE SEQUENCE tick_effect_id_seq
 
 ALTER SEQUENCE tick_effect_id_seq OWNED BY tick_effect.id;
 
-ALTER TABLE feature_flag ALTER COLUMN id SET DEFAULT nextval('feature_flag_id_seq'::regclass);
+ALTER TABLE feature_flag ALTER COLUMN id SET DEFAULT nextval('feature_flag_id_seq');
 
-ALTER TABLE game_instances ALTER COLUMN id SET DEFAULT nextval('game_instances_id_seq'::regclass);
+ALTER TABLE game_instances ALTER COLUMN id SET DEFAULT nextval('game_instances_id_seq');
 
-ALTER TABLE game_manifest ALTER COLUMN id SET DEFAULT nextval('game_manifest_id_seq'::regclass);
+ALTER TABLE game_manifest ALTER COLUMN id SET DEFAULT nextval('game_manifest_id_seq');
 
-ALTER TABLE gameplay_admission_pointer ALTER COLUMN id SET DEFAULT nextval('gameplay_admission_pointer_id_seq'::regclass);
+ALTER TABLE gameplay_admission_pointer ALTER COLUMN id SET DEFAULT nextval('gameplay_admission_pointer_id_seq');
 
-ALTER TABLE gameplay_admission_pointer_event ALTER COLUMN id SET DEFAULT nextval('gameplay_admission_pointer_event_id_seq'::regclass);
+ALTER TABLE gameplay_admission_pointer_event ALTER COLUMN id SET DEFAULT nextval('gameplay_admission_pointer_event_id_seq');
 
-ALTER TABLE gameplay_command ALTER COLUMN id SET DEFAULT nextval('gameplay_command_id_seq'::regclass);
+ALTER TABLE gameplay_command ALTER COLUMN id SET DEFAULT nextval('gameplay_command_id_seq');
 
-ALTER TABLE gameplay_command ALTER COLUMN enqueue_seq SET DEFAULT nextval('gameplay_command_enqueue_seq_seq'::regclass);
+ALTER TABLE gameplay_command ALTER COLUMN enqueue_seq SET DEFAULT nextval('gameplay_command_enqueue_seq_seq');
 
-ALTER TABLE prepared_version_upgrade ALTER COLUMN id SET DEFAULT nextval('prepared_version_upgrade_id_seq'::regclass);
+ALTER TABLE prepared_version_upgrade ALTER COLUMN id SET DEFAULT nextval('prepared_version_upgrade_id_seq');
 
-ALTER TABLE remote_command_coordinator ALTER COLUMN id SET DEFAULT nextval('remote_command_coordinator_id_seq'::regclass);
+ALTER TABLE remote_command_coordinator ALTER COLUMN id SET DEFAULT nextval('remote_command_coordinator_id_seq');
 
-ALTER TABLE remote_followup ALTER COLUMN id SET DEFAULT nextval('remote_followup_id_seq'::regclass);
+ALTER TABLE remote_followup ALTER COLUMN id SET DEFAULT nextval('remote_followup_id_seq');
 
-ALTER TABLE remote_followup_result ALTER COLUMN id SET DEFAULT nextval('remote_followup_result_id_seq'::regclass);
+ALTER TABLE remote_followup_result ALTER COLUMN id SET DEFAULT nextval('remote_followup_result_id_seq');
 
-ALTER TABLE runtime_region_status ALTER COLUMN id SET DEFAULT nextval('runtime_region_status_id_seq'::regclass);
+ALTER TABLE runtime_region_status ALTER COLUMN id SET DEFAULT nextval('runtime_region_status_id_seq');
 
-ALTER TABLE tick_batch ALTER COLUMN id SET DEFAULT nextval('tick_batch_id_seq'::regclass);
+ALTER TABLE tick_batch ALTER COLUMN id SET DEFAULT nextval('tick_batch_id_seq');
 
-ALTER TABLE tick_effect ALTER COLUMN id SET DEFAULT nextval('tick_effect_id_seq'::regclass);
+ALTER TABLE tick_effect ALTER COLUMN id SET DEFAULT nextval('tick_effect_id_seq');
 
 ALTER TABLE feature_flag
     ADD CONSTRAINT feature_flag_pkey PRIMARY KEY (id);

@@ -117,7 +117,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   static void registerProperties(DynamicPropertyRegistry registry) {
     registry.add(
         "spring.datasource.url",
-        () -> "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1");
+        () ->
+            "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
     registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
     registry.add("spring.datasource.username", () -> "sa");
     registry.add("spring.datasource.password", () -> "");

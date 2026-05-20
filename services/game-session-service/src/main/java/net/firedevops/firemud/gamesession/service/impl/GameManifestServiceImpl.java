@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.dto.GameManifestDto;
@@ -17,6 +18,9 @@ public class GameManifestServiceImpl implements GameManifestService {
   private final GameManifestRepository repository;
   private final GameManifestMapper mapper;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected repository and mapper are retained internal collaborators")
   public GameManifestServiceImpl(GameManifestRepository repository, GameManifestMapper mapper) {
     this.repository = repository;
     this.mapper = mapper;
