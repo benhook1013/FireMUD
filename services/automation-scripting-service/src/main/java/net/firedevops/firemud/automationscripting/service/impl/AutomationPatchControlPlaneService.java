@@ -67,6 +67,7 @@ final class AutomationPatchControlPlaneService {
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptRuntimeProperties runtimeProperties;
+  private final TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver;
 
   AutomationPatchControlPlaneService(
       ScriptWorkItemService workItemService,
@@ -75,7 +76,8 @@ final class AutomationPatchControlPlaneService {
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      ScriptRuntimeProperties runtimeProperties) {
+      ScriptRuntimeProperties runtimeProperties,
+      TemporalScriptPatchReadinessWorkflowMetadataResolver workflowMetadataResolver) {
     this.workItemService = workItemService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
@@ -83,6 +85,7 @@ final class AutomationPatchControlPlaneService {
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.runtimeProperties = runtimeProperties;
+    this.workflowMetadataResolver = workflowMetadataResolver;
   }
 
   GetScriptPatchStatusResponse getScriptPatchStatus(GetScriptPatchStatusRequest request) {
@@ -90,15 +93,22 @@ final class AutomationPatchControlPlaneService {
     workItemService
         .getPatchStatus(request.getTenantId(), request.getScriptPatchVersion())
         .ifPresentOrElse(
-            summary ->
-                response
-                    .setStatus(summary.status())
-                    .setStatusReason(summary.statusReason())
-                    .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
-                    .setLastChangedAtMs(summary.lastChangedAtMs())
-                    .setBaseVersionId(summary.baseVersionId())
-                    .setAbilitySchemaDigest(summary.abilitySchemaDigest())
-                    .setPublication(toProto(summary.publication())),
+            summary -> {
+              var workflowMetadata =
+                  workflowMetadataResolver.resolve(
+                      request.getTenantId(), request.getScriptPatchVersion());
+              response
+                  .setStatus(summary.status())
+                  .setStatusReason(summary.statusReason())
+                  .setSupersededByScriptPatchVersion(summary.supersededByScriptPatchVersion())
+                  .setLastChangedAtMs(summary.lastChangedAtMs())
+                  .setBaseVersionId(summary.baseVersionId())
+                  .setAbilitySchemaDigest(summary.abilitySchemaDigest())
+                  .setPublication(toProto(summary.publication()))
+                  .setWorkflowId(workflowMetadata.workflowId())
+                  .setWorkflowRunId(workflowMetadata.workflowRunId())
+                  .setWorkflowStatus(workflowMetadata.workflowStatus());
+            },
             () ->
                 response.setError(
                     AutomationControlPlaneSupport.notFound(
@@ -115,7 +125,12 @@ final class AutomationPatchControlPlaneService {
             request.getChangedAfterMs(),
             request.getChangedBeforeMs())
         .stream()
-        .map(AutomationPatchControlPlaneService::toProto)
+        .map(
+            summary ->
+                toProto(
+                    summary,
+                    workflowMetadataResolver.resolve(
+                        request.getTenantId(), summary.scriptPatchVersion())))
         .forEach(response::addPatches);
     return response.build();
   }
@@ -453,7 +468,9 @@ final class AutomationPatchControlPlaneService {
     return ageMs > runtimeProperties.getScheduleRuntimeProgressStaleThresholdMs();
   }
 
-  private static ScriptPatchStatusEntry toProto(ScriptWorkItemService.PatchStatusSummary summary) {
+  private static ScriptPatchStatusEntry toProto(
+      ScriptWorkItemService.PatchStatusSummary summary,
+      TemporalScriptPatchReadinessWorkflowMetadataResolver.WorkflowMetadata workflowMetadata) {
     return ScriptPatchStatusEntry.newBuilder()
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setStatus(summary.status())
@@ -463,6 +480,9 @@ final class AutomationPatchControlPlaneService {
         .setBaseVersionId(summary.baseVersionId())
         .setAbilitySchemaDigest(summary.abilitySchemaDigest())
         .setPublication(toProto(summary.publication()))
+        .setWorkflowId(workflowMetadata.workflowId())
+        .setWorkflowRunId(workflowMetadata.workflowRunId())
+        .setWorkflowStatus(workflowMetadata.workflowStatus())
         .build();
   }
 

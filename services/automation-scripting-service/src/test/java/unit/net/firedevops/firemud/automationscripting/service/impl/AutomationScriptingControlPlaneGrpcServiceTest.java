@@ -170,7 +170,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             scriptScheduleInstanceService,
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
-            runtimeProperties);
+            runtimeProperties,
+            new TemporalScriptPatchReadinessWorkflowMetadataResolver(
+                java.util.Optional.empty(), java.util.Optional.empty()));
     AutomationPluginControlPlaneService pluginControlPlaneService =
         new AutomationPluginControlPlaneService(pluginRuntimeStateService, runtimeProperties);
     return new AutomationScriptingControlPlaneGrpcService(
@@ -336,6 +338,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getAbilitySchemaDigest()).isEqualTo("ability-1");
     assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
+    assertThat(ref.get().getWorkflowId())
+        .isEqualTo("script-patch-readiness:1:script-patch-version:patch-1");
+    assertThat(ref.get().getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
   @Test
@@ -389,6 +394,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getPatches(0).getAbilitySchemaDigest()).isEqualTo("ability-1");
     assertThat(ref.get().getPatches(0).getPublication().getVersionId()).isEqualTo(18L);
+    assertThat(ref.get().getPatches(0).getWorkflowId())
+        .isEqualTo("script-patch-readiness:1:script-patch-version:patch-2");
+    assertThat(ref.get().getPatches(0).getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
   @Test

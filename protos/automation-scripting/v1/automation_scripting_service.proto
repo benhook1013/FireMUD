@@ -440,6 +440,9 @@ message GetScriptPatchStatusResponse {
   shared.v1.ErrorDetail error = 6;
   string superseded_by_script_patch_version = 7;
   ScriptPatchPublicationLink publication = 8;
+  string workflow_id = 9;
+  string workflow_run_id = 10;
+  string workflow_status = 11;
 }
 
 message ScriptPatchPublicationLink {
@@ -468,6 +471,9 @@ message ScriptPatchStatusEntry {
   string ability_schema_digest = 6;
   string superseded_by_script_patch_version = 7;
   ScriptPatchPublicationLink publication = 8;
+  string workflow_id = 9;
+  string workflow_run_id = 10;
+  string workflow_status = 11;
 }
 
 message ListScriptPatchStatusesResponse {

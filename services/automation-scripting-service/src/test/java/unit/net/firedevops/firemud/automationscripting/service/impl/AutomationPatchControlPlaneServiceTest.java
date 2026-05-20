@@ -58,7 +58,9 @@ class AutomationPatchControlPlaneServiceTest {
         scriptScheduleInstanceService,
         gameDesignClient(),
         gameSessionControlPlaneClient,
-        runtimeProperties);
+        runtimeProperties,
+        new TemporalScriptPatchReadinessWorkflowMetadataResolver(
+            java.util.Optional.empty(), java.util.Optional.empty()));
   }
 
   @AfterEach
