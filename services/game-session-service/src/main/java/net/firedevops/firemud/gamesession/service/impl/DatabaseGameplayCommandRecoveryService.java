@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring injects the shared repository singleton for this service seam.")
 public class DatabaseGameplayCommandRecoveryService implements GameplayCommandRecoveryService {
   private static final Logger logger =
       LoggingUtil.getLogger(DatabaseGameplayCommandRecoveryService.class);

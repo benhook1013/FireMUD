@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.StatusRuntimeException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,6 +24,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring injects the shared repository singleton for compatibility reads.")
 public class InstanceCutoverCompatibilityServiceImpl
     implements InstanceCutoverCompatibilityService {
   private final GameInstanceRepository gameInstanceRepository;
