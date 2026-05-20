@@ -8,6 +8,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
@@ -58,6 +59,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             templateRemapSetService,
             versionAssetArtifactService,
             settingsAuthorityService,
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
   }
 

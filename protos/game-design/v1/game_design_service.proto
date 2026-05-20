@@ -478,6 +478,8 @@ message PublishedReleaseBundle {
   string published_at = 10;
   repeated ParticipantDigest participant_digests = 11;
   string generation_config_revision = 12;
+  string workflow_run_id = 13;
+  string workflow_status = 14;
 }
 
 message LaunchDescriptor {

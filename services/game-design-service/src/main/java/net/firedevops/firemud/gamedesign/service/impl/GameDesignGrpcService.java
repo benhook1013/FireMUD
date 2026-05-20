@@ -117,6 +117,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
+  private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -626,6 +627,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
+          publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       builder.setBundle(
           net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
               .setId(bundle.id())
@@ -633,6 +636,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setVersionNumber(bundle.versionNumber())
               .setAttestationSchemaVersion(bundle.attestationSchemaVersion())
               .setPublishWorkflowId(bundle.publishWorkflowId())
+              .setWorkflowRunId(workflowMetadata.workflowRunId())
+              .setWorkflowStatus(workflowMetadata.workflowStatus())
               .setManifestHash(bundle.manifestHash())
               .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
               .addAllParticipantDigests(

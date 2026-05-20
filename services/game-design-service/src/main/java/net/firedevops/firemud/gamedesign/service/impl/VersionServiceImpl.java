@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -29,9 +28,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PluginVersionStatusEventRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
-import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
-import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
@@ -50,9 +47,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected dependencies are not exposed")
 public class VersionServiceImpl implements VersionService {
   private static final int DEFAULT_PLUGIN_VERSION_STATUS_LIMIT = 100;
   private static final int MAX_PLUGIN_VERSION_STATUS_LIMIT = 200;
@@ -65,7 +59,6 @@ public class VersionServiceImpl implements VersionService {
   private final PluginVersionStatusEventRepository pluginVersionStatusEventRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
-  private final AssetExportService assetExportService;
   private final PublishAttemptService publishAttemptService;
   private final PublishGateService publishGateService;
   private final ControlPlaneDigestService controlPlaneDigestService;
@@ -74,6 +67,8 @@ public class VersionServiceImpl implements VersionService {
   private final RecordedParticipantDigestService recordedParticipantDigestService;
   private final PluginBundleIntakeService pluginBundleIntakeService;
   private final PluginBundleStorageService pluginBundleStorageService;
+  private final VersionPublishCommandServiceImpl publishCommandService;
+  private final Optional<TemporalVersionPublishOrchestrator> temporalPublishOrchestrator;
 
   @Autowired
   public VersionServiceImpl(
@@ -83,7 +78,6 @@ public class VersionServiceImpl implements VersionService {
       PluginVersionStatusEventRepository pluginVersionStatusEventRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
-      AssetExportService assetExportService,
       PublishAttemptService publishAttemptService,
       PublishGateService publishGateService,
       ControlPlaneDigestService controlPlaneDigestService,
@@ -91,14 +85,15 @@ public class VersionServiceImpl implements VersionService {
       PublishedReleaseBundleService publishedReleaseBundleService,
       RecordedParticipantDigestService recordedParticipantDigestService,
       PluginBundleIntakeService pluginBundleIntakeService,
-      PluginBundleStorageService pluginBundleStorageService) {
+      PluginBundleStorageService pluginBundleStorageService,
+      VersionPublishCommandServiceImpl publishCommandService,
+      Optional<TemporalVersionPublishOrchestrator> temporalPublishOrchestrator) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.publishedPluginVersionRepository = publishedPluginVersionRepository;
     this.pluginVersionStatusEventRepository = pluginVersionStatusEventRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
-    this.assetExportService = assetExportService;
     this.publishAttemptService = publishAttemptService;
     this.publishGateService = publishGateService;
     this.controlPlaneDigestService = controlPlaneDigestService;
@@ -107,6 +102,8 @@ public class VersionServiceImpl implements VersionService {
     this.recordedParticipantDigestService = recordedParticipantDigestService;
     this.pluginBundleIntakeService = pluginBundleIntakeService;
     this.pluginBundleStorageService = pluginBundleStorageService;
+    this.publishCommandService = publishCommandService;
+    this.temporalPublishOrchestrator = temporalPublishOrchestrator;
   }
 
   @Override
@@ -114,74 +111,13 @@ public class VersionServiceImpl implements VersionService {
   @Timed(value = "gamedesign.version.publish")
   public VersionDto publishVersion(String tenantId, String notes) {
     logger.info("Publishing version for tenant {}", tenantId);
-    Game game =
-        Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("game not found"));
-
-    Version version = new Version();
-    version.setTenantId(game.getTenantId());
-    version.setNotes(notes);
-    version.setVersionNumber(calculateNextNumber(tenantId));
-    version.setVersionState(VersionLifecycleState.DRAFT);
-    version.setVersionStateEpoch(1L);
-    version.setUpdatedAt(LocalDateTime.now());
-    Version saved = versionRepository.save(version);
-    VersionDto dto = versionMapper.toDto(saved);
-    String publishWorkflowId = UUID.randomUUID().toString();
-    publishAttemptService.createAttempt(dto, PublishType.FULL_VERSION, publishWorkflowId);
-    ExportedAssetManifest exportedManifest = null;
-    Long exportedStateEpoch = null;
-    try {
-      List<PublishParticipantDigestDto> participantDigests =
-          publishGateService.collectFullVersionParticipantDigests(dto);
-      publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
-      publishGateService.assertGatePassed(dto, participantDigests);
-      recordedParticipantDigestService.assertMatchesRecordedDigests(
-          dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
-      exportedManifest = assetExportService.exportAssets(tenantId, saved.getVersionNumber());
-      exportedStateEpoch =
-          versionAssetArtifactService
-              .markExportedUnattested(
-                  dto.tenantId(),
-                  dto.id(),
-                  saved.getVersionNumber(),
-                  publishWorkflowId,
-                  exportedManifest)
-              .stateEpoch();
-      String generationConfigRevision = generationConfigRevision(dto, exportedManifest);
-      publishedReleaseBundleService.createFullVersionBundle(
-          dto, publishWorkflowId, exportedManifest, generationConfigRevision, participantDigests);
-      saved.setVersionState(VersionLifecycleState.PUBLISHED);
-      saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
-      saved.setUpdatedAt(LocalDateTime.now());
-      saved = versionRepository.save(saved);
-      versionAssetArtifactService.markPublished(
-          dto.tenantId(),
-          dto.id(),
-          exportedStateEpoch,
-          publishWorkflowId,
-          exportedManifest.manifestHash());
-      recordedParticipantDigestService.recordVerifiedDigests(
-          dto.tenantId(), PublishType.FULL_VERSION, publishWorkflowId, participantDigests);
-      publishAttemptService.markSucceeded(publishWorkflowId);
-      return versionMapper.toDto(saved);
-    } catch (RuntimeException ex) {
-      publishAttemptService.markFailed(
-          publishWorkflowId, publishFailureCode(ex), publishFailureMessage(ex));
-      if (exportedManifest != null) {
-        versionAssetArtifactService.markFailed(
-            dto.tenantId(),
-            dto.id(),
-            saved.getVersionNumber(),
-            publishWorkflowId,
-            exportedManifest,
-            publishFailureCode(ex),
-            publishFailureMessage(ex));
-      }
-      cleanupExportedAssets(tenantId, saved.getVersionNumber(), exportedManifest);
-      versionRepository.delete(saved);
-      throw ex;
+    if (temporalPublishOrchestrator.isPresent()) {
+      return temporalPublishOrchestrator.get().publishFullVersion(tenantId, notes);
     }
+    return publishCommandService.publishFullVersion(
+        tenantId,
+        notes,
+        TemporalVersionPublishOrchestrator.workflowId(tenantId, UUID.randomUUID().toString()));
   }
 
   @Override
@@ -786,38 +722,12 @@ public class VersionServiceImpl implements VersionService {
         version.getUpdatedAt());
   }
 
-  private void cleanupExportedAssets(
-      String tenantId, int versionNumber, ExportedAssetManifest exportedManifest) {
-    try {
-      if (exportedManifest != null) {
-        assetExportService.deleteExportedAssets(
-            tenantId, versionNumber, exportedManifest.requiredManifestAssetKeys());
-      }
-    } catch (RuntimeException ex) {
-      logger.warn(
-          "Failed to clean exported assets after publish failure tenant={} version={}",
-          tenantId,
-          versionNumber,
-          ex);
-    }
-  }
-
   private void runSafely(String actionName, Runnable action) {
     try {
       action.run();
     } catch (RuntimeException ex) {
       logger.warn("Failed to {}", actionName, ex);
     }
-  }
-
-  private String generationConfigRevision(
-      VersionDto version, ExportedAssetManifest exportedManifest) {
-    return "genrev:"
-        + version.tenantId()
-        + ":"
-        + version.id()
-        + ":"
-        + exportedManifest.manifestHash();
   }
 
   private static void requireText(String value, String fieldName) {

@@ -6,6 +6,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
@@ -85,6 +86,8 @@ class GameDesignGrpcServiceTest {
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
       Mockito.mock(SettingsAuthorityService.class);
+  private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver =
+      new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty());
   private final GameDesignGrpcService service =
       new GameDesignGrpcService(
           pingService,
@@ -94,6 +97,7 @@ class GameDesignGrpcServiceTest {
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
+          publishWorkflowMetadataResolver,
           new SimpleMeterRegistry());
 
   @Test
@@ -184,6 +188,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
   }
 
   @Test

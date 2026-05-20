@@ -110,6 +110,11 @@ Entry format:
   - Observation: optional shared runtime modules do not stay optional if adopter-side components assume the shared beans always exist.
   - Expected pattern: when a shared workflow substrate is opt-in, service-local orchestrators, worker registrars, and similar adopter beans must also be conditional on the shared runtime beans instead of relying only on the common module's property gate.
 
+- `2026-05-20`: Workflow metadata should ride the canonical operator read surface instead of creating a side API
+  - Context: landing the Game Design Temporal `publish` workflow showed that the useful operator-facing state was not a new workflow endpoint by itself, but the linkage between the existing release-bundle view and the workflow execution that produced it.
+  - Observation: when a durable workflow owns a control-plane lifecycle that already has an established read model, adding a second workflow-status API increases drift risk and forces operators to manually correlate two surfaces for one business action.
+  - Expected pattern: expose workflow identity and runtime status on the canonical business read surface first, and only add dedicated workflow inspection APIs later if that surface genuinely cannot carry the needed operator state.
+
 - `2026-05-20`: H2-backed test profiles need lowercase identifier mode once a service starts using generated `jOOQ` table metadata
   - Context: the first `02.19.3` Game Session `jOOQ` repositories initially passed focused unit proof but failed broad integration startup because the existing H2 test URLs created unquoted uppercase table names while the generated `jOOQ` metadata queried quoted lowercase identifiers like `gameplay_admission_pointer`.
   - Observation: a service can look fine under JPA/Hibernate and still break the moment generated `jOOQ` code starts issuing explicit identifier SQL if the local H2 profile is not aligned with the repo's canonical lowercase schema naming.
