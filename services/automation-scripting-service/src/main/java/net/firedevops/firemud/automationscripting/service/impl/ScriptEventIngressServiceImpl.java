@@ -694,24 +694,23 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
-    var existing =
-        repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-                request.getTenantId(),
-                normalize(request.getGameInstanceId()),
-                normalize(request.getRegionId()),
-                request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-                normalize(request.getEntityId()),
-                normalizePlayableStateScope(request.getPlayableStateScope()),
-                routingBundle.worldSlug(),
-                routingBundle.realmSlug(),
-                routingBundle.pointerVersion(),
-                request.getEventType(),
-                schemaVersion,
-                request.getScriptPatchVersion(),
-                request.getScriptEventId(),
-                request.getIsDryRun());
-    return existing == null ? null : existing.orElse(null);
+    return repository
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            request.getTenantId(),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+            normalize(request.getEntityId()),
+            normalizePlayableStateScope(request.getPlayableStateScope()),
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion(),
+            request.getEventType(),
+            schemaVersion,
+            request.getScriptPatchVersion(),
+            request.getScriptEventId(),
+            request.getIsDryRun())
+        .orElse(null);
   }
 
   private String schemaVersion(TriggerScriptEventRequest request) {

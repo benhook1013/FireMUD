@@ -1,24 +1,42 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWorkItemsRecord;
+import org.jooq.Condition;
+import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, Long> {
-  interface ScriptPatchInstanceProjection {
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected DSLContext is an internal Spring collaborator.")
+public class ScriptWorkItemRepository {
+  public interface ScriptPatchInstanceProjection {
     String getGameInstanceId();
 
     String getScriptPatchVersion();
   }
 
-  boolean
+  private final DSLContext dsl;
+
+  public ScriptWorkItemRepository(DSLContext dsl) {
+    this.dsl = dsl;
+  }
+
+  public boolean
       existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
@@ -34,74 +52,407 @@ public interface ScriptWorkItemRepository extends JpaRepository<ScriptWorkItem, 
           String eventSchemaVersion,
           String scriptPatchVersion,
           String scriptEventId,
-          boolean dryRun);
+          boolean dryRun) {
+    return dsl.fetchExists(
+        SCRIPT_WORK_ITEMS,
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
+            .and(SCRIPT_WORK_ITEMS.REGION_EPOCH.eq(regionEpoch))
+            .and(SCRIPT_WORK_ITEMS.ENTITY_ID.eq(entityId))
+            .and(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
+            .and(SCRIPT_WORK_ITEMS.WORLD_SLUG.eq(worldSlug))
+            .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
+            .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
+            .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
+            .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
+            .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun)));
+  }
 
-  boolean existsByTenantIdAndScriptIdAndStatusIn(
-      String tenantId, String scriptId, Collection<String> statuses);
+  public boolean existsByTenantIdAndScriptIdAndStatusIn(
+      String tenantId, String scriptId, Collection<String> statuses) {
+    return dsl.fetchExists(
+        SCRIPT_WORK_ITEMS,
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)));
+  }
 
-  List<ScriptWorkItem> findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
-      String tenantId, String scriptPatchVersion, Collection<String> statuses);
+  public List<ScriptWorkItem>
+      findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
+          String tenantId, String scriptPatchVersion, Collection<String> statuses) {
+    return fetchMany(
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem>
+  public List<ScriptWorkItem>
       findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
-          String tenantId, String pluginId, String pluginVersionId, Collection<String> statuses);
+          String tenantId, String pluginId, String pluginVersionId, Collection<String> statuses) {
+    return fetchMany(
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(pluginId))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(pluginVersionId))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
-      String tenantId, String scriptPatchVersion);
+  public List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
+      String tenantId, String scriptPatchVersion) {
+    return fetchMany(
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion)),
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByTenantIdAndEventTypeAndStatusInOrderByCreatedAtAscIdAsc(
-      String tenantId, String eventType, Collection<String> statuses);
+  public List<ScriptWorkItem> findByTenantIdAndEventTypeAndStatusInOrderByCreatedAtAscIdAsc(
+      String tenantId, String eventType, Collection<String> statuses) {
+    return fetchMany(
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-      String tenantId, String gameInstanceId, String scriptPatchVersion);
+  public List<ScriptWorkItem> findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+    return fetchMany(
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion)),
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  @Query(
-      """
-      select item
-      from ScriptWorkItem item
-      where item.tenantId = :tenantId
-        and item.gameInstanceId = :gameInstanceId
-        and (:regionId = '' or item.regionId = :regionId)
-        and item.status in :statuses
-      order by item.createdAt asc, item.id asc
-      """)
-  List<ScriptWorkItem> findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-      @Param("tenantId") String tenantId,
-      @Param("gameInstanceId") String gameInstanceId,
-      @Param("regionId") String regionId,
-      @Param("statuses") Collection<String> statuses);
+  public List<ScriptWorkItem> findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+      String tenantId, String gameInstanceId, String regionId, Collection<String> statuses) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
+    if (!regionId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
+    }
+    return fetchMany(condition, SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  @Query(
-      "select distinct item.scriptPatchVersion from ScriptWorkItem item where item.tenantId = :tenantId")
-  List<String> findDistinctScriptPatchVersionsByTenantId(@Param("tenantId") String tenantId);
+  public List<String> findDistinctScriptPatchVersionsByTenantId(String tenantId) {
+    return dsl.selectDistinct(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)
+        .from(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId))
+        .fetch(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION);
+  }
 
-  @Query(
-      """
-      select distinct item.gameInstanceId as gameInstanceId, item.scriptPatchVersion as scriptPatchVersion
-      from ScriptWorkItem item
-      where item.tenantId = :tenantId
-        and (:gameInstanceId = '' or item.gameInstanceId = :gameInstanceId)
-        and (:scriptPatchVersion = '' or item.scriptPatchVersion = :scriptPatchVersion)
-      """)
-  List<ScriptPatchInstanceProjection> findDistinctInstancePatchPairs(
-      @Param("tenantId") String tenantId,
-      @Param("gameInstanceId") String gameInstanceId,
-      @Param("scriptPatchVersion") String scriptPatchVersion);
+  public List<ScriptPatchInstanceProjection> findDistinctInstancePatchPairs(
+      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+    Condition condition = SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId);
+    if (!gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (!scriptPatchVersion.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    return dsl.selectDistinct(
+            SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID, SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)
+        .from(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .fetch(
+            record ->
+                new ScriptPatchInstanceProjectionView(
+                    record.get(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID),
+                    record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)));
+  }
 
-  List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(String status, Pageable pageable);
+  public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
+      String status, Pageable pageable) {
+    return fetchManyPaged(
+        SCRIPT_WORK_ITEMS.STATUS.eq(status),
+        pageable,
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
-      Collection<Long> ids, String status, Pageable pageable);
+  public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+      Collection<Long> ids, String status, Pageable pageable) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return fetchManyPaged(
+        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)),
+        pageable,
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByStatusInOrderByCreatedAtAscIdAsc(
-      Collection<String> statuses, Pageable pageable);
+  public List<ScriptWorkItem> findByStatusInOrderByCreatedAtAscIdAsc(
+      Collection<String> statuses, Pageable pageable) {
+    return fetchManyPaged(
+        SCRIPT_WORK_ITEMS.STATUS.in(statuses),
+        pageable,
+        SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByStatusOrderByUpdatedAtAscIdAsc(String status, Pageable pageable);
+  public List<ScriptWorkItem> findByStatusOrderByUpdatedAtAscIdAsc(
+      String status, Pageable pageable) {
+    return fetchManyPaged(
+        SCRIPT_WORK_ITEMS.STATUS.eq(status),
+        pageable,
+        SCRIPT_WORK_ITEMS.UPDATED_AT.asc(),
+        SCRIPT_WORK_ITEMS.ID.asc());
+  }
 
-  List<ScriptWorkItem> findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-      String tenantId, String status, Pageable pageable);
+  public List<ScriptWorkItem> findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
+      String tenantId, String status, Pageable pageable) {
+    return fetchManyPaged(
+        SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)),
+        pageable,
+        SCRIPT_WORK_ITEMS.UPDATED_AT.desc(),
+        SCRIPT_WORK_ITEMS.ID.desc());
+  }
 
-  long countByStatus(String status);
+  public long countByStatus(String status) {
+    return dsl.fetchCount(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.STATUS.eq(status));
+  }
 
-  long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt);
+  public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
+    return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
+        .where(
+            SCRIPT_WORK_ITEMS
+                .STATUS
+                .eq(status)
+                .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
+        .execute();
+  }
+
+  public List<ScriptWorkItem> findAllById(Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.ID.in(ids))
+        .fetch(this::toEntity);
+  }
+
+  public ScriptWorkItem save(ScriptWorkItem entity) {
+    if (entity.getId() == null) {
+      ScriptWorkItemsRecord record = dsl.newRecord(SCRIPT_WORK_ITEMS);
+      populate(record, entity);
+      record.store();
+      return findById(record.getId()).orElseThrow();
+    }
+    int nextRowVersion = entity.getRowVersion() + 1;
+    int updated =
+        dsl.update(SCRIPT_WORK_ITEMS)
+            .set(SCRIPT_WORK_ITEMS.TENANT_ID, entity.getTenantId())
+            .set(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID, entity.getGameInstanceId())
+            .set(SCRIPT_WORK_ITEMS.REGION_ID, entity.getRegionId())
+            .set(SCRIPT_WORK_ITEMS.REGION_EPOCH, entity.getRegionEpoch())
+            .set(SCRIPT_WORK_ITEMS.ENTITY_ID, entity.getEntityId())
+            .set(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
+            .set(SCRIPT_WORK_ITEMS.WORLD_SLUG, entity.getWorldSlug())
+            .set(SCRIPT_WORK_ITEMS.REALM_SLUG, entity.getRealmSlug())
+            .set(SCRIPT_WORK_ITEMS.POINTER_VERSION, entity.getPointerVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, entity.getScriptId())
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, entity.getPluginId())
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
+            .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
+            .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, entity.getSourceService())
+            .set(SCRIPT_WORK_ITEMS.TRIGGER_MODE, entity.getTriggerMode())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_KIND, entity.getSourceKind())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_STATE, entity.getSourceState())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_ORDINAL, entity.getSourceOrdinal())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_DUE_TICK_ID, entity.getSourceDueTickId())
+            .set(SCRIPT_WORK_ITEMS.SOURCE_DUE_AT_MS, entity.getSourceDueAtMs())
+            .set(SCRIPT_WORK_ITEMS.PRIORITY_TAG, entity.getPriorityTag())
+            .set(SCRIPT_WORK_ITEMS.READ_SNAPSHOT_TOKEN, entity.getReadSnapshotToken())
+            .set(SCRIPT_WORK_ITEMS.PAYLOAD_JSON, entity.getPayloadJson())
+            .set(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH, entity.getAdmissionEpoch())
+            .set(SCRIPT_WORK_ITEMS.STATUS, entity.getStatus())
+            .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, entity.getCancelReason())
+            .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
+            .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
+            .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
+            .where(
+                SCRIPT_WORK_ITEMS
+                    .ID
+                    .eq(entity.getId())
+                    .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(entity.getRowVersion())))
+            .execute();
+    if (updated != 1) {
+      throw AutomationScriptingJooqRepositorySupport.staleWrite(
+          "script_work_items", entity.getId());
+    }
+    entity.setRowVersion(nextRowVersion);
+    return findById(entity.getId())
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Saved script_work_item missing for id=" + entity.getId()));
+  }
+
+  public ScriptWorkItem saveAndFlush(ScriptWorkItem entity) {
+    return save(entity);
+  }
+
+  public List<ScriptWorkItem> saveAll(Collection<ScriptWorkItem> entities) {
+    if (entities == null || entities.isEmpty()) {
+      return List.of();
+    }
+    return entities.stream().map(this::save).toList();
+  }
+
+  public Optional<ScriptWorkItem> findById(Long id) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.ID.eq(id))
+        .fetchOptional(this::toEntity);
+  }
+
+  public void deleteAll(Collection<ScriptWorkItem> entities) {
+    if (entities == null || entities.isEmpty()) {
+      return;
+    }
+    List<Long> ids =
+        entities.stream().map(ScriptWorkItem::getId).filter(java.util.Objects::nonNull).toList();
+    if (ids.isEmpty()) {
+      return;
+    }
+    dsl.deleteFrom(SCRIPT_WORK_ITEMS).where(SCRIPT_WORK_ITEMS.ID.in(ids)).execute();
+  }
+
+  private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(orderBy)
+        .fetch(this::toEntity);
+  }
+
+  private List<ScriptWorkItem> fetchManyPaged(
+      Condition condition, Pageable pageable, org.jooq.SortField<?>... orderBy) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(orderBy)
+        .limit(limitOrDefault(pageable, 100))
+        .offset(offsetOrZero(pageable))
+        .fetch(this::toEntity);
+  }
+
+  private void populate(ScriptWorkItemsRecord record, ScriptWorkItem entity) {
+    record.setTenantId(entity.getTenantId());
+    record.setGameInstanceId(entity.getGameInstanceId());
+    record.setRegionId(entity.getRegionId());
+    record.setRegionEpoch(entity.getRegionEpoch());
+    record.setEntityId(entity.getEntityId());
+    record.setPlayableStateScope(entity.getPlayableStateScope());
+    record.setWorldSlug(entity.getWorldSlug());
+    record.setRealmSlug(entity.getRealmSlug());
+    record.setPointerVersion(entity.getPointerVersion());
+    record.setScriptId(entity.getScriptId());
+    record.setPluginId(entity.getPluginId());
+    record.setPluginVersionId(entity.getPluginVersionId());
+    record.setEventType(entity.getEventType());
+    record.setEventSchemaVersion(entity.getEventSchemaVersion());
+    record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptEventId(entity.getScriptEventId());
+    record.setDryRun(entity.isDryRun());
+    record.setSourceService(entity.getSourceService());
+    record.setTriggerMode(entity.getTriggerMode());
+    record.setSourceKind(entity.getSourceKind());
+    record.setSourceState(entity.getSourceState());
+    record.setSourceOrdinal(entity.getSourceOrdinal());
+    record.setSourceDueTickId(entity.getSourceDueTickId());
+    record.setSourceDueAtMs(entity.getSourceDueAtMs());
+    record.setPriorityTag(entity.getPriorityTag());
+    record.setReadSnapshotToken(entity.getReadSnapshotToken());
+    record.setPayloadJson(entity.getPayloadJson());
+    record.setAdmissionEpoch(entity.getAdmissionEpoch());
+    record.setStatus(entity.getStatus());
+    record.setCancelReason(entity.getCancelReason());
+    record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
+    record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
+    record.setRowVersion(entity.getRowVersion());
+  }
+
+  private ScriptWorkItem toEntity(Record record) {
+    ScriptWorkItem entity = new ScriptWorkItem();
+    entity.setId(record.get(SCRIPT_WORK_ITEMS.ID));
+    entity.setTenantId(record.get(SCRIPT_WORK_ITEMS.TENANT_ID));
+    entity.setGameInstanceId(record.get(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID));
+    entity.setRegionId(record.get(SCRIPT_WORK_ITEMS.REGION_ID));
+    entity.setRegionEpoch(record.get(SCRIPT_WORK_ITEMS.REGION_EPOCH));
+    entity.setEntityId(record.get(SCRIPT_WORK_ITEMS.ENTITY_ID));
+    entity.setPlayableStateScope(record.get(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE));
+    entity.setWorldSlug(record.get(SCRIPT_WORK_ITEMS.WORLD_SLUG));
+    entity.setRealmSlug(record.get(SCRIPT_WORK_ITEMS.REALM_SLUG));
+    entity.setPointerVersion(record.get(SCRIPT_WORK_ITEMS.POINTER_VERSION));
+    entity.setScriptId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_ID));
+    entity.setPluginId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID));
+    entity.setPluginVersionId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID));
+    entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
+    entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
+    entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
+    entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));
+    entity.setSourceService(record.get(SCRIPT_WORK_ITEMS.SOURCE_SERVICE));
+    entity.setTriggerMode(record.get(SCRIPT_WORK_ITEMS.TRIGGER_MODE));
+    entity.setSourceKind(record.get(SCRIPT_WORK_ITEMS.SOURCE_KIND));
+    entity.setSourceState(record.get(SCRIPT_WORK_ITEMS.SOURCE_STATE));
+    entity.setSourceOrdinal(record.get(SCRIPT_WORK_ITEMS.SOURCE_ORDINAL));
+    entity.setSourceDueTickId(record.get(SCRIPT_WORK_ITEMS.SOURCE_DUE_TICK_ID));
+    entity.setSourceDueAtMs(record.get(SCRIPT_WORK_ITEMS.SOURCE_DUE_AT_MS));
+    entity.setPriorityTag(record.get(SCRIPT_WORK_ITEMS.PRIORITY_TAG));
+    entity.setReadSnapshotToken(record.get(SCRIPT_WORK_ITEMS.READ_SNAPSHOT_TOKEN));
+    entity.setPayloadJson(record.get(SCRIPT_WORK_ITEMS.PAYLOAD_JSON));
+    Long admissionEpoch = record.get(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH);
+    entity.setAdmissionEpoch(admissionEpoch == null ? 0L : admissionEpoch);
+    entity.setStatus(record.get(SCRIPT_WORK_ITEMS.STATUS));
+    entity.setCancelReason(record.get(SCRIPT_WORK_ITEMS.CANCEL_REASON));
+    entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
+    entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
+    Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);
+    entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
+    return entity;
+  }
+
+  private record ScriptPatchInstanceProjectionView(String gameInstanceId, String scriptPatchVersion)
+      implements ScriptPatchInstanceProjection {
+    @Override
+    public String getGameInstanceId() {
+      return gameInstanceId;
+    }
+
+    @Override
+    public String getScriptPatchVersion() {
+      return scriptPatchVersion;
+    }
+  }
 }

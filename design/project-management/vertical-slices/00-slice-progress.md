@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.19.2 Automation Scripting jOOQ Migration](./02.19.2-task-list-automation-scripting-jooq-migration-vertical-slice.md)
-   Remaining: use the now-live shared `jOOQ` generation/runtime foundation to migrate the queue/projection-heavy Automation Scripting service off JPA and establish the first real service-level SQL house style.
+   Remaining: the first real product-code seam is now migrated onto `jOOQ` for work items, audit/history, readiness/pin/rollout projections, rollout/runtime event history, plugin runtime state, and automation admission state; finish the remaining schedule/definition/NPC/faction JPA surface and then remove JPA/Hibernate runtime dependence from the service.
 2. [02.20.1 Temporal Workflow Foundation and Common Contracts](./02.20.1-task-list-temporal-workflow-foundation-and-common-contracts-vertical-slice.md)
    Remaining: establish the shared Temporal control-plane workflow substrate before world lifecycle and publish/script-patch workflow slices pull in durable workflow behavior independently.
 3. [09.1 Realm Catalog and Admission-Pointer Routing](./09.1-task-list-realm-catalog-and-admission-pointer-routing-vertical-slice.md)

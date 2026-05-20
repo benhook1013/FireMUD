@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import net.firedevops.firemud.automationscripting.entity.AutomationAdmissionState;
 import net.firedevops.firemud.automationscripting.repository.AutomationAdmissionStateRepository;
@@ -8,6 +9,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repository is an internal Spring collaborator.")
 public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionStateService {
   private static final String MODE_NORMAL = "NORMAL";
   private static final String MODE_PAUSED_FOR_ROLLBACK = "PAUSED_FOR_ROLLBACK";
