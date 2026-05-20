@@ -54,6 +54,9 @@ message WorldInstanceLifecycleSnapshot {
   int64 lifecycle_epoch = 11;
   WorldInstanceLifecycleStatus status = 12;
   string remap_set_id = 13;
+  string workflow_id = 14;
+  string workflow_run_id = 15;
+  string workflow_status = 16;
 }
 
 message PrepareWorldInstanceRequest {

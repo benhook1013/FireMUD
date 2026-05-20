@@ -34,7 +34,7 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class WorldInstanceActivationServiceImplTest {
+class WorldLifecycleCommandServiceImplTest {
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
@@ -45,7 +45,7 @@ class WorldInstanceActivationServiceImplTest {
   private RoomInstanceExitRepository roomInstanceExitRepository;
   private WorldEventRepository worldEventRepository;
   private GameDesignClient gameDesignClient;
-  private WorldInstanceActivationServiceImpl service;
+  private WorldLifecycleCommandServiceImpl service;
 
   @BeforeEach
   void setUp() {
@@ -62,7 +62,7 @@ class WorldInstanceActivationServiceImplTest {
     WorldProperties worldProperties = new WorldProperties();
     worldProperties.setLocalShardId(7);
     service =
-        new WorldInstanceActivationServiceImpl(
+        new WorldLifecycleCommandServiceImpl(
             worldInstanceRepository,
             regionInstanceRepository,
             zoneRepository,

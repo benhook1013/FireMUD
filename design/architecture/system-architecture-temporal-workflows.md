@@ -8,7 +8,7 @@ Current status:
 
 - the shared Temporal foundation is live in `services/common-temporal`;
 - services opt in through the shared Gradle plugin `net.firedevops.firemud.temporal-conventions`;
-- the first real workflow adopters are still tracked separately in the `02.20.2` and `02.20.3` slices;
+- World Management now hosts the first real adopter through the `world-lifecycle` workflow family, and the remaining next adopter is tracked in `02.20.3`;
 - `common-saga` remains the canonical substrate for short synchronous orchestration that does not need durable workflow execution.
 
 ## Canonical Usage Boundary
