@@ -17,6 +17,10 @@ gradlePlugin {
             id = "net.firedevops.firemud.jpa-postgres-conventions"
             implementationClass = "net.firedevops.firemud.FiremudJpaPostgresConventionsPlugin"
         }
+        register("firemudJooqConventions") {
+            id = "net.firedevops.firemud.jooq-conventions"
+            implementationClass = "net.firedevops.firemud.FiremudJooqConventionsPlugin"
+        }
         register("firemudRedisConventions") {
             id = "net.firedevops.firemud.redis-conventions"
             implementationClass = "net.firedevops.firemud.FiremudRedisConventionsPlugin"

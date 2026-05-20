@@ -1,4 +1,9 @@
-import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import {
+  useMutation,
+  useQuery,
+  type UseMutationResult,
+  type UseQueryResult,
+} from '@tanstack/react-query';
 
 export interface GreetingResponse {
   message: string;
@@ -13,21 +18,55 @@ export interface RunScriptResponse {
   output: string;
 }
 
-export const firemudApi = createApi({
-  reducerPath: 'firemudApi',
-  baseQuery: fetchBaseQuery({ baseUrl: '/api' }),
-  endpoints: (builder) => ({
-    getGreeting: builder.query<GreetingResponse, void>({
-      query: () => '/greeting',
-    }),
-    runScript: builder.mutation<RunScriptResponse, RunScriptRequest>({
-      query: (body) => ({
-        url: '/scripts/run',
-        method: 'POST',
-        body,
-      }),
-    }),
-  }),
-});
+class ApiError extends Error {
+  readonly status: number;
 
-export const { useGetGreetingQuery, useRunScriptMutation } = firemudApi;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function fetchJson<T>(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<T> {
+  const response = await fetch(input, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      `Request failed with status ${response.status}`
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+export function useGreetingQuery(): UseQueryResult<GreetingResponse, ApiError> {
+  return useQuery({
+    queryKey: ['greeting'],
+    queryFn: () => fetchJson<GreetingResponse>('/api/greeting'),
+  });
+}
+
+export function useRunScriptMutation(): UseMutationResult<
+  RunScriptResponse,
+  ApiError,
+  RunScriptRequest
+> {
+  return useMutation({
+    mutationFn: (body) =>
+      fetchJson<RunScriptResponse>('/api/scripts/run', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  });
+}

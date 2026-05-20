@@ -6,8 +6,8 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 
 ## Implementation Notes
 
-- The current `web-client` still carries a minimal `Redux Toolkit + RTK Query` starter scaffold (`store.ts`, `hooks.ts`, one RTK Query API, and Redux `<Provider>` wiring).
-- That scaffold is not the target house style. [02.21 Frontend Server-State Baseline and Query Convergence](../project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md) tracks the actual convergence to `TanStack Query` plus local feature state before broader admin/editor/browser surfaces grow on the wrong default.
+- The current `web-client` baseline now uses `TanStack Query` plus local feature state rather than Redux starter scaffolding.
+- [02.21 Frontend Server-State Baseline and Query Convergence](../project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md) is complete at the current baseline boundary; later frontend/editor slices should treat Redux as an explicit exception rather than silently reintroducing it as default infrastructure.
 
 ---
 

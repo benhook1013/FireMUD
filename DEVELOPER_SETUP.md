@@ -58,6 +58,14 @@ For SQL-backed services, the repo’s target-state persistence stack is `jOOQ + 
 - prefer changes that keep schema authority in Flyway and avoid deepening ORM-specific infrastructure;
 - expect later service migration slices to introduce shared `jOOQ` code generation and runtime helpers rather than one-off service-local approaches.
 
+The shared `jOOQ` foundation now exposes a canonical generation task:
+
+```bash
+./gradlew :automation-scripting-service:generateJooq
+```
+
+Later migrated services should follow that same `:service:generateJooq` pattern through the shared `net.firedevops.firemud.jooq-conventions` plugin rather than inventing service-local codegen tasks.
+
 If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash
@@ -217,7 +225,7 @@ cd web-client
 npm ci
 ```
 
-The canonical frontend baseline is `React + Vite + MUI + TanStack Query`. Do not assume the current lightweight Redux/RTK Query scaffold is long-term house style; that scaffold is migration debt tracked in `02.21`. Introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
+The canonical frontend baseline is `React + Vite + MUI + TanStack Query`. Introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
 
 Then run these checks:
 

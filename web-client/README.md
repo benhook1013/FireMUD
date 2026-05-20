@@ -10,7 +10,7 @@ This module contains FireMUD's browser client work. Today it is still a lightwei
 
 ## Current Direction
 
-The current source tree still carries a thin `Redux Toolkit + RTK Query` scaffold from the starter phase. That is not the long-term house style. The repo's canonical frontend direction is:
+The repo's canonical frontend direction is:
 
 - use `TanStack Query` for reads, mutations, caching, invalidation, polling, and retry behavior;
 - keep local component/form/editor state close to the owning feature;

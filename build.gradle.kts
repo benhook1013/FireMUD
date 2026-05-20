@@ -235,7 +235,7 @@ subprojects {
     spotless {
         java {
             googleJavaFormat()
-            targetExclude("build/generated/**")
+            targetExclude("build/generated/**", "build/generated-src/**")
         }
     }
 
@@ -264,17 +264,20 @@ subprojects {
         }
         // Exclude generated sources and protobuf-generated packages from analysis
         val generatedDir = "${File.separator}generated${File.separator}"
-        val protoPackages = listOf("net/firedevops/firemud/**/v1/**")
+        val protoAndJooqPackages = listOf(
+            "net/firedevops/firemud/**/v1/**",
+            "net/firedevops/firemud/**/jooq/**"
+        )
         val originalClassDirs = classDirs.files
         classDirs.setFrom(
             originalClassDirs
                 .filterNot { it.path.contains(generatedDir) }
-                .map { fileTree(it) { exclude(protoPackages) } }
+                .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
         sourceDirs.setFrom(
             sourceDirs.files
                 .filterNot { it.path.contains(generatedDir) }
-                .map { fileTree(it) { exclude(protoPackages) } }
+                .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
         auxClassPaths.from(originalClassDirs)
     }

@@ -4,6 +4,9 @@
     <Match>
         <Source name=".*[\\/]build[\\/]generated[\\/].*" />
     </Match>
+    <Match>
+        <Source name=".*[\\/]build[\\/]generated-src[\\/].*" />
+    </Match>
     
     <!-- Exclude all protobuf-generated classes in versioned packages -->
     <Match>
@@ -17,5 +20,10 @@
     </Match>
     <Match>
         <Class name="~net\\.firedevops\\.firemud\\.socialgroups\\.v1\\..*" />
+    </Match>
+
+    <!-- Exclude generated jOOQ DSL classes -->
+    <Match>
+        <Package name="~net\\.firedevops\\.firemud\\..*\\.jooq(\\..*)?" />
     </Match>
 </FindBugsFilter>
