@@ -20,12 +20,15 @@ CREATE TABLE characters (
 CREATE INDEX idx_characters_tenant_id ON characters(tenant_id);
 CREATE INDEX idx_characters_tenant_account_playable_state
     ON characters (tenant_id, account_id, playable_state_key);
-CREATE INDEX idx_characters_tenant_playable_state_lower_name
-    ON characters (tenant_id, playable_state_key, lower(name));
+CREATE INDEX idx_characters_tenant_playable_state_name
+    ON characters (tenant_id, playable_state_key, name);
 
 CREATE TABLE npcs (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
+    behavior VARCHAR(100),
+    respawn_delay INTEGER NOT NULL DEFAULT 60,
+    last_defeated_at TIMESTAMP,
     tenant_id BIGINT NOT NULL,
     version INT NOT NULL DEFAULT 0,
     version_id BIGINT NOT NULL DEFAULT 1
@@ -158,8 +161,7 @@ ALTER TABLE container_instances
     FOREIGN KEY (item_instance_id) REFERENCES item_instances(id);
 
 CREATE UNIQUE INDEX ux_container_instances_item_instance
-    ON container_instances(item_instance_id)
-    WHERE item_instance_id IS NOT NULL;
+    ON container_instances(item_instance_id);
 
 CREATE INDEX idx_item_instances_tenant_character
     ON item_instances(tenant_id, character_id);
@@ -213,11 +215,11 @@ CREATE INDEX idx_item_stacks_item
 CREATE UNIQUE INDEX ux_item_stacks_holder_item_fingerprint
     ON item_stacks(
         tenant_id,
-        COALESCE(character_id, -1),
-        COALESCE(equipment_slot, ''),
-        COALESCE(game_instance_id, ''),
-        COALESCE(room_instance_id, ''),
-        COALESCE(container_instance_id, -1),
+        character_id,
+        equipment_slot,
+        game_instance_id,
+        room_instance_id,
+        container_instance_id,
         item_id,
         compatibility_fingerprint
     );
@@ -267,8 +269,7 @@ CREATE TABLE item_transfer_audits (
 CREATE INDEX idx_item_transfer_audits_tenant_created
     ON item_transfer_audits(tenant_id, created_at DESC);
 CREATE INDEX idx_item_transfer_audits_item_instance
-    ON item_transfer_audits(item_instance_id)
-    WHERE item_instance_id IS NOT NULL;
+    ON item_transfer_audits(item_instance_id);
 CREATE INDEX idx_item_transfer_audits_correlation
     ON item_transfer_audits(tenant_id, correlation_key);
 
@@ -312,6 +313,7 @@ CREATE TABLE actor_resource_states (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     playable_state_key VARCHAR(120) NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_actor_resource_state UNIQUE (tenant_id, playable_state_key, character_id, stat_key)
 );
 
@@ -331,7 +333,8 @@ CREATE TABLE actor_active_conditions (
     effect_payload_json TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    playable_state_key VARCHAR(120) NOT NULL
+    playable_state_key VARCHAR(120) NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_actor_active_conditions_character
