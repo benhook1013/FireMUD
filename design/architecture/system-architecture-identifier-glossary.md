@@ -59,4 +59,16 @@ Long-running, cross-service workflows (publish, world creation) use sagas and mu
 - `sagaStepName` – stable step name within the saga definition.
 - `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope (for example `(tenantId, gameInstanceId, worldCreationRequestId, sagaStepName)`); `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
 
+## Temporal Workflow Identity
+
+Durable Temporal workflows use explicit workflow and step identity independent of one JVM lifetime:
+
+- `workflowId` – the canonical durable workflow identity. FireMUD formats it as `<workflowFamily>:<tenantId>:<scopeKey>:<businessKey>`.
+- `workflowFamily` – the stable workflow class/family name such as `world-lifecycle` or `script-patch-readiness`.
+- `scopeKey` – the narrow business scope for the workflow, such as `world-instance`, `version`, or `game-instance`.
+- `businessKey` – the stable request or domain identity that makes workflow start/retry idempotent.
+- `businessStepKey` – the durable activity/update-side idempotency key. FireMUD formats it as `<workflowId>#<stepName>#<businessKey>`.
+
+Temporal adopter slices must use these identifiers directly rather than inventing service-local workflow-id formats.
+
 See `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for the full effect identity contract and replay semantics.

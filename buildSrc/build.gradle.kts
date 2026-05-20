@@ -49,5 +49,9 @@ gradlePlugin {
             id = "net.firedevops.firemud.aop-conventions"
             implementationClass = "net.firedevops.firemud.FiremudAopConventionsPlugin"
         }
+        register("firemudTemporalConventions") {
+            id = "net.firedevops.firemud.temporal-conventions"
+            implementationClass = "net.firedevops.firemud.FiremudTemporalConventionsPlugin"
+        }
     }
 }

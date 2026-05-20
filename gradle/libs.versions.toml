@@ -15,6 +15,7 @@ argon2 = "2.12"
 h2 = "2.4.240"
 testcontainers = "1.21.4"
 junit-platform = "6.0.3"
+temporal = "1.35.0"
 
 [libraries]
 # Spring Boot Starters
@@ -88,6 +89,7 @@ spring-cloud-gateway = { module = "org.springframework.cloud:spring-cloud-starte
 testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version = "1.21.4" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version = "1.21.4" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }
+temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

@@ -66,6 +66,28 @@ The shared `jOOQ` foundation now exposes a canonical generation task:
 
 Later migrated services should follow that same `:service:generateJooq` pattern through the shared `net.firedevops.firemud.jooq-conventions` plugin rather than inventing service-local codegen tasks.
 
+### Durable Workflow Direction
+
+For long-running control-plane workflows, the repo’s target durable workflow substrate is Temporal. The shared foundation now lives in `services/common-temporal`, and adopter services should opt in through the shared Gradle plugin:
+
+```kotlin
+plugins {
+    id("net.firedevops.firemud.temporal-conventions")
+}
+```
+
+The shared foundation exposes these core properties:
+
+- `firemud.temporal.enabled`
+- `firemud.temporal.namespace`
+- `firemud.temporal.target`
+- `firemud.temporal.workers-enabled`
+- `firemud.temporal.task-queue-prefix`
+
+Workflow-hosting services should use `TemporalTaskQueueResolver`, `FiremudWorkflowIds`, and `TemporalWorkerRegistrar` from the shared package rather than inventing service-local worker startup or workflow-id formatting.
+
+Until the first real Temporal adopters land, most contributors do **not** need a local Temporal cluster just to work in the repo. The shared foundation is intentionally minimal and the first adopter slices will carry the heavier local runtime/bootstrap guidance when those workflows become executable end to end.
+
 If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash

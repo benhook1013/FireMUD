@@ -175,7 +175,7 @@ This keeps tick execution fast, bounded, and safely replayable, while sagas and 
 
 ## When Sagas *Are* Used (Out-of-Band Workflows)
 
-Sagas are only used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis. These include:
+Short synchronous sagas are used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis when the orchestration does not need durable workflow execution. These include:
 
 | Use Case | Description |
 | --- | --- |
@@ -190,6 +190,8 @@ These workflows:
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require durable coordination and rollback capabilities
+
+If a workflow also needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should move to the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 
 ### Rollback Boundaries by Operation Class
 
@@ -286,6 +288,14 @@ Services include the library and the accompanying Flyway migrations located in
 in the `saga_instance` and `saga_step` tables.
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
 and in the Logging & Admin Service README.
+
+### Saga vs Temporal Boundary
+
+FireMUD now has an explicit shared boundary:
+
+- `common-saga` is for short synchronous orchestration that can run inline and does not require durable waiting or restart-safe continuation.
+- `common-temporal` is for long-running durable control-plane workflows that must survive process restarts, support durable timers/signals/queries/updates, and expose operator-visible workflow lifecycle.
+- Gameplay ticks and Redis-backed runtime coordination remain outside both of these workflow substrates and continue to use the tick/idempotency/reconciliation model.
 
 ---
 
