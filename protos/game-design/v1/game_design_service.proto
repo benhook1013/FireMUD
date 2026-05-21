@@ -110,6 +110,7 @@ message AppliedWorldDesignMutation {
 message PublishVersionRequest {
   string tenant_id = 1;
   string notes = 2;
+  string publish_request_id = 3;
 }
 
 message PublishVersionResponse {

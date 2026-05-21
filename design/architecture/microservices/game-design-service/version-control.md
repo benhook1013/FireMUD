@@ -117,7 +117,7 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 
 | Publish Type | Required domain digests (`GetDraftDesignDigest`) | Required Game Design control-plane digest (`GetDesignControlPlaneDigest`) | Not part of digest gate |
 | --- | --- | --- | --- |
-| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history/audit tables that do not affect launchability |
+| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in the durable publish workflow), Game Design internal history/audit tables that do not affect launchability |
 | `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
 
 ### Change Vehicle Selection Matrix
@@ -140,6 +140,7 @@ Rules:
   - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a workflow step.
   For full publishes, Game Logic is digest-gate only unless/until it owns explicit publish-time finalize steps.
 - A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
+- `PublishVersionRequest` must carry a stable `publish_request_id`; the Game Design Temporal `publish` workflow uses that caller-visible request identity as its durable business key, so retries must reuse the same request id instead of minting a fresh client UUID on each attempt.
 - Orchestrator routing is strict by publish type/scope:
   - Full publish requests (`scope.versionId`) call only participants in the full-publish matrix.
   - Script-only publish requests (`scope.scriptPatchVersion`) call only script-patch participants.

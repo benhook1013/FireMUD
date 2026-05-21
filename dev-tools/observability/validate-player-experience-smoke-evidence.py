@@ -83,8 +83,14 @@ def _validate_external_authority(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["externalAuthority is required"]
     findings: list[str] = []
-    if value.get("deadmanIncidentOpened") is not True:
-        findings.append("externalAuthority.deadmanIncidentOpened must be true")
+    deadman = value.get("deadmanAuthority")
+    if not isinstance(deadman, dict):
+        findings.append("externalAuthority.deadmanAuthority is required")
+    else:
+        if deadman.get("status") != "green":
+            findings.append("externalAuthority.deadmanAuthority.status must be green")
+        if not isinstance(deadman.get("evidenceRef"), str) or not deadman.get("evidenceRef").strip():
+            findings.append("externalAuthority.deadmanAuthority.evidenceRef is required")
     checks = value.get("entrypointChecks")
     if not isinstance(checks, dict):
         findings.append("externalAuthority.entrypointChecks is required")

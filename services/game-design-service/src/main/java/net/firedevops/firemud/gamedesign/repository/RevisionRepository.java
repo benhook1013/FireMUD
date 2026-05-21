@@ -4,8 +4,10 @@ import static net.firedevops.firemud.gamedesign.repository.JooqGameDesignReposit
 import static net.firedevops.firemud.gamedesign.repository.JooqGameDesignRepositorySupport.nullableString;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -31,8 +33,8 @@ public class RevisionRepository {
       DSL.field(DSL.name("revision_kind"), String.class);
   private static final Field<String> LOGICAL_REVISION_ID =
       DSL.field(DSL.name("logical_revision_id"), String.class);
-  private static final Field<LocalDateTime> CREATED_AT =
-      DSL.field(DSL.name("created_at"), LocalDateTime.class);
+  private static final Field<Timestamp> CREATED_AT =
+      DSL.field(DSL.name("created_at"), Timestamp.class);
 
   private final DSLContext dsl;
 
@@ -52,7 +54,7 @@ public class RevisionRepository {
               .set(DATA, jsonbParam(revision.getData()))
               .set(REVISION_KIND, revision.getRevisionKind())
               .set(LOGICAL_REVISION_ID, revision.getLogicalRevisionId())
-              .set(CREATED_AT, createdAt)
+              .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
               .returningResult(ID)
               .fetchOne(ID);
       return findById(generatedId);
@@ -64,7 +66,7 @@ public class RevisionRepository {
         .set(DATA, jsonbParam(revision.getData()))
         .set(REVISION_KIND, revision.getRevisionKind())
         .set(LOGICAL_REVISION_ID, revision.getLogicalRevisionId())
-        .set(CREATED_AT, createdAt)
+        .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
         .where(ID.eq(revision.getId()))
         .execute();
     return findById(revision.getId());
@@ -94,7 +96,7 @@ public class RevisionRepository {
     revision.setData(nullableString(record.get(DATA)));
     revision.setRevisionKind(record.get(REVISION_KIND));
     revision.setLogicalRevisionId(record.get(LOGICAL_REVISION_ID));
-    revision.setCreatedAt(record.get(CREATED_AT));
+    revision.setCreatedAt(JooqPersistenceSupport.toLocalDateTime(record.get(CREATED_AT)));
     return revision;
   }
 }

@@ -194,7 +194,12 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     PublishVersionResponse.Builder builder = PublishVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
-      VersionDto version = versionService.publishVersion(request.getTenantId(), request.getNotes());
+      if (request.getPublishRequestId().isBlank()) {
+        throw new IllegalArgumentException("publish_request_id is required");
+      }
+      VersionDto version =
+          versionService.publishVersion(
+              request.getTenantId(), request.getNotes(), request.getPublishRequestId());
       builder.setVersionId(version.id());
     } catch (AdminAuthorizationException ex) {
       builder.setError(

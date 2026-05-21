@@ -12,13 +12,17 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
 
 from smoke_common import (  # noqa: E402
+    http_request_json,
+    http_request_json_with_headers,
     http_readiness_up,
     login_play_look_steps,
+    quote_path,
     recv_until_socket,
     run_telnet_command_plan,
     run_websocket_command_plan,
@@ -112,13 +116,17 @@ class SmokeConfig:
         gateway_api_base: str,
         tcp_proxy_api_base: str,
         tenant_id: str,
-        session_id: str,
+        realm_slug: str,
+        character_name: str | None,
         username: str,
         password: str,
         world: str,
         timeout_seconds: int,
         startup_wait_seconds: int,
         external_checks: dict[str, str],
+        deadman_authority_check: str,
+        auth_api_base: str,
+        auth_api_prefix: str,
         verified_by: str,
         preflight_ref: str,
         deployment_ref: str,
@@ -136,13 +144,17 @@ class SmokeConfig:
         self.gateway_api_base = gateway_api_base
         self.tcp_proxy_api_base = tcp_proxy_api_base
         self.tenant_id = tenant_id
-        self.session_id = session_id
+        self.realm_slug = realm_slug
+        self.character_name = character_name
         self.username = username
         self.password = password
         self.world = world
         self.timeout_seconds = timeout_seconds
         self.startup_wait_seconds = startup_wait_seconds
         self.external_checks = external_checks
+        self.deadman_authority_check = deadman_authority_check
+        self.auth_api_base = auth_api_base
+        self.auth_api_prefix = auth_api_prefix
         self.verified_by = verified_by
         self.preflight_ref = preflight_ref
         self.deployment_ref = deployment_ref
@@ -153,7 +165,10 @@ class SmokeConfig:
             source=source,
             canary_path=canary_path,
             websocket_url=os.environ.get(
-                "SMOKE_GAME_SESSION_WS_URL", "ws://localhost:8086/ws/game"
+                "PLAYER_EXPERIENCE_WEBSOCKET_URL",
+                websocket_url_from_http_base(
+                    os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080")
+                ),
             ),
             websocket_target=os.environ.get(
                 "PLAYER_EXPERIENCE_WEBSOCKET_TARGET", "local-websocket-edge"
@@ -175,7 +190,8 @@ class SmokeConfig:
                 "SMOKE_TCP_PROXY_API_BASE", "http://localhost:8089"
             ),
             tenant_id=os.environ.get("SMOKE_TENANT_ID", "1"),
-            session_id=os.environ.get("SMOKE_SESSION_ID", "1"),
+            realm_slug=os.environ.get("PLAYER_EXPERIENCE_REALM", "production"),
+            character_name=os.environ.get("PLAYER_EXPERIENCE_CHARACTER"),
             username=os.environ.get("SMOKE_USERNAME", "demo@example.com"),
             password=os.environ.get("SMOKE_PASSWORD", "swordfish"),
             world=os.environ.get("PLAYER_EXPERIENCE_WORLD", "demo"),
@@ -196,6 +212,14 @@ class SmokeConfig:
                     "PLAYER_EXPERIENCE_JAEGER_QUERY_CHECK", "green"
                 ),
             },
+            deadman_authority_check=os.environ.get(
+                "PLAYER_EXPERIENCE_DEADMAN_AUTHORITY_CHECK", "green"
+            ),
+            auth_api_base=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_BASE")
+            or os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080"),
+            auth_api_prefix=os.environ.get(
+                "PLAYER_EXPERIENCE_AUTH_API_PREFIX", "/api/account"
+            ),
             verified_by=os.environ.get("PLAYER_EXPERIENCE_VERIFIED_BY", "local-operator"),
             preflight_ref=os.environ.get(
                 "PLAYER_EXPERIENCE_PREFLIGHT_REF",
@@ -209,6 +233,13 @@ class SmokeConfig:
 
 def parse_failure_injection(raw: str) -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def websocket_url_from_http_base(http_base: str) -> str:
+    parsed = urlparse(http_base)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"{scheme}://{parsed.hostname}{port}/ws/game"
 
 
 def execute_smoke(
@@ -236,13 +267,13 @@ def execute_smoke(
         config.startup_wait_seconds,
         config.timeout_seconds,
     )
+    wait_for_http_readiness(
+        "spring-cloud-gateway",
+        config.gateway_api_base,
+        config.startup_wait_seconds,
+        config.timeout_seconds,
+    )
     if config.canary_path == "telnet":
-        wait_for_http_readiness(
-            "spring-cloud-gateway",
-            config.gateway_api_base,
-            config.startup_wait_seconds,
-            config.timeout_seconds,
-        )
         wait_for_http_readiness(
             "tcp-proxy-service",
             config.tcp_proxy_api_base,
@@ -328,13 +359,11 @@ def blackbox_websocket_record(config: SmokeConfig, injected: set[str]) -> dict[s
             "The python 'websocket-client' package is required for WebSocket canary smoke"
         ) from exc
 
+    first_party = first_party_connect_context(config)
     ws = websocket.create_connection(
         config.websocket_url,
         timeout=config.timeout_seconds,
-        header=[
-            f"X-Game-Instance-Id: {config.session_id}",
-            f"X-Tenant-Id: {config.tenant_id}",
-        ],
+        header=[f"Cookie: {first_party['connectCookie']}"],
     )
     try:
         return {"path": "websocket", "target": config.websocket_target, "value": 1}
@@ -347,7 +376,13 @@ def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str,
         return {"path": "telnet", "target": config.telnet_target, "value": 0}
     with socket.create_connection(
         (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
-    ):
+    ) as sock:
+        recv_until_socket(sock, "\n", config.timeout_seconds)
+        run_telnet_command_plan(
+            sock,
+            [("WORLDS", ["OK WORLDS"], "WORLDS")],
+            config.timeout_seconds,
+        )
         return {"path": "telnet", "target": config.telnet_target, "value": 1}
 
 
@@ -371,29 +406,16 @@ def run_websocket_canary(
             "The python 'websocket-client' package is required for WebSocket canary smoke"
         ) from exc
 
+    first_party = first_party_connect_context(config)
     step_results: list[dict[str, Any]] = []
     ws = websocket.create_connection(
         config.websocket_url,
         timeout=config.timeout_seconds,
-        header=[
-            f"X-Game-Instance-Id: {config.session_id}",
-            f"X-Tenant-Id: {config.tenant_id}",
-        ],
+        header=[f"Cookie: {first_party['connectCookie']}"],
     )
     try:
-        run_websocket_command_plan(
-            ws,
-            login_play_look_steps(
-                config.username,
-                config.password,
-                config.world,
-                "OK WORLDS",
-                "OK LOGIN",
-                "OK PLAY",
-                "OK LOOK",
-            ),
-            config.timeout_seconds,
-            step_results,
+        run_first_party_websocket_canary(
+            ws, config, first_party.get("characterName"), step_results
         )
     finally:
         ws.close()
@@ -420,6 +442,8 @@ def run_telnet_canary(
                 "OK LOGIN",
                 "OK PLAY",
                 "OK LOOK",
+                realm=config.realm_slug,
+                character=config.character_name,
             ),
             config.timeout_seconds,
             step_results=step_results,
@@ -507,7 +531,7 @@ def build_evidence(
         "verifiedBy": config.verified_by,
         "preflightEvidenceRef": config.preflight_ref,
         "externalAuthority": {
-            "deadmanIncidentOpened": "deadman" not in injected,
+            "deadmanAuthority": resolve_deadman_authority(config, injected),
             "entrypointChecks": {
                 name: resolve_external_check(name, configured, injected)
                 for name, configured in config.external_checks.items()
@@ -533,6 +557,195 @@ def resolve_external_check(name: str, configured: str, injected: set[str]) -> st
             return "green" if response.status < 500 else "red"
     except (urllib.error.URLError, OSError, ValueError):
         return "red"
+
+
+def resolve_deadman_authority(config: SmokeConfig, injected: set[str]) -> dict[str, str]:
+    status = resolve_external_check("deadman", config.deadman_authority_check, injected)
+    return {
+        "status": status,
+        "evidenceRef": config.deadman_authority_check,
+    }
+
+
+def first_party_connect_context(config: SmokeConfig) -> dict[str, Any]:
+    bootstrap = issue_player_bootstrap(config)
+    require_visible_world(config, bootstrap["bootstrapToken"])
+    connect_scope_id = resolve_connect_scope_id(config, bootstrap["bootstrapToken"])
+    character_name = resolve_character_name(config, bootstrap["bootstrapToken"])
+    connect_token = issue_connect_token(config, bootstrap["bootstrapToken"], connect_scope_id)
+    connect_token["characterName"] = character_name
+    return connect_token
+
+
+def issue_player_bootstrap(config: SmokeConfig) -> dict[str, Any]:
+    response = http_request_json(
+        public_auth_url(config, "/auth/player-bootstrap"),
+        config.timeout_seconds,
+        method="POST",
+        payload={
+            "tenantId": int(config.tenant_id),
+            "username": config.username,
+            "password": config.password,
+            "otp": "",
+        },
+    )
+    return response["data"]
+
+
+def resolve_connect_scope_id(config: SmokeConfig, bootstrap_token: str) -> str:
+    response = http_request_json(
+        public_auth_url(
+            config, f"/auth/bootstrap/worlds/{quote_path(config.world)}/realms"
+        ),
+        config.timeout_seconds,
+        headers={"Authorization": f"Bearer {bootstrap_token}"},
+    )
+    for realm in response["data"]:
+        if realm.get("realmSlug") == config.realm_slug:
+            return realm["connectScopeId"]
+    raise RuntimeError(
+        f"Realm {config.realm_slug!r} was not visible during bootstrap discovery for world {config.world!r}"
+    )
+
+
+def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
+    response = http_request_json(
+        public_auth_url(config, "/auth/bootstrap/worlds"),
+        config.timeout_seconds,
+        headers={"Authorization": f"Bearer {bootstrap_token}"},
+    )
+    for world in response["data"]:
+        if world.get("worldSlug") == config.world:
+            return
+    raise RuntimeError(
+        f"World {config.world!r} was not visible during bootstrap discovery"
+    )
+
+
+def resolve_character_name(config: SmokeConfig, bootstrap_token: str) -> str | None:
+    response = http_request_json(
+        public_auth_url(
+            config,
+            f"/auth/bootstrap/worlds/{quote_path(config.world)}/realms/{quote_path(config.realm_slug)}/characters",
+        ),
+        config.timeout_seconds,
+        headers={"Authorization": f"Bearer {bootstrap_token}"},
+    )
+    characters = response["data"]
+    if config.character_name:
+        for character in characters:
+            if character.get("characterName") == config.character_name:
+                return config.character_name
+        raise RuntimeError(
+            f"Character {config.character_name!r} was not visible during bootstrap discovery"
+        )
+    if not characters:
+        return None
+    return characters[0].get("characterName")
+
+
+def issue_connect_token(
+    config: SmokeConfig, bootstrap_token: str, connect_scope_id: str
+) -> dict[str, Any]:
+    response, headers = http_request_json_with_headers(
+        public_auth_url(config, "/auth/connect-token"),
+        config.timeout_seconds,
+        method="POST",
+        payload={
+            "connectScopeId": connect_scope_id,
+            "requestId": f"player-experience-smoke-{int(time.time() * 1000)}",
+        },
+        headers={"Authorization": f"Bearer {bootstrap_token}"},
+    )
+    cookie = headers.get("Set-Cookie", "")
+    if "Firemud-Connect-Token=" not in cookie:
+        raise RuntimeError(
+            "Connect-token response did not issue the Firemud-Connect-Token cookie"
+        )
+    return {
+        **response["data"],
+        "connectCookie": cookie.split(";", 1)[0],
+    }
+
+
+def run_first_party_websocket_canary(
+    ws: Any,
+    config: SmokeConfig,
+    character_name: str | None,
+    step_results: list[dict[str, Any]],
+) -> None:
+    run_first_party_websocket_step(
+        ws,
+        "LOGIN",
+        "LOGIN",
+        config.timeout_seconds,
+        step_results,
+    )
+    run_first_party_websocket_step(
+        ws,
+        play_command(config, character_name),
+        "PLAY",
+        config.timeout_seconds,
+        step_results,
+    )
+    run_first_party_websocket_step(
+        ws,
+        "LOOK",
+        "LOOK",
+        config.timeout_seconds,
+        step_results,
+    )
+
+
+def run_first_party_websocket_step(
+    ws: Any,
+    command: str,
+    command_type: str,
+    timeout_seconds: int,
+    step_results: list[dict[str, Any]],
+) -> None:
+    started_at = time.time()
+    ws.send(command)
+    payload = await_structured_command_result(ws, command_type, timeout_seconds)
+    step_results.append(
+        {
+            "label": command_type,
+            "command": command,
+            "latencyMs": round((time.time() - started_at) * 1000, 3),
+            "response": payload,
+        }
+    )
+
+
+def await_structured_command_result(ws: Any, command_type: str, timeout_seconds: int) -> str:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        remaining = min(1.0, max(0.1, deadline - time.time()))
+        ws.settimeout(remaining)
+        payload = ws.recv()
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if (
+            parsed.get("eventType") == "command_result"
+            and parsed.get("commandType") == command_type
+        ):
+            if not parsed.get("accepted", False):
+                error_code = parsed.get("errorCode") or "UNKNOWN"
+                raise RuntimeError(f"{command_type} failed with {error_code}: {payload}")
+            return payload
+    raise RuntimeError(f"Timed out waiting for structured {command_type} result")
+
+
+def play_command(config: SmokeConfig, character_name: str | None) -> str:
+    if character_name:
+        return f"PLAY {config.world} {config.realm_slug} {character_name}"
+    return f"PLAY {config.world} {config.realm_slug}"
+
+
+def public_auth_url(config: SmokeConfig, path: str) -> str:
+    return f"{config.auth_api_base}{config.auth_api_prefix}{path}"
 
 
 def alert_record(alert: str, severity: str, injected: set[str]) -> dict[str, str]:

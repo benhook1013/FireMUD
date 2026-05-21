@@ -231,40 +231,40 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
 
 - Trigger admission and drops
-  - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome, priorityTag}`
-  - `automation_script_skips_total{tenantId, scriptId, pluginId, reason, priorityTag}`
-  - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason, priorityTag}`
+  - `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}`
+  - `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}`
+  - `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}`
 - Quotas and budgets
-  - `script_quota_allowed_total{tenantId, scriptId}`
-  - `script_quota_denied_total{tenantId, scriptId, reason}`
-  - `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`
+  - `script_quota_allowed_total{scope, script_category}`
+  - `script_quota_denied_total{scope, script_category, reason}`
+  - `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`
 - Tick integration and queueing
-  - `automation_tick_events_enqueued_total{tenantId}`
-  - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}`
-  - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}`
-  - `automation_script_queue_delay_seconds{tenantId, scriptId}`
-  - `automation_queue_orphaned_entries_total{tenantId}` (when applicable)
-  - `automation_script_timer_catchup_truncated_total{tenantId, scriptId, eventType, reason}`
+  - `automation_tick_events_enqueued_total{scope}`
+  - `automation_tick_version_fence_dropped_total{scope, script_category, reason}`
+  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_family, plugin_version_family, reason}`
+  - `automation_script_queue_delay_seconds{scope, script_category}`
+  - `automation_queue_orphaned_entries_total{scope}` (when applicable)
+  - `automation_script_timer_catchup_truncated_total{scope, script_category, eventType, reason}`
 - Sandbox and runtime health
-  - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}`
+  - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_errors_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}`
 - Dry-run/test traffic (separate from live)
-  - `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}`
-  - `automation_script_test_runtime_seconds{tenantId, scriptId, pluginId, eventType}`
-  - `automation_script_test_sandbox_failures_total{tenantId, scriptId, pluginId, eventType, reason}`
+  - `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}`
+  - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}`
+  - `automation_script_test_sandbox_failures_total{scope, script_category, plugin_family, eventType, reason}`
 - Plugin policy
-  - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}`
+  - `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}`
 - Rollback convergence timeout
-  - `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`
+  - `automation_rollback_convergence_timeout_total{scope, operation, reason}`
 - Rollback drain fencing
-  - `automation_rollback_drain_canceled_total{tenantId, gameInstanceId, finalStage, reason}`
+  - `automation_rollback_drain_canceled_total{scope, operation, finalStage, reason}`
 
 Label rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- If `tenantId` labeling becomes too high-cardinality in practice, it must be moved behind aggregation (for example per-tier or sampled) rather than introducing ad-hoc per-event labels.
+- Raw tenant, script, plugin, and runtime identifiers are not approved ordinary Prometheus labels here. Producers must emit bounded `scope`, category, family, or operation dimensions instead of raw IDs.
 
 Metric semantics:
 

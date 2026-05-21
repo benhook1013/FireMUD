@@ -5,7 +5,6 @@ import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import java.time.Duration;
-import java.util.UUID;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -33,8 +32,7 @@ public class TemporalVersionPublishOrchestrator {
     this.commandService = commandService;
   }
 
-  public VersionDto publishFullVersion(String tenantId, String notes) {
-    String publishRequestId = UUID.randomUUID().toString();
+  public VersionDto publishFullVersion(String tenantId, String notes, String publishRequestId) {
     String workflowId = workflowId(tenantId, publishRequestId);
     PublishWorkflowRequest request = new PublishWorkflowRequest(tenantId, notes, workflowId);
     TemporalVersionPublishWorkflow workflow = newWorkflowStub(workflowId);

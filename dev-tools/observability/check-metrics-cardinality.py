@@ -7,6 +7,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "services"
+DOC_POLICY_FILES = [
+    REPO_ROOT / "design/architecture/system-architecture-logging-monitoring.md",
+    REPO_ROOT / "design/architecture/system-architecture-scripting-observability-contract.md",
+    REPO_ROOT / "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    REPO_ROOT / "design/architecture/microservices/game-session-service/runtime-and-data.md",
+]
 
 FORBIDDEN_EXACT_LABELS = {
     "class",
@@ -33,6 +39,9 @@ FORBIDDEN_EXACT_LITERAL_PATTERN = re.compile(
     + r')"'
 )
 LITERAL_LABEL_PATTERN = re.compile(r'"(?P<label>[A-Za-z_][A-Za-z0-9_]*)"')
+DOC_METRIC_LABEL_PATTERN = re.compile(
+    r"\b[a-zA-Z_:][a-zA-Z0-9_:]*\{[^}\n]*\b(?P<label>tenantId|script_patch_version|scriptPatchVersion|patchVersion)\b[^}\n]*\}"
+)
 
 
 def is_forbidden_label(label: str) -> bool:
@@ -51,6 +60,10 @@ def iter_source_files() -> list[Path]:
         for path in SOURCE_ROOT.rglob("*")
         if path.suffix in {".java", ".kt"} and "build" not in path.parts
     )
+
+
+def iter_doc_policy_files() -> list[Path]:
+    return [path for path in DOC_POLICY_FILES if path.exists()]
 
 
 def main() -> int:
@@ -81,6 +94,16 @@ def main() -> int:
                     f"{label!r}"
                 )
                 break
+    for path in iter_doc_policy_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            match = DOC_METRIC_LABEL_PATTERN.search(line)
+            if match is None:
+                continue
+            findings.append(
+                f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability docs still teach forbidden raw metric label "
+                f"{match.group('label')!r}"
+            )
     if findings:
         print("Metrics cardinality policy violations found:", file=sys.stderr)
         for finding in findings:

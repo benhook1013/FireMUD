@@ -73,6 +73,12 @@ Guidance:
 - `scopeKey` is the narrow workflow scope that matters operationally, such as `world-instance`, `version`, or `game-instance`.
 - `businessKey` is the stable caller-visible request identity or domain identity that makes retries idempotent.
 
+Current adopter examples:
+
+- `world-lifecycle` uses stable world-instance identity for its workflow business key.
+- full Game Design publish uses the caller-supplied `publish_request_id` from `PublishVersionRequest`, so retries converge on the same caller-visible durable workflow instead of minting a fresh internal UUID.
+- script-patch readiness uses the stable patch/readiness domain tuple documented in Automation Scripting.
+
 `workflowId` is the durable process identity. `businessStepKey` is the durable activity/update-side idempotency key for business effects inside the workflow.
 
 ## Canonical Task Queue Convention

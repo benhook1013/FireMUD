@@ -113,15 +113,16 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional
   @Timed(value = "gamedesign.version.publish")
-  public VersionDto publishVersion(String tenantId, String notes) {
+  public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
     logger.info("Publishing version for tenant {}", tenantId);
+    requireText(publishRequestId, "publishRequestId");
     if (temporalPublishOrchestrator.isPresent()) {
-      return temporalPublishOrchestrator.get().publishFullVersion(tenantId, notes);
+      return temporalPublishOrchestrator
+          .get()
+          .publishFullVersion(tenantId, notes, publishRequestId);
     }
     return publishCommandService.publishFullVersion(
-        tenantId,
-        notes,
-        TemporalVersionPublishOrchestrator.workflowId(tenantId, UUID.randomUUID().toString()));
+        tenantId, notes, TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
   }
 
   @Override

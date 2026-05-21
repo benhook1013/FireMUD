@@ -55,6 +55,8 @@ import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionRequest;
@@ -227,6 +229,19 @@ class GameDesignGrpcServiceTest {
     assertEquals(9L, ref.get().getScriptPatch().getVersionId());
     assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
     assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void publishVersionRequiresPublishRequestId() {
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder().setTenantId("tenant-1").setNotes("notes").build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test

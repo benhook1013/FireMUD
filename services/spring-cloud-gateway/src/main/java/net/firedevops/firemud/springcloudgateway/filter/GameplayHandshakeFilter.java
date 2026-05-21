@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -40,6 +41,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String HANDSHAKE_ERROR_CLASS_HEADER = "X-Firemud-Handshake-Error-Class";
   static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   static final String CONNECT_TOKEN_HEADER = "X-Firemud-Connect-Token";
+  static final String CONNECT_TOKEN_COOKIE = "Firemud-Connect-Token";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
   static final String WORLD_SLUG_HEADER = "X-World-Slug";
@@ -102,7 +104,16 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
               }));
     }
 
-    String connectToken = exchange.getRequest().getHeaders().getFirst(CONNECT_TOKEN_HEADER);
+    String connectTokenHeader = exchange.getRequest().getHeaders().getFirst(CONNECT_TOKEN_HEADER);
+    HttpCookie connectTokenCookie =
+        exchange.getRequest().getCookies().getFirst(CONNECT_TOKEN_COOKIE);
+    String connectToken = connectTokenCookie == null ? null : connectTokenCookie.getValue();
+    if (StringUtils.hasText(connectTokenHeader) && StringUtils.hasText(connectToken)) {
+      return reject(exchange, CONNECT_TOKEN_REJECTED, "multiple connect token carriers");
+    }
+    if (StringUtils.hasText(connectTokenHeader)) {
+      connectToken = connectTokenHeader;
+    }
     if (!StringUtils.hasText(connectToken)) {
       return reject(exchange, CONNECT_TOKEN_MISSING, "connect token required");
     }

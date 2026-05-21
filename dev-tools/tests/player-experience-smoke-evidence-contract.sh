@@ -16,7 +16,10 @@ cat >"$VALID_EVIDENCE" <<'JSON'
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
   "externalAuthority": {
-    "deadmanIncidentOpened": true,
+    "deadmanAuthority": {
+      "status": "green",
+      "evidenceRef": "synthetic://deadman/prod-like"
+    },
     "entrypointChecks": {
       "prometheus": "green",
       "alertmanager": "green",
@@ -59,7 +62,10 @@ cat >"$INVALID_EVIDENCE" <<'JSON'
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
   "externalAuthority": {
-    "deadmanIncidentOpened": false,
+    "deadmanAuthority": {
+      "status": "red",
+      "evidenceRef": "synthetic://deadman/failure"
+    },
     "entrypointChecks": {
       "prometheus": "green"
     }
@@ -88,7 +94,7 @@ if python3 "$VALIDATOR" "$INVALID_EVIDENCE" >/tmp/firemud-player-experience-smok
   exit 1
 fi
 
-grep -q "deadmanIncidentOpened must be true" /tmp/firemud-player-experience-smoke-invalid.out
+grep -q "deadmanAuthority.status must be green" /tmp/firemud-player-experience-smoke-invalid.out
 grep -q "entrypath_blackbox_probe_success missing passing paths: telnet" /tmp/firemud-player-experience-smoke-invalid.out
 grep -q "canaryAlerts missing: PlayerFlowCanaryCommandFailed, PlayerFlowCanaryLatencyHigh" /tmp/firemud-player-experience-smoke-invalid.out
 

@@ -20,7 +20,10 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
   "externalAuthority": {
-    "deadmanIncidentOpened": true,
+    "deadmanAuthority": {
+      "status": "green",
+      "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z"
+    },
     "entrypointChecks": {
       "prometheus": "green",
       "alertmanager": "green",

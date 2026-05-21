@@ -16,6 +16,7 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProper
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.ReactiveValueOperations;
+import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -92,6 +93,81 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_SCOPE_MISMATCH);
+  }
+
+  @Test
+  void promotesFirstPartyHandshakeWithCookieCarrier() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "aud", "gameplay-connect",
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "42",
+                    "pointerVersion", "18",
+                    "connectScopeId", "scope-cookie",
+                    "requestId", "req-cookie",
+                    "jti", "jti-cookie"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
+  }
+
+  @Test
+  void rejectsHandshakeWithBothCookieAndHeaderCarrier() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "aud", "gameplay-connect",
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "42",
+                    "pointerVersion", "18",
+                    "connectScopeId", "scope-both",
+                    "requestId", "req-both",
+                    "jti", "jti-both"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+            .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+            .build();
+
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
   }
 
   @Test

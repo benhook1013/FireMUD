@@ -49,6 +49,8 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
+  private static final String PUBLISH_REQUEST_ID = "publish-request-1";
+
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
   @Mock private PublishedPluginVersionRepository publishedPluginVersionRepository;
@@ -99,7 +101,8 @@ class VersionServiceImplTest {
     when(publishCommandService.publishFullVersion(
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             org.mockito.ArgumentMatchers.eq("notes"),
-            org.mockito.ArgumentMatchers.contains("publish:tenant-1:publish-request:")))
+            org.mockito.ArgumentMatchers.eq(
+                "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID)))
         .thenReturn(
             new VersionDto(
                 10L,
@@ -114,7 +117,7 @@ class VersionServiceImplTest {
                 LocalDateTime.now(),
                 LocalDateTime.now()));
 
-    VersionDto dto = service.publishVersion("tenant-1", "notes");
+    VersionDto dto = service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
 
     assertEquals(8, dto.versionNumber());
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
@@ -123,7 +126,8 @@ class VersionServiceImplTest {
         .publishFullVersion(
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             org.mockito.ArgumentMatchers.eq("notes"),
-            org.mockito.ArgumentMatchers.contains("publish:tenant-1:publish-request:"));
+            org.mockito.ArgumentMatchers.eq(
+                "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID));
   }
 
   @Test
@@ -202,7 +206,8 @@ class VersionServiceImplTest {
 
     PublishGateFailureException thrown =
         org.junit.jupiter.api.Assertions.assertThrows(
-            PublishGateFailureException.class, () -> service.publishVersion("tenant-1", "notes"));
+            PublishGateFailureException.class,
+            () -> service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
 
     assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
   }
@@ -227,7 +232,7 @@ class VersionServiceImplTest {
             pluginBundleStorageService,
             publishCommandService,
             Optional.of(temporalPublishOrchestrator));
-    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes"))
+    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID))
         .thenReturn(
             new VersionDto(
                 10L,
@@ -242,10 +247,10 @@ class VersionServiceImplTest {
                 LocalDateTime.now(),
                 LocalDateTime.now()));
 
-    VersionDto dto = temporalService.publishVersion("tenant-1", "notes");
+    VersionDto dto = temporalService.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
 
     assertEquals(10L, dto.id());
-    verify(temporalPublishOrchestrator).publishFullVersion("tenant-1", "notes");
+    verify(temporalPublishOrchestrator).publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
   }
 
   @Test

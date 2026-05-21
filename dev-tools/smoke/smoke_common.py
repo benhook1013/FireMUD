@@ -5,6 +5,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 
 def compose_postgres_container_name():
@@ -50,6 +51,47 @@ def verify_smoke_account(account_api_base, tenant_id, username, password, timeou
                 time.sleep(1)
                 continue
             raise RuntimeError(f"Smoke account validation failed: {exc}") from exc
+
+
+def http_request_json(url, timeout_seconds, method="GET", payload=None, headers=None):
+    return http_request_json_with_headers(
+        url,
+        timeout_seconds,
+        method=method,
+        payload=payload,
+        headers=headers,
+    )[0]
+
+
+def http_request_json_with_headers(
+    url, timeout_seconds, method="GET", payload=None, headers=None
+):
+    request_headers = {"Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=request_headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8")), response.headers
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(
+            f"Request {method} {url} failed with status {exc.code}: {body or '<empty>'}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Request {method} {url} failed: {exc}") from exc
+
+
+def quote_path(value):
+    return quote(value, safe="")
 
 
 def wait_for_account_schema(startup_wait_seconds, timeout_seconds):
@@ -124,11 +166,18 @@ def login_play_look_steps(
     play_expect,
     look_expect,
     look_timeout=None,
+    realm=None,
+    character=None,
 ):
+    play_parts = ["PLAY", world]
+    if realm:
+        play_parts.append(realm)
+    if character:
+        play_parts.append(character)
     steps = [
         ("WORLDS", [worlds_expect], "WORLDS"),
         (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
-        (f"PLAY {world}", [play_expect], "PLAY"),
+        (" ".join(play_parts), [play_expect], "PLAY"),
         ("LOOK", [look_expect], "LOOK"),
     ]
     if look_timeout is None:

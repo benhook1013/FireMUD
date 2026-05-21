@@ -130,9 +130,9 @@ Runtime identity should be exposed consistently enough that operators and admin 
     - Tick runtime safety margins per region, using `tick_execution_time_ms_bucket` and derived recording rules such as `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` alongside `tick_lock_ttl_ms` to compute safety ratios. Regions where `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly exceeds a configured fraction of `tick_lock_ttl_ms` (for example `0.5×` for warning, `0.75×` for critical) are treated as **degraded** and surfaced in dashboards.
     - Lock refresh usage, via counters such as `redis_tick_lock_refresh_requests_total` and `redis_tick_lock_refresh_denied_total`, so operators can detect commands that routinely rely on the optional lock refresh helper instead of completing within the normal lock TTL.
 - **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
-  - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`.
-  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, `automation_tick_events_enqueued_total`, `automation_tick_version_fence_dropped_total`, and `automation_tick_plugin_version_fence_dropped_total`.
-  - Sandbox and runtime meters such as `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds`.
+  - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and bounded-scope budget counters such as `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`.
+  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, `automation_tick_events_enqueued_total`, `automation_tick_version_fence_dropped_total`, and `automation_tick_plugin_version_fence_dropped_total` with bounded semantic dimensions only.
+  - Sandbox and runtime meters such as `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{scope, reason=...}`, and `automation_script_runtime_seconds`.
   - Dry-run/test isolation meters such as `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, and `automation_script_test_sandbox_failures_total`.
   - Plugin policy enforcement meters such as `automation_plugin_policy_violations_total`.
   These metrics are described in more detail in [System Architecture: Scripting & Automation](./system-architecture-scripting.md) and the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md).
@@ -152,7 +152,7 @@ FireMUD’s metrics are designed around low- and medium-cardinality labels so da
 
 - Allowed labels typically include bounded values such as `service`, `job`, `grpc_method`, `status`, `code`, `redis_role`, `effect_type`, `outcome`, `type`, `reason`, and other explicitly documented bounded dimensions in the Redis, tick, and gRPC architecture docs.
 - Disallowed labels on ordinary gameplay/session counters and timers include raw runtime, tenant, request, session, player, or entity identifiers such as `serviceInstanceId`, `tenantId`, `regionId`, `traceId`, `spanId`, `characterId`, `sessionId`, `gameInstanceId`, `script_patch_version`, and arbitrary error messages or stack traces. These belong in logs and traces unless a specific operational metric contract explicitly approves them.
-- Existing Redis, tick, backup, and control-plane operational metrics may retain explicitly documented scope labels only when those labels are bounded operational buckets rather than raw player/runtime identifiers.
+- Existing Redis, tick, backup, and control-plane operational metrics may retain explicitly documented scope labels only when those labels are bounded operational buckets such as `scope`, `region_class`, or `operation`, not raw player/runtime identifiers.
 - No canonical metrics exception currently approves raw `tenantId` bucketing on ordinary Prometheus series. If a player SLO truly needs tenant or region drilldown, introduce an explicitly bounded `scope` label or record a narrow architecture exception here before adding new producers, dashboards, or alerts.
 - When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
 - New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
@@ -350,7 +350,7 @@ Player SLO owner mapping (normative):
 When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
 
 - **Redis coordination tail-loss SLO breaches**
-  - Recording rules based on `redis_coordination_tail_loss_ms{tenantId,regionId}` that expose both `redis_coordination_tail_loss_budget_ms{tenantId,regionId}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{tenantId,regionId}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
+  - Recording rules based on bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that expose both `redis_coordination_tail_loss_budget_ms{scope}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`). Exact tenant/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
 - **Tick execution safety ratios**
   - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
 - **Login success ratio**
@@ -367,13 +367,13 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
     - `backup_pipeline_recent_backup_slo_breached`
     - `backup_pipeline_recent_verification_slo_breached`
     - `backup_pipeline_recent_restore_drill_slo_breached`
-    - `backup_tick_pause_wait_budget_breached{scope_type,tenantId,regionId}`
-    - `backup_tick_pause_duration_budget_breached{scope_type,tenantId,regionId}`
-    - `backup_ticks_paused_budget_breached{scope_type,tenantId,regionId}`
+    - `backup_tick_pause_wait_budget_breached{scope_type,scope}`
+    - `backup_tick_pause_duration_budget_breached{scope_type,scope}`
+    - `backup_ticks_paused_budget_breached{scope_type,scope}`
 - **Tick state and recovery progress**
-  - Recording rules or gauges projecting `current_tick_state{tenantId,regionId,state}` and `current_tick_terminal_at_ms{tenantId,regionId}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
+  - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
 - **Maintenance mode visibility**
-  - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,tenantId,regionId,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
+  - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,scope,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
 - **Cross-region follow-ups**
   - Aggregate recording rules for `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` so scaling and recovery views can show drain pressure explicitly without violating the metrics-cardinality policy. Per-region drilldown belongs on durable control-plane reads such as runtime ownership status, not raw Prometheus labels.
 
@@ -398,7 +398,7 @@ When Logging & Admin renders alert state, it must expose enough metadata for ope
   - When Alertmanager is unhealthy or unreachable, Logging & Admin may render only the documented fallback rule set and must clearly mark those conditions as degraded approximations rather than routed alerts.
 - Duplicate-suppression rules:
   - A fallback condition must not appear as a separate active issue when the matching Alertmanager alert is already healthy and visible.
-  - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `tenantId`, `regionId`, `path`, `command` as applicable).
+  - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `scope`, `path`, `command` as applicable).
   - The canonical family registry is the shared alert snippet set under `design/observability/grafana/`; fallback implementations must use the same alert-family names there rather than inventing local equivalence tables.
 - Failure-mode rules:
   - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
@@ -420,7 +420,7 @@ Illustrative alert-state payload:
   "condition": "EntryPathAvailabilityLowGateway",
   "labels": {
     "path": "websocket",
-    "tenantId": "public"
+    "scope": "public-edge"
   },
   "degraded_reason": "Alertmanager unavailable; showing fallback Prometheus conditions"
 }

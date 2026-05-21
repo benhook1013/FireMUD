@@ -2,10 +2,10 @@
 
 This document outlines the editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service and pushes finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing.
 
-The publish workflow is part of the cross‑service saga described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+The publish workflow is part of the durable control-plane workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 Data entered in these editors is stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross‑service saga described in the [Game Design Service Architecture](README.md).
+Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service publish workflow described in the [Game Design Service Architecture](README.md).
 
 Ability definitions use a structured schema delivered through the API.
 

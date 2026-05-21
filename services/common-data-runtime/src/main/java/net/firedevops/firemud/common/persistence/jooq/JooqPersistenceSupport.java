@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.persistence.jooq;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -14,8 +15,16 @@ public final class JooqPersistenceSupport {
     return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
   }
 
+  public static LocalDateTime toLocalDateTime(Timestamp timestamp) {
+    return timestamp == null ? null : timestamp.toLocalDateTime();
+  }
+
   public static Instant toInstant(LocalDateTime localDateTime) {
     return localDateTime == null ? null : localDateTime.toInstant(ZoneOffset.UTC);
+  }
+
+  public static Timestamp toTimestamp(LocalDateTime localDateTime) {
+    return localDateTime == null ? null : Timestamp.valueOf(localDateTime);
   }
 
   public static OffsetDateTime toOffsetDateTime(Instant instant) {

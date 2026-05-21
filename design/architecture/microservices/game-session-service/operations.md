@@ -18,7 +18,7 @@
 - Game Session runs as a Kubernetes Deployment, or Docker Compose for local development, with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - Prometheus scrapes metrics from `/actuator/prometheus`.
-- Logs and metrics include `script_patch_version` context so operators can tell which hotfix revision is active during incident triage.
+- Logs, traces, and control-plane reads expose the active script patch version so operators can tell which hotfix revision is active during incident triage without reintroducing raw `script_patch_version` Prometheus labels.
 
 ## Scaling and Region Rebalancing
 

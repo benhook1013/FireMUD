@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert data["externalAuthority"]["deadmanIncidentOpened"] is False
+assert data["externalAuthority"]["deadmanAuthority"]["status"] == "red"
 assert data["externalAuthority"]["entrypointChecks"]["prometheus"] == "red"
 assert any(
     record["path"] == "websocket" and record["value"] == 0

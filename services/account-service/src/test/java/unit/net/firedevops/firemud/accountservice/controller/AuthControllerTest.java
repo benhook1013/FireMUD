@@ -1,8 +1,10 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -99,6 +101,13 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.connectToken").value("conn123"))
+        .andExpect(
+            header()
+                .string(HttpHeaders.SET_COOKIE, containsString("Firemud-Connect-Token=conn123")))
+        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
+        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Strict")))
+        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/ws/game")))
         .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"));
   }
 
