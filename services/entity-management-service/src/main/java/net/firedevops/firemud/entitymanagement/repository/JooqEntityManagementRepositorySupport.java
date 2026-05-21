@@ -3,9 +3,17 @@ package net.firedevops.firemud.entitymanagement.repository;
 import java.util.List;
 import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentEntry;
+import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentKey;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
+import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
+import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
+import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
+import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
+import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -108,5 +116,131 @@ final class JooqEntityManagementRepositorySupport {
       container.setItemInstance(itemInstance);
     }
     return container;
+  }
+
+  static ItemInstance partialItemInstance(
+      Long id,
+      Long tenantId,
+      Character character,
+      String equipmentSlot,
+      String gameInstanceId,
+      String roomInstanceId,
+      ContainerInstance containerInstance,
+      Item item,
+      String visibleRefToken,
+      Long visibleRefSequence,
+      String visibleRef,
+      Integer version) {
+    if (id == null) {
+      return null;
+    }
+    ItemInstance instance = new ItemInstance();
+    instance.setId(id);
+    instance.setTenantId(tenantId);
+    instance.setCharacter(character);
+    instance.setEquipmentSlot(equipmentSlot);
+    instance.setGameInstanceId(gameInstanceId);
+    instance.setRoomInstanceId(roomInstanceId);
+    instance.setContainerInstance(containerInstance);
+    instance.setItem(item);
+    instance.setVisibleRefToken(visibleRefToken);
+    instance.setVisibleRefSequence(visibleRefSequence);
+    instance.setVisibleRef(visibleRef);
+    instance.setVersion(version == null ? 0 : version);
+    return instance;
+  }
+
+  static ItemStack partialItemStack(
+      Long id,
+      Long tenantId,
+      Character character,
+      String equipmentSlot,
+      String gameInstanceId,
+      String roomInstanceId,
+      ContainerInstance containerInstance,
+      Item item,
+      String compatibilityFingerprint,
+      String stackFamilyKey,
+      Integer quantity,
+      Integer version) {
+    if (id == null) {
+      return null;
+    }
+    ItemStack stack = new ItemStack();
+    stack.setId(id);
+    stack.setTenantId(tenantId);
+    stack.setCharacter(character);
+    stack.setEquipmentSlot(equipmentSlot);
+    stack.setGameInstanceId(gameInstanceId);
+    stack.setRoomInstanceId(roomInstanceId);
+    stack.setContainerInstance(containerInstance);
+    stack.setItem(item);
+    stack.setCompatibilityFingerprint(compatibilityFingerprint);
+    stack.setStackFamilyKey(stackFamilyKey);
+    stack.setQuantity(quantity == null ? 0 : quantity);
+    stack.setVersion(version == null ? 0 : version);
+    return stack;
+  }
+
+  static InventoryEntry partialInventoryEntry(
+      Long characterId,
+      Long itemId,
+      Character character,
+      Item item,
+      Integer quantity,
+      Integer version) {
+    if (characterId == null || itemId == null) {
+      return null;
+    }
+    InventoryEntry entry = new InventoryEntry();
+    InventoryKey key = new InventoryKey();
+    key.setCharacterId(characterId);
+    key.setItemId(itemId);
+    entry.setId(key);
+    entry.setCharacter(character);
+    entry.setItem(item);
+    entry.setQuantity(quantity == null ? 0 : quantity);
+    entry.setVersion(version == null ? 0 : version);
+    return entry;
+  }
+
+  static CharacterEquipmentEntry partialCharacterEquipmentEntry(
+      Long characterId, String slot, Character character, Item item, Integer version) {
+    if (characterId == null || slot == null) {
+      return null;
+    }
+    CharacterEquipmentEntry entry = new CharacterEquipmentEntry();
+    CharacterEquipmentKey key = new CharacterEquipmentKey();
+    key.setCharacterId(characterId);
+    key.setSlot(slot);
+    entry.setId(key);
+    entry.setCharacter(character);
+    entry.setItem(item);
+    entry.setVersion(version == null ? 0 : version);
+    return entry;
+  }
+
+  static RoomGroundInventoryEntry partialRoomGroundInventoryEntry(
+      Long tenantId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Long itemId,
+      Item item,
+      Integer quantity,
+      Integer version) {
+    if (tenantId == null || gameInstanceId == null || roomInstanceId == null || itemId == null) {
+      return null;
+    }
+    RoomGroundInventoryEntry entry = new RoomGroundInventoryEntry();
+    RoomGroundInventoryKey key = new RoomGroundInventoryKey();
+    key.setTenantId(tenantId);
+    key.setGameInstanceId(gameInstanceId);
+    key.setRoomInstanceId(roomInstanceId);
+    key.setItemId(itemId);
+    entry.setId(key);
+    entry.setItem(item);
+    entry.setQuantity(quantity == null ? 0 : quantity);
+    entry.setVersion(version == null ? 0 : version);
+    return entry;
   }
 }

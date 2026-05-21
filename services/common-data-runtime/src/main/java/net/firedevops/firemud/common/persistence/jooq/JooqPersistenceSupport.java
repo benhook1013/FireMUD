@@ -27,10 +27,10 @@ public final class JooqPersistenceSupport {
   }
 
   public static int limitOrDefault(Pageable pageable, int fallback) {
-    return pageable == null ? fallback : pageable.getPageSize();
+    return pageable == null || pageable.isUnpaged() ? fallback : pageable.getPageSize();
   }
 
   public static int offsetOrZero(Pageable pageable) {
-    return pageable == null ? 0 : Math.toIntExact(pageable.getOffset());
+    return pageable == null || pageable.isUnpaged() ? 0 : Math.toIntExact(pageable.getOffset());
   }
 }

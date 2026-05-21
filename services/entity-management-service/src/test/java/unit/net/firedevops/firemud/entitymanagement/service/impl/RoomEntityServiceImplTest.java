@@ -33,6 +33,16 @@ class RoomEntityServiceImplTest {
     itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
     itemStackRepository = Mockito.mock(ItemStackRepository.class);
     containerInstanceRepository = Mockito.mock(ContainerInstanceRepository.class);
+    Mockito.when(
+            itemInstanceRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                    Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+        .thenReturn(new PageImpl<>(List.of()));
+    Mockito.when(
+            itemStackRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                    Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+        .thenReturn(new PageImpl<>(List.of()));
     service =
         new RoomEntityServiceImpl(
             props, itemInstanceRepository, itemStackRepository, containerInstanceRepository);
