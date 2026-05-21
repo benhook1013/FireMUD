@@ -30,7 +30,7 @@ class TlsMisconfigurationIntegrationTest {
                         "TCP_PROXY_TLS_CERT=/nonexistent/cert.pem",
                         "TCP_PROXY_TLS_KEY=/nonexistent/key.pem",
                         "spring.flyway.enabled=false",
-                        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration")
+                        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration")
                     .run())
         .hasRootCauseInstanceOf(IllegalStateException.class)
         .hasRootCauseMessage(

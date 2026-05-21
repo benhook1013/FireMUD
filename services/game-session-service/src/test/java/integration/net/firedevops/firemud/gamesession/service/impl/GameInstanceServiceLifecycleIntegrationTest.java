@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,7 +45,12 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.NONE,
@@ -52,9 +58,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "spring.profiles.active=test",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
-      "firemud.database.enabled=false",
+      "firemud.database.enabled=true",
       "firemud.redis.enabled=false",
-      "spring.data.redis.repositories.enabled=false"
+      "spring.data.redis.repositories.enabled=false",
+      "spring.flyway.enabled=true"
     })
 @ActiveProfiles("test")
 @Import({
@@ -62,16 +69,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
   GameInstanceServiceLifecycleIntegrationTest.Config.class
 })
 class GameInstanceServiceLifecycleIntegrationTest {
+  @Container
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    registry.add(
-        "spring.datasource.url",
-        () ->
-            "jdbc:h2:mem:game-session-lifecycle-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
-    registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
-    registry.add("spring.datasource.username", () -> "sa");
-    registry.add("spring.datasource.password", () -> "");
-    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "public");
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "game_session_service");
   }
 
   @Autowired private GameInstanceRepository repository;

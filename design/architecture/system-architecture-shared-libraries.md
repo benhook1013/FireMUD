@@ -148,7 +148,7 @@ FireMUD’s SQL-backed services are converging on `jOOQ + Flyway` as the canonic
 - common pagination, filtering, and mapping conventions for control-plane and runtime SQL reads;
 - one schema authority through Flyway rather than service-local ORM interpretations.
 
-Shared libraries should not deepen long-term Hibernate/JPA dependence while the `02.19` convergence family is active.
+Shared libraries should not reintroduce Hibernate/JPA runtime assumptions; the canonical SQL helper surface now targets `jOOQ + Flyway` only.
 
 The first shared substrate is the `net.firedevops.firemud.jooq-conventions` build path, which generates service-local DSL code directly from Flyway-owned SQL and adds only the minimal shared runtime wiring needed to compile and adopt `DSLContext`. Broader runtime helpers should be added only when multiple migrated services prove the same paging/filter/sort, transaction, or error-translation concern is truly repeated.
 

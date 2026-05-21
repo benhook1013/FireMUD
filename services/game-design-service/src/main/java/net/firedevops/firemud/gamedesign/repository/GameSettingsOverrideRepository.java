@@ -1,13 +1,11 @@
 package net.firedevops.firemud.gamedesign.repository;
 
-import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
-import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static net.firedevops.firemud.gamedesign.repository.JooqGameDesignRepositorySupport.jsonbParam;
 import static net.firedevops.firemud.gamedesign.repository.JooqGameDesignRepositorySupport.nullableString;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
@@ -32,8 +30,8 @@ public class GameSettingsOverrideRepository {
       DSL.field(DSL.name("game_instance_id"), Long.class);
   private static final Field<String> DOMAIN = DSL.field(DSL.name("domain"), String.class);
   private static final Field<JSONB> PAYLOAD = DSL.field(DSL.name("payload"), JSONB.class);
-  private static final Field<OffsetDateTime> UPDATED_AT =
-      DSL.field(DSL.name("updated_at"), OffsetDateTime.class);
+  private static final Field<Timestamp> UPDATED_AT =
+      DSL.field(DSL.name("updated_at"), Timestamp.class);
 
   private final DSLContext dsl;
 
@@ -85,7 +83,7 @@ public class GameSettingsOverrideRepository {
               .set(GAME_INSTANCE_ID, entity.getGameInstanceId())
               .set(DOMAIN, entity.getDomain())
               .set(PAYLOAD, jsonbParam(entity.getPayload()))
-              .set(UPDATED_AT, toOffsetDateTime(updatedAt))
+              .set(UPDATED_AT, Timestamp.from(updatedAt))
               .returningResult(ID)
               .fetchOne(ID);
       return dsl.selectFrom(TABLE_REF).where(ID.eq(generatedId)).fetchOne(this::toEntity);
@@ -95,7 +93,7 @@ public class GameSettingsOverrideRepository {
         .set(GAME_INSTANCE_ID, entity.getGameInstanceId())
         .set(DOMAIN, entity.getDomain())
         .set(PAYLOAD, jsonbParam(entity.getPayload()))
-        .set(UPDATED_AT, toOffsetDateTime(updatedAt))
+        .set(UPDATED_AT, Timestamp.from(updatedAt))
         .where(ID.eq(entity.getId()))
         .execute();
     return findOneByScope(entity.getTenantId(), entity.getGameInstanceId(), entity.getDomain())
@@ -129,7 +127,8 @@ public class GameSettingsOverrideRepository {
     entity.setGameInstanceId(record.get(GAME_INSTANCE_ID));
     entity.setDomain(record.get(DOMAIN));
     entity.setPayload(nullableString(record.get(PAYLOAD)));
-    entity.setUpdatedAt(toInstant(record.get(UPDATED_AT)));
+    Timestamp updatedAt = record.get(UPDATED_AT);
+    entity.setUpdatedAt(updatedAt == null ? null : updatedAt.toInstant());
     return entity;
   }
 }

@@ -10,10 +10,6 @@ spring:
     defaultSchema: ${SERVICE_SCHEMA:public}
     placeholders:
       serviceSchema: ${SERVICE_SCHEMA:public}
-  jpa:
-    properties:
-      hibernate:
-        default_schema: ${SERVICE_SCHEMA:public}
   data:
     redis:
       host: ${FIREMUD_REDIS_CACHE_HOST:redis}

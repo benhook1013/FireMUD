@@ -30,7 +30,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 @AutoConfigureBefore(
     name = {
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
-      "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
       "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
       "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
     })
@@ -57,8 +56,8 @@ public class DatabaseAutoConfiguration {
   public DataSource dataSource() {
     String url =
         String.format(
-            "jdbc:postgresql://%s:%d/%s",
-            postgres.getHost(), postgres.getPort(), postgres.getDatabase());
+            "jdbc:postgresql://%s:%d/%s?currentSchema=%s",
+            postgres.getHost(), postgres.getPort(), postgres.getDatabase(), postgres.getSchema());
     return DataSourceBuilder.create()
         .url(url)
         .username(postgres.getUsername())

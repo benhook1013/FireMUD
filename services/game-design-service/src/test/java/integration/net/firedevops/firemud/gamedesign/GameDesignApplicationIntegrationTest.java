@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -37,11 +38,8 @@ class GameDesignApplicationIntegrationTest {
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
-    registry.add("firemud.postgres.host", postgres::getHost);
-    registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
-    registry.add("firemud.postgres.database", postgres::getDatabaseName);
-    registry.add("firemud.postgres.username", postgres::getUsername);
-    registry.add("firemud.postgres.password", postgres::getPassword);
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "game_design_service");
   }
 
   @LocalServerPort private int port;

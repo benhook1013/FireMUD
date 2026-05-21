@@ -20,7 +20,6 @@ dependencies {
     testImplementation(libs.spring.cloud.gateway)
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.spring.boot.starter.data.redis)
-    testImplementation(libs.spring.boot.starter.data.jpa)
     testImplementation(libs.spring.boot.starter.jdbc)
     testImplementation(testFixtures(project(":common-test-support")))
     testImplementation(project(":entity-management-service"))

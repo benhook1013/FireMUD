@@ -1,29 +1,20 @@
 package net.firedevops.firemud.entitymanagement.entity;
 
-import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
 @Data
-@Entity
-@Table(name = "character_equipment")
 public class CharacterEquipmentEntry {
-  @EmbeddedId private CharacterEquipmentKey id;
-
-  @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("characterId")
+  private CharacterEquipmentKey id;
   private Character character;
-
-  @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
 
-  @Version private int version;
+  private int version;
 
   public CharacterEquipmentKey getId() {
     if (id == null) {

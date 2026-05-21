@@ -1,24 +1,12 @@
 package net.firedevops.firemud.worldmanagement.entity;
 
-import jakarta.persistence.*;
 import lombok.Data;
 
 @Data
-@Entity
-@Table(name = "room")
 public class Room {
-  @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
-
-  @Column(nullable = false)
   private Long tenantId;
-
-  @Column(nullable = false)
   private Long versionId = 1L;
-
-  @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "zone_id", nullable = false)
   private Zone zone;
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
@@ -35,17 +23,10 @@ public class Room {
     this.zone = zone;
   }
 
-  @Column(nullable = false, length = 100)
   private String name;
-
-  @Column(length = 255)
   private String description;
-
-  @Column(columnDefinition = "TEXT")
   private String nameLocalizedVariantsJson;
-
-  @Column(columnDefinition = "TEXT")
   private String descriptionLocalizedVariantsJson;
 
-  @Version private int version;
+  private int version;
 }

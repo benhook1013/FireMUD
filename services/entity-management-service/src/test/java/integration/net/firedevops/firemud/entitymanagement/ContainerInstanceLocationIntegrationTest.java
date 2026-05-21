@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,13 +52,9 @@ class ContainerInstanceLocationIntegrationTest {
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
-    registry.add("firemud.postgres.host", postgres::getHost);
-    registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
-    registry.add("firemud.postgres.database", postgres::getDatabaseName);
-    registry.add("firemud.postgres.username", postgres::getUsername);
-    registry.add("firemud.postgres.password", postgres::getPassword);
-    registry.add("firemud.redis.host", redis::getHost);
-    registry.add("firemud.redis.port", () -> redis.getMappedPort(6379));
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "entity_management_service");
+    PostgresBackedServiceTestSupport.registerRedisService(registry, redis);
   }
 
   @Autowired private InventoryService inventoryService;

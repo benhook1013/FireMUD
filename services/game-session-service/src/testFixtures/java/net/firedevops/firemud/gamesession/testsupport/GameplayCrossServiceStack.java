@@ -349,7 +349,6 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 props.put("firemud.postgres.username", postgresUsername);
                 props.put("firemud.postgres.password", postgresPassword);
                 props.put("firemud.database.enabled", "true");
-                props.put("spring.jpa.hibernate.ddl-auto", "none");
                 props.put("firemud.services.entityManagementService", entityStub.endpoint());
                 if (socialStub != null) {
                   props.put("firemud.services.socialGroupsService", socialStub.endpoint());

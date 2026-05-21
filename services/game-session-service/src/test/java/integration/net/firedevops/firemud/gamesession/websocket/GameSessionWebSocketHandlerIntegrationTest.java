@@ -52,6 +52,7 @@ import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTest
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
@@ -75,18 +76,23 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
-@SuppressWarnings({"removal"})
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings({"removal", "resource"})
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
       "spring.profiles.active=test",
       "game-session.require-authenticated-commands=true",
-      "firemud.database.enabled=false",
+      "firemud.database.enabled=true",
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
+      "spring.flyway.enabled=true",
       "firemud.gateway.connect-context.jwt-secret=testsecretkeytestsecretkeytest1234",
       "firemud.gameplay.catalog.worlds[0].slug=demo",
       "firemud.gameplay.catalog.worlds[0].display-name=Demo World",
@@ -113,16 +119,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
+  @Container
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    registry.add(
-        "spring.datasource.url",
-        () ->
-            "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
-    registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
-    registry.add("spring.datasource.username", () -> "sa");
-    registry.add("spring.datasource.password", () -> "");
-    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "public");
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "game_session_service");
   }
 
   @LocalServerPort private int port;

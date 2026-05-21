@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
@@ -36,13 +37,9 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
-    registry.add("firemud.postgres.host", postgres::getHost);
-    registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
-    registry.add("firemud.postgres.database", postgres::getDatabaseName);
-    registry.add("firemud.postgres.username", postgres::getUsername);
-    registry.add("firemud.postgres.password", postgres::getPassword);
-    registry.add("firemud.redis.host", redis::getHost);
-    registry.add("firemud.redis.port", () -> redis.getMappedPort(6379));
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "world_management_service");
+    PostgresBackedServiceTestSupport.registerRedisService(registry, redis);
   }
 
   @LocalServerPort private int port;

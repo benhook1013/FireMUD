@@ -52,11 +52,11 @@ The repository ships with a root Gradle wrapper. In normal use, run tasks with `
 
 ### SQL Persistence Direction
 
-For SQL-backed services, the repo’s target-state persistence stack is `jOOQ + Flyway`. Flyway remains the canonical schema authority, and the `02.19` migration family is the work that will converge current JPA-backed services onto generated/executed explicit SQL. Until that family is complete:
+For SQL-backed services, the repo’s canonical persistence stack is `jOOQ + Flyway`. Flyway is the schema authority, and SQL-backed services now use generated/executed explicit SQL rather than a mixed ORM runtime. New persistence work should therefore:
 
-- do not assume JPA/Hibernate is the long-term house style for new persistence work;
-- prefer changes that keep schema authority in Flyway and avoid deepening ORM-specific infrastructure;
-- expect later service migration slices to introduce shared `jOOQ` code generation and runtime helpers rather than one-off service-local approaches.
+- assume `jOOQ + Flyway` is the house style for SQL-backed services;
+- keep schema authority in Flyway rather than introducing service-local schema side channels;
+- reuse the shared `jOOQ` code generation and runtime helpers instead of inventing one-off service-local repository patterns.
 
 The shared `jOOQ` foundation now exposes a canonical generation task:
 

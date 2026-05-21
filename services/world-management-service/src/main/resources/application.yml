@@ -8,10 +8,6 @@ spring:
     defaultSchema: ${SERVICE_SCHEMA:public}
     placeholders:
       serviceSchema: ${SERVICE_SCHEMA:public}
-  jpa:
-    properties:
-      hibernate:
-        default_schema: ${SERVICE_SCHEMA:public}
   ssl:
     bundle:
       pem:
