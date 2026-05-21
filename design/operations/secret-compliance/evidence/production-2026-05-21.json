@@ -1,9 +1,9 @@
 {
   "environment": "production",
-  "generatedAt": "2026-04-16T00:00:00Z",
+  "generatedAt": "2026-05-21T00:00:00Z",
   "records": {
     "jwt-signing-keys-jwks": {
-      "immutableArtifactId": "k8s-job:jwt-rotation:2026-04-10T00:00:00Z:sha256:4b81c3ad",
+      "immutableArtifactId": "k8s-job:jwt-rotation:2026-05-21T00:00:00Z:sha256:7d91e5a4",
       "source": "cluster-job-log",
       "recordedBy": "platform-security"
     },

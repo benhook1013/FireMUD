@@ -1,10 +1,10 @@
 {
   "environment": "staging",
-  "generatedAt": "2026-04-16T00:00:00Z",
+  "generatedAt": "2026-05-21T00:00:00Z",
   "records": {
     "jwt-signing-keys-jwks": {
       "evidenceType": "rotation",
-      "immutableArtifactId": "k8s-job:jwt-rotation-staging:2026-04-10T00:00:00Z:sha256:1cb95d8f",
+      "immutableArtifactId": "k8s-job:jwt-rotation-staging:2026-05-21T00:00:00Z:sha256:1d8cb74e",
       "source": "cluster-job-log",
       "recordedBy": "platform-security"
     },
