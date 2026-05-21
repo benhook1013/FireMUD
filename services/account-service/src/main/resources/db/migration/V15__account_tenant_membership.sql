@@ -7,9 +7,14 @@ CREATE TABLE account_tenant_membership (
 );
 
 INSERT INTO account_tenant_membership (account_id, tenant_id, gameplay_admission_allowed)
-SELECT id, tenant_id, TRUE
-FROM accounts
-ON CONFLICT (account_id, tenant_id) DO NOTHING;
+SELECT a.id, a.tenant_id, TRUE
+FROM accounts a
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM account_tenant_membership m
+    WHERE m.account_id = a.id
+      AND m.tenant_id = a.tenant_id
+);
 
 CREATE INDEX idx_account_tenant_membership_account_id ON account_tenant_membership(account_id);
 CREATE INDEX idx_account_tenant_membership_tenant_id ON account_tenant_membership(tenant_id);
