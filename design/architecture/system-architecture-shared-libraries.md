@@ -102,7 +102,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 4. Automate tagging and version bumps using `release-please`.
 5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD.
 
-This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
+This library aligns with the shared-platform and implementation-planning direction tracked in [`design/project-management/vertical-slices/`](../project-management/vertical-slices/) and keeps code reuse simple across all FireMUD services.
 
 ## Example Usage
 

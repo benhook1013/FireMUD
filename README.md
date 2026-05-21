@@ -1,6 +1,6 @@
 # FireMUD Game Platform
 
-[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./design/project-management/task-list.md)
+[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./design/project-management/vertical-slices/00-slice-progress.md)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)](LICENSE.md)
 [![CI](https://github.com/benhook1013/FireMUD/actions/workflows/ci.yml/badge.svg)](https://github.com/benhook1013/FireMUD/actions/workflows/ci.yml)
 

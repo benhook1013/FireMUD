@@ -25,7 +25,6 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-security.md`
 - `design/architecture/system-architecture-backup-recovery.md`
 - `design/project-management/service-status-*.md`
-- `design/project-management/task-list.md`
 - `design/project-management/vertical-slices/00-slice-progress.md`
 - `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
 

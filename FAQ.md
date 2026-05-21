@@ -29,7 +29,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   gRPC protobuf files live under the [`protos/`](protos) directory. Each microservice README links to its versioned schemas.
 
 - **Where can I find the roadmap?**
-  The active task list is in [design/project-management/task-list.md](design/project-management/task-list.md).
+  The active slice queue is in [design/project-management/vertical-slices/00-slice-progress.md](design/project-management/vertical-slices/00-slice-progress.md).
 
 ---
 
