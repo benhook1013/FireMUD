@@ -142,6 +142,9 @@ public class GameLogicClient
                     .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
+            .setSessionAttestation(
+                gameplaySessionAttestationService.issueInternalProbeAttestation(
+                    tenantId, gameInstanceId, roomId))
             .build();
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)

@@ -66,38 +66,38 @@ public class TestDataSeeder implements ApplicationRunner {
       region.setVersionId(1L);
       region.setShardId(0);
       region.setName("Demo Region");
-      regionRepository.save(region);
+      Region savedRegion = regionRepository.save(region);
 
       Zone zone = new Zone();
       zone.setTenantId(1L);
       zone.setVersionId(1L);
-      zone.setRegion(region);
+      zone.setRegion(savedRegion);
       zone.setName("Demo Zone");
-      zoneRepository.save(zone);
+      Zone savedZone = zoneRepository.save(zone);
 
       Room room1 = new Room();
       room1.setTenantId(1L);
       room1.setVersionId(1L);
-      room1.setZone(zone);
+      room1.setZone(savedZone);
       room1.setName("Candle-lit Antechamber");
       room1.setDescription(
           "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.");
-      roomRepository.save(room1);
+      Room savedRoom1 = roomRepository.save(room1);
 
       Room room2 = new Room();
       room2.setTenantId(1L);
       room2.setVersionId(1L);
-      room2.setZone(zone);
+      room2.setZone(savedZone);
       room2.setName("Smith's Annex");
       room2.setDescription(
           "An anvil, banked coals, and orderly tool racks mark this alcove as a working annex off the starter chamber.");
-      roomRepository.save(room2);
+      Room savedRoom2 = roomRepository.save(room2);
 
       RoomExit exit = new RoomExit();
       exit.setTenantId(1L);
       exit.setVersionId(1L);
-      exit.setFromRoom(room1);
-      exit.setToRoom(room2);
+      exit.setFromRoom(savedRoom1);
+      exit.setToRoom(savedRoom2);
       exit.setDirection("NORTH");
       roomExitRepository.save(exit);
     }
@@ -147,6 +147,7 @@ public class TestDataSeeder implements ApplicationRunner {
     worldInstance.setStatus("ACTIVE");
     worldInstance.setCreatedAt(Instant.now());
     worldInstance.setUpdatedAt(Instant.now());
+    worldInstance.setRowVersion(0L);
     WorldInstance savedWorldInstance = worldInstanceRepository.save(worldInstance);
 
     RegionInstance regionInstance = new RegionInstance();

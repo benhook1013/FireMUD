@@ -26,6 +26,7 @@ import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
@@ -102,6 +103,33 @@ class GameLogicClientTest {
     MoveResult result = client.resolveMove(SESSION_CONTEXT, "1021", "north", "");
 
     assertThat(result.getSuccess()).isTrue();
+  }
+
+  @Test
+  void resolveLookForReadinessUsesInternalProbeAttestation() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(2L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.resolveLook(
+            LookRequest.newBuilder()
+                .setTenantId("22")
+                .setSessionId("41")
+                .setCharacterId("123")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId("22")
+                        .setGameInstanceId("1")
+                        .setRoomInstanceId("1021")
+                        .build())
+                .setSessionAttestation("probe-attestation")
+                .build()))
+        .thenReturn(LookResult.newBuilder().build());
+    setStub(client, stub);
+
+    client.resolveLookForReadiness("22", "41", "123", "1", "1021");
+
+    assertThat(true).isTrue();
   }
 
   @Test
@@ -369,6 +397,8 @@ class GameLogicClientTest {
     when(attestationService.issueGameplaySessionAttestation(
             "22", "41", "0", "123", "1", "1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
+    when(attestationService.issueInternalProbeAttestation("22", "1", "1021"))
+        .thenReturn("probe-attestation");
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug("world");

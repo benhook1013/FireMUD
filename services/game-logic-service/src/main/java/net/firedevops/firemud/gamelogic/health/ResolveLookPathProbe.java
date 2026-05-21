@@ -124,7 +124,9 @@ public final class ResolveLookPathProbe {
   }
 
   private static boolean isReachableAppError(String errorCode) {
-    return "INVALID_ARGUMENT".equals(errorCode) || "NOT_FOUND".equals(errorCode);
+    return "INVALID_ARGUMENT".equals(errorCode)
+        || "NOT_FOUND".equals(errorCode)
+        || "SESSION_ATTESTATION_REQUIRED".equals(errorCode);
   }
 
   public record ProbeResult(

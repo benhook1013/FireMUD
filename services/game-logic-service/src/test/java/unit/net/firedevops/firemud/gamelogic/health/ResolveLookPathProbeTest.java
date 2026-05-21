@@ -61,6 +61,47 @@ class ResolveLookPathProbeTest {
   }
 
   @Test
+  void probeReturnsUpWhenDependenciesRequireSessionAttestation() {
+    WorldManagementServiceBlockingStub worldStub = mock(WorldManagementServiceBlockingStub.class);
+    when(worldStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(worldStub);
+    when(worldStub.getRoomSnapshot(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            GetRoomSnapshotResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("SESSION_ATTESTATION_REQUIRED")
+                        .setMessage("probe attestation rejected"))
+                .build());
+    EntityManagementServiceBlockingStub entityStub =
+        mock(EntityManagementServiceBlockingStub.class);
+    when(entityStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(entityStub);
+    when(entityStub.listRoomEntities(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("SESSION_ATTESTATION_REQUIRED")
+                        .setMessage("probe attestation rejected"))
+                .build());
+
+    ResolveLookPathProbe probe =
+        new ResolveLookPathProbe(worldStub, entityStub, probeAttestationService());
+
+    ProbeResult result = probe.probe("0", "0", "0");
+
+    assertTrue(result.ready());
+    @SuppressWarnings("unchecked")
+    var world = (java.util.Map<String, Object>) result.dependencies().get("worldManagementService");
+    @SuppressWarnings("unchecked")
+    var entity =
+        (java.util.Map<String, Object>) result.dependencies().get("entityManagementService");
+    assertEquals("SESSION_ATTESTATION_REQUIRED", world.get("outcome"));
+    assertEquals("SESSION_ATTESTATION_REQUIRED", entity.get("outcome"));
+  }
+
+  @Test
   void probeReturnsOutOfServiceWhenWorldDependencyFails() {
     WorldManagementServiceBlockingStub worldStub = mock(WorldManagementServiceBlockingStub.class);
     when(worldStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
