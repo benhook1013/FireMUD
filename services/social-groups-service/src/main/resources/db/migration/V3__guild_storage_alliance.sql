@@ -1,5 +1,5 @@
 CREATE TABLE guild_storage_items (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
     guild_id BIGINT NOT NULL,
     item_name VARCHAR(100) NOT NULL,
@@ -7,7 +7,7 @@ CREATE TABLE guild_storage_items (
 );
 
 CREATE TABLE guild_alliances (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
     guild_id BIGINT NOT NULL,
     ally_guild_id BIGINT NOT NULL,

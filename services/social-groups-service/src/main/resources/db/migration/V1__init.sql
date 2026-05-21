@@ -7,10 +7,11 @@ CREATE TABLE guilds (
 );
 
 CREATE TABLE guild_members (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
     guild_id BIGINT NOT NULL REFERENCES guilds(id),
     account_id BIGINT NOT NULL,
-    role VARCHAR(50) NOT NULL,
-    PRIMARY KEY (guild_id, account_id)
+    role VARCHAR(50) NOT NULL
 );
 
 CREATE TABLE chat_messages (
