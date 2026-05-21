@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.data;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.loggingadmin.entity.LogEvent;
@@ -21,6 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
     havingValue = "true",
     matchIfMissing = false)
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring injects the shared repository singletons for demo seeding.")
 public class TestDataSeeder implements ApplicationRunner {
   private final LogEventRepository logEventRepository;
   private final PlayerReportRepository playerReportRepository;

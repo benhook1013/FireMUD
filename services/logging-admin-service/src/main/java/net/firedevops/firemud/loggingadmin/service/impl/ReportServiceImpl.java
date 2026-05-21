@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -14,6 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring injects the shared repository singleton for this service seam.")
 public class ReportServiceImpl implements ReportService {
   private static final Logger logger = LoggingUtil.getLogger(ReportServiceImpl.class);
 
