@@ -218,7 +218,7 @@ This table defines the authoritative metric-family catalog and label sets for sc
 General rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- If `tenantId` becomes too high-cardinality in practice, the system must introduce aggregation/sampling rather than introducing per-event labels.
+- Raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |

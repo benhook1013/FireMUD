@@ -101,14 +101,3 @@ These are not major design problems, but they are not fully closed.
 2. [02.4 First-Party Reconnect Parity](./02.4-task-list-first-party-reconnect-parity-vertical-slice.md)
 3. [02.5 Non-Edge Failover Invisibility](./02.5-task-list-non-edge-failover-invisibility-vertical-slice.md)
 4. [02.8 Game Logic Restart Invisibility](./02.8-task-list-game-logic-restart-invisibility-vertical-slice.md)
-5. [02.14.4 Metrics Cardinality and Label Policy Hardening](./02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
-   Remaining: only opportunistic audit tail work and later policy wording cleanup.
-6. [02.14.5 Player-Experience Canary and Deadman Smoke](./02.14.5-task-list-player-experience-canary-and-deadman-smoke-vertical-slice.md)
-   Remaining: runtime canary/blackbox/deadman producers and failure injection are paused pending endpoint, synthetic identity, external deadman authority, and non-production paging-route decisions.
-
-## Operator-Proof / Audit Tails
-
-These are still useful, but they are not the next best feature/code-shape slices.
-
-1. `02.14.4` opportunistic metrics-cardinality tail only
-2. `02.14.5` prod-like canary/deadman smoke proof

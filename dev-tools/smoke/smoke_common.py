@@ -280,8 +280,10 @@ def send_telnet_command_and_expect(
     label,
     timeout_seconds,
     drain_timeout=0.25,
+    step_results=None,
 ):
     start_index = len(responses)
+    started_at = time.time()
     sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
     response = wait_for_incremental_response(
         lambda: recv_until_socket(sock, "", 0.5),
@@ -294,6 +296,15 @@ def send_telnet_command_and_expect(
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<no data>")
+    if step_results is not None:
+        step_results.append(
+            {
+                "label": label,
+                "command": line,
+                "latencyMs": round((time.time() - started_at) * 1000, 3),
+                "response": response.strip(),
+            }
+        )
     return response
 
 
@@ -303,6 +314,7 @@ def run_telnet_command_plan(
     timeout_seconds,
     play_drain_timeout=1.0,
     default_drain_timeout=0.25,
+    step_results=None,
 ):
     responses = []
     run_command_plan(
@@ -315,6 +327,7 @@ def run_telnet_command_plan(
             label,
             timeout_seconds if timeout is None else timeout,
             play_drain_timeout if label == "PLAY" else default_drain_timeout,
+            step_results,
         ),
     )
     return responses
@@ -361,8 +374,10 @@ def send_websocket_command_and_expect(
     expected_substrings,
     label,
     timeout_seconds,
+    step_results=None,
 ):
     start_index = len(responses)
+    started_at = time.time()
     ws.send(line)
     response = wait_for_incremental_response(
         lambda: recv_optional_websocket_chunk(
@@ -377,10 +392,19 @@ def send_websocket_command_and_expect(
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<empty>")
+    if step_results is not None:
+        step_results.append(
+            {
+                "label": label,
+                "command": line,
+                "latencyMs": round((time.time() - started_at) * 1000, 3),
+                "response": response.strip(),
+            }
+        )
     return response
 
 
-def run_websocket_command_plan(ws, steps, timeout_seconds):
+def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None):
     responses = []
     run_command_plan(
         steps,
@@ -391,6 +415,7 @@ def run_websocket_command_plan(ws, steps, timeout_seconds):
             expected_substrings,
             label,
             timeout_seconds if timeout is None else timeout,
+            step_results,
         ),
     )
     return responses

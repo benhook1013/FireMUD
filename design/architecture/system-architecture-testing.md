@@ -9,7 +9,7 @@ Unless a more specific runbook defines another canonical evidence path for the s
 For first-live and reopen events, the illustrative `traffic-open-record/v1` shape in `design/architecture/system-architecture-backup-recovery.md#hobby-traffic-open-evidence` is the canonical example artifact for this retained evidence.
 That artifact should minimally preserve: the event identity (`deploymentRef` or `recoveryRef`), the operator identity and timestamp, the backing preflight or smoke evidence reference, and the retained results for the authoritative external pager/deadman verification plus mirrored `entrypath_blackbox_probe_success` / `observability_deadman_heartbeat_timestamp_seconds` / `playerflow_canary_*` checks.
 
-Current repository automation does not yet implement the full prod-like observability smoke described here. PR/main CI currently includes static metric-cardinality and observability-contract validation for dashboards, snippets, saved objects, and reference rules; runtime checks against Alertmanager, the authoritative external pager, Jaeger, Kibana/Elasticsearch, player-flow canaries, and external blackbox failure injection remain target-state prod-like smoke work.
+Current repository automation now includes the canonical retained-evidence validator and runtime smoke harness for the mirrored player-flow canary / blackbox / deadman contract: `dev-tools/observability/validate-player-experience-smoke-evidence.py` and `dev-tools/observability/run-player-experience-smoke.py`. PR/main CI still focuses on static metric-cardinality and observability-contract validation for dashboards, snippets, saved objects, and reference rules; environment-backed checks against Alertmanager, the authoritative external pager, Jaeger, and Kibana/Elasticsearch remain prod-like smoke work driven by the canonical runner rather than ordinary pull-request validation.
 
 Illustrative retained evidence shape for a prod-like observability smoke or hobby traffic-open event:
 
@@ -62,7 +62,7 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
 
 This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the same canonical checks and operator accountability.
 
-Use `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` to validate retained evidence against the repo's current canonical smoke-evidence contract before attaching it to a traffic-open or recovery record.
+Use `python3 dev-tools/observability/run-player-experience-smoke.py --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate canonical prod-like smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record.
 
 ---
 

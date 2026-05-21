@@ -10,7 +10,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 - `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
-- Metrics may include lower-cardinality identifiers such as `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `eventType` as documented below.
+- Metric families in this design may use bounded semantic dimensions such as `eventType`, `outcome`, `reason`, `priorityTag`, and an explicitly approved low-cardinality `scope`, but raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` belong in audit rows, logs, traces, and control-plane queries rather than ordinary canonical Prometheus labels. When the metric catalog below refers to those logical dimensions, treat them as grouping concepts that still require bounded producer-side normalization before they are emitted.
 
 ## Ingress Audit vs Handler Audit
 
