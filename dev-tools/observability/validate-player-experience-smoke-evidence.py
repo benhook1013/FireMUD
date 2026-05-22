@@ -87,10 +87,11 @@ def _validate_external_authority(value: Any) -> list[str]:
     if not isinstance(deadman, dict):
         findings.append("externalAuthority.deadmanAuthority is required")
     else:
-        if deadman.get("status") != "green":
-            findings.append("externalAuthority.deadmanAuthority.status must be green")
-        if not isinstance(deadman.get("evidenceRef"), str) or not deadman.get("evidenceRef").strip():
-            findings.append("externalAuthority.deadmanAuthority.evidenceRef is required")
+        findings.extend(
+            _validate_authority_record(
+                deadman, "externalAuthority.deadmanAuthority", require_green=True
+            )
+        )
     checks = value.get("entrypointChecks")
     if not isinstance(checks, dict):
         findings.append("externalAuthority.entrypointChecks is required")
@@ -98,9 +99,32 @@ def _validate_external_authority(value: Any) -> list[str]:
     missing = sorted(REQUIRED_ENTRYPOINT_CHECKS - checks.keys())
     if missing:
         findings.append("externalAuthority.entrypointChecks missing: " + ", ".join(missing))
-    not_green = sorted(key for key in REQUIRED_ENTRYPOINT_CHECKS if checks.get(key) != "green")
-    if not_green:
-        findings.append("externalAuthority.entrypointChecks not green: " + ", ".join(not_green))
+    for key in sorted(REQUIRED_ENTRYPOINT_CHECKS & checks.keys()):
+        record = checks.get(key)
+        if not isinstance(record, dict):
+            findings.append(f"externalAuthority.entrypointChecks.{key} must be an object")
+            continue
+        findings.extend(
+            _validate_authority_record(
+                record, f"externalAuthority.entrypointChecks.{key}", require_green=True
+            )
+        )
+    return findings
+
+
+def _validate_authority_record(
+    record: dict[str, Any], key: str, require_green: bool
+) -> list[str]:
+    findings: list[str] = []
+    status = record.get("status")
+    if status not in {"green", "red"}:
+        findings.append(f"{key}.status must be green or red")
+    elif require_green and status != "green":
+        findings.append(f"{key}.status must be green")
+    for field in ("evidenceRef", "target", "checkRef"):
+        value = record.get(field)
+        if not isinstance(value, str) or not value.strip():
+            findings.append(f"{key}.{field} is required")
     return findings
 
 

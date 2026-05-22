@@ -53,7 +53,12 @@ class SagaPersistenceRepositoryIntegrationTest {
 
   @BeforeEach
   void resetTables() {
-    dsl.execute("truncate table " + SERVICE_SCHEMA + ".saga_step, " + SERVICE_SCHEMA + ".saga_instance restart identity");
+    dsl.execute(
+        "truncate table "
+            + SERVICE_SCHEMA
+            + ".saga_step, "
+            + SERVICE_SCHEMA
+            + ".saga_instance restart identity");
   }
 
   @Test

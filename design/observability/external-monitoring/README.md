@@ -6,7 +6,7 @@ It complements the Prometheus-facing observability contract in `design/architect
 
 ## Implementation Status
 
-This is a prod-like target-state contract. The repository now provides the canonical runtime smoke harness in `dev-tools/observability/run-player-experience-smoke.py`, retained-evidence validation in `dev-tools/observability/validate-player-experience-smoke-evidence.py`, and the shared mirrored metric vocabulary for blackbox, deadman, and player-flow canary signals. The harness now proves the real first-party browser admission handshake (`player-bootstrap` -> discovery -> `connect-token` cookie -> `/ws/game/**`) plus a real Telnet `WORLDS` handshake instead of treating those paths as raw transport checks. The repository still does not ship an authoritative external monitoring deployment itself; each prod-like environment must wire that deployment and its paging route separately.
+This is a prod-like target-state contract. The repository now provides the canonical runtime smoke harness in `dev-tools/observability/run-player-experience-smoke.py`, retained-evidence validation in `dev-tools/observability/validate-player-experience-smoke-evidence.py`, and the shared mirrored metric vocabulary for blackbox, deadman, and player-flow canary signals. The harness now proves the real first-party browser admission handshake (`player-bootstrap` -> discovery -> `connect-token` cookie -> `/ws/game/**`) plus a real Telnet `WORLDS` handshake instead of treating those paths as raw transport checks. The repository still does not ship an authoritative external monitoring deployment itself; each prod-like environment must wire that deployment and its paging route separately, then feed the retained authoritative check result back into the smoke harness with `--external-authority-evidence`.
 
 ## What This Is
 
@@ -108,6 +108,53 @@ Prod-like readiness evidence must record:
 - the configured targets and check identities for Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query availability
 - evidence that the authoritative external pager can fire without Prometheus
 - evidence that mirrored Prometheus metrics match the external monitor state when Prometheus is healthy
+
+The canonical runner expects that retained authoritative result in a structured JSON object before it will emit prod-like smoke evidence. Required shape:
+
+```json
+{
+  "deadmanAuthority": {
+    "status": "green",
+    "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
+    "target": "staging-deadman-authority",
+    "checkRef": "check://staging/deadman"
+  },
+  "entrypointChecks": {
+    "prometheus": {
+      "status": "green",
+      "evidenceRef": "pager://staging/prometheus/2026-03-19T10:51:00Z",
+      "target": "staging-prometheus",
+      "checkRef": "check://staging/prometheus"
+    },
+    "alertmanager": {
+      "status": "green",
+      "evidenceRef": "pager://staging/alertmanager/2026-03-19T10:51:00Z",
+      "target": "staging-alertmanager",
+      "checkRef": "check://staging/alertmanager"
+    },
+    "grafana": {
+      "status": "green",
+      "evidenceRef": "pager://staging/grafana/2026-03-19T10:51:00Z",
+      "target": "staging-grafana",
+      "checkRef": "check://staging/grafana"
+    },
+    "kibana_log_query": {
+      "status": "green",
+      "evidenceRef": "pager://staging/kibana-log-query/2026-03-19T10:51:00Z",
+      "target": "staging-kibana-log-query",
+      "checkRef": "check://staging/kibana-log-query"
+    },
+    "jaeger_query": {
+      "status": "green",
+      "evidenceRef": "pager://staging/jaeger-query/2026-03-19T10:51:00Z",
+      "target": "staging-jaeger-query",
+      "checkRef": "check://staging/jaeger-query"
+    }
+  }
+}
+```
+
+Only `--simulate` may synthesize this external-authority object. Real prod-like smoke must point at retained authoritative evidence instead of env-fed `green/red` status flags.
 
 ## Compatibility Mapping
 
