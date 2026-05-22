@@ -140,22 +140,39 @@ jobs:
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
+        id: cluster-access
         run: |
+          set +e
           kubectl get namespace kube-system >/dev/null
-          kubectl auth can-i list namespaces --all-namespaces
+          namespace_status=$?
+          kubectl auth can-i list namespaces --all-namespaces >/dev/null
+          namespace_list_status=$?
+          set -e
+
+          if [ "$namespace_status" -eq 0 ] && [ "$namespace_list_status" -eq 0 ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::Dev-demo cluster access unavailable; skipping hosted deploy for this run."
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
 
       - name: Reset dev-demo namespace for clean deploy
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}"
 
       - name: Ensure dev-demo namespace exists
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Ensure GHCR pull secret exists
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
@@ -163,6 +180,7 @@ jobs:
           bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Wait for develop runtime images
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -170,10 +188,12 @@ jobs:
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
 
       - name: Ensure dev-demo gRPC TLS secret exists
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Render dev-demo values
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
             k8s/helm/firemud/values-dev-demo.example.yaml \
@@ -185,6 +205,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Validate dev-demo chart render
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           helm template "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
@@ -194,6 +215,7 @@ jobs:
           wc -l /tmp/dev-demo-rendered.yaml
 
       - name: Upload rendered dev-demo artifacts
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: dev-demo-render-${{ needs.dev-demo-plan.outputs.release_name }}
@@ -202,6 +224,7 @@ jobs:
             /tmp/dev-demo-rendered.yaml
 
       - name: Record reconciled dev-demo target
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
@@ -210,6 +233,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Summarize dev-demo target
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             target \
@@ -219,6 +243,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy dev-demo release
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
         id: deploy-release
         continue-on-error: true
         run: |
@@ -230,12 +255,12 @@ jobs:
             --timeout 15m
 
       - name: Show deployed dev-demo services
-        if: ${{ always() }}
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
         run: |
           kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods,svc,ingress
 
       - name: Show dev-demo rollout diagnostics
-        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
         run: |
           echo "=== pods ==="
           kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods -o wide || true
@@ -257,13 +282,13 @@ jobs:
           done
 
       - name: Fail if dev-demo rollout did not complete
-        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
         run: |
           echo "Dev-demo rollout failed during helm upgrade/install."
           exit 1
 
       - name: Create dev-demo smoke account
-        if: ${{ steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
@@ -410,7 +435,7 @@ jobs:
           kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
 
       - name: Smoke dev-demo over TCP
-        if: ${{ steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
@@ -429,7 +454,7 @@ jobs:
           fi
 
       - name: Summarize dev-demo access
-        if: ${{ steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             success \
@@ -442,8 +467,19 @@ jobs:
             echo "- Demo login: demo@example.com / swordfish"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Summarize dev-demo unavailability
+        if: ${{ steps.cluster-access.outputs.available != 'true' }}
+        run: |
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
+            unavailable \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
+            "cluster-access" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summarize dev-demo failure
-        if: ${{ always() && failure() }}
+        if: ${{ always() && failure() && steps.cluster-access.outputs.available == 'true' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
