@@ -4,7 +4,7 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.VersionCatalogsExtension
 
-class FiremudJpaPostgresConventionsPlugin : Plugin<Project> {
+class FiremudSqlPostgresConventionsPlugin : Plugin<Project> {
     override fun apply(project: Project) = with(project) {
         plugins.withId("java") {
             val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")

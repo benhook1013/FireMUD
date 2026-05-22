@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.jooq.DSLContext;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -32,8 +33,10 @@ public class CommonSagaAutoConfiguration {
       matchIfMissing = true)
   @ConditionalOnClass(DSLContext.class)
   @ConditionalOnMissingBean(SagaInstanceRepository.class)
-  public SagaInstanceRepository sagaInstanceRepository(DSLContext dsl) {
-    return new SagaInstanceRepository(dsl);
+  public SagaInstanceRepository sagaInstanceRepository(
+      DSLContext dsl,
+      @Value("${SERVICE_SCHEMA:${firemud.postgres.schema:public}}") String serviceSchema) {
+    return new SagaInstanceRepository(dsl, serviceSchema);
   }
 
   @Bean
@@ -44,8 +47,10 @@ public class CommonSagaAutoConfiguration {
       matchIfMissing = true)
   @ConditionalOnClass(DSLContext.class)
   @ConditionalOnMissingBean(SagaStepRepository.class)
-  public SagaStepRepository sagaStepRepository(DSLContext dsl) {
-    return new SagaStepRepository(dsl);
+  public SagaStepRepository sagaStepRepository(
+      DSLContext dsl,
+      @Value("${SERVICE_SCHEMA:${firemud.postgres.schema:public}}") String serviceSchema) {
+    return new SagaStepRepository(dsl, serviceSchema);
   }
 
   @Bean

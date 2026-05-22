@@ -2,11 +2,26 @@ package net.firedevops.firemud.test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 public final class PostgresBackedServiceTestSupport {
+  private static final Map<String, String> SERVICE_MODULE_DIRECTORY =
+      Map.ofEntries(
+          Map.entry("account_service", "account-service"),
+          Map.entry("automation_scripting_service", "automation-scripting-service"),
+          Map.entry("entity_management_service", "entity-management-service"),
+          Map.entry("game_design_service", "game-design-service"),
+          Map.entry("game_logic_service", "game-logic-service"),
+          Map.entry("game_session_service", "game-session-service"),
+          Map.entry("gateway", "spring-cloud-gateway"),
+          Map.entry("logging_admin_service", "logging-admin-service"),
+          Map.entry("social_groups_service", "social-groups-service"),
+          Map.entry("tcp_proxy_service", "tcp-proxy-service"),
+          Map.entry("world_management_service", "world-management-service"));
+
   private PostgresBackedServiceTestSupport() {}
 
   public static void registerPostgresService(
@@ -50,7 +65,7 @@ public final class PostgresBackedServiceTestSupport {
     Path serviceMigrations =
         repoRoot
             .resolve("services")
-            .resolve(serviceSchema.replace('_', '-'))
+            .resolve(serviceModuleDirectory(serviceSchema))
             .resolve("src/main/resources/db/migration");
     Path sagaMigrations =
         repoRoot.resolve("services/common-saga/src/main/resources/db/migration/saga");
@@ -58,6 +73,15 @@ public final class PostgresBackedServiceTestSupport {
         + serviceMigrations.toAbsolutePath()
         + ",filesystem:"
         + sagaMigrations.toAbsolutePath();
+  }
+
+  private static String serviceModuleDirectory(String serviceSchema) {
+    String moduleDirectory = SERVICE_MODULE_DIRECTORY.get(serviceSchema);
+    if (moduleDirectory == null) {
+      throw new IllegalArgumentException(
+          "No service module mapping defined for schema " + serviceSchema);
+    }
+    return moduleDirectory;
   }
 
   private static Path findRepoRoot() {

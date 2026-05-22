@@ -14,12 +14,11 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - **Flyway** is used for all schema migrations.
 - The root `build.gradle.kts` applies the `org.flywaydb.flyway` plugin and adds
   `flyway-core`, `flyway-database-postgresql`, and the PostgreSQL driver for
-  every service module under `services/` (excluding the `common-library`
-  module, which does not run Flyway itself).
+  every SQL-backed service module under `services/`.
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
 - Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
-- Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
+- Shared saga migrations live in the `common-saga` module under `src/main/resources/db/migration/saga` and are bundled onto consuming service classpaths as the additional `classpath:db/migration/saga` Flyway location alongside the owning service's `classpath:db/migration`.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - Generated `jOOQ` sources derive from these migrated schemas rather than from a second hand-maintained SQL model.
 - The shared `jOOQ` foundation exposes a canonical `:service:generateJooq` task that derives DSL code directly from `src/main/resources/db/migration/*.sql`.
@@ -36,19 +35,12 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   Schema names match the owning service (for example `account_service`). See
   [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 - Shared schema components such as the Saga tables are defined in the
-  `common-library` module with their own migrations, but are still applied
+  `common-saga` module with their own migrations, but are still applied
   **per service database**:
-  - The `common-library` contains saga table migrations described in
+  - The `common-saga` module contains the shared saga table migrations described in
     [System Architecture – Transactions](./system-architecture-transactions.md).
-  - Services that need these shared tables include the module as a dependency
-    during their build.
-  - The library packages its migrations inside the JAR so the consuming
-    service's dedicated saga Flyway pass can pick them up from the classpath
-    before service-local migrations execute.
-  - The `common-library` itself does not run Flyway; each consuming service
-    executes the saga pass against its own database on startup, creating a
-    local `saga` schema and its own Flyway history state before service-local
-    migrations run.
+  - Services that need these shared tables include `common-saga` as a dependency and expose both `classpath:db/migration` and `classpath:db/migration/saga` to Flyway at startup.
+  - Saga tables are created inside the owning service schema via the shared `${serviceSchema}.saga_*` migrations rather than a separate dedicated `saga` schema.
 - New migrations are committed alongside service code so history stays with the owning service.
 
 ### Version-Aware Migration Guidelines

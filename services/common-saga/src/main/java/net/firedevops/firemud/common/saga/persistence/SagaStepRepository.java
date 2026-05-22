@@ -10,7 +10,6 @@ import org.jooq.impl.DSL;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class SagaStepRepository {
-  private static final org.jooq.Table<?> SAGA_STEP = DSL.table(DSL.name("saga_step"));
   private static final org.jooq.Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final org.jooq.Field<Long> INSTANCE_ID =
       DSL.field(DSL.name("instance_id"), Long.class);
@@ -23,16 +22,18 @@ public class SagaStepRepository {
   private static final org.jooq.Field<java.time.LocalDateTime> UPDATED_AT =
       DSL.field(DSL.name("updated_at"), java.time.LocalDateTime.class);
 
+  private final org.jooq.Table<?> sagaStep;
   private final DSLContext dsl;
 
-  public SagaStepRepository(DSLContext dsl) {
+  public SagaStepRepository(DSLContext dsl, String serviceSchema) {
     this.dsl = dsl;
+    this.sagaStep = DSL.table(DSL.name(serviceSchema, "saga_step"));
   }
 
   public SagaStep save(SagaStep entity) {
     if (entity.getId() == null) {
       Long id =
-          dsl.insertInto(SAGA_STEP)
+          dsl.insertInto(sagaStep)
               .set(INSTANCE_ID, entity.getInstanceId())
               .set(NAME, entity.getName())
               .set(STATUS, entity.getStatus())
@@ -44,7 +45,7 @@ public class SagaStepRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(SAGA_STEP)
+    dsl.update(sagaStep)
         .set(INSTANCE_ID, entity.getInstanceId())
         .set(NAME, entity.getName())
         .set(STATUS, entity.getStatus())
@@ -58,7 +59,7 @@ public class SagaStepRepository {
 
   public List<SagaStep> findByInstanceId(Long instanceId) {
     return dsl.select(ID, INSTANCE_ID, NAME, STATUS, ATTEMPT, CREATED_AT, UPDATED_AT)
-        .from(SAGA_STEP)
+        .from(sagaStep)
         .where(INSTANCE_ID.eq(instanceId))
         .orderBy(ID.asc())
         .fetch(

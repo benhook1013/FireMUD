@@ -14,5 +14,8 @@ dependencies {
     compileOnly(libs.lombok)
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 
+    testImplementation(libs.testcontainers.junit.jupiter)
+    testImplementation(libs.testcontainers.postgresql)
+    testRuntimeOnly(libs.postgresql)
     testImplementation(libs.spring.boot.starter.test)
 }

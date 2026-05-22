@@ -133,8 +133,8 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
-These tables live in a service-local `saga` schema inside each adopting service database.
-Flyway migrations packaged with the module create these tables automatically.
+These tables live in each adopting service's own schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) rather than a separate dedicated `saga` schema.
+Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migration/saga` and run alongside the owning service's local `classpath:db/migration` chain.
 `SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
 
 `common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead.

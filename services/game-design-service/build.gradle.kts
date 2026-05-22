@@ -2,7 +2,7 @@
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 plugins {
-    id("net.firedevops.firemud.secured-jpa-aop-service-conventions")
+    id("net.firedevops.firemud.secured-sql-aop-service-conventions")
     id("net.firedevops.firemud.jooq-conventions")
     id("net.firedevops.firemud.temporal-conventions")
 }
