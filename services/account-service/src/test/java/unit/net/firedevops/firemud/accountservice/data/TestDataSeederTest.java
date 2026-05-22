@@ -51,19 +51,20 @@ class TestDataSeederTest {
   }
 
   @Test
-  void runLeavesExistingDemoBootstrapInPlace() throws Exception {
+  void runReassertsExistingDemoBootstrapAccountState() throws Exception {
     Account account = new Account();
     account.setId(1L);
     account.setEmail("demo@example.com");
 
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.save(any(Account.class))).thenReturn(account);
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(1L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(new Profile()));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(accountRepository, never()).save(any(Account.class));
+    verify(accountRepository).save(any(Account.class));
     verify(accountTenantMembershipRepository, never()).save(any(AccountTenantMembership.class));
     verify(profileRepository, never()).save(any(Profile.class));
   }

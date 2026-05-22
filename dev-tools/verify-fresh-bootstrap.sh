@@ -19,7 +19,7 @@ echo "Fresh bootstrap proof: destroy local compose containers, networks, and nam
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
-"$BUILD_JARS_SCRIPT"
+bash "$BUILD_JARS_SCRIPT"
 if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
   while IFS= read -r service; do
     docker compose "${COMPOSE_FILES[@]}" build "$service"
@@ -30,7 +30,7 @@ else
 fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
-"$HEALTH_SCRIPT"
+bash "$HEALTH_SCRIPT"
 # These smoke clients intentionally reuse the same seeded demo account/runtime
 # state and must stay sequential unless the caller isolates accounts/session ids.
 bash "$WS_SMOKE_SCRIPT"
