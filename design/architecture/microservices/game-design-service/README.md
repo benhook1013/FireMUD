@@ -37,13 +37,13 @@ Authoritative read surfaces worth wiring into creator/operator tooling:
 - Coordinates with World Management, Entity Management, Game Logic, and Automation & Scripting Service to apply changes.
 - Stores version descriptors and manifests so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
-- Publishing a new game version triggers a Saga that coordinates domain services as outlined in
+- Publishing a new game version now starts the durable Temporal `publish` workflow described in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../../system-architecture-transactions.md).
-  The workflow is implemented using the Saga utilities from `firemud-common`
-  with compensation steps to roll back if downstream steps fail. The workflow
-  persists the new version metadata and instructs domain services to finalize their versioned data for that `version_id`.
-- Plugin publication is narrower than a full game-version publish Saga. `UploadPluginBundle` and `PublishPluginVersion` are design-time Game Design workflows that validate and persist immutable plugin-version metadata; they do not repin running games and do not require the cross-service runtime cutover/orchestration used by `PublishVersion`. Cross-service runtime effects begin later, when Logging & Admin invokes instance-scoped activation against Automation & Scripting.
+  The durable orchestration persists version metadata, coordinates participant
+  finalization/attestation, and exposes workflow runtime metadata through the
+  canonical Game Design control-plane read surfaces.
+- Plugin publication is narrower than a full game-version publish workflow. `UploadPluginBundle` and `PublishPluginVersion` are design-time Game Design workflows that validate and persist immutable plugin-version metadata; they do not repin running games and do not require the cross-service runtime cutover/orchestration used by `PublishVersion`. Cross-service runtime effects begin later, when Logging & Admin invokes instance-scoped activation against Automation & Scripting.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -77,7 +77,7 @@ In the design UI:
   - The UI must treat runtime readiness as a separate phase and should show an explicit “runtime validation pending” state until Automation & Scripting reports `READY` (or `FAILED`) for `<tenantId, scriptPatchVersion>`.
   - Any control-plane workflow that would pin/promote a patch for a running game instance must be blocked until `READY` is observed via `GetScriptPatchStatus` and/or `ScriptPatchTenantStatusChanged`.
 - Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
-- Design-time publish Saga failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
+- Design-time publish-workflow failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
 
 Compatibility contract requirement:
 

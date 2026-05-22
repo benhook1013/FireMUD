@@ -1,28 +1,20 @@
 package net.firedevops.firemud.entitymanagement.entity;
 
-import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
 @Data
-@Entity
-@Table(name = "room_ground_inventory")
 public class RoomGroundInventoryEntry {
-  @EmbeddedId private RoomGroundInventoryKey id;
-
-  @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("itemId")
+  private RoomGroundInventoryKey id;
   private Item item;
-
-  @Column(nullable = false)
   private int quantity;
 
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
+  @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
 
-  @Version private int version;
+  private int version;
 
   public RoomGroundInventoryKey getId() {
     if (id == null) {

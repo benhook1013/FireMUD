@@ -13,13 +13,12 @@
     "accessibility": "npm run build && npx serve dist -l 5000 & npx wait-on http://localhost:5000/index.html && npx axe http://localhost:5000/index.html --chrome-options=\"--no-sandbox\" --exit"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.2",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^9.0.1",
-    "@reduxjs/toolkit": "^2.11.2",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "react-redux": "^9.2.0"
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@axe-core/cli": "^4.11.3",

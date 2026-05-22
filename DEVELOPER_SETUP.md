@@ -50,6 +50,44 @@ Expected result:
 
 The repository ships with a root Gradle wrapper. In normal use, run tasks with `./gradlew`.
 
+### SQL Persistence Direction
+
+For SQL-backed services, the repo’s canonical persistence stack is `jOOQ + Flyway`. Flyway is the schema authority, and SQL-backed services now use generated/executed explicit SQL rather than a mixed ORM runtime. New persistence work should therefore:
+
+- assume `jOOQ + Flyway` is the house style for SQL-backed services;
+- keep schema authority in Flyway rather than introducing service-local schema side channels;
+- reuse the shared `jOOQ` code generation and runtime helpers instead of inventing one-off service-local repository patterns.
+
+The shared `jOOQ` foundation now exposes a canonical generation task:
+
+```bash
+./gradlew :automation-scripting-service:generateJooq
+```
+
+Later migrated services should follow that same `:service:generateJooq` pattern through the shared `net.firedevops.firemud.jooq-conventions` plugin rather than inventing service-local codegen tasks.
+
+### Durable Workflow Direction
+
+For long-running control-plane workflows, the repo’s target durable workflow substrate is Temporal. The shared foundation now lives in `services/common-temporal`, and adopter services should opt in through the shared Gradle plugin:
+
+```kotlin
+plugins {
+    id("net.firedevops.firemud.temporal-conventions")
+}
+```
+
+The shared foundation exposes these core properties:
+
+- `firemud.temporal.enabled`
+- `firemud.temporal.namespace`
+- `firemud.temporal.target`
+- `firemud.temporal.workers-enabled`
+- `firemud.temporal.task-queue-prefix`
+
+Workflow-hosting services should use `TemporalTaskQueueResolver`, `FiremudWorkflowIds`, and `TemporalWorkerRegistrar` from the shared package rather than inventing service-local worker startup or workflow-id formatting.
+
+Until the first real Temporal adopters land, most contributors do **not** need a local Temporal cluster just to work in the repo. The shared foundation is intentionally minimal and the first adopter slices will carry the heavier local runtime/bootstrap guidance when those workflows become executable end to end.
+
 If the wrapper JAR is missing and you need to regenerate it, run:
 
 ```bash
@@ -208,6 +246,8 @@ The React client in `web-client` provides npm scripts for linting, formatting, a
 cd web-client
 npm ci
 ```
+
+The canonical frontend baseline is `React + Vite + MUI + TanStack Query`. Introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
 
 Then run these checks:
 

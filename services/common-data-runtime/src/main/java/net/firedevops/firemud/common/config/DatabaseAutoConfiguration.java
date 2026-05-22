@@ -8,28 +8,16 @@ import io.lettuce.core.resource.ClientResources;
 import io.lettuce.core.resource.DefaultClientResources;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityManagerFactory;
 import java.util.Objects;
 import javax.sql.DataSource;
-import net.firedevops.firemud.common.saga.persistence.SagaInstance;
-import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
-import net.firedevops.firemud.common.saga.persistence.SagaStep;
-import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Condition;
-import org.springframework.context.annotation.ConditionContext;
-import org.springframework.context.annotation.Conditional;
-import org.springframework.core.type.AnnotatedTypeMetadata;
-import org.springframework.data.jpa.repository.support.JpaRepositoryFactory;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
@@ -37,13 +25,11 @@ import org.springframework.data.redis.connection.lettuce.LettuceClientConfigurat
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 @AutoConfiguration
 @AutoConfigureBefore(
     name = {
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
-      "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
       "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
       "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
     })
@@ -70,8 +56,8 @@ public class DatabaseAutoConfiguration {
   public DataSource dataSource() {
     String url =
         String.format(
-            "jdbc:postgresql://%s:%d/%s",
-            postgres.getHost(), postgres.getPort(), postgres.getDatabase());
+            "jdbc:postgresql://%s:%d/%s?currentSchema=%s",
+            postgres.getHost(), postgres.getPort(), postgres.getDatabase(), postgres.getSchema());
     return DataSourceBuilder.create()
         .url(url)
         .username(postgres.getUsername())
@@ -181,56 +167,5 @@ public class DatabaseAutoConfiguration {
     StringRedisTemplate template = new StringRedisTemplate();
     template.setConnectionFactory(factory);
     return template;
-  }
-
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.database",
-      name = "enabled",
-      havingValue = "true",
-      matchIfMissing = true)
-  @ConditionalOnBean(EntityManagerFactory.class)
-  @Conditional(SagaPersistenceManagedCondition.class)
-  @ConditionalOnMissingBean(SagaInstanceRepository.class)
-  public SagaInstanceRepository sagaInstanceRepository(EntityManagerFactory entityManagerFactory) {
-    EntityManager entityManager =
-        SharedEntityManagerCreator.createSharedEntityManager(entityManagerFactory);
-    return new JpaRepositoryFactory(entityManager).getRepository(SagaInstanceRepository.class);
-  }
-
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.database",
-      name = "enabled",
-      havingValue = "true",
-      matchIfMissing = true)
-  @ConditionalOnBean(EntityManagerFactory.class)
-  @Conditional(SagaPersistenceManagedCondition.class)
-  @ConditionalOnMissingBean(SagaStepRepository.class)
-  public SagaStepRepository sagaStepRepository(EntityManagerFactory entityManagerFactory) {
-    EntityManager entityManager =
-        SharedEntityManagerCreator.createSharedEntityManager(entityManagerFactory);
-    return new JpaRepositoryFactory(entityManager).getRepository(SagaStepRepository.class);
-  }
-
-  static final class SagaPersistenceManagedCondition implements Condition {
-    @Override
-    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
-      if (context.getBeanFactory() == null) {
-        return false;
-      }
-      EntityManagerFactory entityManagerFactory =
-          context.getBeanFactory().getBeanProvider(EntityManagerFactory.class).getIfAvailable();
-      if (entityManagerFactory == null) {
-        return false;
-      }
-      try {
-        entityManagerFactory.getMetamodel().managedType(SagaInstance.class);
-        entityManagerFactory.getMetamodel().managedType(SagaStep.class);
-        return true;
-      } catch (IllegalArgumentException ignored) {
-        return false;
-      }
-    }
   }
 }

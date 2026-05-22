@@ -71,6 +71,21 @@ public record PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
   }
 
+  public static PlayerOutput view(FriendDetailViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput view(FriendRosterSummaryViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput view(FriendPresencePolicyViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
   public static PlayerOutput prompt(String text) {
     return prompt(text, java.util.List.of());
   }
@@ -89,6 +104,11 @@ public record PlayerOutput(
         new NoticeOutput(text),
         ReplayPolicy.NO_REPLAY,
         BriefRenderPolicy.ALWAYS_SHOW);
+  }
+
+  public static PlayerOutput notice(FriendMutationResultOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.NOTICE, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.ALWAYS_SHOW);
   }
 
   public static PlayerOutput notice(
@@ -125,6 +145,7 @@ public record PlayerOutput(
       case TextMessageOutput message -> message.text();
       case PromptOutput prompt -> prompt.text();
       case NoticeOutput notice -> notice.text();
+      case FriendMutationResultOutput result -> friendMutationText(result);
       case ErrorOutput error ->
           "ERROR "
               + error.code()
@@ -136,11 +157,29 @@ public record PlayerOutput(
       case CharacterBrowseViewOutput ignored -> null;
       case WhoViewOutput ignored -> null;
       case FriendPresenceViewOutput ignored -> null;
+      case FriendDetailViewOutput ignored -> null;
+      case FriendRosterSummaryViewOutput ignored -> null;
+      case FriendPresencePolicyViewOutput ignored -> null;
       default -> null;
     };
   }
 
   public boolean screenBufferEligible() {
     return replayPolicy == ReplayPolicy.BUFFERABLE && kind != PlayerOutputKind.PROMPT;
+  }
+
+  private static String friendMutationText(FriendMutationResultOutput result) {
+    if (result.characterName() != null && !result.characterName().isBlank()) {
+      return result.displayName()
+          + " [acct #"
+          + result.friendAccountId()
+          + "] "
+          + actionVerb(result.action());
+    }
+    return result.displayName() + " " + actionVerb(result.action());
+  }
+
+  private static String actionVerb(String action) {
+    return "ADD".equals(action) ? "added." : "removed.";
   }
 }

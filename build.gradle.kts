@@ -5,7 +5,17 @@ import org.gradle.api.plugins.quality.Checkstyle
 import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
+import org.flywaydb.gradle.FlywayExtension
 import org.springframework.boot.gradle.tasks.run.BootRun
+
+buildscript {
+    dependencies {
+        // The Flyway Gradle plugin resolves database support from the buildscript classpath,
+        // not from each service's runtime dependencies.
+        classpath("org.flywaydb:flyway-database-postgresql:12.5.0")
+        classpath("org.postgresql:postgresql:42.7.11")
+    }
+}
 
 plugins {
     java
@@ -198,6 +208,10 @@ subprojects {
                 System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE") ?: "test"
             )
         }
+
+        extensions.configure(FlywayExtension::class.java) {
+            configurations = arrayOf("runtimeClasspath")
+        }
     }
 
     dependencies {
@@ -221,7 +235,7 @@ subprojects {
     spotless {
         java {
             googleJavaFormat()
-            targetExclude("build/generated/**")
+            targetExclude("build/generated/**", "build/generated-src/**")
         }
     }
 
@@ -250,17 +264,20 @@ subprojects {
         }
         // Exclude generated sources and protobuf-generated packages from analysis
         val generatedDir = "${File.separator}generated${File.separator}"
-        val protoPackages = listOf("net/firedevops/firemud/**/v1/**")
+        val protoAndJooqPackages = listOf(
+            "net/firedevops/firemud/**/v1/**",
+            "net/firedevops/firemud/**/jooq/**"
+        )
         val originalClassDirs = classDirs.files
         classDirs.setFrom(
             originalClassDirs
                 .filterNot { it.path.contains(generatedDir) }
-                .map { fileTree(it) { exclude(protoPackages) } }
+                .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
         sourceDirs.setFrom(
             sourceDirs.files
                 .filterNot { it.path.contains(generatedDir) }
-                .map { fileTree(it) { exclude(protoPackages) } }
+                .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
         auxClassPaths.from(originalClassDirs)
     }

@@ -26,6 +26,7 @@ This section is a high-level snapshot. For the current implementation summary, u
 
 - **Implemented and evolving**
   - Script publish lifecycle integrates Game Design publish workflows with Automation runtime reload and readiness gating (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`, with `SUPERSEDED` for older pending patches displaced by newer publishes).
+  - The tenant patch-readiness lifecycle is now durably tracked through the Temporal `script-patch-readiness` workflow family after `NotifyScriptVersionUpdate`; the canonical patch-status control-plane reads expose workflow identity and execution status directly rather than relying on process-local orchestration state.
   - World generation and PvE behavior libraries continue to expand; feature-level progress is tracked in service task lists rather than this hub.
   - Scheduler leadership leases and per-region tick-stream consumption are implemented; sharding/indexing and long-term retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
 
@@ -102,7 +103,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - Errors at this stage are shown directly in the editor; scripts cannot be published until they are resolved.
 
 2. **Compile-time validation and persistence (Automation & Scripting Service)**
-   - When designers publish a new script patch, the Game Design Service drives a Saga that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
+   - When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
    - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
@@ -110,6 +111,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - In the first implementation slice, `onLoad` is limited to **ephemeral readiness work** such as validating configuration and warming recomputable in-process caches. It is not a hook for creating durable shared state.
    - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, running instances remain on their previously pinned patch, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
    - Tenant readiness is single-pending: if a newer patch publish is accepted while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch becomes `SUPERSEDED` and cannot later become `READY`.
+   - The readiness wait itself is now durably hosted in the Temporal `script-patch-readiness` workflow family, which polls the canonical readiness projection until the patch reaches a terminal state and exposes workflow identity/status to operator control-plane reads.
 
 4. **Version pinning (Game Session Service)**
    - Once a patch is `READY` for a tenant, the Game Session Service may pin it as the active `scriptPatchVersion` for a game. All script events emitted by Game Session include that pinned version and the upstream-generated `scriptEventId`.

@@ -77,6 +77,7 @@ public final class LoginCommandHandler {
     long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
     if (maybeInstance.isEmpty()) {
+      clearFailedLoginSessionState(numericSessionId, 0L, bootstrapGameInstanceId, null, null, 0L);
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
     GameInstance instance = maybeInstance.get();
@@ -92,14 +93,20 @@ public final class LoginCommandHandler {
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
+      clearFailedLoginSessionState(
+          numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return failure(mapErrorCode(error), error.getMessage());
     }
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
     if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
+      clearFailedLoginSessionState(
+          numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
     }
     if (!Objects.equals(authenticatedAccountId, instance.getOwnerAccountId())) {
+      clearFailedLoginSessionState(
+          numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return accountMismatchFailure();
     }
 
@@ -133,6 +140,7 @@ public final class LoginCommandHandler {
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
         firstPartyConnectContextRegistry.find(numericSessionId);
     if (maybeContext.isEmpty()) {
+      clearFailedLoginSessionState(numericSessionId, 0L, 0L, null, null, 0L);
       return failure(
           LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
           LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
@@ -142,16 +150,44 @@ public final class LoginCommandHandler {
     Optional<GameInstance> maybeInstance =
         gameInstanceRepository.findById(verifiedContext.gameInstanceId());
     if (maybeInstance.isEmpty()) {
+      clearFailedLoginSessionState(
+          numericSessionId,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
     GameInstance instance = maybeInstance.get();
     if (instance.getTenantId() != verifiedContext.tenantId()) {
+      clearFailedLoginSessionState(
+          numericSessionId,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
       return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
     }
     if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
+      clearFailedLoginSessionState(
+          numericSessionId,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
       return accountMismatchFailure();
     }
     if (!currentAdmissionPointerMatches(verifiedContext)) {
+      clearFailedLoginSessionState(
+          numericSessionId,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
       return failure("CONNECT_SCOPE_MISMATCH", "Connect scope invalid");
     }
 
@@ -255,6 +291,48 @@ public final class LoginCommandHandler {
         .filter(pointer -> pointer.gameInstanceId() == verifiedContext.gameInstanceId())
         .filter(pointer -> pointer.pointerVersion() == verifiedContext.pointerVersion())
         .isPresent();
+  }
+
+  private void clearFailedLoginSessionState(
+      long sessionId,
+      long fallbackTenantId,
+      long fallbackBootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {
+    SessionContext existing = sessionContextService.findBySessionId(sessionId).orElse(null);
+    long tenantId =
+        existing != null ? existing.tenantId() : (fallbackTenantId > 0 ? fallbackTenantId : 0L);
+    if (tenantId <= 0) {
+      return;
+    }
+    String preservedWorldSlug =
+        StringUtils.hasText(worldSlug) ? worldSlug : existing != null ? existing.worldSlug() : null;
+    String preservedRealmSlug =
+        StringUtils.hasText(realmSlug) ? realmSlug : existing != null ? existing.realmSlug() : null;
+    long preservedPointerVersion =
+        pointerVersion > 0 ? pointerVersion : existing != null ? existing.pointerVersion() : 0L;
+    long bootstrapGameInstanceId =
+        existing != null && existing.bootstrapGameInstanceId() > 0
+            ? existing.bootstrapGameInstanceId()
+            : fallbackBootstrapGameInstanceId;
+    sessionContextService.save(
+        new SessionContext(
+            sessionId,
+            tenantId,
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            existing != null ? existing.localeTag() : null,
+            bootstrapGameInstanceId,
+            preservedWorldSlug,
+            preservedRealmSlug,
+            preservedPointerVersion,
+            null));
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

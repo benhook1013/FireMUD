@@ -6,11 +6,11 @@ export default function ScriptEditor() {
   const [name, setName] = useState('');
   const [definition, setDefinition] = useState('');
 
-  const [runScript, { isLoading }] = useRunScriptMutation();
+  const runScript = useRunScriptMutation();
 
   const handleTest = async () => {
     try {
-      const result = await runScript({ name, definition }).unwrap();
+      const result = await runScript.mutateAsync({ name, definition });
       alert(result.output);
     } catch (err) {
       alert('Failed to run script');
@@ -41,9 +41,9 @@ export default function ScriptEditor() {
         variant="contained"
         sx={{ mt: 1 }}
         onClick={handleTest}
-        disabled={isLoading}
+        disabled={runScript.isPending}
       >
-        {isLoading ? 'Running...' : 'Test Run'}
+        {runScript.isPending ? 'Running...' : 'Test Run'}
       </Button>
     </Box>
   );

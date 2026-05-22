@@ -150,6 +150,31 @@ public final class TickScheduler {
             consecutiveHighQueueDepthCycles,
             AtomicInteger::get)
         .register(meterRegistry);
+    Gauge.builder(
+            "game_session_tick_scheduler_rejection_alert_threshold_cycles",
+            this,
+            scheduler -> scheduler.rejectionAlertConsecutiveCycles)
+        .register(meterRegistry);
+    Gauge.builder(
+            "game_session_tick_scheduler_merge_alert_threshold_count",
+            this,
+            scheduler -> scheduler.mergeAlertThreshold)
+        .register(meterRegistry);
+    Gauge.builder(
+            "game_session_tick_scheduler_merge_alert_threshold_cycles",
+            this,
+            scheduler -> scheduler.mergeAlertConsecutiveCycles)
+        .register(meterRegistry);
+    Gauge.builder(
+            "game_session_tick_scheduler_queue_depth_alert_threshold_count",
+            this,
+            scheduler -> scheduler.queueDepthAlertThreshold)
+        .register(meterRegistry);
+    Gauge.builder(
+            "game_session_tick_scheduler_queue_depth_alert_threshold_cycles",
+            this,
+            scheduler -> scheduler.queueDepthAlertConsecutiveCycles)
+        .register(meterRegistry);
   }
 
   @Scheduled(fixedDelayString = "${game.tick-duration-ms:1000}")

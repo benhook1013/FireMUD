@@ -42,6 +42,24 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpFriendsTopicExplainsVisibilityReadAndWriteSurface() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("friends"), "HELP friends"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "FRIENDS VISIBILITY shows your current cross-game friend-presence policy, and FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE> updates it."));
+    assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_VISIBILITY"));
+    assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
+    assertTrue(result.outputs().get(0).text().contains("#entryNumber removal"));
+  }
+
+  @Test
   void helpMovementAliasResolvesToMovementTopic() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("walk"), "HELP walk"));

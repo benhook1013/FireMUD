@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -92,7 +93,27 @@ public class AuthController {
       @Valid @RequestBody ConnectTokenRequest request) {
     String bootstrapToken = extractBearerToken(authorization);
     ConnectTokenResult result = accountService.issueConnectToken(bootstrapToken, request);
-    return ResponseEntity.ok(ApiResponse.success(result));
+    ResponseCookie cookie =
+        ResponseCookie.from("Firemud-Connect-Token", result.connectToken())
+            .httpOnly(true)
+            .secure(true)
+            .sameSite("Strict")
+            .path("/ws/game")
+            .maxAge(connectTokenMaxAgeSeconds(result))
+            .build();
+    return ResponseEntity.ok()
+        .header(HttpHeaders.SET_COOKIE, cookie.toString())
+        .body(ApiResponse.success(result));
+  }
+
+  private long connectTokenMaxAgeSeconds(ConnectTokenResult result) {
+    try {
+      java.time.Instant issuedAt = java.time.Instant.parse(result.issuedAt());
+      java.time.Instant expiresAt = java.time.Instant.parse(result.expiresAt());
+      return Math.max(0L, java.time.Duration.between(issuedAt, expiresAt).getSeconds());
+    } catch (RuntimeException ignored) {
+      return 30L;
+    }
   }
 
   @PostMapping("/request-password-reset")

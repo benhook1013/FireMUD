@@ -1,14 +1,24 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
+import java.util.UUID;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandler {
+  private static final Logger LOG = LoggerFactory.getLogger(WorldsTextCommandDispatchHandler.class);
   private final WorldsCommandHandler worldsHandler;
+  private final ScriptEventPublisher scriptEventPublisher;
 
-  WorldsTextCommandDispatchHandler(WorldsCommandHandler worldsHandler) {
+  WorldsTextCommandDispatchHandler(
+      WorldsCommandHandler worldsHandler, ScriptEventPublisher scriptEventPublisher) {
     this.worldsHandler = worldsHandler;
+    this.scriptEventPublisher = scriptEventPublisher;
   }
 
   @Override
@@ -18,23 +28,30 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    return switch (request.command().type()) {
-      case WORLDS ->
-          new TextCommandInterpretationResult(
-              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-              List.of(
-                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                      worldsHandler.browseView())));
-      case REALMS -> handleRealms(request.command());
-      case CHARS -> handleChars(request);
-      default ->
-          new TextCommandInterpretationResult(
-              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
-                  "INVALID_ARGUMENT", "Unsupported discovery command"),
-              List.of(
-                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
-                      "INVALID_ARGUMENT", "Unsupported discovery command")));
-    };
+    TextCommandInterpretationResult result =
+        switch (request.command().type()) {
+          case WORLDS ->
+              new TextCommandInterpretationResult(
+                  net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+                  List.of(
+                      net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                          worldsHandler.browseView())));
+          case REALMS -> handleRealms(request.command());
+          case CHARS -> handleChars(request);
+          default ->
+              new TextCommandInterpretationResult(
+                  net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
+                      "INVALID_ARGUMENT", "Unsupported discovery command"),
+                  List.of(
+                      net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
+                          "INVALID_ARGUMENT", "Unsupported discovery command")));
+        };
+    if (result.commandResult().accepted()) {
+      request
+          .sessionContext()
+          .ifPresent(context -> publishCommandEvent(context, request.command()));
+    }
+    return result;
   }
 
   private TextCommandInterpretationResult handleRealms(TextCommand command) {
@@ -93,5 +110,22 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     return new TextCommandInterpretationResult(
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(code, message),
         List.of(net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(code, message)));
+  }
+
+  private void publishCommandEvent(SessionContext context, TextCommand command) {
+    try {
+      GameplayCommand gameplayCommand = new GameplayCommand();
+      gameplayCommand.setCommandId("worlds-" + UUID.randomUUID());
+      gameplayCommand.setCommandName(command.type().name());
+      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Discovery script event publish failed tenantId={} gameInstanceId={} characterId={} commandType={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          command.type(),
+          ex);
+    }
   }
 }

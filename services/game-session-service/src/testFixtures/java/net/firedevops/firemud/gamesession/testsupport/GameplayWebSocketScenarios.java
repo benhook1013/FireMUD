@@ -50,6 +50,17 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public record LoginThenPlayScenario(GameplayWebSocketDriver driver) implements AutoCloseable {
+    public List<String> responses() {
+      return driver.responses();
+    }
+
+    @Override
+    public void close() throws Exception {
+      driver.close();
+    }
+  }
+
   public record TakeoverScenario(
       List<String> firstResponses, GameplayWebSocketDriver first, GameplayWebSocketDriver takeover)
       implements AutoCloseable {
@@ -256,6 +267,24 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public static LoginThenPlayScenario loginThenAttemptPlay(
+      DriverFactory factory,
+      String connectionId,
+      Admission admission,
+      DriverExercise playOutcomeAssertion)
+      throws Exception {
+    GameplayWebSocketDriver driver = factory.open(connectionId);
+    try {
+      driver.login(admission.email(), admission.password());
+      attemptPlay(driver, admission);
+      playOutcomeAssertion.accept(driver);
+      return new LoginThenPlayScenario(driver);
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
+  }
+
   private static void enterAdmitted(GameplayWebSocketDriver driver, Admission admission)
       throws Exception {
     driver.login(admission.email(), admission.password());
@@ -270,6 +299,15 @@ public final class GameplayWebSocketScenarios {
       throws Exception {
     enterAdmitted(driver, admission);
     driver.lookUntilReady(admission.readyText());
+  }
+
+  private static void attemptPlay(GameplayWebSocketDriver driver, Admission admission)
+      throws Exception {
+    if (admission.characterName() == null || admission.characterName().isBlank()) {
+      driver.send("PLAY " + admission.world());
+      return;
+    }
+    driver.send("PLAY " + admission.world() + " " + admission.characterName());
   }
 
   private static void closeQuietly(

@@ -3,7 +3,10 @@ package net.firedevops.firemud.gamesession.command.text;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,12 +22,14 @@ public class ItemCommandHandler {
   private final EquipmentCommandHandler equipmentHandler;
   private final ContainerCommandHandler containerHandler;
   private final MeterRegistry meterRegistry;
+  private final ScriptEventPublisher scriptEventPublisher;
 
   public ItemCommandHandler(
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ScriptEventPublisher scriptEventPublisher) {
     this.inventoryHandler =
         Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
     this.equipmentHandler =
@@ -32,6 +37,8 @@ public class ItemCommandHandler {
     this.containerHandler =
         Objects.requireNonNull(containerHandler, "containerHandler must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.scriptEventPublisher =
+        Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
   }
 
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
@@ -57,6 +64,8 @@ public class ItemCommandHandler {
         };
     if (!result.commandResult().accepted()) {
       recordFailure(context, typeTag, result.commandResult().errorCode());
+    } else if (!isMutation(command.type())) {
+      publishCommandEvent(context, command);
     }
     return result;
   }
@@ -64,6 +73,13 @@ public class ItemCommandHandler {
   private static TextCommandInterpretationResult toInterpretationResult(
       InventoryCommandHandlingResult result) {
     return new TextCommandInterpretationResult(result.commandResult(), result.outputs());
+  }
+
+  private boolean isMutation(TextCommandType type) {
+    return switch (type) {
+      case GET, DROP, PUT, TAKE, WEAR, REMOVE -> true;
+      default -> false;
+    };
   }
 
   private void recordFailure(SessionContext context, String typeTag, String errorCode) {
@@ -76,5 +92,26 @@ public class ItemCommandHandler {
         context.characterId(),
         typeTag,
         errorTag);
+  }
+
+  private void publishCommandEvent(SessionContext context, TextCommand command) {
+    try {
+      scriptEventPublisher.publishCommandEvent(context, scriptEventCommand(command));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Item script event publish failed tenantId={} gameInstanceId={} characterId={} type={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          command.type(),
+          ex);
+    }
+  }
+
+  private GameplayCommand scriptEventCommand(TextCommand command) {
+    GameplayCommand gameplayCommand = new GameplayCommand();
+    gameplayCommand.setCommandId("item-" + UUID.randomUUID());
+    gameplayCommand.setCommandName(command.type().name());
+    return gameplayCommand;
   }
 }

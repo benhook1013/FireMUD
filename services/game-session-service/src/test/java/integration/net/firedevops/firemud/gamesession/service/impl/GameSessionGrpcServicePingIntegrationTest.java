@@ -8,6 +8,8 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
@@ -41,6 +43,8 @@ class GameSessionGrpcServicePingIntegrationTest {
             featureFlagService,
             textCommandInterpreter,
             gameInstanceRepository,
+            (tenantId, viewerAccountId, accountIds) -> java.util.List.of(),
+            new GameplayWorldCatalog(new GameplayCatalogProperties()),
             tickService,
             meterRegistry,
             ipLimiter);

@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -113,6 +114,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
                         && "cmd-1".equals(followup.getCommandId())
+                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
@@ -121,6 +123,11 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && Long.valueOf(44L).equals(followup.getOriginSourceOrdinal())
                         && Long.valueOf(22L).equals(followup.getOriginSourceDueTickId())
                         && Long.valueOf(1700L).equals(followup.getOriginSourceDueAtMs())
+                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                        && followup.getQueueSourceOrdinal() == null
+                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                        && followup.getQueueSourceDueAtMs() == null
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -167,9 +174,15 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "SHARED".equals(followup.getPlayableStateScope())
                         && "cmd-1".equals(followup.getCommandId())
+                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
+                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                        && followup.getQueueSourceOrdinal() == null
+                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                        && followup.getQueueSourceDueAtMs() == null
                         && "dispatch-1".equals(followup.getAutomationDispatchId())
                         && "work-1".equals(followup.getAutomationWorkItemId())
                         && "script-1".equals(followup.getScriptId())
@@ -179,6 +192,152 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "demo".equals(followup.getWorldSlug())
                         && "production".equals(followup.getRealmSlug())
                         && Long.valueOf(17L).equals(followup.getPointerVersion())));
+  }
+
+  @Test
+  void scheduleFollowupDropsPartialRoutingBundle() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(
+            new RemoteFollowupRuntimeService.ScheduleRequest(
+                1L,
+                "cmd-1",
+                "coord-1",
+                7L,
+                "region-a",
+                4L,
+                8L,
+                "region-b",
+                8L,
+                22L,
+                4L,
+                25L,
+                "late_result_safe_to_ignore",
+                "followup-1",
+                "effect-1",
+                "entity-9",
+                "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                "enqueue_automation_command",
+                "LOOK",
+                false,
+                "SHARED",
+                "demo",
+                "production",
+                null,
+                "patch-1",
+                "plugin-1",
+                "plugin-v1",
+                "dispatch-1",
+                "work-1",
+                "script-1",
+                "REMOTE_FOLLOWUP",
+                "TARGET_REGION_EXECUTED",
+                44L,
+                22L,
+                1700L));
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(coordinatorRepository)
+        .save(
+            argThat(
+                coordinator ->
+                    coordinator.getWorldSlug() == null
+                        && coordinator.getRealmSlug() == null
+                        && coordinator.getPointerVersion() == null));
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    followup.getWorldSlug() == null
+                        && followup.getRealmSlug() == null
+                        && followup.getPointerVersion() == null));
+  }
+
+  @Test
+  void scheduleFollowupAllowsRetryWhenPartialRequestCollapsedToStoredAbsentRoutingBundle() {
+    AtomicReference<RemoteCommandCoordinator> storedCoordinator = new AtomicReference<>();
+    AtomicReference<RemoteFollowup> storedFollowup = new AtomicReference<>();
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(storedCoordinator.get()));
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(storedFollowup.get()));
+    when(coordinatorRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              RemoteCommandCoordinator coordinator = invocation.getArgument(0);
+              storedCoordinator.set(coordinator);
+              return coordinator;
+            });
+    when(followupRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              RemoteFollowup followup = invocation.getArgument(0);
+              storedFollowup.set(followup);
+              return followup;
+            });
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleRequest request =
+        new RemoteFollowupRuntimeService.ScheduleRequest(
+            1L,
+            "cmd-1",
+            "coord-1",
+            7L,
+            "region-a",
+            4L,
+            8L,
+            "region-b",
+            8L,
+            22L,
+            4L,
+            25L,
+            "late_result_safe_to_ignore",
+            "followup-1",
+            "effect-1",
+            "entity-9",
+            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+            "enqueue_automation_command",
+            "LOOK",
+            true,
+            "SHARED",
+            "demo",
+            null,
+            null,
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "dispatch-1",
+            "work-1",
+            "script-1",
+            "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
+            44L,
+            22L,
+            1700L);
+
+    RemoteFollowupRuntimeService.ScheduleOutcome firstOutcome = service.scheduleFollowup(request);
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome = service.scheduleFollowup(request);
+
+    assertTrue(firstOutcome.coordinatorCreated());
+    assertTrue(firstOutcome.followupCreated());
+    assertFalse(outcome.coordinatorCreated());
+    assertFalse(outcome.followupCreated());
+    assertEquals("coord-1", outcome.coordinatorId());
+    assertEquals("followup-1", outcome.followupId());
+    assertEquals(null, storedCoordinator.get().getWorldSlug());
+    assertEquals(null, storedCoordinator.get().getRealmSlug());
+    assertEquals(null, storedCoordinator.get().getPointerVersion());
+    assertEquals(null, storedFollowup.get().getWorldSlug());
+    assertEquals(null, storedFollowup.get().getRealmSlug());
+    assertEquals(null, storedFollowup.get().getPointerVersion());
   }
 
   @Test
@@ -481,7 +640,14 @@ class RemoteFollowupRuntimeServiceImplTest {
                 followup ->
                     "trigger_script_event".equals(followup.getPayloadKind())
                         && followup.getRequestedCommand() == null
-                        && "321".equals(followup.getTargetEntityId())));
+                        && "321".equals(followup.getTargetEntityId())
+                        && "onEnterRegion".equals(followup.getEventType())
+                        && "v1".equals(followup.getEventSchemaVersion())
+                        && "remote-enter-1".equals(followup.getScriptEventId())
+                        && "game-session:onEnterRegion:9:8:remote-enter-1"
+                            .equals(followup.getReadSnapshotToken())
+                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
+                            .equals(followup.getEventPayloadJson())));
   }
 
   @Test
@@ -627,7 +793,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null,
                         null)));
 
-    assertEquals("payload readSnapshotToken is required", ex.getMessage());
+    assertEquals("trigger_script_event read_snapshot_token is required", ex.getMessage());
     verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
   }
 
@@ -757,7 +923,9 @@ class RemoteFollowupRuntimeServiceImplTest {
         .save(
             argThat(
                 result ->
-                    "SHARED".equals(result.getPlayableStateScope())
+                    Long.valueOf(7L).equals(result.getOriginGameInstanceId())
+                        && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
+                        && "SHARED".equals(result.getPlayableStateScope())
                         && "cmd-1".equals(result.getCommandId())
                         && "auto-1".equals(result.getResultCommandId())
                         && "RATE_LIMIT".equals(result.getResultErrorCode())
@@ -805,6 +973,34 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.lateResult());
     assertFalse(outcome.reconciledLateResult());
     verify(coordinatorRepository, never()).save(any());
+  }
+
+  @Test
+  void recordResultDropsPartialStoredRoutingBundleFromResultProjection() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setWorldSlug("demo");
+    coordinator.setRealmSlug("production");
+    coordinator.setPointerVersion(null);
+    RemoteFollowup followup = followup();
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(null);
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1")).thenReturn(Optional.empty());
+
+    service.recordResult(resultRequest("APPLIED"));
+
+    verify(resultRepository)
+        .save(
+            argThat(
+                result ->
+                    result.getWorldSlug() == null
+                        && result.getRealmSlug() == null
+                        && result.getPointerVersion() == null));
   }
 
   @Test

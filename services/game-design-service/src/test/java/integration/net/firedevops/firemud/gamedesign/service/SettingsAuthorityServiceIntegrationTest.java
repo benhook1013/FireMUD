@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,11 +38,8 @@ class SettingsAuthorityServiceIntegrationTest {
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
-    registry.add("firemud.postgres.host", postgres::getHost);
-    registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
-    registry.add("firemud.postgres.database", postgres::getDatabaseName);
-    registry.add("firemud.postgres.username", postgres::getUsername);
-    registry.add("firemud.postgres.password", postgres::getPassword);
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "game_design_service");
   }
 
   @Autowired private SettingsAuthorityService settingsAuthorityService;

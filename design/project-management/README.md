@@ -6,7 +6,7 @@ Key files include:
 
 - [**AGENTS.md**](../../AGENTS.md) – Repository-wide AI coding and documentation guidelines.
 - [**core-requirements.md**](./core-requirements.md) – High-level feature requirements.
-- [**task-list.md**](./task-list.md) – Planning index for active vertical slices and service-status summaries.
+- [**vertical-slices/00-slice-progress.md**](./vertical-slices/00-slice-progress.md) – Short queue view of active slice maturity and remaining work.
 - [**vertical-slices/**](./vertical-slices/) – Active working task lists for implementation slices.
 - [**service-status-*.md**](./service-status-account-service.md) – High-level per-service implementation summaries.
 - [**slice-support/**](./slice-support/README.md) – Slice-specific developer workflows, regression notes, instrumentation references, and playtesting support docs.

@@ -18,6 +18,7 @@ class FiremudServiceConventionsPlugin : Plugin<Project> {
             dependencies.add("implementation", libs.findLibrary("mapstruct").get())
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter").get())
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter.actuator").get())
+            dependencies.add("implementation", libs.findLibrary("spring-data-commons").get())
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter.validation").get())
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter.web").get())
             dependencies.add("implementation", project.project(":common-data-runtime"))

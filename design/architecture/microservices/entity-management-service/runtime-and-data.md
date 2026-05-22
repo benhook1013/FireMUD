@@ -14,7 +14,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 - Runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the current operation-level guard. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` cannot double-apply after Game Session replay or retry. The `entitymanagement.mutation.effect.execution{operation,effect_status}` metric distinguishes first apply, replay/no-op, in-progress conflict, rejected reuse, and unreadable stored-response outcomes.
 - This design reduces write frequency and contention, making optimistic locking a natural fit because most entities are updated by only one process at a time and conflicts are rare.
 - Item transfers and other gameplay actions span services but execute within ticks using Redis scripts for rollback. Sagas are reserved for non-gameplay workflows. See [Transaction Strategies](../../system-architecture-transactions.md).
-- For long-running, non-gameplay workflows such as publishing a game version, this service participates as a domain step in Saga flows coordinated by the Game Design Service as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- For long-running, non-gameplay workflows such as publishing a game version, this service participates as a domain step in durable publish workflows coordinated by the Game Design Service as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 - All entity tables include a `tenantId` column. Service methods always filter on this value so character data for different games remains isolated; Redis keys mirror this prefix. Details are in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Gameplay-facing gRPC endpoints do not parse JWT tokens. The Game Session Service injects identity context using `SessionContext` and may request a new JWT from the Account Service if a player's roles change. It does not validate tokens for gameplay. Traffic between services still uses mutual TLS certificates as outlined in the [Security Architecture](../../system-architecture-security.md).
 - Design-time writes are a separate surface:
@@ -276,12 +276,12 @@ Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInsta
 
 - Game Session must already have closed admissions for the target instance before cleanup starts.
 - Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.
-- Cleanup must be idempotent and guarded by a durable saga step key so retries converge without double-deletes.
+- Cleanup must be idempotent and guarded by a durable workflow step key so retries converge without double-deletes.
 - Entity Management must not treat world row deletion as implicit cleanup confirmation; World Management marks an instance `TERMINATED` only after this service confirms cleanup completion.
 
-### Saga Participation
+### Workflow Participation
 
-Entity Management does not orchestrate its own Saga workflows and does not use Sagas for tick-driven gameplay or inventory operations. For long-running, non-gameplay workflows such as publishing or rolling back a game version, it participates as a domain step in Sagas coordinated by the Game Design Service and Game Session Service. These workflows finalize or validate versioned template data for `(tenantId, versionId)` without touching live runtime entities. See [Transaction Strategies](../../system-architecture-transactions.md) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for the overall Saga patterns.
+Entity Management does not orchestrate its own synchronous saga or Temporal workflows and does not use them for tick-driven gameplay or inventory operations. For long-running, non-gameplay workflows such as publishing or rolling back a game version, it participates as a domain step in workflows coordinated by the Game Design Service and Game Session Service. These workflows finalize or validate versioned template data for `(tenantId, versionId)` without touching live runtime entities. See [Transaction Strategies](../../system-architecture-transactions.md) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for the overall workflow patterns.
 
 ## Redis Role and Prefixes
 

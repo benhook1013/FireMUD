@@ -585,7 +585,12 @@ public class PlayCommandHandler {
         accountClient.getTenantEntitlementsForRuntime(
             Long.toString(selectedRealm.getTenantId()), requestId);
     return validateEntitlementsResponse(
-        entitlementResponse, context, tenantTag, selectedRealm, requestedCharacterId);
+        entitlementResponse,
+        context,
+        tenantTag,
+        selectedWorld,
+        selectedRealm,
+        requestedCharacterId);
   }
 
   private Optional<PlayCommandHandlingResult> validateMembershipResponse(
@@ -608,6 +613,9 @@ public class PlayCommandHandler {
       if (grantError.isPresent() && isAuthorityUnavailable(grantError.get())) {
         recordResumeDeniedIfApplicable(
             context,
+            selectedWorld.getSlug(),
+            selectedRealm.getSlug(),
+            selectedRealm.getPointerVersion(),
             selectedRealm.getGameInstanceId(),
             requestedCharacterId,
             tenantTag,
@@ -626,6 +634,9 @@ public class PlayCommandHandler {
       if (grantError.isPresent() || !grantResponse.getGranted()) {
         recordResumeDeniedIfApplicable(
             context,
+            selectedWorld.getSlug(),
+            selectedRealm.getSlug(),
+            selectedRealm.getPointerVersion(),
             selectedRealm.getGameInstanceId(),
             requestedCharacterId,
             tenantTag,
@@ -649,6 +660,9 @@ public class PlayCommandHandler {
       if ("NOT_FOUND".equalsIgnoreCase(error.getCode())) {
         recordResumeDeniedIfApplicable(
             context,
+            selectedWorld.getSlug(),
+            selectedRealm.getSlug(),
+            selectedRealm.getPointerVersion(),
             selectedRealm.getGameInstanceId(),
             requestedCharacterId,
             tenantTag,
@@ -666,6 +680,9 @@ public class PlayCommandHandler {
       }
       recordResumeDeniedIfApplicable(
           context,
+          selectedWorld.getSlug(),
+          selectedRealm.getSlug(),
+          selectedRealm.getPointerVersion(),
           selectedRealm.getGameInstanceId(),
           requestedCharacterId,
           tenantTag,
@@ -696,6 +713,9 @@ public class PlayCommandHandler {
         if (ensureError.isPresent() && isAuthorityUnavailable(ensureError.get())) {
           recordResumeDeniedIfApplicable(
               context,
+              selectedWorld.getSlug(),
+              selectedRealm.getSlug(),
+              selectedRealm.getPointerVersion(),
               selectedRealm.getGameInstanceId(),
               requestedCharacterId,
               tenantTag,
@@ -714,6 +734,9 @@ public class PlayCommandHandler {
       }
       recordResumeDeniedIfApplicable(
           context,
+          selectedWorld.getSlug(),
+          selectedRealm.getSlug(),
+          selectedRealm.getPointerVersion(),
           selectedRealm.getGameInstanceId(),
           requestedCharacterId,
           tenantTag,
@@ -736,12 +759,16 @@ public class PlayCommandHandler {
       GetTenantEntitlementsForRuntimeResponse response,
       SessionContext context,
       String tenantTag,
+      GameplayCatalogProperties.World selectedWorld,
       GameplayCatalogProperties.Realm selectedRealm,
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       recordResumeDeniedIfApplicable(
           context,
+          selectedWorld.getSlug(),
+          selectedRealm.getSlug(),
+          selectedRealm.getPointerVersion(),
           selectedRealm.getGameInstanceId(),
           requestedCharacterId,
           tenantTag,
@@ -760,6 +787,9 @@ public class PlayCommandHandler {
     if (!response.getGameplayAvailable()) {
       recordResumeDeniedIfApplicable(
           context,
+          selectedWorld.getSlug(),
+          selectedRealm.getSlug(),
+          selectedRealm.getPointerVersion(),
           selectedRealm.getGameInstanceId(),
           requestedCharacterId,
           tenantTag,
@@ -931,14 +961,50 @@ public class PlayCommandHandler {
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
+      String requestedWorldSlug,
+      String requestedRealmSlug,
+      long requestedPointerVersion,
       long requestedGameInstanceId,
       long requestedCharacterId,
       String tenantTag,
       String reason) {
-    if (context.gameInstanceId() != requestedGameInstanceId
-        || context.characterId() != requestedCharacterId) {
+    boolean sameGameplayIdentity =
+        context.gameInstanceId() == requestedGameInstanceId
+            && context.characterId() == requestedCharacterId;
+    boolean sameVisibleRealm =
+        sameSlug(context.worldSlug(), requestedWorldSlug)
+            && sameSlug(context.realmSlug(), requestedRealmSlug);
+    if (!sameGameplayIdentity && !sameVisibleRealm) {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();
+    sessionContextService.save(
+        new SessionContext(
+            context.sessionId(),
+            context.tenantId(),
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            context.localeTag(),
+            context.bootstrapGameInstanceId(),
+            requestedWorldSlug,
+            requestedRealmSlug,
+            requestedPointerVersion,
+            null));
+    LOG.debug(
+        "Cleared stale gameplay binding after denied reconnect-style PLAY for tenant {} session {} world {} realm {} reason {}",
+        tenantTag,
+        context.sessionId(),
+        requestedWorldSlug,
+        requestedRealmSlug,
+        reason);
+  }
+
+  private boolean sameSlug(String left, String right) {
+    return StringUtils.hasText(left) && StringUtils.hasText(right) && left.equalsIgnoreCase(right);
   }
 }

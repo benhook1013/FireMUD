@@ -55,7 +55,8 @@ class LogoutCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     verify(scriptEventPublisher)
         .publishCommandEvent(context, command("logout-command:41:1:123", "LOGOUT"));
-    verify(scriptEventPublisher).publishRegionExitEvent(context, "logout:41:1:123");
+    verify(scriptEventPublisher, never())
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     verify(gameInstanceService).stopSession(1L);
     verify(screenBufferService).clear(22L, 1L, 123L);
     verify(gameplayPresenceLifecycleService)
@@ -74,7 +75,7 @@ class LogoutCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
     verify(scriptEventPublisher, never())
-        .publishRegionExitEvent(Mockito.any(), Mockito.anyString());
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
     verify(screenBufferService, never())
         .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());

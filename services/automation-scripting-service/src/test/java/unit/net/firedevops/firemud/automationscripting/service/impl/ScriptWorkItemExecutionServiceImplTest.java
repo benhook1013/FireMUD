@@ -116,7 +116,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             invocation -> {
               item.setStatus("HANDED_OFF");
               return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-1", "");
+                  true, "ENQUEUED", "auto-1", "", "", "");
             });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
@@ -144,6 +144,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(handoffService).handoff(Mockito.eq(item), commandCaptor.capture());
     assertThat(commandCaptor.getValue().commandText()).isEqualTo("say LOOK from entity-1");
     assertThat(commandCaptor.getValue().targetEntityId()).isEqualTo("entity-1");
+    assertThat(commandCaptor.getValue().targetGameInstanceId()).isEqualTo("7");
+    assertThat(commandCaptor.getValue().targetRegionId()).isEqualTo("region-1");
+    assertThat(commandCaptor.getValue().targetRegionEpoch()).isEqualTo(12L);
     assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("success");
@@ -187,7 +190,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             invocation -> {
               item.setStatus("HANDED_OFF");
               return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-1", "");
+                  true, "ENQUEUED", "auto-1", "", "", "");
             });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
@@ -214,7 +217,76 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(handoffService).handoff(Mockito.eq(item), commandCaptor.capture());
     assertThat(commandCaptor.getValue().commandText()).isEqualTo("say LOOK for entity-1");
     assertThat(commandCaptor.getValue().targetEntityId()).isEqualTo("target-entity-2");
+    assertThat(commandCaptor.getValue().targetGameInstanceId()).isEqualTo("7");
+    assertThat(commandCaptor.getValue().targetRegionId()).isEqualTo("region-1");
+    assertThat(commandCaptor.getValue().targetRegionEpoch()).isEqualTo(12L);
     assertThat(audit.getFinalOutcome()).isEqualTo("success");
+  }
+
+  @Test
+  void supportsExplicitTargetRuntimeScopeTemplates() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setPayloadJson(
+        "{\"targetInstance\":\"remote-7\",\"targetRegion\":\"region-9\",\"targetEpoch\":44}");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setDefinition(
+        """
+        {
+          "emitCommands": [
+            {
+              "commandText": "say remote hello",
+              "targetGameInstanceId": "{{payload.targetInstance}}",
+              "targetRegionId": "{{payload.targetRegion}}",
+              "targetRegionEpoch": "{{payload.targetEpoch}}"
+            }
+          ]
+        }
+        """);
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("HANDED_OFF");
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  true, "REMOTE_SCHEDULED", "", "coord-1", "followup-1", "");
+            });
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.completedCount()).isEqualTo(1);
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> commandCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService).handoff(Mockito.eq(item), commandCaptor.capture());
+    assertThat(commandCaptor.getValue().targetGameInstanceId()).isEqualTo("remote-7");
+    assertThat(commandCaptor.getValue().targetRegionId()).isEqualTo("region-9");
+    assertThat(commandCaptor.getValue().targetRegionEpoch()).isEqualTo(44L);
   }
 
   @Test
@@ -259,6 +331,8 @@ class ScriptWorkItemExecutionServiceImplTest {
                         + invocation
                             .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
                             .ordinal(),
+                    "",
+                    "",
                     ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
@@ -331,6 +405,8 @@ class ScriptWorkItemExecutionServiceImplTest {
                         + invocation
                             .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
                             .ordinal(),
+                    "",
+                    "",
                     ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
@@ -413,6 +489,8 @@ class ScriptWorkItemExecutionServiceImplTest {
                         + invocation
                             .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
                             .ordinal(),
+                    "",
+                    "",
                     ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))

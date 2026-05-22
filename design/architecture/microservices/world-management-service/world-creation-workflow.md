@@ -1,6 +1,6 @@
 # World Creation Workflow
 
-World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. World Management's activation lifecycle surface is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
+World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow now runs on the shared **Temporal** substrate so prepare/activate/fail/terminate orchestration survives service restarts, keeps deterministic workflow identity, and exposes operator-visible execution status without pulling gameplay runtime onto the workflow engine. World Management's activation lifecycle surface is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
 
 - `tenantId` – identifies the game (tenant) as described in
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -25,7 +25,7 @@ World creation consumes a previously resolved immutable launch descriptor for th
 
 For replacement-instance launches, World Management now persists the frozen `remapSetId` on `world_instance` so later cutover/termination consumers can prove they are still operating on the same approved cross-version remap identity that launch resolution selected.
 
-The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Saga:
+The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Temporal workflow and its activities:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, or authored generation metadata); and
 - Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `zone_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
@@ -47,9 +47,9 @@ If any of those proofs drift, activation fails closed with application-level att
 
 The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state.
 
-It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
+It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this workflow, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
-World creation uses **Class A (pre-activation) rollback semantics** from [Transaction Strategies](../../system-architecture-transactions.md#rollback-boundaries-by-operation-class): compensation is allowed until the instance is admitted for gameplay. Once admission opens, runtime mutations move to Class B retry/reconciliation semantics and are no longer rolled back through this Saga.
+World creation uses **Class A (pre-activation) rollback semantics** from [Transaction Strategies](../../system-architecture-transactions.md#rollback-boundaries-by-operation-class): compensation is allowed until the instance is admitted for gameplay. Once admission opens, runtime mutations move to Class B retry/reconciliation semantics and are no longer rolled back through this workflow.
 
 Activation-time input invariants:
 
@@ -59,17 +59,17 @@ Activation-time input invariants:
 
 The Class A/Class B boundary is persisted explicitly through a monotonic instance lifecycle state in World Management:
 
-- `world_instance_status=PREPARING` while world-creation Saga steps are still compensatable.
+- `world_instance_status=PREPARING` while world-lifecycle workflow steps are still compensatable.
 - `world_instance_status=ACTIVE` once admission opens for gameplay.
 - `world_instance_status=FAILED_PRE_ACTIVATION` when Class A preparation cannot converge and admission never opens.
 
-Transitions are one-way for a given `gameInstanceId` once terminal states are reached. Compensation logic in the world-creation Saga is allowed only while status is `PREPARING`; once status is `ACTIVE`, failures must be handled by Class B retry/reconciliation semantics instead of destructive rollback.
+Transitions are one-way for a given `gameInstanceId` once terminal states are reached. Compensation logic in the world-lifecycle workflow is allowed only while status is `PREPARING`; once status is `ACTIVE`, failures must be handled by Class B retry/reconciliation semantics instead of destructive rollback.
 
 Initial NPC and item presence is modeled declaratively:
 
 - Version-scoped spawn templates and population bindings are design-time data owned by the **World Management Service** and published under `(tenantId, versionId)`. They describe which entity templates (owned by Entity Management) may appear where.
 - World-creation stages may materialize only instance-scoped spawn schedules derived from those published bindings for the target `(tenantId, gameInstanceId)`. They must not create new version-scoped bindings during activation.
-- Creation of live entities and inventories remains the responsibility of Entity Management and Automation & Scripting workflows, typically driven at runtime via ticks or separate non-gameplay Sagas, and is not performed directly by this world-creation Saga.
+- Creation of live entities and inventories remains the responsibility of Entity Management and Automation & Scripting workflows, typically driven at runtime via ticks or separate non-gameplay workflows, and is not performed directly by this world-creation workflow.
 
 ## Steps
 
@@ -110,12 +110,13 @@ Illustrative stage outcome:
 }
 ```
 
-Illustrative operator-facing saga status fragment:
+Illustrative operator-facing workflow status fragment:
 
 ```json
 {
-  "sagaName": "createWorld",
-  "sagaInstanceId": "saga-9001",
+  "workflowFamily": "world-lifecycle",
+  "workflowId": "world-lifecycle:t1:world-instance:g-100",
+  "workflowStatus": "RUNNING",
   "tenantId": "t1",
   "gameInstanceId": "g-100",
   "steps": [
@@ -129,18 +130,18 @@ Illustrative operator-facing saga status fragment:
 }
 ```
 
-### Saga Step Idempotency
+### Workflow Activity Idempotency
 
 World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
 
 - `(tenantId, gameInstanceId, worldCreationRequestId, stepName, expectedGenerationConfigRevision)`
 
-For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different `sagaInstanceId` values converge on one logical result.
+For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different workflow runs converge on one logical result.
 
-On a retry of the same saga instance:
+On a retry of the same workflow identity:
 
 - If the guard indicates the step has already completed successfully, the step must become a no-op and return success.
-- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the saga can be retried safely after cleanup.
+- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the workflow can be retried safely after cleanup.
 
 If retries are exhausted before admission:
 
@@ -148,34 +149,21 @@ If retries are exhausted before admission:
 - No gameplay admission is permitted for that `gameInstanceId`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; operators must create a new instance with a new `gameInstanceId` for retry.
 
-This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new saga instances resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
+This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new workflow runs resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
 
-```java
-SagaBuilder builder = new SagaBuilder("createWorld");
-builder
-    .step("createStarterRegion", () -> createStarterRegionInstance(
-        tenantId, versionId, gameInstanceId, worldCreationRequestId, expectedGenerationConfigRevision))
-    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
-    .step("materializePopulationSchedules", () -> materializePopulationSchedules(
-        tenantId, versionId, gameInstanceId, generationRequestId, expectedGenerationConfigRevision))
-    .step("activateInstance", () -> activateInstance(
-        tenantId, gameInstanceId, expectedVersionStateEpoch, expectedGenerationConfigRevision));
-sagaRunner.run(builder.build());
-```
-
-The saga state is stored in the `saga_instance` and `saga_step` tables defined in the common library. Operators can inspect progress through the Logging & Admin Service's saga dashboard.
+The durable workflow state is owned by Temporal using the canonical `world-lifecycle` workflow identity. Operators can inspect progress through the normal lifecycle read surface and any Temporal-backed operator tooling that projects the same `workflowId`.
 
 See [World Management Service](README.md) for additional service context.
 
-See [Transaction Strategies](../../system-architecture-transactions.md) for background on how sagas are used across FireMUD.
+See [Transaction Strategies](../../system-architecture-transactions.md) for the canonical boundary between ticks, short synchronous saga orchestration, and durable Temporal workflows.
 
 ## Instance Termination and Cleanup
 
 Instance expiry and operator-driven shutdown must use an explicit cross-service termination workflow rather than independent cleanup jobs.
 
 - Game Session must first mark the target instance non-admissible/draining before World starts termination.
-- World Management starts an `InstanceTermination` Saga and marks the instance `TERMINATING`.
-- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with `sagaInstanceId` as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
+- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and marks the instance `TERMINATING`.
+- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with Temporal `workflowId` / run identity as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion; current world-side cleanup hard-deletes runtime `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows for the terminating instance while retaining the terminal `world_instance` lifecycle row.
 - The current first implementation cut now exposes that contract synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination.
 - If cleanup fails after admission is already closed, the world remains `TERMINATING` and the same termination workflow identity must retry to convergence instead of restoring the instance to live admission.
@@ -202,7 +190,7 @@ instance data derived from that version:
   instance data and no reuse of instance layouts across different
   `gameInstanceId` values.
 - Moving a game to a different version is modeled as starting a **new** game
-  instance with a fresh `gameInstanceId` and running the world-creation Saga
+  instance with a fresh `gameInstanceId` and running the world-lifecycle workflow
   again for the new `(tenantId, versionId)`. Existing instances continue to use
   their original templates until they are shut down.
 - Operational tooling should not attempt to “retarget” an existing

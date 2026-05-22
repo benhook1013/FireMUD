@@ -20,7 +20,7 @@ Generation flows fall into two categories:
 - **Design-time/template generation** – invoked from Game Design workflows to produce
   versioned world scaffolding that is saved into template tables keyed by
   `(tenantId, versionId)` and later published like any other design asset.
-- **Runtime/instance generation** – invoked from world-creation Sagas or tick-driven
+- **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven
   commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
   flows never modify template tables for Published versions.
 
@@ -65,7 +65,7 @@ Procedural generators are invoked by the World Management Service, which calls p
 - When invoked from Game Design workflows for **design templates**, results are
   persisted as template rows keyed by `(tenantId, versionId)` and become part of
   the published topology for that version.
-- When invoked from world-creation Sagas or tick-driven commands for **runtime
+- When invoked from the world-lifecycle workflow or tick-driven commands for **runtime
   instances**, results are persisted as instance rows keyed by
   `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
   rows remain unchanged.
@@ -254,7 +254,7 @@ The following rules align generators with the core runtime and tooling:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
-   - `generationRequestId` must be derived from business identity rather than saga instance identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new `sagaInstanceId` must reuse the same `generationRequestId`.
+   - `generationRequestId` must be derived from business identity rather than transient execution identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`.
    - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
    - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
    - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
@@ -272,7 +272,7 @@ Initial-slice delivery expectation:
 - For the first implementation slice, runtime generation and instance-scoped population scheduling are required only when the published launch descriptor and version-scoped design inputs explicitly call for them.
 - If a launched version does not require those capabilities, the initial slice may omit those runtime stages without violating the persistence contract, provided the world-creation workflow still records deterministic “not required” outcomes under the same launch identity.
 - Those recorded outcomes should use a stable stage result such as `SKIPPED_NOT_REQUIRED` so operator tooling and replay/debug flows can distinguish “not part of this launch” from “step failed before execution”.
-- Operator-facing saga or admin diagnostics should surface that same recorded result without reinterpretation so the service-local workflow record and the control-plane view use identical outcome vocabulary.
+- Operator-facing workflow or admin diagnostics should surface that same recorded result without reinterpretation so the service-local workflow record and the control-plane view use identical outcome vocabulary.
 
 Procedural-generation configuration is split into two classes:
 

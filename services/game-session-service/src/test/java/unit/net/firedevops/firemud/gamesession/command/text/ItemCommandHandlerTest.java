@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -17,9 +18,16 @@ class ItemCommandHandlerTest {
       Mockito.mock(EquipmentCommandHandler.class);
   private final ContainerCommandHandler containerHandler =
       Mockito.mock(ContainerCommandHandler.class);
+  private final ScriptEventPublisher scriptEventPublisher =
+      Mockito.mock(ScriptEventPublisher.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ItemCommandHandler handler =
-      new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler, meterRegistry);
+      new ItemCommandHandler(
+          inventoryHandler,
+          equipmentHandler,
+          containerHandler,
+          meterRegistry,
+          scriptEventPublisher);
   private final SessionContext context =
       new SessionContext(
           1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
@@ -41,6 +49,25 @@ class ItemCommandHandlerTest {
                 .count())
         .isEqualTo(1.0);
     assertThat(meterRegistry.find("gamesession.command.item.failures").counter()).isNull();
+  }
+
+  @Test
+  void publishesScriptEventForSuccessfulDirectInventoryRead() {
+    TextCommand command = new TextCommand(TextCommandType.INVENTORY, List.of(), "INVENTORY");
+    when(inventoryHandler.handle(context, command, null))
+        .thenReturn(new InventoryCommandHandlingResult(CommandEnqueueResult.success(), List.of()));
+
+    TextCommandInterpretationResult result = handler.handle(context, command);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(context),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "INVENTORY".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("item-")));
   }
 
   @Test

@@ -94,40 +94,40 @@ Example alerts for the bounded fan-out scheduler's merge and rejection pressure:
 
 ```yaml
 - alert: TickSchedulerRejectingWork
-  expr: increase(game_session_tick_scheduler_rejected_total[5m]) > 0
-  for: 10m
+  expr: game_session_tick_scheduler_rejection_consecutive_cycles >= game_session_tick_scheduler_rejection_alert_threshold_cycles
+  for: 1m
   labels:
     service: game-session-service
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
   annotations:
     summary: Tick scheduler is rejecting session work
-    description: The bounded tick scheduler has rejected one or more session submissions for at least 10 minutes. Investigate executor saturation, queue depth, and session count before gameplay timing starts degrading materially.
+    description: The bounded tick scheduler has sustained scheduler cycles with rejected session submissions. Investigate executor saturation, queue depth, and session count before gameplay timing starts degrading materially.
 
 - alert: TickSchedulerQueueDepthHigh
-  expr: game_session_tick_scheduler_executor_queue_depth > 75
-  for: 10m
+  expr: game_session_tick_scheduler_queue_depth_consecutive_cycles >= game_session_tick_scheduler_queue_depth_alert_threshold_cycles
+  for: 1m
   labels:
     service: game-session-service
     severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
   annotations:
     summary: Tick scheduler executor queue depth is persistently high
-    description: The bounded executor behind the tick scheduler is spending sustained time near queue saturation. Investigate recent merge/rejection rates and the number of active sessions.
+    description: The bounded executor behind the tick scheduler has spent enough consecutive scheduler cycles above the configured queue-depth threshold to trip the alert contract. Investigate recent merge/rejection rates and the number of active sessions.
 
 - alert: TickSchedulerMergeRateHigh
-  expr: increase(game_session_tick_scheduler_merged_total[15m]) > 100
-  for: 15m
+  expr: game_session_tick_scheduler_merge_consecutive_cycles >= game_session_tick_scheduler_merge_alert_threshold_cycles
+  for: 1m
   labels:
     service: game-session-service
     severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
   annotations:
     summary: Tick scheduler is merging overlapping work heavily
-    description: The bounded fan-out scheduler is repeatedly merging overlapping pulses instead of scheduling fresh work. This is expected under moderate pressure, but sustained elevated merges indicate the runtime is running close to its scheduling budget.
+    description: The bounded fan-out scheduler has spent enough consecutive scheduler cycles above the configured merge threshold that overlapping pulses are now an operator-visible pressure condition.
 ```
 
 These rules assume the current scheduler metric contract from `TickScheduler`:
@@ -136,5 +136,13 @@ These rules assume the current scheduler metric contract from `TickScheduler`:
 - `game_session_tick_scheduler_merged_total`
 - `game_session_tick_scheduler_executor_queue_depth`
 - `game_session_tick_scheduler_pending_sessions`
+- `game_session_tick_scheduler_rejection_consecutive_cycles`
+- `game_session_tick_scheduler_merge_consecutive_cycles`
+- `game_session_tick_scheduler_queue_depth_consecutive_cycles`
+- `game_session_tick_scheduler_rejection_alert_threshold_cycles`
+- `game_session_tick_scheduler_merge_alert_threshold_count`
+- `game_session_tick_scheduler_merge_alert_threshold_cycles`
+- `game_session_tick_scheduler_queue_depth_alert_threshold_count`
+- `game_session_tick_scheduler_queue_depth_alert_threshold_cycles`
 
-Environment overlays may tune exact thresholds, but should preserve the alert names, owner, and runbook routing so scheduler pressure is visible and actionable.
+Environment overlays may tune exact thresholds, but should preserve the alert names, owner, and runbook routing so scheduler pressure is visible and actionable. The alert expressions should prefer the exported threshold/cycle gauges over re-hardcoding numeric defaults in rule files, while dashboards should still show the raw queue-depth, merge, and rejection counters for diagnosis.

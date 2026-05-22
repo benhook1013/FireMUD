@@ -19,17 +19,17 @@ This document defines the Game Logic Service runtime model, dependency ownership
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
 - NPC morale and aggression-state evaluation remain part of this service's runtime behavior. When gameplay rules consume faction or reputation signals sourced from Social & Groups, the local morale logic is still owned here, including transitions such as `FLEEING` and `SURRENDERED`; cross-service reputation data informs the decision, but Game Logic owns the gameplay-state consequence.
 
-## Saga Participation
+## Workflow Participation
 
-The Game Logic Service does not orchestrate or own Saga workflows. All gameplay commands execute inside ticks using Redis-based rollback and the transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
+The Game Logic Service does not orchestrate or own synchronous saga or Temporal workflows. All gameplay commands execute inside ticks using Redis-based rollback and the transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
 
-When a game version is published, its rule data is prepared and finalized by the Game Design and Game Session services; this service reads the already-published, versioned rule data for the active `runtime_version` and does not participate directly in the publish Saga.
+When a game version is published, its rule data is prepared and finalized by the Game Design and Game Session services; this service reads the already-published, versioned rule data for the active `runtime_version` and does not participate directly in the durable `publish` workflow.
 
-Role classification: Game Logic is a digest-gate participant for full publishes, not a saga-step participant, unless future publish workflows add explicit finalize or compensation steps owned by this service.
+Role classification: Game Logic is a digest-gate participant for full publishes, not a workflow-step participant, unless future publish workflows add explicit finalize or compensation steps owned by this service.
 
 ## Draft Digest Contract
 
-For full-version publish gating, this service is still a required digest participant even though it does not orchestrate Saga steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
+For full-version publish gating, this service is still a required digest participant even though it does not orchestrate publish-workflow steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
 
 Implementation Notes:
 

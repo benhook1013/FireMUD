@@ -5,7 +5,6 @@ plugins {
 
 dependencies {
     api(project(":common-platform-core"))
-    implementation(project(":common-saga"))
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.spring.boot.configuration.processor)
     compileOnly(libs.lombok)
@@ -13,7 +12,6 @@ dependencies {
     implementation(libs.micrometer.core)
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
-    implementation(libs.spring.boot.starter.data.jpa)
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.data.redis)
 

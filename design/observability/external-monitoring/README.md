@@ -6,7 +6,7 @@ It complements the Prometheus-facing observability contract in `design/architect
 
 ## Implementation Status
 
-This is a prod-like target-state contract. The repository currently provides documentation, reference alert expressions for mirrored entry-path blackbox signals, and static validation of observability assets. It does not yet include an authoritative external monitoring deployment, heartbeat emitter, canary runner, or runtime smoke harness that proves the independent pager path end to end.
+This is a prod-like target-state contract. The repository now provides the canonical runtime smoke harness in `dev-tools/observability/run-player-experience-smoke.py`, retained-evidence validation in `dev-tools/observability/validate-player-experience-smoke-evidence.py`, and the shared mirrored metric vocabulary for blackbox, deadman, and player-flow canary signals. The harness now proves the real first-party browser admission handshake (`player-bootstrap` -> discovery -> `connect-token` cookie -> `/ws/game/**`) plus a real Telnet `WORLDS` handshake instead of treating those paths as raw transport checks. The repository still does not ship an authoritative external monitoring deployment itself; each prod-like environment must wire that deployment and its paging route separately.
 
 ## What This Is
 

@@ -6,6 +6,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
@@ -54,6 +55,8 @@ import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesResponse;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishPluginVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionRequest;
@@ -85,6 +88,8 @@ class GameDesignGrpcServiceTest {
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
       Mockito.mock(SettingsAuthorityService.class);
+  private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver =
+      new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty());
   private final GameDesignGrpcService service =
       new GameDesignGrpcService(
           pingService,
@@ -94,6 +99,7 @@ class GameDesignGrpcServiceTest {
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
+          publishWorkflowMetadataResolver,
           new SimpleMeterRegistry());
 
   @Test
@@ -184,6 +190,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
   }
 
   @Test
@@ -222,6 +229,19 @@ class GameDesignGrpcServiceTest {
     assertEquals(9L, ref.get().getScriptPatch().getVersionId());
     assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
     assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void publishVersionRequiresPublishRequestId() {
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder().setTenantId("tenant-1").setNotes("notes").build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test

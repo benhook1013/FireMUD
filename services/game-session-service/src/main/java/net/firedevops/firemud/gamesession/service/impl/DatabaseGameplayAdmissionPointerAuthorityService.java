@@ -52,10 +52,8 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Transactional(readOnly = true)
   public Optional<GameplayAdmissionPointerSnapshot> findByRuntimeTarget(
       long tenantId, long gameInstanceId) {
-    return pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc().stream()
-        .filter(pointer -> pointer.getTenantId() == tenantId)
-        .filter(pointer -> pointer.getGameInstanceId() == gameInstanceId)
-        .findFirst()
+    return pointerRepository
+        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
         .map(this::toSnapshot);
   }
 

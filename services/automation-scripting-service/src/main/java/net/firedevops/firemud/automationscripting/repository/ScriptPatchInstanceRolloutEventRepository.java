@@ -1,34 +1,151 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
+import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptPatchInstanceRolloutEventsRecord;
+import org.jooq.Condition;
+import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface ScriptPatchInstanceRolloutEventRepository
-    extends JpaRepository<ScriptPatchInstanceRolloutEvent, Long> {
-  @Query(
-      """
-      select event from ScriptPatchInstanceRolloutEvent event
-      where event.tenantId = :tenantId
-        and (:gameInstanceId = '' or event.gameInstanceId = :gameInstanceId)
-        and (:scriptPatchVersion = '' or event.scriptPatchVersion = :scriptPatchVersion)
-        and (:rolloutStatus = '' or event.rolloutStatus = :rolloutStatus)
-        and (:changedAfter is null or event.observedAt > :changedAfter)
-        and (:changedBefore is null or event.observedAt < :changedBefore)
-      order by event.observedAt desc, event.eventId desc
-      """)
-  List<ScriptPatchInstanceRolloutEvent> findEvents(
-      @Param("tenantId") String tenantId,
-      @Param("gameInstanceId") String gameInstanceId,
-      @Param("scriptPatchVersion") String scriptPatchVersion,
-      @Param("rolloutStatus") String rolloutStatus,
-      @Param("changedAfter") Instant changedAfter,
-      @Param("changedBefore") Instant changedBefore,
-      Pageable pageable);
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected DSLContext is an internal Spring collaborator.")
+public class ScriptPatchInstanceRolloutEventRepository {
+  private final DSLContext dsl;
+
+  public ScriptPatchInstanceRolloutEventRepository(DSLContext dsl) {
+    this.dsl = dsl;
+  }
+
+  public List<ScriptPatchInstanceRolloutEvent> findEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String rolloutStatus,
+      Instant changedAfter,
+      Instant changedBefore,
+      Pageable pageable) {
+    Condition condition = SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID.eq(tenantId);
+    if (!gameInstanceId.isBlank()) {
+      condition =
+          condition.and(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (!scriptPatchVersion.isBlank()) {
+      condition =
+          condition.and(
+              SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    if (!rolloutStatus.isBlank()) {
+      condition =
+          condition.and(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS.eq(rolloutStatus));
+    }
+    if (changedAfter != null) {
+      condition =
+          condition.and(
+              SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT.gt(toLocalDateTime(changedAfter)));
+    }
+    if (changedBefore != null) {
+      condition =
+          condition.and(
+              SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT.lt(toLocalDateTime(changedBefore)));
+    }
+    return dsl.selectFrom(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
+        .where(condition)
+        .orderBy(
+            SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT.desc(),
+            SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID.desc())
+        .limit(limitOrDefault(pageable, 100))
+        .offset(offsetOrZero(pageable))
+        .fetch(this::toEntity);
+  }
+
+  public ScriptPatchInstanceRolloutEvent save(ScriptPatchInstanceRolloutEvent entity) {
+    if (entity.getId() == null) {
+      ScriptPatchInstanceRolloutEventsRecord record =
+          dsl.newRecord(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS);
+      populate(record, entity);
+      record.store();
+      return findById(record.getId()).orElseThrow();
+    }
+    int nextRowVersion = entity.getRowVersion() + 1;
+    int updated =
+        dsl.update(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID, entity.getEventId())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID, entity.getTenantId())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.GAME_INSTANCE_ID, entity.getGameInstanceId())
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION,
+                entity.getScriptPatchVersion())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS, entity.getRolloutStatus())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON, entity.getStatusReason())
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT,
+                toLocalDateTime(entity.getObservedAt()))
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.PROJECTION_REFRESHED_AT,
+                toLocalDateTime(entity.getProjectionRefreshedAt()))
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION, nextRowVersion)
+            .where(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS
+                    .ID
+                    .eq(entity.getId())
+                    .and(
+                        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION.eq(
+                            entity.getRowVersion())))
+            .execute();
+    if (updated != 1) {
+      throw AutomationScriptingJooqRepositorySupport.staleWrite(
+          "script_patch_instance_rollout_events", entity.getId());
+    }
+    entity.setRowVersion(nextRowVersion);
+    return findById(entity.getId()).orElseThrow();
+  }
+
+  private java.util.Optional<ScriptPatchInstanceRolloutEvent> findById(Long id) {
+    return dsl.selectFrom(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
+        .where(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ID.eq(id))
+        .fetchOptional(this::toEntity);
+  }
+
+  private void populate(
+      ScriptPatchInstanceRolloutEventsRecord record, ScriptPatchInstanceRolloutEvent entity) {
+    record.setEventId(entity.getEventId());
+    record.setTenantId(entity.getTenantId());
+    record.setGameInstanceId(entity.getGameInstanceId());
+    record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setRolloutStatus(entity.getRolloutStatus());
+    record.setStatusReason(entity.getStatusReason());
+    record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
+    record.setProjectionRefreshedAt(toLocalDateTime(entity.getProjectionRefreshedAt()));
+    record.setRowVersion(entity.getRowVersion());
+  }
+
+  private ScriptPatchInstanceRolloutEvent toEntity(Record record) {
+    ScriptPatchInstanceRolloutEvent entity = new ScriptPatchInstanceRolloutEvent();
+    entity.setId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ID));
+    entity.setEventId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID));
+    entity.setTenantId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID));
+    entity.setGameInstanceId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.GAME_INSTANCE_ID));
+    entity.setScriptPatchVersion(
+        record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION));
+    entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS));
+    entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON));
+    entity.setObservedAt(toInstant(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT)));
+    entity.setProjectionRefreshedAt(
+        toInstant(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.PROJECTION_REFRESHED_AT)));
+    Integer rowVersion = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION);
+    entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
+    return entity;
+  }
 }

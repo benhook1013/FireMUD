@@ -9,6 +9,7 @@ dependencies {
     annotationProcessor(libs.spring.boot.configuration.processor)
     compileOnly(libs.lombok)
 
+    implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.micrometer.core)
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
@@ -22,4 +23,5 @@ dependencies {
     compileOnly(libs.grpc.spring.boot.starter)
 
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
+    testImplementation(libs.spring.boot.starter.test)
 }

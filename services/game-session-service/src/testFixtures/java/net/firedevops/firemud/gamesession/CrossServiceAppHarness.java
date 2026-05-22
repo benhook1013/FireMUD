@@ -180,7 +180,7 @@ public final class CrossServiceAppHarness {
   }
 
   @TestConfiguration
-  static class GameSessionTestOverrides {
+  public static class GameSessionTestOverrides {
     @Bean
     @Primary
     ConflictTracker conflictTracker() {

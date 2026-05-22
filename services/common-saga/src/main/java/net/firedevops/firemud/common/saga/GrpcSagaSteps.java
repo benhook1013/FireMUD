@@ -3,7 +3,7 @@ package net.firedevops.firemud.common.saga;
 import java.time.Duration;
 import java.util.function.Supplier;
 
-/** Helper methods for creating gRPC-based saga steps. */
+/** Helper methods for creating gRPC-based synchronous saga steps. */
 public final class GrpcSagaSteps {
   private GrpcSagaSteps() {}
 

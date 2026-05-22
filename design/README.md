@@ -10,11 +10,11 @@ Suggested reading order:
 2. [**architecture/service-responsibility-matrix.md**](./architecture/service-responsibility-matrix.md) for service ownership boundaries.
 3. [**architecture/user-journeys.md**](./architecture/user-journeys.md) for player, creator, and operator flows.
 4. [**project-management/vertical-slices/00-design-area-slice-coverage.md**](./project-management/vertical-slices/00-design-area-slice-coverage.md) for design-area to slice coverage.
-5. [**project-management/task-list.md**](./project-management/task-list.md) for current slice maturity and remaining work.
+5. [**project-management/vertical-slices/00-slice-progress.md**](./project-management/vertical-slices/00-slice-progress.md) for current slice maturity and remaining work.
 
 - [**architecture/**](./architecture/) – Infrastructure, microservice designs, and system overviews.
 - [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key vertical slices.
-- [**project-management/**](./project-management/) – Requirements, task lists, and AI rule sets.
+- [**project-management/**](./project-management/) – Requirements, slice planning, and AI rule sets.
 - [**user-guides/**](./user-guides/) – Documentation for game creators and integration testing.
 
 Additional generated documentation lives in:

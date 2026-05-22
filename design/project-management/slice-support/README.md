@@ -2,7 +2,7 @@
 
 This directory contains slice-specific implementation support material that is useful while a slice is being built, debugged, or stabilized.
 
-These docs are not the primary planning index. Use [`../task-list.md`](../task-list.md) and [`../vertical-slices/`](../vertical-slices/) for active planning, and use service architecture docs for long-lived canonical behavior once a slice is fully absorbed into the permanent design set.
+These docs are not the primary planning index. Use [`../vertical-slices/00-slice-progress.md`](../vertical-slices/00-slice-progress.md) and [`../vertical-slices/`](../vertical-slices/) for active planning, and use service architecture docs for long-lived canonical behavior once a slice is fully absorbed into the permanent design set.
 
 Current contents include:
 

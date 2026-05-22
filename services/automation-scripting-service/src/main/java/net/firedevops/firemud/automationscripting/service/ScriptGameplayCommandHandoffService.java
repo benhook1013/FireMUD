@@ -8,9 +8,18 @@ public interface ScriptGameplayCommandHandoffService {
   record EmittedCommand(
       String commandText,
       String targetEntityId,
+      String targetGameInstanceId,
+      String targetRegionId,
+      Long targetRegionEpoch,
       boolean requiresSoloTick,
       long dueTickId,
       int ordinal) {}
 
-  record HandoffResult(boolean accepted, String outcome, String commandId, String errorCode) {}
+  record HandoffResult(
+      boolean accepted,
+      String outcome,
+      String commandId,
+      String remoteCoordinatorId,
+      String remoteFollowupId,
+      String errorCode) {}
 }

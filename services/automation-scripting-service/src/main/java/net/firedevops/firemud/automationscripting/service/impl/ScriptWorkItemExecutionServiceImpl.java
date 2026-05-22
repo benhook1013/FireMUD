@@ -289,6 +289,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
 
+    if (isOnLoad(workItem)
+        && declaresCommands(definition.get().getDefinition(), workItem.getEventType())) {
+      deadLetter(
+          workItem, STAGE_DSL_EVAL, "definition_invalid", "onload_commands_not_allowed", now);
+      return false;
+    }
+
     List<ScriptGameplayCommandHandoffService.EmittedCommand> commands;
     try {
       commands = parseCommands(definition.get().getDefinition(), workItem);
@@ -299,11 +306,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
     if (commands.size() > outputProperties.getMaxCommandsPerRun()) {
       deadLetter(workItem, STAGE_DSL_EVAL, "command_count_exceeded", "command_count_exceeded", now);
-      return false;
-    }
-    if (isOnLoad(workItem) && !commands.isEmpty()) {
-      deadLetter(
-          workItem, STAGE_DSL_EVAL, "definition_invalid", "onload_commands_not_allowed", now);
       return false;
     }
     if (exceedsPerEntityCommandLimit(commands)) {
@@ -377,6 +379,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             new ScriptGameplayCommandHandoffService.EmittedCommand(
                 commandText,
                 targetEntityId,
+                renderedTargetGameInstanceId(node, variables, workItem),
+                renderedTargetRegionId(node, variables, workItem),
+                renderedTargetRegionEpoch(node, variables, workItem),
                 node.path("requiresSoloTick").asBoolean(false),
                 Math.max(0L, node.path("dueTickId").asLong(0L)),
                 ordinal++));
@@ -427,6 +432,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       }
     }
     return root.path("emitCommands");
+  }
+
+  private boolean declaresCommands(String definition, String eventType) {
+    JsonNode root;
+    try {
+      root = objectMapper.readTree(definition);
+    } catch (Exception ex) {
+      throw new IllegalArgumentException("definition_json_invalid");
+    }
+    JsonNode commandsNode = selectCommandsNode(root, eventType);
+    return commandsNode.isArray() && !commandsNode.isEmpty();
   }
 
   private Map<String, String> templateVariables(ScriptWorkItem workItem) {
@@ -549,6 +565,50 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       throw new IllegalArgumentException("target_entity_id_blank");
     }
     return List.of(targetEntityId);
+  }
+
+  private static String renderedTargetGameInstanceId(
+      JsonNode node, Map<String, String> variables, ScriptWorkItem workItem) {
+    String value =
+        render(node.path("targetGameInstanceId").asText(workItem.getGameInstanceId()), variables)
+            .trim();
+    if (value.isBlank()) {
+      throw new IllegalArgumentException("target_game_instance_id_blank");
+    }
+    return value;
+  }
+
+  private static String renderedTargetRegionId(
+      JsonNode node, Map<String, String> variables, ScriptWorkItem workItem) {
+    String value =
+        render(node.path("targetRegionId").asText(workItem.getRegionId()), variables).trim();
+    if (value.isBlank()) {
+      throw new IllegalArgumentException("target_region_id_blank");
+    }
+    return value;
+  }
+
+  private static long renderedTargetRegionEpoch(
+      JsonNode node, Map<String, String> variables, ScriptWorkItem workItem) {
+    if (!node.has("targetRegionEpoch")) {
+      if (workItem.getRegionEpoch() <= 0) {
+        throw new IllegalArgumentException("target_region_epoch_invalid");
+      }
+      return workItem.getRegionEpoch();
+    }
+    String rendered = render(node.path("targetRegionEpoch").asText(""), variables).trim();
+    if (rendered.isBlank()) {
+      throw new IllegalArgumentException("target_region_epoch_blank");
+    }
+    try {
+      long value = Long.parseLong(rendered);
+      if (value <= 0) {
+        throw new IllegalArgumentException("target_region_epoch_invalid");
+      }
+      return value;
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("target_region_epoch_invalid");
+    }
   }
 
   private boolean exceedsPerEntityCommandLimit(

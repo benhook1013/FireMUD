@@ -26,18 +26,19 @@ public final class GameplayAsyncAssertions {
       double expectedValue,
       String... tags)
       throws InterruptedException {
-    long deadline = System.nanoTime() + timeout.toNanos();
-    while (System.nanoTime() < deadline) {
-      Counter counter = registry.find(meterName).tags(tags).counter();
-      if (counter != null && counter.count() >= expectedValue) {
-        return;
-      }
-      Thread.sleep(TestAsyncAssertions.DEFAULT_POLL_INTERVAL.toMillis());
-    }
+    TestAsyncAssertions.assertEventually(
+        "metric " + meterName + " reaching " + expectedValue,
+        timeout,
+        () -> {
+          Counter counter = registry.find(meterName).tags(tags).counter();
+          return counter != null && counter.count() >= expectedValue;
+        });
     Counter counter = registry.find(meterName).tags(tags).counter();
     double actual = counter == null ? 0.0 : counter.count();
-    throw new AssertionError(
-        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
+    if (actual < expectedValue) {
+      throw new AssertionError(
+          "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
+    }
   }
 
   public static void assertBufferedScreenEventuallyContains(

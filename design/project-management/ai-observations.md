@@ -70,3 +70,87 @@ Entry format:
   - Context: after splitting `compose build` from `compose up`, the same `dev-tools/verify-fresh-bootstrap.sh` proof still stalled inside `docker compose build` on WSL/Docker Desktop while multiple service contexts were building in parallel.
   - Observation: the local failure mode is not limited to `up --build`; parallel compose builds themselves can wedge after partial progress even when the service Dockerfiles and jars are valid.
   - Expected pattern: canonical source-built smoke scripts should build compose services one-by-one instead of relying on a single multi-service `docker compose build` invocation.
+
+- `2026-05-11`: Shared proto modules need non-incremental Java compilation after message-shape expansion
+  - Context: extending `social_groups_service.proto` with new friend roster request/response messages and visibility-policy fields generated the expected Java message classes, but `:common-saga:compileJava` still failed on the regenerated gRPC stub during incremental compilation until the module was cleaned.
+  - Observation: in this repo's shared-proto modules, Gradle incremental Java compilation can miss freshly generated protobuf source files even when `generateProto` itself succeeded, which makes proto-surface expansion look like a random compile break.
+  - Expected pattern: protobuf-bearing modules should favor deterministic full Java recompilation after `generateProto` rather than incremental compilation, or CI/local conventions should otherwise force compile inputs to refresh whenever new generated message files appear.
+
+- `2026-05-15`: Shared smoke command catalogs do not prevent drift if each transport still owns its own socket loop
+  - Context: reviewing gameplay proof convergence across `services/game-session-service/websocket-login-look-smoke.sh`, `services/tcp-proxy-service/telnet-login-look-smoke.sh`, and `dev-tools/hosted/shared/hosted-login-look-smoke.sh`.
+  - Observation: the repo now shares command-step catalogs and readiness/account checks through `dev-tools/smoke/smoke_common.py`, but the telnet hosted smoke, local telnet smoke, and local websocket smoke still carry separate transport read/drain/send loops and partial retry behavior, so smoke proof can still drift one layer below the shared step definitions.
+  - Expected pattern: when a smoke flow is canonical across environments, share both the command plan and the transport executor semantics so hosted and local smoke paths do not fork on timeout, draining, or partial-response handling.
+
+- `2026-05-19`: Shared reactive test app bootstraps should disable Spring Cloud discovery and pin InetUtils localhost defaults
+  - Context: a repo-wide `./gradlew check` hung in `:tcp-proxy-service:crossServiceTest` after the test worker finished product work because `ReactiveTestApplicationSupport.startReactiveApp(...)` was starting stub reactive apps with a live `spring.cloud.inetutils` thread still resolving host metadata under heavier test load.
+  - Observation: reactive stub apps in this repo do not need service discovery, and leaving Spring Cloud InetUtils enabled can turn a test bootstrap helper into an intermittent startup hang that looks like a random module teardown stall.
+  - Expected pattern: shared reactive test bootstrap helpers should set `spring.cloud.discovery.enabled=false` and short localhost InetUtils defaults unless a specific test explicitly needs discovery behavior.
+
+- `2026-05-19`: Gradle Flyway task support for PostgreSQL needs explicit buildscript classpath wiring, not only service runtime dependencies
+  - Context: validating the first `02.17.2` destructive baseline squash exposed that `dev-tools/restores/reset-service-db.sh` could drop tables correctly but `:entity-management-service:flywayMigrate` still failed with `No Flyway database plugin found to handle jdbc:postgresql://...` even though the service already carried `flyway-database-postgresql` on its runtime classpath.
+  - Observation: in this repo, making Spring Boot startup migrations work is not enough to make the standalone Gradle Flyway tasks work; the Gradle Flyway plugin also needs the PostgreSQL database module on the buildscript classpath, and reset tooling should export standard `FLYWAY_*` connection variables rather than only the repo-local `FIREMUD_POSTGRES_*` names.
+  - Expected pattern: whenever local tooling or docs rely on `:service:flywayMigrate`/`flywayInfo`/`flywayValidate`, verify the Gradle plugin path directly and keep both the buildscript Flyway database module wiring and standard `FLYWAY_*` env mapping in place.
+
+- `2026-05-19`: Destructive local Flyway reset must preserve the service-local schema and history table, not just the database connection
+  - Context: validating the second `02.17.2` squash target showed `dev-tools/restores/reset-service-db.sh automation-scripting-service` still produced a Flyway checksum mismatch even after dropping the discovered service tables, because the local Gradle `flywayMigrate` path was silently using `public.flyway_schema_history` while the runtime service configuration uses `automation_scripting_service.flyway_schema_history_automation_scripting_service`.
+  - Observation: exporting only `FLYWAY_URL`/`USER`/`PASSWORD` is not enough in this repo's per-service-schema topology; a destructive reset can look successful while reusing stale history in the wrong schema if the tool does not also preserve the owning schema and Flyway table identity.
+  - Expected pattern: local reset/rebuild tooling should always export the same schema/table contract the service container uses (`SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, `FLYWAY_TABLE`) and should qualify destructive drops against that schema instead of relying on `public` search-path fallbacks.
+
+- `2026-05-19`: Export alert-threshold config as metrics when the operational contract depends on consecutive-cycle gauges
+  - Context: closing `02.18.6` exposed that the tick scheduler already tracked consecutive rejection/merge/queue-depth pressure cycles, but the canonical alert snippets still hardcoded numeric defaults instead of following the actual configured thresholds that the runtime was using.
+  - Observation: once runtime alerting depends on "N consecutive cycles above threshold" semantics, publishing only the live signal without the configured threshold guarantees alert-rule drift between code, docs, and environment overlays.
+  - Expected pattern: when a service exports consecutive-cycle or sustained-pressure gauges, it should also export the corresponding configured threshold values so rule files and dashboards can compare against runtime truth rather than copying stale constants.
+
+- `2026-05-20`: Shared Temporal foundation proof should avoid dragging an incompatible in-process test server into the base substrate
+  - Context: landing `02.20.1` against the repo's current gRPC line showed `io.temporal:temporal-testing` failing at startup with an `AbstractMethodError` in `InProcessServerBuilder` because the in-process test server path expected an older gRPC internal method shape than the repo-wide dependency set provided.
+  - Observation: a minimal shared workflow foundation should prove its host/registration contract without forcing the entire repo to align around Temporal's in-process test server stack before the first real workflow adopters actually need end-to-end execution proof.
+  - Expected pattern: keep the shared Temporal foundation limited to runtime beans, identity/task-queue helpers, and host-registration proof; defer heavier Temporal test-server or containerized workflow execution proof to the first real adopter slices unless the foundation itself truly requires it.
+- `2026-05-20`: Optional shared workflow adopters must keep their own beans conditional too
+  - Context: landing the first real Temporal adopter in `world-management-service` showed that making `common-temporal` conditional was not enough; app contexts with Temporal disabled still failed because the service-local orchestrator and worker registrar eagerly required `WorkflowClient`.
+  - Observation: optional shared runtime modules do not stay optional if adopter-side components assume the shared beans always exist.
+  - Expected pattern: when a shared workflow substrate is opt-in, service-local orchestrators, worker registrars, and similar adopter beans must also be conditional on the shared runtime beans instead of relying only on the common module's property gate.
+
+- `2026-05-20`: Workflow metadata should ride the canonical operator read surface instead of creating a side API
+  - Context: landing the Game Design Temporal `publish` workflow showed that the useful operator-facing state was not a new workflow endpoint by itself, but the linkage between the existing release-bundle view and the workflow execution that produced it.
+  - Observation: when a durable workflow owns a control-plane lifecycle that already has an established read model, adding a second workflow-status API increases drift risk and forces operators to manually correlate two surfaces for one business action.
+  - Expected pattern: expose workflow identity and runtime status on the canonical business read surface first, and only add dedicated workflow inspection APIs later if that surface genuinely cannot carry the needed operator state.
+
+- `2026-05-20`: H2-backed test profiles need lowercase identifier mode once a service starts using generated `jOOQ` table metadata
+  - Context: the first `02.19.3` Game Session `jOOQ` repositories initially passed focused unit proof but failed broad integration startup because the existing H2 test URLs created unquoted uppercase table names while the generated `jOOQ` metadata queried quoted lowercase identifiers like `gameplay_admission_pointer`.
+  - Observation: a service can look fine under JPA/Hibernate and still break the moment generated `jOOQ` code starts issuing explicit identifier SQL if the local H2 profile is not aligned with the repo's canonical lowercase schema naming.
+  - Expected pattern: when migrating a service onto generated `jOOQ` tables while it still uses H2-backed Spring test contexts, make the H2 URLs opt into lowercase identifier behavior (for example `DATABASE_TO_LOWER=TRUE`) before treating the repository conversion as complete.
+
+- `2026-05-21`: Heavy Gradle test tasks need clean result directories or strictly sequential execution once the same module is rerun
+  - Context: validating the next `02.19.3` Game Session `jOOQ` batch exposed two false negatives after overlapping `:game-session-service:integrationTest` work with a repo-wide `./gradlew check`: Gradle reported an `EOFException` while reading previous test results, and the broader `check` run surfaced stale mixed failure output from the same module.
+  - Observation: on heavy suites that reuse `build/test-results/**/results-generic.bin`, rerunning the same module concurrently or before stale binary results are cleared can look like a product regression even when the underlying tests are green.
+  - Expected pattern: when a service module has already been exercised by one Gradle test task, rerun later proof for that same module sequentially; if Gradle reports binary test-result read errors or mixed stale failures, clear that module's `build/test-results` and matching `build/reports/tests` directories before trusting the next gate.
+
+- `2026-05-21`: Closing a platform transition slice requires updating the surviving abstraction docs and helper comments in the same pass
+  - Context: closing `02.20.4` after the first real Temporal adopters showed that even after product code had converged, the remaining audit drift lived in architecture docs and shared helper comments that still used plain "Saga" as a synonym for durable workflow execution.
+  - Observation: when a new shared substrate replaces only part of an older abstraction, leaving the old docs/comments broad guarantees future audits will keep flagging "architecture mismatch" even if the runtime behavior is already canonical.
+  - Expected pattern: when a slice narrows an existing shared abstraction, sweep the high-level docs, adopter docs, and the surviving helper/module comments in the same batch so the repo teaches one boundary instead of the old and new stories at once.
+
+- `2026-05-21`: Shared `jOOQ` codegen will force old Flyway DDL into a stricter canonical SQL subset
+  - Context: landing the first `02.19.4` Game Design `jOOQ` repositories surfaced several older migrations that Flyway/Postgres had always accepted but the shared `jOOQ` DDL parser could not interpret, including mixed `ALTER TABLE` statements and an `UPDATE ... FROM`-style data repair.
+  - Observation: once a service adopts shared schema-driven codegen, legacy migration text is no longer inert archaeology; parser-incompatible DDL becomes an immediate blocker for every later repository migration in that service.
+  - Expected pattern: when enabling shared `jOOQ` codegen on an older service, normalize historical migrations into simple parser-friendly statements at the source instead of adding service-local workarounds around codegen or silently treating the schema baseline as “special.”
+
+- `2026-05-21`: Shared `jOOQ` paging helpers must treat `Pageable.unpaged()` as a first-class contract, not just `null`
+  - Context: closing the full `02.19.5` Entity Management repository migration exposed integration failures in room/container inventory flows because the new explicit SQL repositories reused `JooqPersistenceSupport.limitOrDefault(...)`, which still called `getPageSize()` on Spring's `Unpaged` implementation and threw `UnsupportedOperationException`.
+  - Observation: once multiple services share explicit SQL paging helpers, assuming "paged means non-null" creates a repo-wide trap because many canonical gameplay/control-plane call sites deliberately pass `Pageable.unpaged()` while still expecting repository methods to return ordinary `Page` containers.
+  - Expected pattern: shared `jOOQ` pagination helpers should branch on both `null` and `pageable.isUnpaged()` for limit/offset behavior, and service tests should mock repository page-returning methods as non-null empty pages rather than `null` sentinels so the contract stays aligned with Spring Data semantics.
+
+- `2026-05-21`: Shared `jOOQ` migration work should collapse old ORM-masked schema drift back into Flyway, not into repository adapters
+  - Context: landing the `02.19.8` Social Groups repository migration exposed that the service’s Java model had long assumed surrogate ids, tenant scoping, and `Long` id widths for `guild_members`, `guild_storage_items`, and `guild_alliances`, while the older Flyway DDL still described a composite-key guild-member table and narrower `SERIAL` ids that only stayed invisible because JPA had been filling the gap.
+  - Observation: once a service moves to shared schema-driven SQL codegen, "the entity is the truth" stops being enough; any old mismatch between ORM-mutated runtime schema and checked-in Flyway DDL becomes a direct blocker to compilation, fresh boot, and future audits.
+  - Expected pattern: when a `jOOQ` migration exposes service-local schema drift that Hibernate had been masking, fix the canonical Flyway DDL to the current contract in the same batch rather than teaching repositories or tests to live with two competing schema stories.
+
+- `2026-05-21`: Post-Hibernate integration tests should join the shared Postgres/Flyway contract instead of reviving H2-only datasource paths
+  - Context: closing `02.19.10` exposed that a couple of Game Session integration suites still forced `firemud.database.enabled=false` while trying to prove new `jOOQ` repositories, which left them booting the fallback H2 datasource even after the shared Postgres-backed helper existed and made the squashed Postgres baseline look like an H2 portability bug.
+  - Observation: once repo-wide Hibernate default-schema behavior is removed, mixed "real Postgres in some tests, H2 fallback in others" proof paths become a source of false persistence regressions because Flyway, JDBC schema selection, and generated SQL metadata are no longer being exercised under one canonical contract.
+  - Expected pattern: SQL-backed integration suites that need real repository proof should prefer the shared `PostgresBackedServiceTestSupport` contract, keep `firemud.database.enabled=true`, and only use embedded/H2 Flyway paths for tests that are intentionally scoped away from the service-owned Postgres runtime model.
+
+- `2026-05-21`: Public-edge smoke must default to the gateway route family, not direct service ports
+  - Context: closing the remaining audit findings showed that a player-experience harness can look "real" while still bypassing edge bugs if it defaults to direct service URLs for bootstrap and token issuance. The first honest rerun against `/api/account/**` exposed a real gateway rate-limiter keying gap that never appeared when the harness called `account-service` directly.
+  - Observation: for first-party browser-style flows, proving the connect-token handshake on a direct internal service URL is not operationally equivalent to proving the public edge contract.
+  - Expected pattern: public-ingress smoke should default to Gateway-owned routes and only allow direct-service endpoints as explicit overrides for isolated debugging, so edge policy, routing, and rate-limiter regressions stay visible.

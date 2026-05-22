@@ -50,6 +50,8 @@ service GameSessionControlPlaneService {
       returns (GetRuntimeOwnershipStatusResponse);
   rpc GetRemoteCommandCoordinator(GetRemoteCommandCoordinatorRequest)
       returns (GetRemoteCommandCoordinatorResponse);
+  rpc ListRemoteCommandCoordinators(ListRemoteCommandCoordinatorsRequest)
+      returns (ListRemoteCommandCoordinatorsResponse);
   rpc ScheduleRemoteFollowup(ScheduleRemoteFollowupRequest)
       returns (ScheduleRemoteFollowupResponse);
   rpc ListRemoteFollowups(ListRemoteFollowupsRequest) returns (ListRemoteFollowupsResponse);
@@ -346,6 +348,7 @@ message PluginPublicationLink {
 message GetGameInstanceRuntimeStateRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
+  string region_id = 3;
 }
 
 message GameInstanceRuntimeState {
@@ -488,15 +491,43 @@ message GameplayCommandStatus {
   string remote_result_error_code = 53;
   string remote_result_message = 54;
   PluginPublicationLink plugin_publication = 55;
-  string remote_origin_region_id = 56;
-  int64 remote_origin_region_epoch = 57;
-  string remote_target_region_id = 58;
-  int64 remote_target_region_epoch = 59;
-  int64 remote_origin_deadline_region_epoch = 60;
-  int64 remote_origin_deadline_tick_id = 61;
-  string remote_late_result_policy = 62;
-  string remote_target_command_execution_outcome = 63;
-  string remote_target_command_gameplay_result = 64;
+  string remote_origin_game_instance_id = 56;
+  string remote_origin_region_id = 57;
+  int64 remote_origin_region_epoch = 58;
+  string remote_target_game_instance_id = 59;
+  string remote_target_region_id = 60;
+  int64 remote_target_region_epoch = 61;
+  int64 remote_origin_deadline_region_epoch = 62;
+  int64 remote_origin_deadline_tick_id = 63;
+  string remote_late_result_policy = 64;
+  string remote_target_command_execution_outcome = 65;
+  string remote_target_command_gameplay_result = 66;
+  string remote_followup_status = 67;
+  string remote_followup_payload_kind = 68;
+  string remote_followup_requested_command = 69;
+  bool remote_followup_requires_solo_tick = 70;
+  string remote_followup_origin_source_kind = 71;
+  string remote_followup_origin_source_state = 72;
+  int64 remote_followup_origin_source_ordinal = 73;
+  int64 remote_followup_origin_source_due_tick_id = 74;
+  int64 remote_followup_origin_source_due_at_ms = 75;
+  string remote_target_entity_id = 76;
+  string remote_followup_effect_key = 77;
+  string remote_followup_failure_code = 78;
+  string remote_followup_failure_message = 79;
+  string remote_followup_event_type = 80;
+  string remote_followup_event_schema_version = 81;
+  string remote_followup_script_event_id = 82;
+  string remote_followup_trigger_mode = 83;
+  string remote_followup_claim_target_aggregate = 84;
+  string current_runtime_region_id = 85;
+  int64 current_runtime_region_epoch = 86;
+  string current_runtime_game_instance_id = 87;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 88;
+  string current_runtime_world_slug = 89;
+  string current_runtime_realm_slug = 90;
+  int64 current_runtime_pointer_version = 91;
+  bool is_current_runtime_routing_bundle_stale = 92;
 }
 
 message GetGameplayCommandStatusResponse {
@@ -589,10 +620,101 @@ message RemoteCommandCoordinatorEntry {
   int64 followup_origin_source_ordinal = 48;
   int64 followup_origin_source_due_tick_id = 49;
   int64 followup_origin_source_due_at_ms = 50;
+  string target_entity_id = 51;
+  string followup_effect_key = 52;
+  string followup_failure_code = 53;
+  string followup_failure_message = 54;
+  string followup_event_type = 55;
+  string followup_event_schema_version = 56;
+  string followup_script_event_id = 57;
+  string followup_trigger_mode = 58;
+  string followup_read_snapshot_token = 59;
+  string followup_event_payload_json = 60;
+  string followup_claim_target_aggregate = 61;
+  string current_origin_runtime_region_id = 62;
+  int64 current_origin_runtime_region_epoch = 63;
+  string current_target_runtime_region_id = 64;
+  int64 current_target_runtime_region_epoch = 65;
+  string followup_queue_source_kind = 66;
+  string followup_queue_source_state = 67;
+  int64 followup_queue_source_ordinal = 68;
+  int64 followup_queue_source_due_tick_id = 69;
+  int64 followup_queue_source_due_at_ms = 70;
+  string current_origin_runtime_game_instance_id = 71;
+  string current_target_runtime_game_instance_id = 72;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 73;
+  string current_origin_runtime_world_slug = 74;
+  string current_origin_runtime_realm_slug = 75;
+  int64 current_origin_runtime_pointer_version = 76;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 77;
+  string current_target_runtime_world_slug = 78;
+  string current_target_runtime_realm_slug = 79;
+  int64 current_target_runtime_pointer_version = 80;
+  bool is_origin_routing_bundle_stale = 81;
+  bool is_target_routing_bundle_stale = 82;
 }
 
 message GetRemoteCommandCoordinatorResponse {
   RemoteCommandCoordinatorEntry coordinator = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListRemoteCommandCoordinatorsRequest {
+  string tenant_id = 1;
+  string origin_region_id = 2;
+  string target_region_id = 3;
+  string state = 4;
+  string followup_id = 5;
+  string script_id = 6;
+  string plugin_id = 7;
+  string automation_dispatch_id = 8;
+  string command_id = 9;
+  int32 limit = 10;
+  string origin_game_instance_id = 11;
+  int64 origin_region_epoch = 12;
+  string target_game_instance_id = 13;
+  int64 target_region_epoch = 14;
+  string script_patch_version = 15;
+  string plugin_version_id = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  int64 pointer_version = 20;
+  string target_entity_id = 21;
+  string effect_key = 22;
+  string payload_kind = 23;
+  string origin_source_kind = 24;
+  string automation_work_item_id = 25;
+  string event_type = 26;
+  string script_event_id = 27;
+  string target_command_id = 28;
+  string target_command_execution_outcome = 29;
+  string target_command_gameplay_result = 30;
+  string late_result_policy = 31;
+  string execution_outcome = 32;
+  string gameplay_result = 33;
+  string followup_status = 34;
+  string followup_claimed_tick_batch_id = 35;
+  bool followup_requires_solo_tick = 36;
+  string followup_origin_source_state = 37;
+  string latest_result_outcome = 38;
+  string latest_result_error_code = 39;
+  string claim_target_aggregate = 40;
+  string current_origin_runtime_region_id = 41;
+  int64 current_origin_runtime_region_epoch = 42;
+  string current_target_runtime_region_id = 43;
+  int64 current_target_runtime_region_epoch = 44;
+  string followup_queue_source_kind = 45;
+  string followup_queue_source_state = 46;
+  int64 followup_queue_source_ordinal = 47;
+  int64 followup_queue_source_due_tick_id = 48;
+  int64 followup_queue_source_due_at_ms = 49;
+  string current_origin_runtime_game_instance_id = 50;
+  string current_target_runtime_game_instance_id = 51;
+}
+
+message ListRemoteCommandCoordinatorsResponse {
+  repeated RemoteCommandCoordinatorEntry coordinators = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
@@ -632,6 +754,12 @@ message ScheduleRemoteFollowupRequest {
   int64 origin_source_ordinal = 33;
   int64 origin_source_due_tick_id = 34;
   int64 origin_source_due_at_ms = 35;
+  string event_type = 36;
+  string event_schema_version = 37;
+  string script_event_id = 38;
+  string trigger_mode = 39;
+  string read_snapshot_token = 40;
+  string event_payload_json = 41;
 }
 
 message ScheduleRemoteFollowupResponse {
@@ -646,6 +774,53 @@ message ListRemoteFollowupsRequest {
   string tenant_id = 1;
   string target_region_id = 2;
   string status = 3;
+  string origin_game_instance_id = 4;
+  string origin_region_id = 5;
+  string target_game_instance_id = 6;
+  int64 target_region_epoch = 7;
+  string followup_id = 8;
+  string script_id = 9;
+  string plugin_id = 10;
+  string automation_dispatch_id = 11;
+  string command_id = 12;
+  int32 limit = 13;
+  int64 origin_region_epoch = 14;
+  string script_patch_version = 15;
+  string plugin_version_id = 16;
+  entity_management.v1.PlayableStateScope playable_state_scope = 17;
+  string world_slug = 18;
+  string realm_slug = 19;
+  int64 pointer_version = 20;
+  string payload_kind = 21;
+  string origin_source_kind = 22;
+  string automation_work_item_id = 23;
+  string target_entity_id = 24;
+  string effect_key = 25;
+  string failure_code = 26;
+  bool requires_solo_tick = 27;
+  string event_type = 28;
+  string script_event_id = 29;
+  string target_command_id = 30;
+  string target_command_execution_outcome = 31;
+  string target_command_gameplay_result = 32;
+  string claimed_tick_batch_id = 33;
+  string requested_command = 34;
+  string origin_source_state = 35;
+  int64 origin_deadline_region_epoch = 36;
+  int64 origin_deadline_tick_id = 37;
+  string late_result_policy = 38;
+  string claim_target_aggregate = 39;
+  string current_origin_runtime_region_id = 40;
+  int64 current_origin_runtime_region_epoch = 41;
+  string current_target_runtime_region_id = 42;
+  int64 current_target_runtime_region_epoch = 43;
+  string queue_source_kind = 44;
+  string queue_source_state = 45;
+  int64 queue_source_ordinal = 46;
+  int64 queue_source_due_tick_id = 47;
+  int64 queue_source_due_at_ms = 48;
+  string current_origin_runtime_game_instance_id = 49;
+  string current_target_runtime_game_instance_id = 50;
 }
 
 message RemoteFollowupEntry {
@@ -695,6 +870,34 @@ message RemoteFollowupEntry {
   int64 origin_deadline_region_epoch = 44;
   int64 origin_deadline_tick_id = 45;
   string late_result_policy = 46;
+  string event_type = 47;
+  string event_schema_version = 48;
+  string script_event_id = 49;
+  string trigger_mode = 50;
+  string read_snapshot_token = 51;
+  string event_payload_json = 52;
+  string claim_target_aggregate = 53;
+  string current_origin_runtime_region_id = 54;
+  int64 current_origin_runtime_region_epoch = 55;
+  string current_target_runtime_region_id = 56;
+  int64 current_target_runtime_region_epoch = 57;
+  string queue_source_kind = 58;
+  string queue_source_state = 59;
+  int64 queue_source_ordinal = 60;
+  int64 queue_source_due_tick_id = 61;
+  int64 queue_source_due_at_ms = 62;
+  string current_origin_runtime_game_instance_id = 63;
+  string current_target_runtime_game_instance_id = 64;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 65;
+  string current_origin_runtime_world_slug = 66;
+  string current_origin_runtime_realm_slug = 67;
+  int64 current_origin_runtime_pointer_version = 68;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 69;
+  string current_target_runtime_world_slug = 70;
+  string current_target_runtime_realm_slug = 71;
+  int64 current_target_runtime_pointer_version = 72;
+  bool is_origin_routing_bundle_stale = 73;
+  bool is_target_routing_bundle_stale = 74;
 }
 
 message ListRemoteFollowupsResponse {
@@ -705,6 +908,54 @@ message ListRemoteFollowupsResponse {
 message ListRemoteFollowupResultsRequest {
   string tenant_id = 1;
   string coordinator_id = 2;
+  string followup_id = 3;
+  string origin_region_id = 4;
+  string target_region_id = 5;
+  string outcome = 6;
+  string script_id = 7;
+  string plugin_id = 8;
+  string automation_dispatch_id = 9;
+  string command_id = 10;
+  int32 limit = 11;
+  string origin_game_instance_id = 12;
+  string target_game_instance_id = 13;
+  int64 origin_region_epoch = 14;
+  int64 target_region_epoch = 15;
+  string script_patch_version = 16;
+  string plugin_version_id = 17;
+  entity_management.v1.PlayableStateScope playable_state_scope = 18;
+  string world_slug = 19;
+  string realm_slug = 20;
+  int64 pointer_version = 21;
+  string result_error_code = 22;
+  string automation_work_item_id = 23;
+  string result_command_id = 24;
+  string result_command_execution_outcome = 25;
+  string result_command_gameplay_result = 26;
+  string target_entity_id = 27;
+  string effect_key = 28;
+  string failure_code = 29;
+  string payload_kind = 30;
+  string origin_source_kind = 31;
+  string event_type = 32;
+  string script_event_id = 33;
+  string result_message = 34;
+  bool requires_solo_tick = 35;
+  string origin_source_state = 36;
+  string late_result_policy = 37;
+  string claimed_tick_batch_id = 38;
+  string claim_target_aggregate = 39;
+  string current_origin_runtime_region_id = 40;
+  int64 current_origin_runtime_region_epoch = 41;
+  string current_target_runtime_region_id = 42;
+  int64 current_target_runtime_region_epoch = 43;
+  string queue_source_kind = 44;
+  string queue_source_state = 45;
+  int64 queue_source_ordinal = 46;
+  int64 queue_source_due_tick_id = 47;
+  int64 queue_source_due_at_ms = 48;
+  string current_origin_runtime_game_instance_id = 49;
+  string current_target_runtime_game_instance_id = 50;
 }
 
 message RemoteFollowupResultEntry {
@@ -740,6 +991,47 @@ message RemoteFollowupResultEntry {
   int64 origin_deadline_region_epoch = 30;
   int64 origin_deadline_tick_id = 31;
   string late_result_policy = 32;
+  string origin_game_instance_id = 33;
+  string target_game_instance_id = 34;
+  string target_entity_id = 35;
+  string effect_key = 36;
+  string payload_kind = 37;
+  bool requires_solo_tick = 38;
+  string origin_source_kind = 39;
+  string origin_source_state = 40;
+  int64 origin_source_ordinal = 41;
+  int64 origin_source_due_tick_id = 42;
+  int64 origin_source_due_at_ms = 43;
+  string failure_code = 44;
+  string failure_message = 45;
+  string event_type = 46;
+  string event_schema_version = 47;
+  string script_event_id = 48;
+  string trigger_mode = 49;
+  string read_snapshot_token = 50;
+  string event_payload_json = 51;
+  string claim_target_aggregate = 52;
+  string current_origin_runtime_region_id = 53;
+  int64 current_origin_runtime_region_epoch = 54;
+  string current_target_runtime_region_id = 55;
+  int64 current_target_runtime_region_epoch = 56;
+  string queue_source_kind = 57;
+  string queue_source_state = 58;
+  int64 queue_source_ordinal = 59;
+  int64 queue_source_due_tick_id = 60;
+  int64 queue_source_due_at_ms = 61;
+  string current_origin_runtime_game_instance_id = 62;
+  string current_target_runtime_game_instance_id = 63;
+  entity_management.v1.PlayableStateScope current_origin_runtime_playable_state_scope = 64;
+  string current_origin_runtime_world_slug = 65;
+  string current_origin_runtime_realm_slug = 66;
+  int64 current_origin_runtime_pointer_version = 67;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 68;
+  string current_target_runtime_world_slug = 69;
+  string current_target_runtime_realm_slug = 70;
+  int64 current_target_runtime_pointer_version = 71;
+  bool is_origin_routing_bundle_stale = 72;
+  bool is_target_routing_bundle_stale = 73;
 }
 
 message ListRemoteFollowupResultsResponse {

@@ -21,6 +21,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -125,16 +127,17 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(command.gameInstanceId(), "game_instance_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.targetPluginVersionId(), "target_plugin_version_id");
-    validateActivation(command);
-    Instant now = Instant.now();
-    PluginRuntimeState state =
+    PluginRuntimeState existingState =
         repository
             .findByTenantIdAndGameInstanceIdAndPluginId(
                 command.tenantId(), command.gameInstanceId(), command.pluginId())
-            .orElseGet(
-                () ->
-                    newState(
-                        command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
+            .orElse(null);
+    GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
+    Instant now = Instant.now();
+    PluginRuntimeState state =
+        existingState != null
+            ? existingState
+            : newState(command.tenantId(), command.gameInstanceId(), command.pluginId(), now);
     String previous = normalize(state.getActivePluginVersionId());
     String statusReason = normalizeReason(command.reason(), "operator_activation");
     String controlPlaneRequestId = normalize(command.controlPlaneRequestId());
@@ -151,13 +154,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setActorPrincipal(actorPrincipal);
     state.setLastChangedAt(now);
     state.setLastPolicyCheckedAt(now);
+    observeRuntimeScope(state, runtime);
     PluginRuntimeState saved = repository.save(state);
     appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
     reconcileSchedules(saved);
     return new ActivationResult(previous, saved.getActivePluginVersionId(), controlPlaneRequestId);
   }
 
-  private void validateActivation(ActivationCommand command) {
+  private GetGameInstanceRuntimeStateResponse validateActivation(
+      ActivationCommand command, PluginRuntimeState existingState) {
     var publication =
         gameDesignControlPlaneClient.getPublishedPluginVersion(
             command.tenantId(), command.pluginId(), command.targetPluginVersionId());
@@ -189,9 +194,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
           "PLUGIN_COMPONENT_POLICY_UNAVAILABLE: plugin component policy decision is missing");
     }
 
-    var runtime =
+    GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            command.tenantId(), command.gameInstanceId());
+            command.tenantId(),
+            command.gameInstanceId(),
+            existingState == null ? "" : normalize(existingState.getRuntimeRegionId()));
     if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
       throw new IllegalArgumentException(
           "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + runtime.getError().getMessage());
@@ -215,6 +222,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         runtime.getRuntimeState().getPinnedScriptPatchVersion(),
         command.pluginId(),
         command.targetPluginVersionId());
+    return runtime;
   }
 
   private void requireAbilitySchemaMatch(
@@ -288,6 +296,10 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       String tenantId, String gameInstanceId, int maxResults) {
     requireText(tenantId, "tenant_id");
     int limit = Math.max(1, maxResults <= 0 ? 100 : maxResults);
+    RuntimeScope runtimeScope =
+        normalize(gameInstanceId).isBlank()
+            ? RuntimeScope.UNKNOWN
+            : currentRuntimeScope(tenantId, gameInstanceId);
     List<PluginRuntimeState> activeStates =
         normalize(gameInstanceId).isBlank()
             ? repository
@@ -300,6 +312,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     PluginState.PLUGIN_STATE_ENABLED.name(),
                     "",
                     PageRequest.of(0, limit));
+    activeStates =
+        activeStates.stream().filter(state -> matchesRuntimeScope(state, runtimeScope)).toList();
     long evaluatedAtMs = Instant.now().toEpochMilli();
     List<PluginPolicyViolation> violations =
         activeStates.stream()
@@ -321,6 +335,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             reason ->
                 new PluginPolicyViolation(
                     state.getGameInstanceId(),
+                    normalize(state.getRuntimeRegionId()),
+                    zeroIfNull(state.getRuntimeRegionEpoch()),
                     state.getPluginId(),
                     activePluginVersionId,
                     reason,
@@ -370,6 +386,40 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     reconcileSchedules(saved);
   }
 
+  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
+    GetGameInstanceRuntimeStateResponse runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+    if (runtime == null
+        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
+        || !runtime.hasRuntimeState()) {
+      return RuntimeScope.UNKNOWN;
+    }
+    return new RuntimeScope(
+        normalize(runtime.getRuntimeState().getRegionId()),
+        runtime.getRuntimeState().getRegionEpoch());
+  }
+
+  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
+    if (!runtimeScope.known()) {
+      return true;
+    }
+    String stateRegionId = normalize(state.getRuntimeRegionId());
+    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
+      return false;
+    }
+    return stateRegionId.equals(runtimeScope.regionId())
+        && stateRegionEpoch == runtimeScope.regionEpoch();
+  }
+
+  private record RuntimeScope(String regionId, long regionEpoch) {
+    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
+
+    private boolean known() {
+      return !regionId.isBlank() && regionEpoch > 0;
+    }
+  }
+
   private void transition(
       PluginStateCommand command, PluginState targetState, String defaultReason) {
     requireText(command.tenantId(), "tenant_id");
@@ -405,9 +455,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   }
 
   private void reconcileSchedules(PluginRuntimeState state) {
-    var runtime =
+    GetGameInstanceRuntimeStateResponse runtime =
         gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            state.getTenantId(), state.getGameInstanceId());
+            state.getTenantId(), state.getGameInstanceId(), normalize(state.getRuntimeRegionId()));
     if (runtime == null) {
       logger.warn(
           "Skipping schedule reconciliation for tenant {} gameInstance {} plugin {} because runtime state client returned null",
@@ -432,6 +482,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
           state.getGameInstanceId(),
           state.getPluginId());
       return;
+    }
+    if (observeRuntimeScope(state, runtime)) {
+      repository.save(state);
     }
     scriptScheduleInstanceService.reconcileObservedRuntimeState(
         state.getTenantId(), state.getGameInstanceId(), runtime.getRuntimeState());
@@ -497,6 +550,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return new PluginRuntimeStatus(
         activePluginVersionId,
         pendingPluginVersionId,
+        normalize(state.getRuntimeRegionId()),
+        zeroIfNull(state.getRuntimeRegionEpoch()),
         PluginState.valueOf(state.getPluginState()),
         state.getStatusReason(),
         state.getLastChangedAt().toEpochMilli(),
@@ -537,6 +592,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         event.getEventId(),
         event.getTenantId(),
         event.getGameInstanceId(),
+        normalize(event.getRuntimeRegionId()),
+        zeroIfNull(event.getRuntimeRegionEpoch()),
         event.getPluginId(),
         previousPluginVersionId,
         activePluginVersionId,
@@ -559,6 +616,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     event.setEventId("prte-" + UUID.randomUUID());
     event.setTenantId(state.getTenantId());
     event.setGameInstanceId(state.getGameInstanceId());
+    event.setRuntimeRegionId(normalize(state.getRuntimeRegionId()));
+    event.setRuntimeRegionEpoch(state.getRuntimeRegionEpoch());
     event.setPluginId(state.getPluginId());
     event.setPreviousPluginVersionId(normalize(previousPluginVersionId));
     event.setActivePluginVersionId(normalize(state.getActivePluginVersionId()));
@@ -587,6 +646,31 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
+  }
+
+  private static boolean observeRuntimeScope(
+      PluginRuntimeState state, GetGameInstanceRuntimeStateResponse runtime) {
+    if (runtime == null || !runtime.hasRuntimeState()) {
+      return false;
+    }
+    return observeRuntimeScope(state, runtime.getRuntimeState());
+  }
+
+  private static boolean observeRuntimeScope(
+      PluginRuntimeState state, GameInstanceRuntimeState runtimeState) {
+    String runtimeRegionId = normalize(runtimeState.getRegionId());
+    Long runtimeRegionEpoch =
+        runtimeState.getRegionEpoch() > 0 ? runtimeState.getRegionEpoch() : null;
+    boolean changed =
+        !runtimeRegionId.equals(normalize(state.getRuntimeRegionId()))
+            || zeroIfNull(runtimeRegionEpoch) != zeroIfNull(state.getRuntimeRegionEpoch());
+    state.setRuntimeRegionId(runtimeRegionId);
+    state.setRuntimeRegionEpoch(runtimeRegionEpoch);
+    return changed;
   }
 
   private static void requireText(String value, String fieldName) {

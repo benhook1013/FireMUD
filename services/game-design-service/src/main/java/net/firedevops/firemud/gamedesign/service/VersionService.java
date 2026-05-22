@@ -11,7 +11,8 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 
 public interface VersionService {
-  VersionDto publishVersion(String tenantId, String notes) throws Exception;
+  VersionDto publishVersion(String tenantId, String notes, String publishRequestId)
+      throws Exception;
 
   VersionDto publishScriptPatchVersion(
       String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)

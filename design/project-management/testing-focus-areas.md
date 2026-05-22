@@ -1,104 +1,88 @@
-# FireMUD Testing Focus Areas (Problem Domains)
+# FireMUD Testing Focus Areas
 
-This document lists recurring problem domains and testing focus areas for FireMUD. As the project grows and new bugs appear, extend these sections with concrete scenarios, links to tests, and regression checks.
+This document is the short catalog of the testing areas that most often deserve explicit proof in the current FireMUD tree. Keep it focused on recurring risk domains and canonical proof surfaces, not on one-off bug notes.
 
 ## How to Use This Document
 
-- Treat each numbered section as a **living catalog** of risks and regression scenarios.
-- When fixing a bug, add a short note under the relevant section with links to the tests that cover it.
-- Link cross-service regression suites (for example, LOOK and SAY flows) from here rather than duplicating full transcripts or Gradle invocation details.
+- Treat each numbered section as a living list of recurring regression risks.
+- When fixing a bug, add a short note under the relevant section with links to the tests or smoke proof that now cover it.
+- Prefer linking to the canonical suite, harness, or proof doc rather than copying command transcripts or Gradle invocations into this file.
+- For current slice priority, use `design/project-management/vertical-slices/00-slice-progress.md` rather than this file.
 
-## 1. Authentication, Authorization, and Session Management
+## 1. Admission, Authentication, and Session Binding
 
-- Login flow: correct handling of valid/invalid credentials, lockouts, and error messages.
-- Session creation and teardown: game sessions, WebSocket sessions, and TCP connections cleaned up reliably on logout or disconnect.
-- Session fixation and hijacking: new logins should not reuse attacker-controlled identifiers; verify session IDs and tokens are regenerated appropriately.
-- Cross-service auth: Account Service, Game Session Service, and gateways agree on user identity and permissions (no privilege escalation between services).
-- Idle timeouts: long-running connections (Telnet/WebSocket) respect inactivity timeouts and clean stale sessions.
-- Reconnection behavior: reconnecting clients reattach cleanly or get a clear error; no duplicate sessions or “ghost” players.
+- Prove `LOGIN`, `PLAY`, reconnect, takeover, and logout behavior across both WebSocket and Telnet when the change touches session ownership or account identity.
+- Check fail-closed behavior when account identity, connect context, entitlement state, moderation, or routing freshness no longer matches the preserved session.
+- Keep first-party bootstrap and classic text-client admission aligned on the same account and gameplay-binding rules.
+- Favor proof that checks both the user-visible result and the persisted or cached session state after the flow completes.
 
-## 2. Redis and Caching (Keys, TTL, and Consistency)
+## 2. Routing Authority, Realm Selection, and Freshness
 
-- Key naming: consistent namespaces and patterns, no accidental collisions between services or environments.
-- TTL and expiry: session or transient keys have appropriate timeouts; expired keys do not leave orphaned state.
-- Atomic operations: multi-step updates use appropriate Redis primitives (transactions, Lua, or optimistic locking) to avoid race conditions.
-- Cleanup: logout, character delete, and server shutdown paths remove or invalidate related keys.
-- Environment isolation: dev/test/prod Redis instances and key prefixes are distinct to prevent cross-environment interference.
-- Failure behavior: Redis outages or timeouts degrade gracefully; clients see explicit errors instead of silent corruption.
+- Treat world and realm selection as a routing-sensitive seam, not just command parsing.
+- Re-prove routing freshness whenever work touches admission pointers, reconnect, connect-token issuance, gameplay-stage command admission, or presence projections.
+- Prefer tests that preserve and validate the full routing bundle rather than reverse-mapping from only `tenantId` and `gameInstanceId`.
+- Keep player-facing discovery and admission reads aligned with the Game Session authority surface rather than local config copies.
 
-## 3. Persistence and Data Integrity (PostgreSQL and JPA)
+## 3. Transport Parity and Transcript Semantics
 
-- Transaction boundaries: multi-step operations are transactional where needed; partial failures do not leave inconsistent rows.
-- Referential integrity: foreign keys and relationships correctly prevent orphaned or dangling records.
-- Idempotency: commands that may be retried (e.g., due to network issues) can be safely applied more than once when required.
-- Migrations: schema changes are backward compatible during rolling deploys and maintain data integrity.
-- Query performance: key queries used in hot paths have indexes and acceptable execution plans.
+- WebSocket and Telnet should agree on the admitted gameplay flow for the same user-visible action unless the protocol intentionally differs.
+- Transcript-oriented tests should wait for the concrete canonical message they care about rather than depending on incidental ordering.
+- Telnet transcript helpers must preserve multiline blocks, prompt-tolerant reads, and timeout-returned partial output where that is the real contract under test.
+- For LOOK, SAY, and related transport-sensitive proof, use the slice-support docs as the canonical entrypoint:
+  - `design/project-management/slice-support/look-and-say-regressions.md`
+  - `design/project-management/slice-support/look-cross-service-tests.md`
+  - `design/project-management/slice-support/look-smoke-tests.md`
 
-## 4. Cross-Service and Network Boundaries
+## 4. Shared Harnesses, Fixtures, and Scenario Isolation
 
-- Protocol compatibility: Telnet, WebSocket, and gateway APIs behave as documented and stay backward compatible for existing clients.
-- Integration flows: end-to-end tests for login, character selection, entering the world, and simple commands across multiple services.
-- Timeouts and retries: reasonable client timeouts and retry strategies that do not cause thundering herds or duplicate side effects.
-- Error propagation: errors from downstream services (Account, Game Session, DB, Redis) are converted to clear, safe messages for clients.
-- LOOK and SAY cross-service regressions: see `design/project-management/slice-support/look-and-say-regressions.md` for the detailed test plan, transcripts, metrics, and Gradle tasks that exercise WebSocket and Telnet flows in lockstep.
-- Version skew: older services can interact safely with newer ones during incremental rollouts.
+- Prefer shared gameplay drivers, scenario builders, assertion helpers, and cross-service stacks over local mini-harnesses.
+- When a suite mutates baseline room state, social state, session state, or runtime rows, verify that the shared reset path restores the suite-specific baseline rather than a generic global default.
+- Reuse canonical ready/admitted/reconnect/takeover helpers when possible so proof stays readable and transport semantics stay consistent.
+- Treat flaky local polling loops as infrastructure work to eliminate unless the timing behavior itself is the thing under test.
 
-## 5. Command Parsing, Input Validation, and Game Logic
+## 5. Cross-Service Gameplay Mutation Flows
 
-- Input validation: commands and payloads are validated and sanitized; malicious or malformed input can’t cause crashes or injections.
-- Command parsing: ambiguous or partial commands are handled consistently; whitespace and encoding edge cases are covered.
-- State transitions: player and world state changes follow valid transitions (e.g., cannot act while dead, stunned, or disconnected).
-- Business rules: core mechanics (combat, movement, inventory, economy) have deterministic, tested behavior.
-- Rate limiting: spammy commands are throttled to protect CPU, network, and downstream services.
-- `LOOK` cross-service regressions: the `crossServiceTest` target spins up Game Session, Game Logic, World Management, Entity Management, and the TCP proxy/Gateway so both WebSocket and Telnet flows re-run `LOGIN` + `LOOK`, validate the canonical transcript, and surface the `gamesession.command.look.*` metrics/logs described in `design/project-management/slice-support/look-cross-service-tests.md`.
+- Re-prove full command paths whenever work crosses Game Session, Game Logic, Entity Management, Social Groups, Gateway, or TCP Proxy boundaries.
+- High-risk flows include:
+  - movement and destination LOOK refresh
+  - inventory, container, and equipment mutations
+  - friend presence, roster mutations, and visibility policy
+  - communication flows such as `SAY`, `WHISPER`, and `TELL`
+- Prefer proof that checks both the player-visible transcript and the backend request shape or durable command outcome.
 
-## 6. Concurrency, Race Conditions, and State Consistency
+## 6. Redis, Persistence, and Replay-Sensitive State
 
-- Concurrent actions: multiple commands or connections from the same player do not corrupt state or bypass checks.
-- Locking and contention: shared resources (e.g., rooms, items, combat state) avoid deadlocks and starvation.
-- Event ordering: events that must be processed in order (combat ticks, buffs, timers) are consistently ordered under load.
-- Duplicate deliveries: message or event deduplication where at-least-once delivery is used.
+- Verify cleanup and isolation around Redis keys, cached session state, recent presence, and replay-sensitive command or transport state.
+- Check transactional and idempotent behavior when work touches durable command rows, admission pointers, migrations, or other retry-prone persistence seams.
+- When fixing reconnect, restart, or cutover behavior, prove that stale cached state does not silently survive into the next admitted command path.
+- If a change affects Flyway numbering, repo-wide validation still matters because service-local green checks can miss branch-wide migration drift.
 
-## 7. Error Handling, Logging, Metrics, and Tracing
+## 7. Smoke Proof and Runtime Packaging
 
-- Error contracts: APIs and services return structured error responses rather than leaking stack traces or internal details.
-- Logging quality: important paths log with appropriate levels and context; no sensitive data appears in logs.
-- Metrics and alerts: key operations (logins, session creation, critical commands) emit metrics and have alert thresholds.
-- Tracing: cross-service flows are traceable end-to-end with consistent correlation IDs.
-- Degradation tests: verify behavior when dependencies are slow, partially failing, or unavailable.
+- If a change affects startup, wiring, auth, routing, migrations, or packaged artifacts, use the canonical repo smoke entrypoints under `dev-tools/` rather than ad hoc compose loops.
+- Keep source-built smoke proof aligned with the canonical scripts:
+  - `dev-tools/verify-fresh-bootstrap.sh`
+  - `dev-tools/verify-restart-state.sh`
+  - `dev-tools/verify-smoke-images.sh`
+- Prefer fresh-image or fresh-container proof when runtime behavior could be hidden by stale local artifacts.
+- Hosted or preview-specific proof should still validate the same player-facing admission and basic gameplay seams as the local smoke path.
 
-## 8. Security (OWASP and Game-Specific Threats)
+## 8. Error Contracts, Logging, and Observability
 
-- Authentication: password handling, credential storage, and login flows adhere to OWASP best practices.
-- Authorization: role- and permission-based checks exist at appropriate boundaries; no “trust the client” assumptions.
-- Injection: defense against SQL/NoSQL/command injection in all inputs, including in-game commands and chat.
-- CSRF/XSS/Clickjacking: for any web dashboards or admin tools, apply standard OWASP defenses.
-- Transport security: secure protocols, cipher suites, and certificate handling for external-facing endpoints.
-- Abuse and cheating: rate limits, anti-bot/automation checks, and detection for suspicious behavior (e.g., impossible movement or actions).
+- Verify that application-level gRPC failures stay in normal responses with `ErrorDetail` instead of surfacing as transport errors.
+- Check that player-visible failures remain specific and safe when downstream services are unavailable or return app-level denials.
+- Re-prove important command metrics, warning logs, and trace context when changing hot gameplay or admission paths.
+- Favor tests that prove the exact canonical failure code or metric increment rather than only asserting that some generic error occurred.
 
-## 9. Configuration, Secrets, and Environment Management
+## 9. Security and Boundary Enforcement
 
-- Configuration safety: defaults are safe for production (e.g., debug off, strict security settings on).
-- Secrets management: secrets never live in source control; they are injected through secure mechanisms (vaults, CI/CD secret stores).
-- Environment parity: test/stage environments resemble production configurations closely enough to catch real issues.
-- Misconfiguration resilience: missing or invalid configuration results in clear startup failures or safe fallbacks, not silent misbehavior.
+- Re-test account and tenant authorization whenever a route, RPC, or internal bridge changes ownership checks or session assumptions.
+- Verify that internal-only seams do not quietly become caller-trusted seams through convenience shortcuts in tests or control-plane code.
+- Keep transport-edge checks, session binding rules, and role-clamped visibility behavior explicitly covered where gameplay or operator work depends on them.
+- For web or operator surfaces, keep standard OWASP concerns in scope, but prioritize the FireMUD-specific identity and routing boundaries first.
 
-## 10. Performance, Load, and Scalability
+## 10. Bug-Driven Regression Discipline
 
-- Load characteristics: sustained and burst load tests for login, chat, movement, and combat traffic patterns.
-- Resource usage: CPU, memory, threads, and connection pools stay within acceptable bounds under load.
-- Latency budgets: critical paths (login, join world, simple commands) stay within target response times.
-- Scaling strategies: horizontal scaling and sharding plans are validated in non-prod environments.
-
-## 11. Deployment, Rollback, and Operations
-
-- Zero-downtime deploys: blue/green or rolling deployment behavior is tested for stateful flows and long-lived connections.
-- Health checks: readiness and liveness probes correctly reflect service health and dependencies.
-- Rollback: rollback procedures are tested, especially after schema or protocol changes.
-- Runbooks: for critical failure modes, document and periodically test operational playbooks.
-
-## 12. Regression and Bug-Driven Testing
-
-- Bug capture: every significant bug gets a short note added to the relevant section here with a link to a regression test.
-- Regression tests: when fixing a bug, add or update tests so the failure mode is covered permanently.
-- Periodic reviews: revisit this document regularly to add new domains or refine existing ones as FireMUD evolves.
+- Significant bugs should land with a durable test, smoke proof, or harness improvement in the same risk family.
+- When the real problem is missing shared test support, fix the harness or proof path rather than copying another local workaround.
+- Revisit this document periodically to remove obsolete focus areas and add new recurring seams as the platform changes.

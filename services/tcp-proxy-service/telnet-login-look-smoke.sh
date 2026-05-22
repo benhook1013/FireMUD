@@ -49,8 +49,8 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 from smoke_common import (
     gameplay_item_container_equipment_steps,
     http_readiness_up,
-    run_command_plan,
-    wait_for_incremental_response,
+    recv_until_socket,
+    run_telnet_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -75,56 +75,6 @@ startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unav
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
-def recv_until(sock, expected_substring, timeout):
-    deadline = time.time() + timeout
-    chunks = []
-    while time.time() < deadline:
-        try:
-            sock.settimeout(deadline - time.time())
-            data = sock.recv(4096)
-        except (socket.timeout, BlockingIOError):
-            break
-        if not data:
-            break
-        chunks.append(data.decode("iso-8859-1", errors="ignore"))
-        joined = "".join(chunks)
-        if expected_substring in joined:
-            return joined
-    return "".join(chunks)
-
-
-def drain_available(sock, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
-    chunks = []
-    while time.time() < deadline:
-        try:
-            sock.settimeout(max(0.05, deadline - time.time()))
-            data = sock.recv(4096)
-        except (socket.timeout, BlockingIOError):
-            break
-        if not data:
-            break
-        chunks.append(data.decode("iso-8859-1", errors="ignore"))
-    return "".join(chunks)
-
-def send_and_expect(sock, responses, line, expected_substrings, label):
-    start_index = len(responses)
-    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
-    drain_timeout = 1.0 if label == "PLAY" else 0.25
-    response = wait_for_incremental_response(
-        lambda: recv_until(sock, "", 0.5),
-        responses,
-        start_index,
-        expected_substrings,
-        timeout_seconds,
-        "".join,
-        lambda: drain_available(sock, drain_timeout),
-    )
-    print(f"=== {label} response ===")
-    print(response.strip() or "<no data>")
-    return response
-
-
 def verify_pre_readiness_telnet_admission():
     readiness_url = f"{tcp_proxy_api_base}/actuator/health/readiness"
     deadline = time.time() + startup_wait_seconds
@@ -139,7 +89,7 @@ def verify_pre_readiness_telnet_admission():
         observed_unready_window = True
         try:
             with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-                response = recv_until(sock, "\n", timeout_seconds).strip()
+                response = recv_until_socket(sock, "\n", timeout_seconds).strip()
                 print("=== Pre-readiness Telnet response ===")
                 print(response or "<no data>")
                 # A pre-readiness admission block may surface as either an explicit
@@ -181,16 +131,10 @@ try:
     )
     verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-        responses = []
         steps = gameplay_item_container_equipment_steps(
             username, password, worlds_expect, login_expect, play_expect, look_expect
         )
-        run_command_plan(
-            steps,
-            lambda line, expected_substrings, label, timeout: send_and_expect(
-                sock, responses, line, expected_substrings, label
-            ),
-        )
+        run_telnet_command_plan(sock, steps, timeout_seconds)
 
 except OSError as exc:
     sys.stderr.write(f"Failed to connect to {host}:{port}: {exc}\n")

@@ -39,6 +39,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   static final String COORDINATOR_LATE_RESULT_RECONCILED = "LATE_RESULT_RECONCILED";
 
   static final String FOLLOWUP_SCHEDULED = "SCHEDULED";
+  static final String FOLLOWUP_QUEUE_SOURCE_KIND = "REMOTE_FOLLOWUP";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED = "TARGET_REGION_SCHEDULED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED = "TARGET_REGION_CLAIMED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_APPLIED = "TARGET_REGION_APPLIED";
+  static final String FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED = "TARGET_REGION_ABANDONED";
   static final String FOLLOWUP_APPLIED = "APPLIED";
   static final String FOLLOWUP_ABANDONED = "ABANDONED";
 
@@ -206,6 +211,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
     followup.setStatus(FOLLOWUP_ABANDONED);
     followup.setClaimedTickBatchId(null);
+    followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+    followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED);
     followup.setFailureCode(failureCode);
     followup.setFailureMessage(truncate(failureMessage));
     followup.setUpdatedAt(Instant.now(clock));
@@ -381,33 +388,20 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
           "payload kind '%s' is not yet supported".formatted(payloadSummary.kind()));
     }
     if (PAYLOAD_KIND_TRIGGER_SCRIPT_EVENT.equals(payloadSummary.kind())) {
-      validateTriggerScriptEventPayload(request.payloadJson(), request.targetEntityId());
+      triggerScriptEventSummary(
+          request.payloadJson(),
+          request.eventType(),
+          request.eventSchemaVersion(),
+          request.scriptEventId(),
+          request.triggerMode(),
+          request.readSnapshotToken(),
+          request.eventPayloadJson(),
+          request.targetEntityId());
       return;
     }
     if (payloadSummary.command() == null) {
       throw new IllegalArgumentException(
           "payload command is required for kind '%s'".formatted(payloadSummary.kind()));
-    }
-  }
-
-  private static void validateTriggerScriptEventPayload(String payloadJson, String targetEntityId) {
-    if (payloadJson == null || payloadJson.isBlank()) {
-      throw new IllegalArgumentException(
-          "payload_json is required for kind 'trigger_script_event'");
-    }
-    JsonNode root;
-    try {
-      root = OBJECT_MAPPER.readTree(payloadJson);
-    } catch (IOException ex) {
-      throw new IllegalArgumentException("payload_json must be valid JSON");
-    }
-    requirePayloadField(root, "eventType", "payload eventType is required");
-    requirePayloadField(root, "scriptEventId", "payload scriptEventId is required");
-    requirePayloadField(root, "readSnapshotToken", "payload readSnapshotToken is required");
-    requirePayloadField(root, "eventPayload", "payload eventPayload is required");
-    if (blankToNull(targetEntityId) == null) {
-      throw new IllegalArgumentException(
-          "target_entity_id is required for kind 'trigger_script_event'");
     }
   }
 
@@ -555,11 +549,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       String automationWorkItemId,
       String scriptId,
       ScheduleRequest request) {
+    RoutingBundle requestRoutingBundle =
+        routingBundleFromStoredValues(
+            request.worldSlug(), request.realmSlug(), request.pointerVersion(), null, null, null);
     return normalized(blankToNull(request.playableStateScope()))
             .equals(normalized(playableStateScope))
-        && normalized(blankToNull(request.worldSlug())).equals(normalized(worldSlug))
-        && normalized(blankToNull(request.realmSlug())).equals(normalized(realmSlug))
-        && sameLong(pointerVersion, request.pointerVersion())
+        && normalized(requestRoutingBundle.worldSlug()).equals(normalized(worldSlug))
+        && normalized(requestRoutingBundle.realmSlug()).equals(normalized(realmSlug))
+        && sameLong(pointerVersion, requestRoutingBundle.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
@@ -632,6 +629,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     followup.setDueTickId(request.targetDueTickId());
     followup.setEffectKey(request.effectKey());
     followup.setTargetEntityId(blankToNull(request.targetEntityId()));
+    followup.setClaimTargetAggregate(
+        claimTargetAggregate(request.targetEntityId(), request.targetGameInstanceId()));
     followup.setPayloadJson(blankToNull(request.payloadJson()));
     PayloadSummary payloadSummary =
         payloadSummary(
@@ -652,9 +651,30 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataLong(request.originSourceDueTickId(), payloadSummary.originSourceDueTickId()));
     followup.setOriginSourceDueAtMs(
         metadataLong(request.originSourceDueAtMs(), payloadSummary.originSourceDueAtMs()));
+    TriggerScriptEventSummary eventSummary =
+        triggerScriptEventSummary(
+            request.payloadJson(),
+            request.eventType(),
+            request.eventSchemaVersion(),
+            request.scriptEventId(),
+            request.triggerMode(),
+            request.readSnapshotToken(),
+            request.eventPayloadJson(),
+            request.targetEntityId());
+    followup.setEventType(eventSummary.eventType());
+    followup.setEventSchemaVersion(eventSummary.eventSchemaVersion());
+    followup.setScriptEventId(eventSummary.scriptEventId());
+    followup.setTriggerMode(eventSummary.triggerMode());
+    followup.setReadSnapshotToken(eventSummary.readSnapshotToken());
+    followup.setEventPayloadJson(eventSummary.eventPayloadJson());
     followup.setStatus(FOLLOWUP_SCHEDULED);
     followup.setClaimedTickBatchId(null);
     followup.setClaimOrdinal(null);
+    followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+    followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED);
+    followup.setQueueSourceOrdinal(null);
+    followup.setQueueSourceDueTickId(request.targetDueTickId());
+    followup.setQueueSourceDueAtMs(null);
     followup.setFailureCode(null);
     followup.setFailureMessage(null);
     applySchedulingMetadata(followup, request, command);
@@ -674,8 +694,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTenantId(request.tenantId());
     result.setCoordinatorId(request.coordinatorId());
     result.setFollowupId(request.followupId());
+    result.setOriginGameInstanceId(
+        coordinator != null && coordinator.getOriginGameInstanceId() != null
+            ? coordinator.getOriginGameInstanceId()
+            : followup == null ? null : followup.getOriginGameInstanceId());
     result.setOriginRegionId(request.originRegionId());
     result.setOriginRegionEpoch(request.originRegionEpoch());
+    result.setTargetGameInstanceId(
+        coordinator != null && coordinator.getTargetGameInstanceId() != null
+            ? coordinator.getTargetGameInstanceId()
+            : followup == null ? null : followup.getTargetGameInstanceId());
     result.setTargetRegionId(request.targetRegionId());
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
@@ -695,16 +723,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getPlayableStateScope() != null
                 ? coordinator.getPlayableStateScope()
                 : followup == null ? null : followup.getPlayableStateScope()));
-    result.setWorldSlug(
-        blankToNull(
-            coordinator != null && coordinator.getWorldSlug() != null
-                ? coordinator.getWorldSlug()
-                : followup == null ? null : followup.getWorldSlug()));
-    result.setRealmSlug(
-        blankToNull(
-            coordinator != null && coordinator.getRealmSlug() != null
-                ? coordinator.getRealmSlug()
-                : followup == null ? null : followup.getRealmSlug()));
+    RoutingBundle resultRoutingBundle =
+        routingBundleFromStoredValues(
+            coordinator != null ? coordinator.getWorldSlug() : null,
+            coordinator != null ? coordinator.getRealmSlug() : null,
+            coordinator != null ? coordinator.getPointerVersion() : null,
+            followup == null ? null : followup.getWorldSlug(),
+            followup == null ? null : followup.getRealmSlug(),
+            followup == null ? null : followup.getPointerVersion());
+    result.setWorldSlug(resultRoutingBundle.worldSlug());
+    result.setRealmSlug(resultRoutingBundle.realmSlug());
     result.setScriptPatchVersion(
         blankToNull(
             coordinator != null && coordinator.getScriptPatchVersion() != null
@@ -740,26 +768,27 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getScriptId() != null
                 ? coordinator.getScriptId()
                 : followup == null ? null : followup.getScriptId()));
-    result.setPointerVersion(
-        coordinator != null && coordinator.getPointerVersion() != null
-            ? coordinator.getPointerVersion()
-            : followup == null ? null : followup.getPointerVersion());
+    result.setPointerVersion(resultRoutingBundle.pointerVersion());
     result.setObservedAt(now);
   }
 
   private static void applySchedulingMetadata(
       RemoteCommandCoordinator coordinator, ScheduleRequest request, GameplayCommand command) {
+    RoutingBundle routingBundle =
+        routingBundleFromRequestAndCommand(
+            request.worldSlug(),
+            request.realmSlug(),
+            request.pointerVersion(),
+            command == null ? null : command.getWorldSlug(),
+            command == null ? null : command.getRealmSlug(),
+            command == null ? null : command.getPointerVersion());
     coordinator.setPlayableStateScope(
         metadataValue(
             request.playableStateScope(),
             command == null ? null : command.getPlayableStateScope()));
-    coordinator.setWorldSlug(
-        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
-    coordinator.setRealmSlug(
-        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
-    coordinator.setPointerVersion(
-        metadataLong(
-            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    coordinator.setWorldSlug(routingBundle.worldSlug());
+    coordinator.setRealmSlug(routingBundle.realmSlug());
+    coordinator.setPointerVersion(routingBundle.pointerVersion());
     coordinator.setScriptPatchVersion(
         metadataValue(
             request.scriptPatchVersion(),
@@ -783,17 +812,21 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static void applySchedulingMetadata(
       RemoteFollowup followup, ScheduleRequest request, GameplayCommand command) {
+    RoutingBundle routingBundle =
+        routingBundleFromRequestAndCommand(
+            request.worldSlug(),
+            request.realmSlug(),
+            request.pointerVersion(),
+            command == null ? null : command.getWorldSlug(),
+            command == null ? null : command.getRealmSlug(),
+            command == null ? null : command.getPointerVersion());
     followup.setPlayableStateScope(
         metadataValue(
             request.playableStateScope(),
             command == null ? null : command.getPlayableStateScope()));
-    followup.setWorldSlug(
-        metadataValue(request.worldSlug(), command == null ? null : command.getWorldSlug()));
-    followup.setRealmSlug(
-        metadataValue(request.realmSlug(), command == null ? null : command.getRealmSlug()));
-    followup.setPointerVersion(
-        metadataLong(
-            request.pointerVersion(), command == null ? null : command.getPointerVersion()));
+    followup.setWorldSlug(routingBundle.worldSlug());
+    followup.setRealmSlug(routingBundle.realmSlug());
+    followup.setPointerVersion(routingBundle.pointerVersion());
     followup.setScriptPatchVersion(
         metadataValue(
             request.scriptPatchVersion(),
@@ -870,17 +903,108 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         positiveLong(root.path("originSourceDueAtMs")));
   }
 
-  private static void requirePayloadField(JsonNode root, String fieldName, String message) {
-    JsonNode field = root.path(fieldName);
-    if (field.isMissingNode() || field.isNull()) {
-      throw new IllegalArgumentException(message);
+  private static TriggerScriptEventSummary triggerScriptEventSummary(
+      String payloadJson,
+      String requestEventType,
+      String requestEventSchemaVersion,
+      String requestScriptEventId,
+      String requestTriggerMode,
+      String requestReadSnapshotToken,
+      String requestEventPayloadJson,
+      String targetEntityId) {
+    String payloadEventType = null;
+    String payloadEventSchemaVersion = null;
+    String payloadScriptEventId = null;
+    String payloadTriggerMode = null;
+    String payloadReadSnapshotToken = null;
+    String payloadEventPayloadJson = null;
+    if (payloadJson != null && !payloadJson.isBlank()) {
+      JsonNode root;
+      try {
+        root = OBJECT_MAPPER.readTree(payloadJson);
+      } catch (IOException ex) {
+        throw new IllegalArgumentException("payload_json must be valid JSON");
+      }
+      payloadEventType = blankToNull(root.path("eventType").asText(""));
+      payloadEventSchemaVersion = blankToNull(root.path("eventSchemaVersion").asText(""));
+      payloadScriptEventId = blankToNull(root.path("scriptEventId").asText(""));
+      payloadTriggerMode = blankToNull(root.path("triggerMode").asText(""));
+      payloadReadSnapshotToken = blankToNull(root.path("readSnapshotToken").asText(""));
+      JsonNode payloadNode = root.path("eventPayload");
+      if (!payloadNode.isMissingNode() && !payloadNode.isNull()) {
+        payloadEventPayloadJson = payloadNode.toString();
+      }
+      if (requestConflict(requestEventType, payloadEventType)) {
+        throw new IllegalArgumentException("payload_json eventType does not match event_type");
+      }
+      if (requestConflict(requestEventSchemaVersion, payloadEventSchemaVersion)) {
+        throw new IllegalArgumentException(
+            "payload_json eventSchemaVersion does not match event_schema_version");
+      }
+      if (requestConflict(requestScriptEventId, payloadScriptEventId)) {
+        throw new IllegalArgumentException(
+            "payload_json scriptEventId does not match script_event_id");
+      }
+      if (requestConflict(requestTriggerMode, payloadTriggerMode)) {
+        throw new IllegalArgumentException("payload_json triggerMode does not match trigger_mode");
+      }
+      if (requestConflict(requestReadSnapshotToken, payloadReadSnapshotToken)) {
+        throw new IllegalArgumentException(
+            "payload_json readSnapshotToken does not match read_snapshot_token");
+      }
+      if (requestConflict(
+          normalizedJson(requestEventPayloadJson), normalizedJson(payloadEventPayloadJson))) {
+        throw new IllegalArgumentException(
+            "payload_json eventPayload does not match event_payload_json");
+      }
     }
-    if (field.isTextual() && blankToNull(field.asText("")) == null) {
-      throw new IllegalArgumentException(message);
+    String eventType = metadataValue(requestEventType, payloadEventType);
+    String eventSchemaVersion = metadataValue(requestEventSchemaVersion, payloadEventSchemaVersion);
+    String scriptEventId = metadataValue(requestScriptEventId, payloadScriptEventId);
+    String triggerMode = metadataValue(requestTriggerMode, payloadTriggerMode);
+    String readSnapshotToken = metadataValue(requestReadSnapshotToken, payloadReadSnapshotToken);
+    String eventPayloadJson = metadataValue(requestEventPayloadJson, payloadEventPayloadJson);
+    if (eventType == null
+        && eventSchemaVersion == null
+        && scriptEventId == null
+        && triggerMode == null
+        && readSnapshotToken == null
+        && eventPayloadJson == null) {
+      return new TriggerScriptEventSummary(null, null, null, null, null, null);
     }
-    if (field.isContainerNode() && field.isEmpty()) {
-      throw new IllegalArgumentException(message);
+    if (blankToNull(targetEntityId) == null) {
+      throw new IllegalArgumentException(
+          "target_entity_id is required for kind 'trigger_script_event'");
     }
+    if (eventType == null) {
+      throw new IllegalArgumentException("trigger_script_event event_type is required");
+    }
+    if (scriptEventId == null) {
+      throw new IllegalArgumentException("trigger_script_event script_event_id is required");
+    }
+    if (readSnapshotToken == null) {
+      throw new IllegalArgumentException("trigger_script_event read_snapshot_token is required");
+    }
+    if (eventPayloadJson == null) {
+      throw new IllegalArgumentException("trigger_script_event event_payload_json is required");
+    }
+    try {
+      JsonNode payloadNode = OBJECT_MAPPER.readTree(eventPayloadJson);
+      if (!payloadNode.isObject() || payloadNode.isEmpty()) {
+        throw new IllegalArgumentException(
+            "trigger_script_event event_payload_json must be a non-empty JSON object");
+      }
+    } catch (IOException ex) {
+      throw new IllegalArgumentException(
+          "trigger_script_event event_payload_json must be valid JSON");
+    }
+    return new TriggerScriptEventSummary(
+        eventType,
+        eventSchemaVersion == null ? "v1" : eventSchemaVersion,
+        scriptEventId,
+        triggerMode,
+        readSnapshotToken,
+        eventPayloadJson);
   }
 
   private static boolean requestConflict(String requestValue, String jsonValue) {
@@ -889,6 +1013,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return normalizedRequest != null
         && normalizedJson != null
         && !normalizedRequest.equals(normalizedJson);
+  }
+
+  private static String normalizedJson(String value) {
+    return value == null ? "" : value.replaceAll("\\s+", "");
   }
 
   private static boolean samePayloadAuthority(
@@ -908,7 +1036,31 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             metadataLong(request.originSourceDueTickId(), payload.originSourceDueTickId()))
         && sameLong(
             existing.getOriginSourceDueAtMs(),
-            metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()));
+            metadataLong(request.originSourceDueAtMs(), payload.originSourceDueAtMs()))
+        && sameTriggerScriptEventAuthority(existing, request);
+  }
+
+  private static boolean sameTriggerScriptEventAuthority(
+      RemoteFollowup existing, ScheduleRequest request) {
+    TriggerScriptEventSummary summary =
+        triggerScriptEventSummary(
+            request.payloadJson(),
+            request.eventType(),
+            request.eventSchemaVersion(),
+            request.scriptEventId(),
+            request.triggerMode(),
+            request.readSnapshotToken(),
+            request.eventPayloadJson(),
+            request.targetEntityId());
+    return normalized(summary.eventType()).equals(normalized(existing.getEventType()))
+        && normalized(summary.eventSchemaVersion())
+            .equals(normalized(existing.getEventSchemaVersion()))
+        && normalized(summary.scriptEventId()).equals(normalized(existing.getScriptEventId()))
+        && normalized(summary.triggerMode()).equals(normalized(existing.getTriggerMode()))
+        && normalized(summary.readSnapshotToken())
+            .equals(normalized(existing.getReadSnapshotToken()))
+        && normalizedJson(summary.eventPayloadJson())
+            .equals(normalizedJson(existing.getEventPayloadJson()));
   }
 
   private static boolean sameResultAuthority(RemoteFollowupResult existing, ResultRequest request) {
@@ -974,6 +1126,45 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static Long metadataLong(Long requestValue, Long commandValue) {
     return requestValue != null ? requestValue : commandValue;
+  }
+
+  private static RoutingBundle routingBundleFromRequestAndCommand(
+      String requestWorldSlug,
+      String requestRealmSlug,
+      Long requestPointerVersion,
+      String commandWorldSlug,
+      String commandRealmSlug,
+      Long commandPointerVersion) {
+    return normalizeRoutingBundle(
+        metadataValue(requestWorldSlug, commandWorldSlug),
+        metadataValue(requestRealmSlug, commandRealmSlug),
+        metadataLong(requestPointerVersion, commandPointerVersion));
+  }
+
+  private static RoutingBundle routingBundleFromStoredValues(
+      String primaryWorldSlug,
+      String primaryRealmSlug,
+      Long primaryPointerVersion,
+      String fallbackWorldSlug,
+      String fallbackRealmSlug,
+      Long fallbackPointerVersion) {
+    return normalizeRoutingBundle(
+        metadataValue(primaryWorldSlug, fallbackWorldSlug),
+        metadataValue(primaryRealmSlug, fallbackRealmSlug),
+        metadataLong(primaryPointerVersion, fallbackPointerVersion));
+  }
+
+  private static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    String normalizedWorld = blankToNull(worldSlug);
+    String normalizedRealm = blankToNull(realmSlug);
+    boolean hasWorld = normalizedWorld != null;
+    boolean hasRealm = normalizedRealm != null;
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (hasWorld && hasRealm && hasPointer) {
+      return new RoutingBundle(normalizedWorld, normalizedRealm, pointerVersion);
+    }
+    return RoutingBundle.EMPTY;
   }
 
   private static void applyTerminalResult(
@@ -1046,10 +1237,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteFollowup followup, String outcome, ResultSummary resultSummary, Instant now) {
     if (RESULT_APPLIED.equalsIgnoreCase(outcome)) {
       followup.setStatus(FOLLOWUP_APPLIED);
+      followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_APPLIED);
       followup.setFailureCode(null);
       followup.setFailureMessage(null);
     } else {
       followup.setStatus(FOLLOWUP_ABANDONED);
+      followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED);
       followup.setFailureCode(
           resultSummary.errorCode() == null ? "REMOTE_ABANDONED" : resultSummary.errorCode());
       followup.setFailureMessage(
@@ -1074,6 +1269,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       return value;
     }
     return value.substring(0, 500);
+  }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
   }
 
   private static Long positiveLong(JsonNode node) {
@@ -1163,6 +1362,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
   }
 
+  private static String claimTargetAggregate(String targetEntityId, long targetGameInstanceId) {
+    String normalizedTargetEntityId = blankToNull(targetEntityId);
+    if (normalizedTargetEntityId != null) {
+      return "entity:" + normalizedTargetEntityId;
+    }
+    return "game-instance:" + targetGameInstanceId;
+  }
+
   private record PayloadSummary(
       String kind,
       String command,
@@ -1172,6 +1379,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       Long originSourceOrdinal,
       Long originSourceDueTickId,
       Long originSourceDueAtMs) {}
+
+  private record TriggerScriptEventSummary(
+      String eventType,
+      String eventSchemaVersion,
+      String scriptEventId,
+      String triggerMode,
+      String readSnapshotToken,
+      String eventPayloadJson) {}
 
   private record ResultSummary(String commandId, String errorCode, String message) {}
 }

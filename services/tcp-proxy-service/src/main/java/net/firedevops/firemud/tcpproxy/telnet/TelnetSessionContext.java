@@ -48,8 +48,21 @@ final class TelnetSessionContext {
     }
     this.gameInstanceId = gameInstanceId;
     this.tenantId = tenantId;
-    this.worldSlug = StringUtils.hasText(worldSlug) ? worldSlug : null;
-    this.realmSlug = StringUtils.hasText(realmSlug) ? realmSlug : null;
-    this.pointerVersion = StringUtils.hasText(pointerVersion) ? pointerVersion : null;
+    if (routingBundleIsComplete(worldSlug, realmSlug, pointerVersion)) {
+      this.worldSlug = worldSlug;
+      this.realmSlug = realmSlug;
+      this.pointerVersion = pointerVersion;
+      return;
+    }
+    this.worldSlug = null;
+    this.realmSlug = null;
+    this.pointerVersion = null;
+  }
+
+  private static boolean routingBundleIsComplete(
+      String worldSlug, String realmSlug, String pointerVersion) {
+    return StringUtils.hasText(worldSlug)
+        && StringUtils.hasText(realmSlug)
+        && StringUtils.hasText(pointerVersion);
   }
 }

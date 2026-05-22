@@ -175,6 +175,29 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     gameSession.bean(SessionContextService.class).save(context);
   }
 
+  public void seedLiveSession(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt) {
+    seedLiveSession(
+        new SessionContext(
+            sessionId,
+            tenantId,
+            accountId,
+            loginName,
+            characterId,
+            characterName,
+            gameInstanceId,
+            roomInstanceId,
+            jwt));
+  }
+
   public long insertRunningGameInstance(
       long tenantId, long accountId, long gameTemplateId, boolean clearExisting) {
     JdbcTemplate jdbc = jdbc();
@@ -326,7 +349,6 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 props.put("firemud.postgres.username", postgresUsername);
                 props.put("firemud.postgres.password", postgresPassword);
                 props.put("firemud.database.enabled", "true");
-                props.put("spring.jpa.hibernate.ddl-auto", "none");
                 props.put("firemud.services.entityManagementService", entityStub.endpoint());
                 if (socialStub != null) {
                   props.put("firemud.services.socialGroupsService", socialStub.endpoint());

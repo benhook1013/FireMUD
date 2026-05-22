@@ -33,6 +33,7 @@ import org.springframework.util.StringUtils;
 public class TcpProxyEventClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyEventClient.class);
   private static final String DEFAULT_CHANNEL_TARGET = "dns:///game-session-service:6565";
+  private static final long DISCONNECT_NOTIFY_DEADLINE_MS = 2000L;
 
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties tlsProps;
@@ -84,7 +85,8 @@ public class TcpProxyEventClient implements AutoCloseable {
       builder.setTenantId(tenantId);
     }
     NotifyDisconnectRequest request = builder.build();
-    return stub.notifyDisconnect(request);
+    return stub.withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
+        .notifyDisconnect(request);
   }
 
   @PreDestroy

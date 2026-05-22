@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,7 +89,9 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       return;
     }
 
-    Map<String, String> activePluginVersions = activePluginVersions(tenantId, gameInstanceId);
+    RuntimeScope runtimeScope = currentRuntimeScope(tenantId, gameInstanceId);
+    Map<String, String> activePluginVersions =
+        activePluginVersions(tenantId, gameInstanceId, runtimeScope);
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
             .filter(ResolvedBinding::enabled)
@@ -154,11 +157,15 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     return List.copyOf(resolved);
   }
 
-  private Map<String, String> activePluginVersions(String tenantId, String gameInstanceId) {
+  private Map<String, String> activePluginVersions(
+      String tenantId, String gameInstanceId, RuntimeScope runtimeScope) {
     Map<String, String> active = new LinkedHashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      if (!matchesRuntimeScope(state, runtimeScope)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -168,6 +175,38 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       }
     }
     return active;
+  }
+
+  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
+    GetGameInstanceRuntimeStateResponse runtime =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      return RuntimeScope.UNKNOWN;
+    }
+    return new RuntimeScope(
+        blankToEmpty(runtime.getRuntimeState().getRegionId()),
+        runtime.getRuntimeState().getRegionEpoch());
+  }
+
+  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
+    if (!runtimeScope.known()) {
+      return true;
+    }
+    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
+    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
+      return false;
+    }
+    return stateRegionId.equals(runtimeScope.regionId())
+        && stateRegionEpoch == runtimeScope.regionEpoch();
+  }
+
+  private record RuntimeScope(String regionId, long regionEpoch) {
+    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
+
+    private boolean known() {
+      return !regionId.isBlank() && regionEpoch > 0;
+    }
   }
 
   private boolean participatesInResolvedHandlerSet(
@@ -294,6 +333,10 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static long zeroIfNull(Long value) {
+    return value == null ? 0L : value;
   }
 
   private static void requireText(String value, String message) {

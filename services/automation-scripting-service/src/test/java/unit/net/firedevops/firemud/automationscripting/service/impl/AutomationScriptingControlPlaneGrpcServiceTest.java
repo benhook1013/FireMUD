@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -68,6 +69,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -108,7 +112,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         new ScriptRuntimeProperties(),
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -124,7 +129,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         Mockito.mock(ScriptScheduleInstanceService.class),
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -141,7 +147,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         scriptPatchPinProjectionService,
         runtimeProperties,
         scriptScheduleInstanceService,
-        gameDesignClient());
+        gameDesignClient(),
+        Mockito.mock(GameSessionControlPlaneClient.class));
   }
 
   private static AutomationScriptingControlPlaneGrpcService newService(
@@ -151,16 +158,25 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptRuntimeProperties runtimeProperties,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient) {
+    AutomationEventControlPlaneService eventControlPlaneService =
+        new AutomationEventControlPlaneService(new BuiltInScriptEventRegistryService());
+    AutomationPatchControlPlaneService patchControlPlaneService =
+        new AutomationPatchControlPlaneService(
+            workItemService,
+            automationAdmissionStateService,
+            scriptPatchPinProjectionService,
+            scriptScheduleInstanceService,
+            gameDesignControlPlaneClient,
+            gameSessionControlPlaneClient,
+            runtimeProperties,
+            new TemporalScriptPatchReadinessWorkflowMetadataResolver(
+                java.util.Optional.empty(), java.util.Optional.empty()));
+    AutomationPluginControlPlaneService pluginControlPlaneService =
+        new AutomationPluginControlPlaneService(pluginRuntimeStateService, runtimeProperties);
     return new AutomationScriptingControlPlaneGrpcService(
-        new BuiltInScriptEventRegistryService(),
-        workItemService,
-        pluginRuntimeStateService,
-        automationAdmissionStateService,
-        scriptPatchPinProjectionService,
-        scriptScheduleInstanceService,
-        gameDesignControlPlaneClient,
-        runtimeProperties);
+        eventControlPlaneService, patchControlPlaneService, pluginControlPlaneService);
   }
 
   @AfterEach
@@ -322,6 +338,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getAbilitySchemaDigest()).isEqualTo("ability-1");
     assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
+    assertThat(ref.get().getWorkflowId())
+        .isEqualTo("script-patch-readiness:1:script-patch-version:patch-1");
+    assertThat(ref.get().getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
   @Test
@@ -375,6 +394,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getBaseVersionId()).isEqualTo(7L);
     assertThat(ref.get().getPatches(0).getAbilitySchemaDigest()).isEqualTo("ability-1");
     assertThat(ref.get().getPatches(0).getPublication().getVersionId()).isEqualTo(18L);
+    assertThat(ref.get().getPatches(0).getWorkflowId())
+        .isEqualTo("script-patch-readiness:1:script-patch-version:patch-2");
+    assertThat(ref.get().getPatches(0).getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
   @Test
@@ -501,6 +523,24 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "",
                         ""),
                     null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setPointerVersion(17L)
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -508,7 +548,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
-            scheduleInstanceService);
+            scheduleInstanceService,
+            gameDesignClient(),
+            gameSessionClient);
     AtomicReference<ListScriptScheduleInstancesResponse> ref = new AtomicReference<>();
 
     service.listScriptScheduleInstances(
@@ -533,6 +575,18 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isFalse();
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeRegionEpoch()).isEqualTo(12L);
+    assertThat(ref.get().getSchedules(0).getIsRuntimeScopeStale()).isFalse();
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimeRealmSlug()).isEqualTo("production");
+    assertThat(ref.get().getSchedules(0).getCurrentRuntimePointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getSchedules(0).getIsRoutingBundleStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
@@ -673,6 +727,24 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "",
                         ""),
                     null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-live")
+                        .setRegionEpoch(44L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -680,7 +752,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class),
             new ScriptRuntimeProperties(),
-            scheduleInstanceService);
+            scheduleInstanceService,
+            gameDesignClient(),
+            gameSessionClient);
     AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
 
     service.listScriptTimerAuditEvents(
@@ -705,6 +779,18 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo(TriggerMode.TRIGGER_MODE_CATCH_UP);
     assertThat(ref.get().getEvents(0).getFinalReason()).isEqualTo("catch_up_truncated");
     assertThat(ref.get().getEvents(0).getSourceDueTickId()).isEqualTo(130L);
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeRegionId()).isEqualTo("region-live");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeRegionEpoch()).isEqualTo(44L);
+    assertThat(ref.get().getEvents(0).getIsRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getEvents(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getEvents(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
   }
 
@@ -983,7 +1069,30 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     Mockito.when(
             workItemService.listHandoffEvents(
-                "1", "game-1", "patch-1", "99", "enqueued", 10L, 20L, 50))
+                "1",
+                "game-1",
+                "patch-1",
+                "99",
+                "enqueued",
+                "game-2",
+                "region-2",
+                17L,
+                "remote-coordinator:workItem:99#0",
+                "remote-followup:workItem:99#0",
+                "script-1",
+                "plugin-1",
+                "workItem:99#0",
+                "command-1",
+                "target-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "SCHEDULE_TIMER",
+                "SCHEDULE_DUE_CLAIMED",
+                10L,
+                20L,
+                50))
         .thenReturn(
             List.of(
                 new ScriptWorkItemService.HandoffEventSummary(
@@ -998,6 +1107,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     0,
                     "workItem:99#0",
                     "command-1",
+                    "game-2",
+                    "region-2",
+                    17L,
+                    "remote-coordinator:workItem:99#0",
+                    "remote-followup:workItem:99#0",
                     "target-1",
                     "SHARED",
                     "demo",
@@ -1022,12 +1136,47 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "",
                         ""),
                     null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-2")
+                        .setRegionId("region-live")
+                        .setRegionEpoch(22L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
+                        .build())
+                .build());
+    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "command-1"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(
+                    GameplayCommandStatus.newBuilder()
+                        .setCommandId("command-1")
+                        .setExecutionOutcome("APPLIED")
+                        .setGameplayResult("SUCCESS")
+                        .setRemoteState("REMOTE_APPLIED")
+                        .setRemoteTargetCommandExecutionOutcome("APPLIED")
+                        .setRemoteTargetCommandGameplayResult("SUCCESS")
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
     AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
 
     service.listScriptHandoffEvents(
@@ -1037,6 +1186,24 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setScriptPatchVersion("patch-1")
             .setWorkItemId("99")
             .setHandoffOutcome("enqueued")
+            .setTargetGameInstanceId("game-2")
+            .setTargetRegionId("region-2")
+            .setTargetRegionEpoch(17L)
+            .setRemoteCoordinatorId("remote-coordinator:workItem:99#0")
+            .setRemoteFollowupId("remote-followup:workItem:99#0")
+            .setScriptId("script-1")
+            .setPluginId("plugin-1")
+            .setAutomationDispatchId("workItem:99#0")
+            .setGameSessionCommandId("command-1")
+            .setTargetEntityId("target-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion("17")
+            .setSourceKind("SCHEDULE_TIMER")
+            .setSourceState("SCHEDULE_DUE_CLAIMED")
             .setChangedAfterMs(10L)
             .setChangedBeforeMs(20L)
             .setLimit(50)
@@ -1047,6 +1214,32 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getTargetGameInstanceId()).isEqualTo("game-2");
+    assertThat(ref.get().getEvents(0).getTargetRegionId()).isEqualTo("region-2");
+    assertThat(ref.get().getEvents(0).getTargetRegionEpoch()).isEqualTo(17L);
+    assertThat(ref.get().getEvents(0).getRemoteCoordinatorId())
+        .isEqualTo("remote-coordinator:workItem:99#0");
+    assertThat(ref.get().getEvents(0).getRemoteFollowupId())
+        .isEqualTo("remote-followup:workItem:99#0");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeGameInstanceId()).isEqualTo("game-2");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionId()).isEqualTo("region-live");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRegionEpoch()).isEqualTo(22L);
+    assertThat(ref.get().getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getEvents(0).getIsTargetRoutingBundleStale()).isTrue();
+    assertThat(ref.get().getEvents(0).getGameplayCommandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayCommandGameplayResult()).isEqualTo("SUCCESS");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteState()).isEqualTo("REMOTE_APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteTargetCommandExecutionOutcome())
+        .isEqualTo("APPLIED");
+    assertThat(ref.get().getEvents(0).getGameplayRemoteTargetCommandGameplayResult())
+        .isEqualTo("SUCCESS");
     assertThat(ref.get().getEvents(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getEvents(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getEvents(0).getPointerVersion()).isEqualTo("17");
@@ -1057,6 +1250,104 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getEmittedCommandText()).isEqualTo("LOOK AT old chest");
     assertThat(ref.get().getEvents(0).getHandoffOutcome()).isEqualTo("enqueued");
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void collapsesPartialRoutingBundleWhenProjectingScriptHandoffEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listHandoffEvents(
+                "1", "", "", "", "", "game-2", "", 0L, "", "", "", "", "", "", "", "", "", "", "",
+                "", "", 0L, 0L, 50))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.HandoffEventSummary(
+                    "event-1",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "script-1",
+                    "",
+                    "",
+                    "99",
+                    0,
+                    "",
+                    "",
+                    "game-2",
+                    "region-2",
+                    17L,
+                    "",
+                    "",
+                    "target-1",
+                    "SHARED",
+                    "demo",
+                    "",
+                    "17",
+                    "",
+                    "",
+                    0L,
+                    0L,
+                    0L,
+                    "LOOK",
+                    "enqueued",
+                    "game_session_accepted",
+                    15L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""),
+                    null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-2")
+                        .setRegionId("region-live")
+                        .setRegionEpoch(22L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo-next")
+                        .build())
+                .build());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
+    AtomicReference<ListScriptHandoffEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptHandoffEvents(
+        ListScriptHandoffEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setTargetGameInstanceId("game-2")
+            .setLimit(50)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getEventsList()).hasSize(1);
+    assertThat(ref.get().getEvents(0).getWorldSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getRealmSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getPointerVersion()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeWorldSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimeRealmSlug()).isBlank();
+    assertThat(ref.get().getEvents(0).getCurrentTargetRuntimePointerVersion()).isBlank();
+    assertThat(ref.get().getEvents(0).getIsTargetRoutingBundleStale()).isFalse();
   }
 
   @Test
@@ -1102,12 +1393,34 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "",
                         ""),
                     null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(99L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .setWorldSlug("demo-next")
+                        .setRealmSlug("staging")
+                        .setPointerVersion(99L)
+                        .build())
+                .build());
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
-            Mockito.mock(ScriptPatchPinProjectionService.class));
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
     AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
 
     service.listScriptDeadLetters(
@@ -1130,7 +1443,110 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(ref.get().getDeadLetters(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getDeadLetters(0).getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionEpoch()).isEqualTo(99L);
+    assertThat(ref.get().getDeadLetters(0).getIsRuntimeScopeStale()).isTrue();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePlayableStateScope())
+        .isEqualTo(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeWorldSlug()).isEqualTo("demo-next");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRealmSlug()).isEqualTo("staging");
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getDeadLetters(0).getReason()).isEqualTo("STALE_TIMELINE");
+  }
+
+  @Test
+  void collapsesPartialRoutingBundleWhenProjectingScriptDeadLetters() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.listDeadLetters("1", "game-1", "patch-1", 25))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.DeadLetterSummary(
+                    "99",
+                    "1",
+                    "game-1",
+                    "region-1",
+                    12L,
+                    "entity-1",
+                    "SHARED",
+                    "demo",
+                    "",
+                    "17",
+                    "GAMEPLAY_EVENT",
+                    "WORK_ITEM_PERSISTED",
+                    0L,
+                    0L,
+                    0L,
+                    "script-1",
+                    "",
+                    "",
+                    "onCommand",
+                    "patch-1",
+                    "event-1",
+                    "DEAD_LETTERED",
+                    "STALE_TIMELINE",
+                    100L,
+                    200L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        18L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""),
+                    null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(99L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo-next")
+                        .build())
+                .build());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            gameDesignClient(),
+            gameSessionClient);
+    AtomicReference<ListScriptDeadLettersResponse> ref = new AtomicReference<>();
+
+    service.listScriptDeadLetters(
+        ListScriptDeadLettersRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getDeadLettersList()).hasSize(1);
+    assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeWorldSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRealmSlug()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getCurrentRuntimePointerVersion()).isBlank();
+    assertThat(ref.get().getDeadLetters(0).getIsRoutingBundleStale()).isFalse();
   }
 
   @Test
@@ -1173,6 +1589,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 new PluginRuntimeStateService.PluginRuntimeStatus(
                     "plugin-v1",
                     "",
+                    "region-7",
+                    12L,
                     PluginState.PLUGIN_STATE_ENABLED,
                     "operator_activation",
                     55L,
@@ -1207,6 +1625,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getActivePluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
     assertThat(ref.get().getLastChangedAtMs()).isEqualTo(55L);
     assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("req-1");
@@ -1240,6 +1660,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "event-1",
                     "1",
                     "game-1",
+                    "region-7",
+                    12L,
                     "plugin-1",
                     "plugin-v0",
                     "plugin-v1",
@@ -1290,6 +1712,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
+    assertThat(ref.get().getEvents(0).getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getEvents(0).getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getEvents(0).getPreviousPluginVersionId()).isEqualTo("plugin-v0");
     assertThat(ref.get().getEvents(0).getActivePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(ref.get().getEvents(0).getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED);
@@ -1313,6 +1737,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 List.of(
                     new PluginRuntimeStateService.PluginPolicyViolation(
                         "game-1",
+                        "region-7",
+                        12L,
                         "plugin-1",
                         "plugin-v1",
                         "signer_revoked",
@@ -1349,6 +1775,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvaluatedAtMs()).isEqualTo(evaluatedAtMs);
     assertThat(ref.get().getIsStale()).isFalse();
     assertThat(ref.get().getViolationsList()).hasSize(1);
+    assertThat(ref.get().getViolations(0).getRuntimeRegionId()).isEqualTo("region-7");
+    assertThat(ref.get().getViolations(0).getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(ref.get().getViolations(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getViolations(0).getActivePublication().getPublicationId()).isEqualTo(17L);
   }

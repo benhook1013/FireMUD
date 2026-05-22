@@ -186,8 +186,8 @@ If Game Session rejects a queued command because its embedded `scriptPatchVersio
 - Record the drop with identifiers sufficient for diagnosis (including `scriptEventId`, `scriptId`, `scriptPatchVersion`, `gameInstanceId`, `regionId`, `entityId`).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
 - Emit an operator-visible metric for version-fence drops:
-  - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
-  - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}` for plugin version mismatches (for example `reason="plugin_version_mismatch"`).
+  - `automation_tick_version_fence_dropped_total{scope, script_category, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
+  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_family, plugin_version_family, reason}` for plugin version mismatches (for example `reason="plugin_version_mismatch"`).
 - Dead-letter retention for rejected queue entries must be bounded and explicit:
   - `maxAge` and `maxRows` must be documented per environment.
   - Cleanup cadence must be documented and alert-backed.
@@ -218,26 +218,26 @@ This table defines the authoritative metric-family catalog and label sets for sc
 General rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- If `tenantId` becomes too high-cardinality in practice, the system must introduce aggregation/sampling rather than introducing per-event labels.
+- Raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
-| `automation_script_triggers_total` | `tenantId`, `scriptId`, `eventType`, `outcome`, optional `pluginId`, `pluginVersionId`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted) with final stage-aware outcome; do not treat “DSL eval success” as success if handoff failed. |
-| `automation_script_skips_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
-| `automation_script_triggers_dropped_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
-| `script_quota_allowed_total` | `tenantId`, `scriptId` | `scriptEventId` | Quota decisions are pre-eval. |
-| `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | N/A |
-| `automation_tick_events_enqueued_total` | `tenantId` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
-| `automation_tick_version_fence_dropped_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
-| `automation_tick_plugin_version_fence_dropped_total` | `tenantId`, `pluginId`, `pluginVersionId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
-| `automation_script_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
-| `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` | N/A |
-| `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |
-| `automation_script_test_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
-| `automation_script_test_sandbox_failures_total` | `tenantId`, `scriptId`, `eventType`, `reason`, optional `pluginId` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
-| `automation_script_timer_catchup_truncated_total` | `tenantId`, `scriptId`, `eventType`, `reason` | `scriptEventId` | Counts catch-up firings that were intentionally truncated/dropped by resume-window limits. |
-| `automation_script_timer_runtime_fence_dropped_total` | `tenantId`, `scriptId`, `eventType`, `reason` | `scriptEventId` | Counts due points intentionally dropped because runtime scope or epoch changed before the scheduler could admit them. |
-| `automation_rollback_convergence_timeout_total` | `tenantId`, `gameInstanceId`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |
+| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted) with final stage-aware outcome; do not treat “DSL eval success” as success if handoff failed. |
+| `automation_script_skips_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
+| `automation_script_triggers_dropped_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
+| `script_quota_allowed_total` | `scope`, `script_category` | `scriptEventId` | Quota decisions are pre-eval. |
+| `script_quota_denied_total` | `scope`, `script_category`, `reason` | `scriptEventId` | N/A |
+| `automation_tick_events_enqueued_total` | `scope` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
+| `automation_tick_version_fence_dropped_total` | `scope`, `script_category`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
+| `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
+| `automation_script_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
+| `automation_script_sandbox_failures_total` | `scope`, `script_category`, `reason`, optional `plugin_family` | `scriptEventId` | N/A |
+| `automation_script_test_runs_total` | `scope`, `script_category`, `eventType`, `result`, optional `plugin_family` | `scriptEventId` | Must be separate from live-traffic counters. |
+| `automation_script_test_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
+| `automation_script_test_sandbox_failures_total` | `scope`, `script_category`, `eventType`, `reason`, optional `plugin_family` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
+| `automation_script_timer_catchup_truncated_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts catch-up firings that were intentionally truncated/dropped by resume-window limits. |
+| `automation_script_timer_runtime_fence_dropped_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts due points intentionally dropped because runtime scope or epoch changed before the scheduler could admit them. |
+| `automation_rollback_convergence_timeout_total` | `scope`, `operation`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |
 
 ## Documentation Drift Guardrails
 

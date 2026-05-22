@@ -63,6 +63,74 @@ class GameSessionGrpcServiceTest {
     SessionContext.clear();
   }
 
+  private static GameSessionGrpcService newService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      TickService tickService,
+      SimpleMeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    return new GameSessionGrpcService(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        (tenantId, viewerAccountId, accountIds) -> List.of(),
+        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
+  }
+
+  private static GameSessionGrpcService newService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      AccountPresenceQueryService accountPresenceQueryService,
+      TickService tickService,
+      SimpleMeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    return new GameSessionGrpcService(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        accountPresenceQueryService,
+        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
+  }
+
+  private static GameSessionGrpcService newService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      TickService tickService,
+      SimpleMeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    return new GameSessionGrpcService(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        (tenantId, viewerAccountId, accountIds) -> List.of(),
+        gameplayWorldCatalog,
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -75,7 +143,7 @@ class GameSessionGrpcServiceTest {
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -142,7 +210,7 @@ class GameSessionGrpcServiceTest {
                     AccountRecentPresenceDisposition.TRANSPORT_LOSS,
                     AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -218,7 +286,7 @@ class GameSessionGrpcServiceTest {
     world.setRealms(List.of(realm));
     properties.setWorlds(List.of(world));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -297,7 +365,7 @@ class GameSessionGrpcServiceTest {
             new GameInstanceDto(
                 1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -356,7 +424,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -442,7 +510,7 @@ class GameSessionGrpcServiceTest {
                 1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -500,7 +568,7 @@ class GameSessionGrpcServiceTest {
             new GameInstanceDto(
                 1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -560,7 +628,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -633,7 +701,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -707,7 +775,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -777,7 +845,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -834,7 +902,7 @@ class GameSessionGrpcServiceTest {
                 Mockito.eq(false)))
         .thenThrow(new IllegalStateException("Failed to start session"));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -893,7 +961,7 @@ class GameSessionGrpcServiceTest {
         .when(gameInstanceService)
         .stopSession(7L);
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -947,7 +1015,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(gameInstanceService.restartSession(7L))
         .thenThrow(new IllegalStateException("Failed to restart session"));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1005,7 +1073,7 @@ class GameSessionGrpcServiceTest {
                 CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded")));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1064,7 +1132,7 @@ class GameSessionGrpcServiceTest {
         .thenThrow(new IllegalStateException("boom"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1120,7 +1188,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(tickService.queryState(7L)).thenThrow(new IllegalStateException("boom"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1167,7 +1235,7 @@ class GameSessionGrpcServiceTest {
             Mockito.any(net.firedevops.firemud.gamesession.dto.ToggleFeatureFlagRequest.class));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1216,7 +1284,7 @@ class GameSessionGrpcServiceTest {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     Mockito.doThrow(new IllegalStateException("boom")).when(tickService).pauseTicks("backup");
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1260,7 +1328,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("99", List.of(), Map.of());
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1313,7 +1381,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("99", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1365,7 +1433,7 @@ class GameSessionGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("99", List.of(), Map.of());
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,
@@ -1416,7 +1484,7 @@ class GameSessionGrpcServiceTest {
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
-        new GameSessionGrpcService(
+        newService(
             pingService,
             gameInstanceService,
             featureFlagService,

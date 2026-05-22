@@ -20,8 +20,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 ## Utility Packages
 
 - **Logging Utilities** – `LoggingUtil` is a thin SLF4J wrapper. The
-  `LoggingInterceptor` and `SagaRunner` attach a `correlationId` using MDC so logs
-  from different services can be correlated.
+  `LoggingInterceptor`, `SagaRunner`, and Temporal workflow/activity hosts attach
+  correlation-friendly context using MDC so logs from different services can be
+  correlated.
 - **Security Utilities** – `JwtUtil` for verifying tokens (and building them
   within the Account Service only) plus `AuthTokenInterceptor`,
   `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
@@ -32,6 +33,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   - Cache/rate‑limit clients (for example Spring Cloud Gateway) bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
 - **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
+- **Temporal Workflow Foundation** – `common-temporal` owns the shared Temporal runtime substrate for durable control-plane workflows. It provides `TemporalProperties`, `WorkflowServiceStubs`, `WorkflowClient`, `WorkerFactory`, `TemporalTaskQueueResolver`, `TemporalWorkerHost`, and the shared identity helpers in `FiremudWorkflowIds`. Services opt in through the `net.firedevops.firemud.temporal-conventions` Gradle plugin and contribute `TemporalWorkerRegistrar` beans instead of inventing service-local worker startup loops.
 - **Metrics Common Tags** – `CommonAutoConfiguration` attaches a stable `service` tag to all Micrometer meters using `spring.application.name` so shared dashboards and alert rules can scope queries consistently without each call site manually tagging every counter/timer.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
 - `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs. The Spring Cloud Gateway uses these variables for dynamic routing.
@@ -100,7 +102,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 4. Automate tagging and version bumps using `release-please`.
 5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD.
 
-This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
+This library aligns with the shared-platform and implementation-planning direction tracked in [`design/project-management/vertical-slices/`](../project-management/vertical-slices/) and keeps code reuse simple across all FireMUD services.
 
 ## Example Usage
 
@@ -118,9 +120,9 @@ private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 
 `JwtUtil` helps verify tokens and is used by the Account Service when issuing new ones.
 
-## Saga Orchestration
+## Short Synchronous Saga Orchestration
 
-The library also provides a lightweight saga engine for multi-step workflows. Flows are defined with `SagaBuilder` and may include compensation actions:
+The shared `common-saga` module provides a lightweight short synchronous orchestration helper for multi-step workflows that can complete in one caller-owned execution path. Flows are defined with `SagaBuilder` and may include compensation actions:
 
 ```java
 new SagaBuilder()
@@ -131,9 +133,24 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
-These tables live in a shared `saga` schema so migrations only run once across services.
-Flyway migrations packaged with the library create these tables automatically.
-`SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
+These tables live in a service-local `saga` schema inside each adopting service database.
+Flyway migrations packaged with the module create these tables automatically.
+`SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
+
+`common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead.
+
+## SQL Persistence Direction
+
+FireMUD’s SQL-backed services are converging on `jOOQ + Flyway` as the canonical persistence stack. Shared-library work in this area should optimize for:
+
+- explicit SQL generation and execution;
+- shared transaction and error-translation helpers where the value is truly cross-service;
+- common pagination, filtering, and mapping conventions for control-plane and runtime SQL reads;
+- one schema authority through Flyway rather than service-local ORM interpretations.
+
+Shared libraries should not reintroduce Hibernate/JPA runtime assumptions; the canonical SQL helper surface now targets `jOOQ + Flyway` only.
+
+The first shared substrate is the `net.firedevops.firemud.jooq-conventions` build path, which generates service-local DSL code directly from Flyway-owned SQL and adds only the minimal shared runtime wiring needed to compile and adopt `DSLContext`. Broader runtime helpers should be added only when multiple migrated services prove the same paging/filter/sort, transaction, or error-translation concern is truly repeated.
 
 ## Related Documentation
 

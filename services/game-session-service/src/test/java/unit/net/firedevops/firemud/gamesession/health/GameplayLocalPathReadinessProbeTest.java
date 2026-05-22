@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -15,27 +14,35 @@ import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 
 class GameplayLocalPathReadinessProbeTest {
+  private static final long PROBE_SESSION_ID_BASE = 9_223_372_036_854_770_000L;
+  private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
+  private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
 
   @Test
   void sessionContextProbeReturnsUpWhenContextRoundTrips() {
     SessionContextService sessionContextService = mock(SessionContextService.class);
     @SuppressWarnings("unchecked")
     RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
-    SessionContext storedContext =
-        new SessionContext(
-            9_223_372_036_854_770_000L,
-            0L,
-            9_223_372_036_854_770_001L,
-            9_223_372_036_854_770_002L,
-            0L,
-            "readiness-room",
-            "readiness-probe");
     when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
-        .thenReturn(Optional.of(storedContext));
+        .thenAnswer(
+            invocation -> {
+              long sessionId = invocation.getArgument(1, Long.class);
+              long probeSequence = sessionId - PROBE_SESSION_ID_BASE;
+              return Optional.of(
+                  new SessionContext(
+                      sessionId,
+                      0L,
+                      PROBE_ACCOUNT_ID,
+                      PROBE_CHARACTER_ID,
+                      0L,
+                      "readiness-room-" + probeSequence,
+                      "readiness-probe"));
+            });
 
     GameplayLocalPathReadinessProbe probe =
         new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);
@@ -44,8 +51,12 @@ class GameplayLocalPathReadinessProbeTest {
 
     assertTrue(result.ready());
     assertEquals("ROUND_TRIP_OK", result.detail());
-    verify(sessionContextService).save(any(SessionContext.class));
-    verify(sessionContextService).deleteBySessionId(0L, 9_223_372_036_854_770_000L);
+    ArgumentCaptor<SessionContext> contextCaptor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(contextCaptor.capture());
+    SessionContext savedContext = contextCaptor.getValue();
+    assertTrue(savedContext.sessionId() > PROBE_SESSION_ID_BASE);
+    assertTrue(savedContext.roomInstanceId().startsWith("readiness-room-"));
+    verify(sessionContextService).deleteBySessionId(0L, savedContext.sessionId());
   }
 
   @Test
@@ -83,8 +94,9 @@ class GameplayLocalPathReadinessProbeTest {
     ProbeResult result = probe.probeSessionContextStore();
 
     assertEquals(false, result.ready());
-    verify(sessionContextService).save(any(SessionContext.class));
-    verify(sessionContextService).deleteBySessionId(0L, 9_223_372_036_854_770_000L);
+    ArgumentCaptor<SessionContext> contextCaptor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(contextCaptor.capture());
+    verify(sessionContextService).deleteBySessionId(0L, contextCaptor.getValue().sessionId());
     verify(redisTemplate, never()).delete(anyString());
   }
 

@@ -11,4 +11,5 @@ public class PostgresProperties {
   private String database = "firemud";
   private String username = "firemud";
   private String password = "firemud";
+  private String schema = System.getenv().getOrDefault("SERVICE_SCHEMA", "public");
 }

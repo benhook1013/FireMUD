@@ -24,7 +24,7 @@ content even though domain services own the runtime templates:
   `(tenantId, versionId)`. Draft template graphs in World Management, Entity
   Management, and related services are therefore the authoritative snapshots of
   world and entity data for each version.
-- When a version is published, the service coordinates a Saga that validates and
+- When a version is published, the service coordinates the durable `publish` workflow that validates and
   finalizes the existing Draft data in each domain service and transitions the
   version to Published as described in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
@@ -76,7 +76,7 @@ services as the source of truth for the current Draft template graphs:
   to `IN_SYNC` once all participating services report digests matching the
   commit being published.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
-  before starting the publish Saga. Versions that are out of sync cannot be
+  before starting the durable `publish` workflow. Versions that are out of sync cannot be
   published until reconciliation succeeds.
 - Reconciliation does not authorize silently broken drafts:
   - commits introducing unresolved cross-service references must move the version into explicit invalid state (`UNRESOLVED_REFERENCE` or equivalent) rather than leaving it as a normal Draft;
@@ -117,7 +117,7 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 
 | Publish Type | Required domain digests (`GetDraftDesignDigest`) | Required Game Design control-plane digest (`GetDesignControlPlaneDigest`) | Not part of digest gate |
 | --- | --- | --- | --- |
-| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history/audit tables that do not affect launchability |
+| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in the durable publish workflow), Game Design internal history/audit tables that do not affect launchability |
 | `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
 
 ### Change Vehicle Selection Matrix
@@ -136,10 +136,11 @@ Rules:
 
 - The publish request type determines the participant set; do not infer participants dynamically from transient service availability.
 - Participant roles are explicit per publish type:
-  - `saga-step participant`: executes durable finalize/validation work inside the publish Saga.
-  - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a Saga step.
+  - `workflow-step participant`: executes durable finalize/validation work inside the publish workflow.
+  - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a workflow step.
   For full publishes, Game Logic is digest-gate only unless/until it owns explicit publish-time finalize steps.
 - A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
+- `PublishVersionRequest` must carry a stable `publish_request_id`; the Game Design Temporal `publish` workflow uses that caller-visible request identity as its durable business key, so retries must reuse the same request id instead of minting a fresh client UUID on each attempt.
 - Orchestrator routing is strict by publish type/scope:
   - Full publish requests (`scope.versionId`) call only participants in the full-publish matrix.
   - Script-only publish requests (`scope.scriptPatchVersion`) call only script-patch participants.

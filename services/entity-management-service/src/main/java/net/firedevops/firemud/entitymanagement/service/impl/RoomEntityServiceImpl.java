@@ -1,7 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -49,7 +48,7 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     LookProperties.LookRoom room = rooms.getOrDefault(regionKey(tenantId, roomId), null);
     List<RoomEntityDto> configuredEntities =
         room == null
-            ? Collections.emptyList()
+            ? List.of()
             : room.getEntities().stream()
                 .map(
                     entity ->
@@ -69,17 +68,13 @@ public class RoomEntityServiceImpl implements RoomEntityService {
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
                 Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
     List<RoomEntityDto> roomGroundEntities =
-        roomGroundPage == null
-            ? Collections.emptyList()
-            : roomGroundPage.map(this::toRoomGroundEntity).getContent();
+        roomGroundPage.map(this::toRoomGroundEntity).getContent();
     Page<ItemStack> roomGroundStackPage =
         itemStackRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
                 Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
     List<RoomEntityDto> roomGroundStackEntities =
-        roomGroundStackPage == null
-            ? Collections.emptyList()
-            : roomGroundStackPage.map(this::toRoomGroundEntity).getContent();
+        roomGroundStackPage.map(this::toRoomGroundEntity).getContent();
     if (configuredEntities.isEmpty()) {
       return Stream.concat(roomGroundEntities.stream(), roomGroundStackEntities.stream()).toList();
     }

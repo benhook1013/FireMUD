@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.health;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -20,9 +21,10 @@ public final class GameplayLocalPathReadinessProbe {
   private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
   private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
   private static final long PROBE_GAME_INSTANCE_ID = 0L;
-  private static final String PROBE_ROOM_INSTANCE_ID = "readiness-room";
+  private static final String PROBE_ROOM_INSTANCE_ID_PREFIX = "readiness-room-";
   private static final String PROBE_JWT = "readiness-probe";
   private static final String QUEUE_PREFIX = "gamesession:tick:queue:";
+  private static final AtomicLong PROBE_SEQUENCE = new AtomicLong();
 
   private final SessionContextService sessionContextService;
   private final RedisTemplate<String, Object> redisTemplate;
@@ -35,20 +37,23 @@ public final class GameplayLocalPathReadinessProbe {
   }
 
   public ProbeResult probeSessionContextStore() {
+    long probeSequence = PROBE_SEQUENCE.incrementAndGet();
+    long probeSessionId = PROBE_SESSION_ID + probeSequence;
+    String probeRoomInstanceId = PROBE_ROOM_INSTANCE_ID_PREFIX + probeSequence;
     SessionContext context =
         new SessionContext(
-            PROBE_SESSION_ID,
+            probeSessionId,
             PROBE_TENANT_ID,
             PROBE_ACCOUNT_ID,
             PROBE_CHARACTER_ID,
             PROBE_GAME_INSTANCE_ID,
-            PROBE_ROOM_INSTANCE_ID,
+            probeRoomInstanceId,
             PROBE_JWT);
     try {
       sessionContextService.save(context);
       SessionContext stored =
           sessionContextService
-              .findByTenantAndSessionId(PROBE_TENANT_ID, PROBE_SESSION_ID)
+              .findByTenantAndSessionId(PROBE_TENANT_ID, probeSessionId)
               .orElseThrow(() -> new IllegalStateException("session context was not persisted"));
       if (!stored.equals(context)) {
         return ProbeResult.down("stored session context did not round-trip");
@@ -57,12 +62,12 @@ public final class GameplayLocalPathReadinessProbe {
     } catch (RuntimeException ex) {
       return ProbeResult.down(DependencyReadinessSupport.message(ex));
     } finally {
-      cleanupSessionContext();
+      cleanupSessionContext(probeSessionId);
     }
   }
 
   public ProbeResult probeCommandQueueStore() {
-    String key = queueKey();
+    String key = queueKey(PROBE_SEQUENCE.incrementAndGet());
     try {
       redisTemplate.opsForList().rightPush(key, "N|READINESS_LOOK");
       Object queuedValue = redisTemplate.opsForList().index(key, 0);
@@ -77,16 +82,16 @@ public final class GameplayLocalPathReadinessProbe {
     }
   }
 
-  private void cleanupSessionContext() {
+  private void cleanupSessionContext(long probeSessionId) {
     try {
-      sessionContextService.deleteBySessionId(PROBE_TENANT_ID, PROBE_SESSION_ID);
+      sessionContextService.deleteBySessionId(PROBE_TENANT_ID, probeSessionId);
     } catch (RuntimeException ignored) {
       // Cleanup failures should not hide the original probe result.
     }
   }
 
-  private String queueKey() {
-    return QUEUE_PREFIX + PROBE_TENANT_ID + ":" + PROBE_SESSION_ID;
+  private String queueKey(long probeSequence) {
+    return QUEUE_PREFIX + PROBE_TENANT_ID + ":" + (PROBE_SESSION_ID + probeSequence);
   }
 
   public record ProbeResult(boolean ready, String detail) {

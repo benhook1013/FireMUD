@@ -175,7 +175,7 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
-  void publishesRegionExitEventWithUnknownDestination() {
+  void publishesRegionExitEventWithUnknownDestinationAndOptionalExitReason() {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
@@ -193,18 +193,20 @@ class AutomationScriptEventPublisherTest {
         new AutomationScriptEventPublisher(
             client, statusRepository, gameInstanceRepository, Runnable::run);
 
-    publisher.publishRegionExitEvent(sharedGameplayContext("room-a"), "logout:17:99:44");
+    publisher.publishRegionExitEvent(
+        sharedGameplayContext("room-a"), "disconnect:transport_loss:17:99:44", "TRANSPORT_LOSS");
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
     verify(client).triggerScriptEvent(captor.capture());
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getEventType()).isEqualTo("onLeaveRegion");
-    assertThat(request.getScriptEventId()).isEqualTo("logout:17:99:44");
+    assertThat(request.getScriptEventId()).isEqualTo("disconnect:transport_loss:17:99:44");
     assertThat(request.getReadSnapshotToken())
-        .isEqualTo("game-session:onLeaveRegion:99:7:logout:17:99:44");
+        .isEqualTo("game-session:onLeaveRegion:99:7:disconnect:transport_loss:17:99:44");
     assertThat(request.getPayloadJson()).contains("\"fromRegionId\":\"room-a\"");
     assertThat(request.getPayloadJson()).contains("\"toRegionId\":\"\"");
+    assertThat(request.getPayloadJson()).contains("\"exitReason\":\"TRANSPORT_LOSS\"");
   }
 
   private static GameplayCommand command(String commandId, String commandName) {

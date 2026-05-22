@@ -7,6 +7,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(
+    prefix = "firemud.database",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 public class GameplayAdmissionPointerBootstrapInitializer implements ApplicationRunner {
   private final GameplayAdmissionPointerRepository pointerRepository;
   private final GameplayAdmissionPointerAuthorityService authorityService;

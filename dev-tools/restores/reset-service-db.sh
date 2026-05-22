@@ -59,6 +59,21 @@ declare -A SERVICE_FLYWAY_TABLE=(
   [world-management-service]=flyway_schema_history_world_management_service
 )
 
+declare -A SERVICE_SCHEMA_NAME=(
+  [account-service]=account_service
+  [automation-scripting-service]=automation_scripting_service
+  [entity-management-service]=entity_management_service
+  [game-design-service]=game_design_service
+  [game-logic-service]=game_logic_service
+  [game-session-service]=game_session_service
+  [gateway]=gateway
+  [logging-admin-service]=logging_admin_service
+  [social-groups-service]=social_groups_service
+  [spring-cloud-gateway]=gateway
+  [tcp-proxy-service]=tcp_proxy_service
+  [world-management-service]=world_management_service
+)
+
 usage() {
   cat <<'EOF'
 Usage: reset-service-db.sh <service> [--dry-run]
@@ -134,6 +149,37 @@ for table in tables:
 PY
 }
 
+service_uses_saga_migrations() {
+  local project="$1"
+  local application_file="$ROOT_DIR/services/$project/src/main/resources/application.yml"
+  [[ -f "$application_file" ]] && grep -Fq 'classpath:db/migration/saga' "$application_file"
+}
+
+append_unique_tables() {
+  local -n target_ref="$1"
+  shift
+
+  local table
+  for table in "$@"; do
+    [[ -z "$table" ]] && continue
+    if [[ " ${target_ref[*]} " == *" $table "* ]]; then
+      continue
+    fi
+    target_ref+=("$table")
+  done
+}
+
+qualify_table_for_schema() {
+  local schema_name="$1"
+  local table_name="$2"
+
+  if [[ "$table_name" == *.* ]]; then
+    printf '%s' "$table_name"
+  else
+    printf '%s.%s' "$schema_name" "$table_name"
+  fi
+}
+
 SERVICE="${1:-}"
 DRY_RUN=0
 
@@ -169,8 +215,9 @@ done
 PROJECT="${SERVICE_PROJECT[$SERVICE]:-}"
 COMPOSE_SERVICE="${SERVICE_COMPOSE[$SERVICE]:-}"
 HISTORY_TABLE="${SERVICE_FLYWAY_TABLE[$SERVICE]:-}"
+SERVICE_SCHEMA_NAME_VALUE="${SERVICE_SCHEMA_NAME[$SERVICE]:-}"
 
-if [[ -z "$PROJECT" || -z "$COMPOSE_SERVICE" || -z "$HISTORY_TABLE" ]]; then
+if [[ -z "$PROJECT" || -z "$COMPOSE_SERVICE" || -z "$HISTORY_TABLE" || -z "$SERVICE_SCHEMA_NAME_VALUE" ]]; then
   echo "Unknown service: $SERVICE" >&2
   usage >&2
   exit 1
@@ -184,15 +231,26 @@ fi
 
 mapfile -t OWNED_TABLES < <(discover_owned_tables "$MIGRATION_DIR")
 
+if service_uses_saga_migrations "$PROJECT"; then
+  append_unique_tables OWNED_TABLES saga_instance saga_step
+fi
+
+QUALIFIED_HISTORY_TABLE="$(qualify_table_for_schema "$SERVICE_SCHEMA_NAME_VALUE" "$HISTORY_TABLE")"
+QUALIFIED_OWNED_TABLES=()
+for table in "${OWNED_TABLES[@]}"; do
+  QUALIFIED_OWNED_TABLES+=("$(qualify_table_for_schema "$SERVICE_SCHEMA_NAME_VALUE" "$table")")
+done
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Service: $SERVICE"
   echo "Gradle project: $PROJECT"
-  echo "Flyway history table: $HISTORY_TABLE"
+  echo "Service schema: $SERVICE_SCHEMA_NAME_VALUE"
+  echo "Flyway history table: $QUALIFIED_HISTORY_TABLE"
   echo "Owned tables:"
-  if [[ "${#OWNED_TABLES[@]}" -eq 0 ]]; then
+  if [[ "${#QUALIFIED_OWNED_TABLES[@]}" -eq 0 ]]; then
     echo "  (none discovered)"
   else
-    printf '  %s\n' "${OWNED_TABLES[@]}"
+    printf '  %s\n' "${QUALIFIED_OWNED_TABLES[@]}"
   fi
   exit 0
 fi
@@ -215,6 +273,14 @@ fi
 : "${FIREMUD_POSTGRES_PASSWORD:=firemud}"
 
 export FIREMUD_POSTGRES_HOST FIREMUD_POSTGRES_PORT FIREMUD_POSTGRES_DB FIREMUD_POSTGRES_USER FIREMUD_POSTGRES_PASSWORD
+export FLYWAY_URL="jdbc:postgresql://${FIREMUD_POSTGRES_HOST}:${FIREMUD_POSTGRES_PORT}/${FIREMUD_POSTGRES_DB}"
+export FLYWAY_USER="$FIREMUD_POSTGRES_USER"
+export FLYWAY_PASSWORD="$FIREMUD_POSTGRES_PASSWORD"
+export SERVICE_SCHEMA="$SERVICE_SCHEMA_NAME_VALUE"
+export SPRING_FLYWAY_TABLE="$HISTORY_TABLE"
+export FLYWAY_SCHEMAS="$SERVICE_SCHEMA_NAME_VALUE"
+export FLYWAY_DEFAULT_SCHEMA="$SERVICE_SCHEMA_NAME_VALUE"
+export FLYWAY_TABLE="$HISTORY_TABLE"
 
 WAS_RUNNING=0
 if [[ -n "$(docker compose "${COMPOSE_FILES[@]}" ps -q "$COMPOSE_SERVICE" 2>/dev/null || true)" ]]; then
@@ -224,8 +290,25 @@ fi
 
 docker compose "${COMPOSE_FILES[@]}" up -d postgres >/dev/null
 
-SQL="DROP TABLE IF EXISTS $(quote_identifier "$HISTORY_TABLE") CASCADE;"
-for table in "${OWNED_TABLES[@]}"; do
+for _ in {1..30}; do
+  if docker compose "${COMPOSE_FILES[@]}" exec -T postgres pg_isready \
+    -U "$FIREMUD_POSTGRES_USER" \
+    -d "$FIREMUD_POSTGRES_DB" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! docker compose "${COMPOSE_FILES[@]}" exec -T postgres pg_isready \
+  -U "$FIREMUD_POSTGRES_USER" \
+  -d "$FIREMUD_POSTGRES_DB" >/dev/null 2>&1; then
+  echo "Error: postgres did not become ready for $SERVICE reset" >&2
+  exit 1
+fi
+
+SQL="CREATE SCHEMA IF NOT EXISTS $(quote_identifier "$SERVICE_SCHEMA_NAME_VALUE");"
+SQL+=$'\n'"DROP TABLE IF EXISTS $(quote_identifier "$QUALIFIED_HISTORY_TABLE") CASCADE;"
+for table in "${QUALIFIED_OWNED_TABLES[@]}"; do
   SQL+=$'\n'"DROP TABLE IF EXISTS $(quote_identifier "$table") CASCADE;"
 done
 

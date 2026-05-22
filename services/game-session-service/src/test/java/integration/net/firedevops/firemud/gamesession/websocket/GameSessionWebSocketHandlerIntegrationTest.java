@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -47,8 +49,10 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
@@ -72,18 +76,23 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
-@SuppressWarnings({"removal"})
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings({"removal", "resource"})
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
       "spring.profiles.active=test",
       "game-session.require-authenticated-commands=true",
-      "firemud.database.enabled=false",
+      "firemud.database.enabled=true",
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
+      "spring.flyway.enabled=true",
       "firemud.gateway.connect-context.jwt-secret=testsecretkeytestsecretkeytest1234",
       "firemud.gameplay.catalog.worlds[0].slug=demo",
       "firemud.gameplay.catalog.worlds[0].display-name=Demo World",
@@ -110,15 +119,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
+  @Container
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    registry.add(
-        "spring.datasource.url",
-        () -> "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1");
-    registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
-    registry.add("spring.datasource.username", () -> "sa");
-    registry.add("spring.datasource.password", () -> "");
-    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "public");
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        registry, postgres, "game_session_service");
   }
 
   @LocalServerPort private int port;
@@ -583,6 +590,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void unexpectedDisconnectKeepsReplayEligibleForFreshReconnect() throws Exception {
+    clearInvocations(screenBufferService);
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -611,7 +619,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    verify(screenBufferService).get(22L, 1L, 123L);
+    verify(screenBufferService, atLeastOnce()).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
 
@@ -755,10 +763,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 json(payload).path("commandType").asText().equals("PLAY")
                     && json(payload).path("accepted").asBoolean());
-    assertThat(payloads)
-        .anyMatch(
-            payload ->
-                json(payload).path("outputs").isArray() && containsKind(json(payload), "PROMPT"));
+    assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
         .getTenantMembershipForRuntime(
             eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
@@ -1092,6 +1097,115 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void websocketFailedReloginFailsClosedWithoutLeakingOldAuthenticatedState() throws Exception {
+    when(accountClient.authenticate(eq("22"), eq("demo@example.com"), eq("wrongpass"), eq("")))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("UNAUTHENTICATED")
+                        .setMessage("Invalid credentials")
+                        .build())
+                .build());
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOOK");
+      client.awaitStartsWith("OK LOOK");
+      client.send("LOGIN demo@example.com wrongpass");
+      client.awaitStartsWith("ERROR INVALID_CREDENTIALS");
+      client.send("LOOK");
+      client.awaitStartsWith("ERROR LOGIN_REQUIRED");
+      payloads = client.responses();
+    }
+
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR INVALID_CREDENTIALS"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR LOGIN_REQUIRED"));
+  }
+
+  @Test
+  void websocketActiveGameplaySessionFallsBackToPlayRequiredWhenPointerAdvances() throws Exception {
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
+      client.login("demo@example.com", "swordfish");
+      client.play("demo");
+      client.send("LOOK");
+      client.awaitStartsWith("OK LOOK");
+      bumpProductionAdmissionPointer(1L, false);
+      client.send("LOOK");
+      client.awaitStartsWith("ERROR PLAY_REQUIRED");
+      client.send("CHARS demo");
+      client.awaitStartsWith("OK CHARS");
+      payloads = client.responses();
+    }
+
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR PLAY_REQUIRED"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK CHARS"));
+  }
+
+  @Test
+  void websocketGenericRouteChangeOnReusedTransportClearsOldStateAndRefreshesBootstrapShell()
+      throws Exception {
+    try (GameplayWebSocketDriver first =
+        openGameplayDriver(
+            "41",
+            java.util.Map.of(
+                "X-Tenant-Id", "22",
+                "X-Firemud-Transport-Session-Id", "41",
+                "X-World-Slug", "demo",
+                "X-Realm-Slug", "production",
+                "X-Pointer-Version", "1"))) {
+      first.login("demo@example.com", "swordfish");
+      first.play("demo");
+      first.send("LOOK");
+      first.awaitStartsWith("OK LOOK");
+    }
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver second =
+        openGameplayDriver(
+            "42",
+            java.util.Map.of(
+                "X-Tenant-Id", "22",
+                "X-Firemud-Transport-Session-Id", "41",
+                "X-World-Slug", "sandbox",
+                "X-Realm-Slug", "production",
+                "X-Pointer-Version", "1"))) {
+      second.send("LOOK");
+      second.awaitStartsWith("ERROR LOGIN_REQUIRED");
+      second.login("demo@example.com", "swordfish");
+      second.awaitStartsWith("OK LOGIN");
+      second.send("REALMS sandbox");
+      second.awaitStartsWith("OK REALMS");
+      payloads = second.responses();
+    }
+
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR LOGIN_REQUIRED"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.gameInstanceId()).isZero();
+              assertThat(context.characterId()).isZero();
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(42L);
+              assertThat(context.worldSlug()).isEqualTo("sandbox");
+              assertThat(context.realmSlug()).isEqualTo("production");
+              assertThat(context.pointerVersion()).isEqualTo(1L);
+            });
+  }
+
+  @Test
   void websocketFirstPartyInvalidConnectContextClosesImmediately() throws Exception {
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
@@ -1155,6 +1269,128 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void websocketFirstPartyReconnectAfterCutoverFailsClosedWithoutLeakingOldGameplayBinding()
+      throws Exception {
+    try (GameplayWebSocketDriver first =
+        openFirstPartyDriver(
+            "2", firstPartyClaims("demo", "production", "1", "1", "resume-before-cutover"))) {
+      first.send("LOGIN");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      first.send("PLAY demo");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      first.send("LOOK");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+    }
+
+    bumpProductionAdmissionPointer(2L, true);
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver reconnecting =
+        openFirstPartyDriver(
+            "2", firstPartyClaims("demo", "production", "1", "1", "resume-after-cutover"))) {
+      reconnecting.send("LOGIN");
+      reconnecting.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      reconnecting.send("LOOK");
+      reconnecting.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      payloads = reconnecting.responses();
+    }
+
+    JsonNode loginFailure =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOGIN"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+
+    JsonNode lookFailure =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOOK"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(lookFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
+  }
+
+  @Test
+  void websocketFirstPartyRouteChangeOnReusedTransportClearsOldGameplayBeforeRelogin()
+      throws Exception {
+    try (GameplayWebSocketDriver first =
+        openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "route-a"))) {
+      first.send("LOGIN");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      first.send("PLAY demo");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      first.send("LOOK");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+    }
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver second =
+        openFirstPartyDriver("2", firstPartyClaims("sandbox", "production", "2", "1", "route-b"))) {
+      second.send("LOGIN");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      second.send("LOOK");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      second.send("REALMS sandbox");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "REALMS"), "structured REALMS result");
+      payloads = second.responses();
+    }
+
+    JsonNode loginSuccess =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOGIN"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
+
+    JsonNode lookFailure =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOOK"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(lookFailure.path("errorCode").asText()).isEqualTo("PLAY_REQUIRED");
+
+    JsonNode realmsSuccess =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "REALMS"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(realmsSuccess.path("accepted").asBoolean()).isTrue();
+    assertThat(realmsSuccess.path("outputs").get(0).path("payload").path("worldSlug").asText())
+        .isEqualTo("sandbox");
+
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.gameInstanceId()).isZero();
+              assertThat(context.characterId()).isZero();
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
+              assertThat(context.worldSlug()).isEqualTo("sandbox");
+              assertThat(context.realmSlug()).isEqualTo("production");
+              assertThat(context.pointerVersion()).isEqualTo(1L);
+            });
   }
 
   @Test

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
@@ -102,5 +103,25 @@ class InMemoryGameplayPresenceServiceTest {
     service.setExplicitAfk(2L, false);
     GameplayPresence cleared = service.listConnectedByGameInstance(22L, 7L).get(0);
     assertNull(cleared.explicitAfkSinceEpochMs());
+  }
+
+  @Test
+  void findConnectedByAccountIdsPrefersMostRecentlyActivePresencePerAccount() {
+    AtomicLong now = new AtomicLong(100L);
+    InMemoryGameplayPresenceService service =
+        new InMemoryGameplayPresenceService(jwtUtil, now::get);
+    service.registerConnected(
+        new SessionContext(2L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", null));
+    now.set(110L);
+    service.registerConnected(
+        new SessionContext(3L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", null));
+    now.set(140L);
+    service.recordCommandActivity(3L, true);
+
+    var result = service.findConnectedByAccountIds(22L, new LinkedHashSet<>(List.of(102L)));
+
+    assertEquals(1, result.size());
+    assertEquals(3L, result.get(102L).sessionId());
+    assertEquals(Long.valueOf(140L), result.get(102L).lastMeaningfulActivityAtEpochMs());
   }
 }

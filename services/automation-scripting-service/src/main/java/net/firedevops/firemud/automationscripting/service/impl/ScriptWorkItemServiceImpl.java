@@ -4,11 +4,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -66,31 +64,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final ScriptPatchReadinessProjectionService readinessProjectionService;
 
   @org.springframework.beans.factory.annotation.Autowired
-  public ScriptWorkItemServiceImpl(
-      ScriptWorkItemRepository workItemRepository,
-      ScriptEventAuditRepository auditRepository,
-      ScriptEventIngressAuditRepository ingressAuditRepository,
-      ScriptHandoffEventRepository handoffEventRepository,
-      ScriptOutboxProperties outboxProperties,
-      AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
-      PluginRuntimeStateService pluginRuntimeStateService,
-      GameDesignControlPlaneClient gameDesignControlPlaneClient) {
-    this(
-        workItemRepository,
-        auditRepository,
-        ingressAuditRepository,
-        handoffEventRepository,
-        outboxProperties,
-        automationAdmissionStateService,
-        scriptPatchPinProjectionService,
-        rolloutProjectionService,
-        pluginRuntimeStateService,
-        gameDesignControlPlaneClient,
-        null);
-  }
-
   public ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
@@ -242,27 +215,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public Optional<PatchStatusSummary> getPatchStatus(String tenantId, String scriptPatchVersion) {
     requireText(tenantId, "tenant_id");
     requireText(scriptPatchVersion, "script_patch_version");
-    if (readinessProjectionService != null) {
-      Optional<PatchStatusSummary> projectionSummary =
-          readinessProjectionService
-              .getProjection(tenantId, scriptPatchVersion)
-              .map(
-                  readiness -> {
-                    PublicationMetadata metadata =
-                        publicationMetadata(tenantId, scriptPatchVersion);
-                    return PatchStatusSummary.fromProjection(
-                        readiness,
-                        metadata.baseVersionId(),
-                        metadata.abilitySchemaDigest(),
-                        metadata.publication());
-                  });
-      if (projectionSummary.isPresent()) {
-        return projectionSummary;
-      }
-    }
-    return summarize(
-        scriptPatchVersion,
-        workItemRepository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion));
+    return readinessProjectionService
+        .getProjection(tenantId, scriptPatchVersion)
+        .map(
+            readiness -> {
+              PublicationMetadata metadata = publicationMetadata(tenantId, scriptPatchVersion);
+              return PatchStatusSummary.fromProjection(
+                  readiness,
+                  metadata.baseVersionId(),
+                  metadata.abilitySchemaDigest(),
+                  metadata.publication());
+            });
   }
 
   @Override
@@ -270,51 +233,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
-    if (readinessProjectionService != null) {
-      List<PatchStatusSummary> projectionSummaries =
-          readinessProjectionService.listProjections(tenantId).stream()
-              .map(
-                  readiness -> {
-                    PublicationMetadata metadata =
-                        publicationMetadata(tenantId, readiness.scriptPatchVersion());
-                    return PatchStatusSummary.fromProjection(
-                        readiness,
-                        metadata.baseVersionId(),
-                        metadata.abilitySchemaDigest(),
-                        metadata.publication());
-                  })
-              .toList();
-      LinkedHashSet<String> projectedPatchVersions =
-          projectionSummaries.stream()
-              .map(PatchStatusSummary::scriptPatchVersion)
-              .collect(Collectors.toCollection(LinkedHashSet::new));
-      Stream<PatchStatusSummary> legacySummaries =
-          workItemRepository.findDistinctScriptPatchVersionsByTenantId(tenantId).stream()
-              .filter(patchVersion -> !projectedPatchVersions.contains(patchVersion))
-              .map(
-                  patchVersion ->
-                      summarize(
-                          patchVersion,
-                          workItemRepository.findByTenantIdAndScriptPatchVersion(
-                              tenantId, patchVersion)))
-              .flatMap(Optional::stream);
-      return Stream.concat(projectionSummaries.stream(), legacySummaries)
-          .filter(
-              summary ->
-                  status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED
-                      || summary.status() == status)
-          .filter(summary -> changedAfterMs <= 0 || summary.lastChangedAtMs() > changedAfterMs)
-          .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
-          .sorted(Comparator.comparingLong(PatchStatusSummary::lastChangedAtMs).reversed())
-          .toList();
-    }
-    return workItemRepository.findDistinctScriptPatchVersionsByTenantId(tenantId).stream()
+    return readinessProjectionService.listProjections(tenantId).stream()
         .map(
-            patchVersion ->
-                summarize(
-                    patchVersion,
-                    workItemRepository.findByTenantIdAndScriptPatchVersion(tenantId, patchVersion)))
-        .flatMap(Optional::stream)
+            readiness -> {
+              PublicationMetadata metadata =
+                  publicationMetadata(tenantId, readiness.scriptPatchVersion());
+              return PatchStatusSummary.fromProjection(
+                  readiness,
+                  metadata.baseVersionId(),
+                  metadata.abilitySchemaDigest(),
+                  metadata.publication());
+            })
         .filter(
             summary ->
                 status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED
@@ -439,11 +368,29 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String scriptPatchVersion,
       String workItemId,
       String handoffOutcome,
+      String targetGameInstanceId,
+      String targetRegionId,
+      long targetRegionEpoch,
+      String remoteCoordinatorId,
+      String remoteFollowupId,
+      String scriptId,
+      String pluginId,
+      String automationDispatchId,
+      String gameSessionCommandId,
+      String targetEntityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String sourceKind,
+      String sourceState,
       long changedAfterMs,
       long changedBeforeMs,
       int limit) {
     requireText(tenantId, "tenant_id");
     int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(worldSlug, realmSlug, pointerVersion);
     return handoffEventRepository
         .findEvents(
             tenantId,
@@ -451,6 +398,22 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             blankToEmpty(scriptPatchVersion),
             parseOptionalWorkItemId(workItemId),
             blankToEmpty(handoffOutcome),
+            blankToEmpty(targetGameInstanceId),
+            blankToEmpty(targetRegionId),
+            targetRegionEpoch,
+            blankToEmpty(remoteCoordinatorId),
+            blankToEmpty(remoteFollowupId),
+            blankToEmpty(scriptId),
+            blankToEmpty(pluginId),
+            blankToEmpty(automationDispatchId),
+            blankToEmpty(gameSessionCommandId),
+            blankToEmpty(targetEntityId),
+            blankToEmpty(playableStateScope),
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion(),
+            blankToEmpty(sourceKind),
+            blankToEmpty(sourceState),
             changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
             changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
             PageRequest.of(0, boundedLimit))
@@ -510,31 +473,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       replayed++;
     }
     return new ReplayResult(replayed, rejected);
-  }
-
-  private Optional<PatchStatusSummary> summarize(
-      String scriptPatchVersion, List<ScriptWorkItem> workItems) {
-    if (workItems.isEmpty()) {
-      return Optional.empty();
-    }
-    Instant lastChanged =
-        workItems.stream()
-            .map(ScriptWorkItem::getUpdatedAt)
-            .max(Comparator.naturalOrder())
-            .orElse(Instant.EPOCH);
-    ScriptPatchStatus status = statusFor(workItems);
-    PublicationMetadata publicationMetadata =
-        publicationMetadata(workItems.getFirst().getTenantId(), scriptPatchVersion);
-    return Optional.of(
-        new PatchStatusSummary(
-            scriptPatchVersion,
-            status,
-            statusReasonFor(status, workItems),
-            "",
-            lastChanged.toEpochMilli(),
-            publicationMetadata.baseVersionId(),
-            publicationMetadata.abilitySchemaDigest(),
-            publicationMetadata.publication()));
   }
 
   private PatchInstanceRolloutSummary withPublication(
@@ -614,6 +552,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.commandOrdinal(),
         summary.automationDispatchId(),
         summary.gameSessionCommandId(),
+        summary.targetGameInstanceId(),
+        summary.targetRegionId(),
+        summary.targetRegionEpoch(),
+        summary.remoteCoordinatorId(),
+        summary.remoteFollowupId(),
         summary.targetEntityId(),
         summary.playableStateScope(),
         summary.worldSlug(),
@@ -706,63 +649,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         "");
   }
 
-  private ScriptPatchStatus statusFor(List<ScriptWorkItem> workItems) {
-    if (hasStatus(workItems, STATUS_FAILED) || hasStatus(workItems, STATUS_DEAD_LETTERED)) {
-      return ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED;
-    }
-    if (hasStatus(workItems, STATUS_PENDING_EVALUATION)
-        || hasStatus(workItems, STATUS_EVALUATING)
-        || hasStatus(workItems, STATUS_HANDOFF_IN_FLIGHT)) {
-      return ScriptPatchStatus.SCRIPT_PATCH_STATUS_ONLOAD_RUNNING;
-    }
-    if (workItems.stream().allMatch(item -> STATUS_CANCELED.equals(item.getStatus()))) {
-      return ScriptPatchStatus.SCRIPT_PATCH_STATUS_ROLLED_BACK;
-    }
-    return ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY;
-  }
-
-  private static boolean hasStatus(List<ScriptWorkItem> workItems, String status) {
-    return workItems.stream().anyMatch(item -> status.equals(item.getStatus()));
-  }
-
-  private static String statusReasonFor(ScriptPatchStatus status, List<ScriptWorkItem> workItems) {
-    return switch (status) {
-      case SCRIPT_PATCH_STATUS_FAILED ->
-          latestReasonFor(workItems, STATUS_FAILED, STATUS_DEAD_LETTERED);
-      case SCRIPT_PATCH_STATUS_ONLOAD_RUNNING -> "runtime_work_active";
-      case SCRIPT_PATCH_STATUS_ROLLED_BACK -> rolledBackReasonFor(workItems);
-      case SCRIPT_PATCH_STATUS_READY -> "runtime_work_terminal";
-      default -> "runtime_status_unknown";
-    };
-  }
-
-  private static String latestReasonFor(
-      List<ScriptWorkItem> workItems, String primaryStatus, String secondaryStatus) {
-    return workItems.stream()
-        .filter(
-            item ->
-                primaryStatus.equals(item.getStatus()) || secondaryStatus.equals(item.getStatus()))
-        .sorted(Comparator.comparing(ScriptWorkItem::getUpdatedAt).reversed())
-        .map(ScriptWorkItem::getCancelReason)
-        .filter(reason -> reason != null && !reason.isBlank())
-        .findFirst()
-        .orElse("terminal_work_failed");
-  }
-
-  private static String rolledBackReasonFor(List<ScriptWorkItem> workItems) {
-    List<String> reasons =
-        workItems.stream()
-            .filter(item -> STATUS_CANCELED.equals(item.getStatus()))
-            .map(ScriptWorkItem::getCancelReason)
-            .filter(reason -> reason != null && !reason.isBlank())
-            .distinct()
-            .toList();
-    if (reasons.size() == 1) {
-      return reasons.getFirst();
-    }
-    return "runtime_work_canceled";
-  }
-
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
   }
@@ -790,6 +676,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static DeadLetterSummary toDeadLetterSummary(ScriptWorkItem item) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            item.getWorldSlug(), item.getRealmSlug(), item.getPointerVersion());
     return new DeadLetterSummary(
         item.getId().toString(),
         item.getTenantId(),
@@ -798,9 +687,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item.getRegionEpoch(),
         item.getEntityId(),
         blankToEmpty(item.getPlayableStateScope()),
-        blankToEmpty(item.getWorldSlug()),
-        blankToEmpty(item.getRealmSlug()),
-        blankToEmpty(item.getPointerVersion()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         blankToEmpty(item.getSourceKind()),
         blankToEmpty(item.getSourceState()),
         zeroIfNull(item.getSourceOrdinal()),
@@ -821,6 +710,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static HandoffEventSummary toHandoffSummary(ScriptHandoffEvent event) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            event.getWorldSlug(), event.getRealmSlug(), event.getPointerVersion());
     return new HandoffEventSummary(
         event.getEventId(),
         event.getTenantId(),
@@ -833,11 +725,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getCommandOrdinal(),
         event.getAutomationDispatchId(),
         blankToEmpty(event.getGameSessionCommandId()),
+        blankToEmpty(event.getTargetGameInstanceId()),
+        blankToEmpty(event.getTargetRegionId()),
+        event.getTargetRegionEpoch(),
+        blankToEmpty(event.getRemoteCoordinatorId()),
+        blankToEmpty(event.getRemoteFollowupId()),
         event.getTargetEntityId(),
         blankToEmpty(event.getPlayableStateScope()),
-        blankToEmpty(event.getWorldSlug()),
-        blankToEmpty(event.getRealmSlug()),
-        blankToEmpty(event.getPointerVersion()),
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        routingBundle.pointerVersion(),
         blankToEmpty(event.getSourceKind()),
         blankToEmpty(event.getSourceState()),
         zeroIfNull(event.getSourceOrdinal()),
@@ -896,9 +793,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean eligibleForOnLoadReplay(ScriptWorkItem item) {
-    if (readinessProjectionService == null) {
-      return false;
-    }
     return readinessProjectionService
         .getProjection(item.getTenantId(), item.getScriptPatchVersion())
         .filter(summary -> summary.status() == ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED)
@@ -946,7 +840,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private void refreshReadinessProjectionIfNeeded(ScriptWorkItem item) {
-    if (readinessProjectionService == null || !"onLoad".equals(item.getEventType())) {
+    if (!"onLoad".equals(item.getEventType())) {
       return;
     }
     readinessProjectionService.refreshFromOnLoadWorkItems(
@@ -954,9 +848,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private void refreshReadinessProjectionsIfNeeded(List<ScriptWorkItem> items) {
-    if (readinessProjectionService == null) {
-      return;
-    }
     items.stream()
         .filter(item -> "onLoad".equals(item.getEventType()))
         .map(item -> item.getTenantId() + "\u0000" + item.getScriptPatchVersion())

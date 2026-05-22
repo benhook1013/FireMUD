@@ -36,13 +36,15 @@ WHERE NOT EXISTS (
 ALTER TABLE room_instance ADD COLUMN zone_instance_id BIGINT;
 
 UPDATE room_instance rmi
-SET zone_instance_id = zi.id
-FROM room r
-JOIN zone_instance zi
-  ON zi.template_zone_id = r.zone_id
-WHERE r.id = rmi.template_room_id
-  AND zi.tenant_id = rmi.tenant_id
-  AND zi.game_instance_id = rmi.game_instance_id;
+SET zone_instance_id = (
+    SELECT zi.id
+    FROM room r
+    JOIN zone_instance zi
+      ON zi.template_zone_id = r.zone_id
+    WHERE r.id = rmi.template_room_id
+      AND zi.tenant_id = rmi.tenant_id
+      AND zi.game_instance_id = rmi.game_instance_id
+);
 
 ALTER TABLE room_instance
     ADD CONSTRAINT fk_room_instance_zone_instance

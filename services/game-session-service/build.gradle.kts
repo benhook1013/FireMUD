@@ -1,5 +1,6 @@
 plugins {
     `java-test-fixtures`
+    id("net.firedevops.firemud.jooq-conventions")
     id("net.firedevops.firemud.stateful-service-conventions")
 }
 
@@ -51,10 +52,10 @@ dependencies {
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
-    testFixturesApi(project(":entity-management-service"))
-    testFixturesApi(project(":game-logic-service"))
-    testFixturesApi(project(":social-groups-service"))
-    testFixturesApi(project(":world-management-service"))
+    testFixturesImplementation(project(":entity-management-service"))
+    testFixturesImplementation(project(":game-logic-service"))
+    testFixturesImplementation(project(":social-groups-service"))
+    testFixturesImplementation(project(":world-management-service"))
     testFixturesImplementation(testFixtures(project(":common-test-support")))
     testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))

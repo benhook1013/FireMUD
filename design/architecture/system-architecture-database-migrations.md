@@ -2,6 +2,11 @@
 
 This document explains how FireMUD manages PostgreSQL schema changes across its microservices. Each service owns its tables and applies migrations independently.
 
+## Implementation Notes
+
+- FireMUD’s SQL target state is `jOOQ + Flyway`, with Flyway as the canonical schema authority and `jOOQ` generation/execution as the intended runtime access model for SQL-backed services.
+- The `02.19` convergence family is now closed at the platform boundary: SQL-backed services use `jOOQ + Flyway`, and repo-wide Hibernate/JPA runtime support has been removed rather than preserved as a second persistence path.
+
 ---
 
 ## Migration Tool
@@ -13,11 +18,14 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   module, which does not run Flyway itself).
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
-- Every service-local module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
 - Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
+- Generated `jOOQ` sources derive from these migrated schemas rather than from a second hand-maintained SQL model.
+- The shared `jOOQ` foundation exposes a canonical `:service:generateJooq` task that derives DSL code directly from `src/main/resources/db/migration/*.sql`.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
+- Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.
 - Java-based callbacks are avoided; migrations remain SQL-only for portability.
 
 ## Per-Service Organization
@@ -193,7 +201,7 @@ The following examples illustrate how to apply the version-aware guidelines to c
 - Execute this task from the service directory or prefix the project name (e.g.,
   `./gradlew :account-service:flywayMigrate`).
 - You can also run `./gradlew :service:flywayInfo`, `flywayClean`, or `flywayRepair` to troubleshoot local databases. **Use `flywayClean` with caution** because it drops tables.
-- For service-scoped local rebuilds, use [`dev-tools/restores/reset-service-db.sh`](../../dev-tools/restores/reset-service-db.sh) instead of `flywayClean`. It drops only the tables created by that service's migrations plus that service's Flyway history table, then reruns `flywayMigrate` for the same service. Pass `--dry-run` first if you want to inspect the destructive scope.
+- For service-scoped local rebuilds, use [`dev-tools/restores/reset-service-db.sh`](../../dev-tools/restores/reset-service-db.sh) instead of `flywayClean`. It drops only the tables created by that service's migrations plus that service's Flyway history table, and saga-backed services also include the shared saga tables in that destructive scope before rerunning `flywayMigrate` for the same service. The script waits for local Postgres readiness, exports standard `FLYWAY_*` connection variables, and preserves the owning service schema plus Flyway history table (`SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, `FLYWAY_TABLE`) before rerunning migrations. Pass `--dry-run` first if you want to inspect the destructive scope.
 - Run `./gradlew :service:flywayValidate` to verify migrations before committing.
 - The CI pipeline runs `flywayValidate` for all services to catch migration issues early.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.

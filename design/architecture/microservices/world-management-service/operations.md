@@ -21,6 +21,6 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 - **Stubbed:** Current snapshot data comes from the deterministic LOOK test fixtures so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
 - **Deferred:** Future work will push live snapshot updates through `/ws/game/**` so Gateway and TCP Proxy clients can react to world changes as soon as they happen.
 
-## Saga Participation
+## Temporal Participation
 
-World creation for a new game instance runs as a Saga using the helper utilities from `firemud-common`. Each step is described in [`world-creation-workflow.md`](./world-creation-workflow.md) and can be rolled back if a later step fails. This keeps instance world state consistent even when the workflow spans multiple services.
+World creation, activation, failure, and termination for a game instance now run on the shared Temporal substrate as the canonical `world-lifecycle` workflow family. The workflow delegates durable business steps to World Management command activities, keeps gameplay runtime out of scope, and exposes deterministic workflow identity/status through the lifecycle read surface. The detailed step model is described in [`world-creation-workflow.md`](./world-creation-workflow.md).

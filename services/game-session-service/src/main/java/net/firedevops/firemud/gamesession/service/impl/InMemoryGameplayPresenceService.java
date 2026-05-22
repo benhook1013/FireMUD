@@ -3,7 +3,10 @@ package net.firedevops.firemud.gamesession.service.impl;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -136,6 +139,43 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
     }
     matches.sort(ordering);
     return List.copyOf(matches);
+  }
+
+  @Override
+  public Map<Long, GameplayPresence> findConnectedByAccountIds(
+      long tenantId, Collection<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return Map.of();
+    }
+    LinkedHashSet<Long> requestedIds = new LinkedHashSet<>();
+    for (Long accountId : accountIds) {
+      if (accountId != null && accountId > 0) {
+        requestedIds.add(accountId);
+      }
+    }
+    if (requestedIds.isEmpty()) {
+      return Map.of();
+    }
+    Comparator<GameplayPresence> preference =
+        Comparator.comparing(
+                GameplayPresence::lastMeaningfulActivityAtEpochMs,
+                Comparator.nullsFirst(Long::compareTo))
+            .thenComparing(
+                GameplayPresence::lastAcceptedCommandAtEpochMs,
+                Comparator.nullsFirst(Long::compareTo))
+            .thenComparingLong(GameplayPresence::connectedAtEpochMs)
+            .thenComparingLong(GameplayPresence::sessionId);
+    Map<Long, GameplayPresence> results = new LinkedHashMap<>();
+    for (GameplayPresence presence : presences.values()) {
+      if (presence.tenantId() != tenantId || !requestedIds.contains(presence.accountId())) {
+        continue;
+      }
+      results.merge(
+          presence.accountId(),
+          presence,
+          (left, right) -> preference.compare(left, right) >= 0 ? left : right);
+    }
+    return Map.copyOf(results);
   }
 
   @Override

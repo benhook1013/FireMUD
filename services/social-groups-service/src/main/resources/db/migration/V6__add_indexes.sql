@@ -1,6 +1,9 @@
 CREATE INDEX idx_guilds_tenant_id ON guilds(tenant_id);
 CREATE INDEX idx_guilds_owner_account_id ON guilds(owner_account_id);
+CREATE INDEX idx_guild_members_tenant_id ON guild_members(tenant_id);
 CREATE INDEX idx_guild_members_account_id ON guild_members(account_id);
+CREATE UNIQUE INDEX uq_guild_members_tenant_guild_account
+    ON guild_members(tenant_id, guild_id, account_id);
 CREATE INDEX idx_chat_messages_tenant_id ON chat_messages(tenant_id);
 CREATE INDEX idx_chat_messages_sender_id ON chat_messages(sender_account_id);
 CREATE INDEX idx_chat_messages_recipient_id ON chat_messages(recipient_account_id);
@@ -17,4 +20,3 @@ CREATE INDEX idx_guild_storage_items_guild_id ON guild_storage_items(guild_id);
 CREATE INDEX idx_guild_alliances_tenant_id ON guild_alliances(tenant_id);
 CREATE INDEX idx_guild_alliances_guild_id ON guild_alliances(guild_id);
 CREATE INDEX idx_guild_alliances_ally_id ON guild_alliances(ally_guild_id);
-

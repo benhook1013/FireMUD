@@ -561,26 +561,30 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     try {
       long tenant = Long.parseLong(tenantId);
       long bootstrapGameInstance = Long.parseLong(bootstrapGameInstanceId);
-      if (sessionContextService.findByTenantAndSessionId(tenant, sessionId).isPresent()) {
+      Optional<SessionContext> existing =
+          sessionContextService.findByTenantAndSessionId(tenant, sessionId);
+      if (existing.isPresent()) {
+        maybeRefreshBootstrapShell(
+            existing.orElseThrow(),
+            bootstrapShell(
+                sessionId,
+                tenant,
+                bootstrapGameInstance,
+                resolveWorldSlug(session),
+                resolveRealmSlug(session),
+                resolvePointerVersion(session),
+                resolveLocaleTag(session)));
         return;
       }
       sessionContextService.save(
-          new SessionContext(
+          bootstrapShell(
               sessionId,
               tenant,
-              0L,
-              null,
-              0L,
-              null,
-              0L,
-              null,
-              null,
-              resolveLocaleTag(session),
               bootstrapGameInstance,
               resolveWorldSlug(session),
               resolveRealmSlug(session),
               resolvePointerVersion(session),
-              null));
+              resolveLocaleTag(session)));
     } catch (NumberFormatException ex) {
       logger.debug(
           "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
@@ -600,28 +604,118 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     var connectContext = maybeContext.orElseThrow();
     firstPartyConnectContextRegistry.register(sessionId, connectContext);
-    if (sessionContextService
-        .findByTenantAndSessionId(connectContext.tenantId(), sessionId)
-        .isPresent()) {
+    Optional<SessionContext> existing =
+        sessionContextService.findByTenantAndSessionId(connectContext.tenantId(), sessionId);
+    if (existing.isPresent()) {
+      maybeRefreshBootstrapShell(
+          existing.orElseThrow(),
+          bootstrapShell(
+              sessionId,
+              connectContext.tenantId(),
+              connectContext.gameInstanceId(),
+              connectContext.worldSlug(),
+              connectContext.realmSlug(),
+              connectContext.pointerVersion(),
+              resolveLocaleTag(session)));
       return;
     }
     sessionContextService.save(
-        new SessionContext(
+        bootstrapShell(
             sessionId,
             connectContext.tenantId(),
-            0L,
-            null,
-            0L,
-            null,
-            0L,
-            null,
-            null,
-            resolveLocaleTag(session),
             connectContext.gameInstanceId(),
             connectContext.worldSlug(),
             connectContext.realmSlug(),
             connectContext.pointerVersion(),
+            resolveLocaleTag(session)));
+  }
+
+  private void maybeRefreshBootstrapShell(SessionContext existing, SessionContext incomingShell) {
+    if (sameBootstrapRoute(existing, incomingShell)) {
+      if (StringUtils.hasText(incomingShell.localeTag())
+          && !incomingShell.localeTag().equals(existing.localeTag())) {
+        sessionContextService.save(
+            new SessionContext(
+                existing.sessionId(),
+                existing.tenantId(),
+                existing.accountId(),
+                existing.loginName(),
+                existing.characterId(),
+                existing.characterName(),
+                existing.gameInstanceId(),
+                existing.roomInstanceId(),
+                existing.jwt(),
+                incomingShell.localeTag(),
+                existing.bootstrapGameInstanceId(),
+                existing.worldSlug(),
+                existing.realmSlug(),
+                existing.pointerVersion(),
+                existing.playableStateScope()));
+      }
+      return;
+    }
+    sessionContextService.save(
+        new SessionContext(
+            incomingShell.sessionId(),
+            incomingShell.tenantId(),
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            incomingShell.localeTag(),
+            incomingShell.bootstrapGameInstanceId(),
+            incomingShell.worldSlug(),
+            incomingShell.realmSlug(),
+            incomingShell.pointerVersion(),
             null));
+  }
+
+  private boolean sameBootstrapRoute(SessionContext existing, SessionContext incomingShell) {
+    if (existing.tenantId() != incomingShell.tenantId()) {
+      return false;
+    }
+    if (existing.bootstrapGameInstanceId() != incomingShell.bootstrapGameInstanceId()) {
+      return false;
+    }
+    if (StringUtils.hasText(incomingShell.worldSlug())
+        && !incomingShell.worldSlug().equalsIgnoreCase(existing.worldSlug())) {
+      return false;
+    }
+    if (StringUtils.hasText(incomingShell.realmSlug())
+        && !incomingShell.realmSlug().equalsIgnoreCase(existing.realmSlug())) {
+      return false;
+    }
+    return incomingShell.pointerVersion() <= 0
+        || existing.pointerVersion() == incomingShell.pointerVersion();
+  }
+
+  private SessionContext bootstrapShell(
+      long sessionId,
+      long tenantId,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String localeTag) {
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        null);
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {

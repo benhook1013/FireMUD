@@ -9,7 +9,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <password> [otp]` / `LOGON ...`.
 - Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
-- The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is the target first-party browser contract. The current gateway implementation still accepts the header carrier used by non-browser clients; browser cookie issuance and gateway cookie validation need follow-up implementation before first-party browser gameplay is production-ready.
+- The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is now implemented for first-party browser gameplay. Non-browser clients may still use the dedicated `X-Firemud-Connect-Token` header carrier, but Gateway rejects handshakes that try to present both carriers at once.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
 
 ## Contract Decisions (Normative)

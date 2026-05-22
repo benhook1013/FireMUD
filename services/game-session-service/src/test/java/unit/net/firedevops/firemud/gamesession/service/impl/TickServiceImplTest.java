@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
@@ -55,6 +57,7 @@ class TickServiceImplTest {
       remoteFollowupRuntimeService;
   private AutomationScriptingClient automationScriptingClient;
   private TickService service;
+  private TickStagingService tickStagingService;
 
   @BeforeEach
   @SuppressWarnings("unchecked")
@@ -112,27 +115,58 @@ class TickServiceImplTest {
     automationScriptingClient = mock(AutomationScriptingClient.class);
     when(automationScriptingClient.observeRuntimeTickProgress(any()))
         .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
+    TickQueueControlService tickQueueControlService =
+        new TickQueueControlService(
+            redisTemplate,
+            repository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            runtimeIdentity,
+            sessionContextService);
+    TickBatchExecutionService tickBatchExecutionService =
+        new TickBatchExecutionService(
+            meterRegistry,
+            redisTemplate,
+            gameplayCommandRepository,
+            tickBatchRepository,
+            tickEffectRepository,
+            durableGameplayCommandExecutionService,
+            durableRemoteFollowupExecutionService,
+            remoteFollowupDrainService,
+            tickQueueControlService);
+    tickStagingService =
+        new TickStagingService(
+            redisTemplate,
+            gameplayCommandRepository,
+            remoteFollowupRepository,
+            tickBatchRepository,
+            tickEffectRepository,
+            remoteFollowupDrainService,
+            tickQueueControlService,
+            tickBatchExecutionService);
+    TickRuntimeProgressService tickRuntimeProgressService =
+        new TickRuntimeProgressService(
+            meterRegistry,
+            remoteFollowupRepository,
+            remoteFollowupRuntimeService,
+            automationScriptingClient,
+            tickQueueControlService);
+    tickRuntimeProgressService.init();
     service =
         new TickServiceImpl(
             redisTemplate,
             meterRegistry,
             conflictTracker,
-            repository,
-            gameplayCommandRepository,
-            runtimeIdentity,
-            runtimeRegionStatusRepository,
-            remoteFollowupRepository,
-            tickBatchRepository,
-            tickEffectRepository,
-            sessionContextService,
-            durableGameplayCommandExecutionService,
-            durableRemoteFollowupExecutionService,
-            remoteFollowupDrainService,
-            remoteFollowupRuntimeService,
-            automationScriptingClient);
+            tickQueueControlService,
+            tickBatchExecutionService,
+            tickStagingService,
+            tickRuntimeProgressService);
     ((TickServiceImpl) service).init();
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
+    setField(tickStagingService, "maxRemoteFollowupsPerTick", 16);
+    setField(tickRuntimeProgressService, "tickDurationMs", 1000L);
+    setField(tickRuntimeProgressService, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
@@ -175,67 +209,6 @@ class TickServiceImplTest {
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
                 List.of(), 0));
-  }
-
-  @Test
-  void enqueueCommandPushesToQueue() {
-    service.enqueueCommand(1L, 2L, "cmd-123", "look", false);
-    ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-    verify(listOps).rightPush(eq("gamesession:tick:queue:1:2"), payloadCaptor.capture());
-    org.junit.jupiter.api.Assertions.assertEquals("N|cmd-123|look", payloadCaptor.getValue());
-  }
-
-  @Test
-  void enqueueCommandRejectsMissingCommandId() {
-    org.junit.jupiter.api.Assertions.assertThrows(
-        IllegalArgumentException.class, () -> service.enqueueCommand(1L, 2L, null, "look", true));
-  }
-
-  @Test
-  void purgeQueuedAutomationCommandsForScriptPatchRemovesRedisPayloadAndMarksTerminal() {
-    var command = gameplayCommand("cmd-1");
-    command.setTenantId(1L);
-    command.setGameInstanceId(2L);
-    command.setSourceType("AUTOMATION");
-    command.setScriptPatchVersion("patch-1");
-    command.setCommandText("say hello");
-    command.setRequiresSoloTick(false);
-    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
-            1L, 2L, "region-1", "patch-1"))
-        .thenReturn(List.of(command));
-
-    long purged =
-        service.purgeQueuedAutomationCommandsForScriptPatch(
-            1L, 2L, "region-1", "patch-1", "rollback");
-
-    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
-    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-1|say hello");
-    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
-    org.junit.jupiter.api.Assertions.assertEquals("NOT_APPLIED", command.getGameplayResult());
-    org.junit.jupiter.api.Assertions.assertEquals("ROLLBACK_PURGED", command.getFailureCode());
-    org.junit.jupiter.api.Assertions.assertEquals("rollback", command.getFailureMessage());
-    org.junit.jupiter.api.Assertions.assertNotNull(command.getCompletedAt());
-    verify(gameplayCommandRepository).saveAll(List.of(command));
-  }
-
-  @Test
-  void purgeQueuedAutomationCommandsForPluginVersionUsesPluginProvenance() {
-    var command = gameplayCommand("cmd-2");
-    command.setCommandText("emote waves");
-    command.setPluginId("plugin-1");
-    command.setPluginVersionId("plugin-v1");
-    when(gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
-            1L, 2L, "", "plugin-1", "plugin-v1"))
-        .thenReturn(List.of(command));
-
-    long purged =
-        service.purgeQueuedAutomationCommandsForPluginVersion(
-            1L, 2L, "", "plugin-1", "plugin-v1", "plugin rollback");
-
-    org.junit.jupiter.api.Assertions.assertEquals(1L, purged);
-    verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-2|emote waves");
-    org.junit.jupiter.api.Assertions.assertEquals("PURGED", command.getExecutionOutcome());
-    org.junit.jupiter.api.Assertions.assertEquals("plugin rollback", command.getFailureMessage());
   }
 
   @Test
@@ -577,7 +550,7 @@ class TickServiceImplTest {
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, replayEntries));
+        replayManifestDigest(tickStagingService, replayEntries));
 
     service.processTick(1L, 2L);
 
@@ -672,6 +645,9 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", drainedEffect.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
+    org.junit.jupiter.api.Assertions.assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "REDIS_RETRY_QUEUED", command.getQueueSourceState());
     verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
     verify(remoteFollowupDrainService)
         .releaseClaimedFollowups(
@@ -934,6 +910,40 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickDropsPartialRoutingBundleFromSelectedWorkManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|say hello"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("demo");
+    command.setRealmSlug("production");
+    command.setPointerVersion(null);
+    command.setEnqueueSeq(77L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
+  }
+
+  @Test
   void processTickPersistsRetryClaimMetadataInSelectedWorkManifest() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
@@ -1043,10 +1053,10 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(5L);
@@ -1084,10 +1094,10 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson((TickServiceImpl) service, List.of("N|cmd-1|look"));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest((TickServiceImpl) service, List.of("N|cmd-1|look")));
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
     first.setEnqueueSeq(5L);
@@ -1096,6 +1106,21 @@ class TickServiceImplTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("AUTOMATION");
+    List<net.firedevops.firemud.gamesession.entity.GameplayCommand> savedSnapshots =
+        new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> saved =
+                  (List<net.firedevops.firemud.gamesession.entity.GameplayCommand>)
+                      invocation.getArgument(0);
+              saved.stream()
+                  .map(TickServiceImplTest::copyGameplayCommand)
+                  .forEach(savedSnapshots::add);
+              return saved;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
@@ -1109,6 +1134,14 @@ class TickServiceImplTest {
     verify(redisTemplate).delete("gamesession:tick:pending:1:2");
     verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
     verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    org.junit.jupiter.api.Assertions.assertTrue(
+        savedSnapshots.stream()
+            .anyMatch(
+                saved ->
+                    "cmd-2".equals(saved.getCommandId())
+                        && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
+                        && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())
+                        && "REDIS_RETRY_QUEUED".equals(saved.getQueueSourceState())));
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0,
         meterRegistry
@@ -1117,6 +1150,72 @@ class TickServiceImplTest {
             .counter()
             .count(),
         0.001);
+  }
+
+  @Test
+  void processTickDropsPartialRoutingBundleFromRemoteFollowupManifest() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup followup =
+        new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("followup-1");
+    followup.setCommandId("cmd-1");
+    followup.setOriginRegionId("origin-region");
+    followup.setOriginRegionEpoch(4L);
+    followup.setTargetRegionId("target-region");
+    followup.setTargetRegionEpoch(8L);
+    followup.setDueTickId(10L);
+    followup.setQueueSourceKind("REMOTE_FOLLOWUP");
+    followup.setQueueSourceState("REDIS_PENDING_CLAIMED");
+    followup.setQueueSourceOrdinal(1L);
+    followup.setTargetEntityId("entity-1");
+    followup.setClaimTargetAggregate("entity:entity-1");
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(null);
+    followup.setPayloadKind("noop");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
+    followup.setPayloadJson("{\"kind\":\"noop\"}");
+    when(remoteFollowupDrainService.claimDueFollowups(
+            eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
+                List.of("followup-1"), 1));
+    when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(any(String.class)))
+        .thenReturn(List.of(followup));
+    when(durableRemoteFollowupExecutionService.execute(any()))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService
+                .DurableRemoteFollowupExecutionResult(
+                "ABANDONED", "REMOTE_FOLLOWUP_KIND_UNSUPPORTED", "unsupported"));
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
+        runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus),
+            Optional.of(currentStatus));
+
+    service.processTick(1L, 2L);
+
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.TickBatch> batchCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.TickBatch stagedBatch =
+        batchCaptor.getAllValues().stream()
+            .filter(batch -> "REMOTE_FOLLOWUP_DRAIN".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"worldSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        !stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
   }
 
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand(
@@ -1129,6 +1228,16 @@ class TickServiceImplTest {
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     return command;
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.GameplayCommand copyGameplayCommand(
+      net.firedevops.firemud.gamesession.entity.GameplayCommand source) {
+    var copy = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
+    copy.setCommandId(source.getCommandId());
+    copy.setExecutionOutcome(source.getExecutionOutcome());
+    copy.setQueueSourceKind(source.getQueueSourceKind());
+    copy.setQueueSourceState(source.getQueueSourceState());
+    return copy;
   }
 
   private static net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeOwnership(
@@ -1179,25 +1288,27 @@ class TickServiceImplTest {
     }
   }
 
-  private static String replayManifestDigest(TickServiceImpl service, List<Object> rawEntries) {
+  private static String replayManifestDigest(TickStagingService service, List<Object> rawEntries) {
     String manifest = replayManifestJson(service, rawEntries);
     return shortHash(service, manifest);
   }
 
-  private static String replayManifestJson(TickServiceImpl service, List<Object> rawEntries) {
+  private static String replayManifestJson(TickStagingService service, List<Object> rawEntries) {
     try {
-      var parseMethod = TickServiceImpl.class.getDeclaredMethod("parseQueuedCommand", String.class);
+      var parseMethod =
+          TickStagingService.class.getDeclaredMethod("parseQueuedCommand", String.class);
       parseMethod.setAccessible(true);
       List<Object> entries = new java.util.ArrayList<>();
       for (Object rawEntry : rawEntries) {
         entries.add(parseMethod.invoke(service, rawEntry.toString()));
       }
       var selectionsMethod =
-          TickServiceImpl.class.getDeclaredMethod("commandSelections", List.class);
+          TickStagingService.class.getDeclaredMethod("commandSelections", List.class);
       selectionsMethod.setAccessible(true);
       Object selections = selectionsMethod.invoke(service, entries);
       var manifestMethod =
-          TickServiceImpl.class.getDeclaredMethod("selectedWorkManifest", String.class, List.class);
+          TickStagingService.class.getDeclaredMethod(
+              "selectedWorkManifest", String.class, List.class);
       manifestMethod.setAccessible(true);
       return (String) manifestMethod.invoke(service, "2", selections);
     } catch (ReflectiveOperationException e) {
@@ -1205,9 +1316,9 @@ class TickServiceImplTest {
     }
   }
 
-  private static String shortHash(TickServiceImpl service, String value) {
+  private static String shortHash(TickStagingService service, String value) {
     try {
-      var hashMethod = TickServiceImpl.class.getDeclaredMethod("shortHash", String.class);
+      var hashMethod = TickStagingService.class.getDeclaredMethod("shortHash", String.class);
       hashMethod.setAccessible(true);
       return (String) hashMethod.invoke(service, value);
     } catch (ReflectiveOperationException e) {

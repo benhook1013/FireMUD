@@ -173,5 +173,5 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 ## Runtime Data Notes
 
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
-- Logs and metrics include a `script_patch_version` label so operators can identify which hotfix revision is active.
+- Logs, traces, and control-plane reads expose the active script patch version so operators can identify which hotfix revision is active without adding raw `script_patch_version` Prometheus labels.
 - Built-in analytics for player behavior are a supported feature of the target service design.

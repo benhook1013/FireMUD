@@ -612,6 +612,9 @@ public class WorldManagementGrpcService
         .setLifecycleEpoch(snapshot.lifecycleEpoch())
         .setStatus(toProtoStatus(snapshot.status()))
         .setRemapSetId(snapshot.remapSetId() == null ? "" : snapshot.remapSetId())
+        .setWorkflowId(snapshot.workflowId() == null ? "" : snapshot.workflowId())
+        .setWorkflowRunId(snapshot.workflowRunId() == null ? "" : snapshot.workflowRunId())
+        .setWorkflowStatus(snapshot.workflowStatus() == null ? "" : snapshot.workflowStatus())
         .build();
   }
 

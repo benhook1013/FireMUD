@@ -283,6 +283,15 @@ message ScriptDeadLetterEntry {
   string plugin_version_id = 25;
   ScriptPatchPublicationLink publication = 26;
   PluginPublicationLink plugin_publication = 27;
+  string current_runtime_game_instance_id = 28;
+  string current_runtime_region_id = 29;
+  int64 current_runtime_region_epoch = 30;
+  bool is_runtime_scope_stale = 31;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 32;
+  string current_runtime_world_slug = 33;
+  string current_runtime_realm_slug = 34;
+  string current_runtime_pointer_version = 35;
+  bool is_routing_bundle_stale = 36;
 }
 
 message ListScriptDeadLettersResponse {
@@ -431,6 +440,9 @@ message GetScriptPatchStatusResponse {
   shared.v1.ErrorDetail error = 6;
   string superseded_by_script_patch_version = 7;
   ScriptPatchPublicationLink publication = 8;
+  string workflow_id = 9;
+  string workflow_run_id = 10;
+  string workflow_status = 11;
 }
 
 message ScriptPatchPublicationLink {
@@ -459,6 +471,9 @@ message ScriptPatchStatusEntry {
   string ability_schema_digest = 6;
   string superseded_by_script_patch_version = 7;
   ScriptPatchPublicationLink publication = 8;
+  string workflow_id = 9;
+  string workflow_run_id = 10;
+  string workflow_status = 11;
 }
 
 message ListScriptPatchStatusesResponse {
@@ -600,6 +615,15 @@ message ScriptScheduleInstanceEntry {
   bool is_runtime_progress_stale = 34;
   ScriptPatchPublicationLink publication = 35;
   PluginPublicationLink plugin_publication = 36;
+  string current_runtime_game_instance_id = 37;
+  string current_runtime_region_id = 38;
+  int64 current_runtime_region_epoch = 39;
+  bool is_runtime_scope_stale = 40;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 41;
+  string current_runtime_world_slug = 42;
+  string current_runtime_realm_slug = 43;
+  string current_runtime_pointer_version = 44;
+  bool is_routing_bundle_stale = 45;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -648,6 +672,15 @@ message ScriptTimerAuditEventEntry {
   string work_item_id = 26;
   ScriptPatchPublicationLink publication = 27;
   PluginPublicationLink plugin_publication = 28;
+  string current_runtime_game_instance_id = 29;
+  string current_runtime_region_id = 30;
+  int64 current_runtime_region_epoch = 31;
+  bool is_runtime_scope_stale = 32;
+  entity_management.v1.PlayableStateScope current_runtime_playable_state_scope = 33;
+  string current_runtime_world_slug = 34;
+  string current_runtime_realm_slug = 35;
+  string current_runtime_pointer_version = 36;
+  bool is_routing_bundle_stale = 37;
 }
 
 message ListScriptTimerAuditEventsResponse {
@@ -718,6 +751,22 @@ message ListScriptHandoffEventsRequest {
   int64 changed_after_ms = 6;
   int64 changed_before_ms = 7;
   int32 limit = 8;
+  string target_game_instance_id = 9;
+  string target_region_id = 10;
+  int64 target_region_epoch = 11;
+  string remote_coordinator_id = 12;
+  string remote_followup_id = 13;
+  string script_id = 14;
+  string plugin_id = 15;
+  string automation_dispatch_id = 16;
+  string game_session_command_id = 17;
+  string target_entity_id = 18;
+  entity_management.v1.PlayableStateScope playable_state_scope = 19;
+  string world_slug = 20;
+  string realm_slug = 21;
+  string pointer_version = 22;
+  string source_kind = 23;
+  string source_state = 24;
 }
 
 message ScriptHandoffEventEntry {
@@ -732,22 +781,43 @@ message ScriptHandoffEventEntry {
   int32 command_ordinal = 9;
   string automation_dispatch_id = 10;
   string game_session_command_id = 11;
-  string target_entity_id = 12;
-  string emitted_command_text = 13;
-  string handoff_outcome = 14;
-  string handoff_reason = 15;
-  int64 observed_at_ms = 16;
-  entity_management.v1.PlayableStateScope playable_state_scope = 17;
-  string world_slug = 18;
-  string realm_slug = 19;
-  string pointer_version = 20;
-  string source_kind = 21;
-  string source_state = 22;
-  int64 source_ordinal = 23;
-  int64 source_due_tick_id = 24;
-  int64 source_due_at_ms = 25;
-  ScriptPatchPublicationLink publication = 26;
-  PluginPublicationLink plugin_publication = 27;
+  string target_game_instance_id = 12;
+  string target_region_id = 13;
+  int64 target_region_epoch = 14;
+  string remote_coordinator_id = 15;
+  string remote_followup_id = 16;
+  string target_entity_id = 17;
+  string emitted_command_text = 18;
+  string handoff_outcome = 19;
+  string handoff_reason = 20;
+  int64 observed_at_ms = 21;
+  entity_management.v1.PlayableStateScope playable_state_scope = 22;
+  string world_slug = 23;
+  string realm_slug = 24;
+  string pointer_version = 25;
+  string source_kind = 26;
+  string source_state = 27;
+  int64 source_ordinal = 28;
+  int64 source_due_tick_id = 29;
+  int64 source_due_at_ms = 30;
+  ScriptPatchPublicationLink publication = 31;
+  PluginPublicationLink plugin_publication = 32;
+  string current_target_runtime_game_instance_id = 33;
+  string current_target_runtime_region_id = 34;
+  int64 current_target_runtime_region_epoch = 35;
+  bool is_target_runtime_scope_stale = 36;
+  string gameplay_command_execution_outcome = 37;
+  string gameplay_command_gameplay_result = 38;
+  string gameplay_command_failure_code = 39;
+  string gameplay_command_failure_message = 40;
+  string gameplay_remote_state = 41;
+  string gameplay_remote_target_command_execution_outcome = 42;
+  string gameplay_remote_target_command_gameplay_result = 43;
+  entity_management.v1.PlayableStateScope current_target_runtime_playable_state_scope = 44;
+  string current_target_runtime_world_slug = 45;
+  string current_target_runtime_realm_slug = 46;
+  string current_target_runtime_pointer_version = 47;
+  bool is_target_routing_bundle_stale = 48;
 }
 
 message ListScriptHandoffEventsResponse {
@@ -814,16 +884,18 @@ message PluginPublicationLink {
 message GetPluginStatusResponse {
   string active_plugin_version_id = 1;
   string pending_plugin_version_id = 2;
-  PluginState plugin_state = 3;
-  string status_reason = 4;
-  int64 last_changed_at_ms = 5;
-  string control_plane_request_id = 6;
-  string actor_principal = 7;
-  int64 last_policy_checked_at_ms = 8;
-  bool policy_check_stale = 9;
-  shared.v1.ErrorDetail error = 10;
-  PluginPublicationLink active_publication = 11;
-  PluginPublicationLink pending_publication = 12;
+  string runtime_region_id = 3;
+  int64 runtime_region_epoch = 4;
+  PluginState plugin_state = 5;
+  string status_reason = 6;
+  int64 last_changed_at_ms = 7;
+  string control_plane_request_id = 8;
+  string actor_principal = 9;
+  int64 last_policy_checked_at_ms = 10;
+  bool policy_check_stale = 11;
+  shared.v1.ErrorDetail error = 12;
+  PluginPublicationLink active_publication = 13;
+  PluginPublicationLink pending_publication = 14;
 }
 
 message ListPluginRuntimeEventsRequest {
@@ -841,16 +913,18 @@ message PluginRuntimeEventEntry {
   string event_id = 1;
   string tenant_id = 2;
   string game_instance_id = 3;
-  string plugin_id = 4;
-  string previous_plugin_version_id = 5;
-  string active_plugin_version_id = 6;
-  PluginState plugin_state = 7;
-  string status_reason = 8;
-  string control_plane_request_id = 9;
-  string actor_principal = 10;
-  int64 observed_at_ms = 11;
-  PluginPublicationLink previous_publication = 12;
-  PluginPublicationLink active_publication = 13;
+  string runtime_region_id = 4;
+  int64 runtime_region_epoch = 5;
+  string plugin_id = 6;
+  string previous_plugin_version_id = 7;
+  string active_plugin_version_id = 8;
+  PluginState plugin_state = 9;
+  string status_reason = 10;
+  string control_plane_request_id = 11;
+  string actor_principal = 12;
+  int64 observed_at_ms = 13;
+  PluginPublicationLink previous_publication = 14;
+  PluginPublicationLink active_publication = 15;
 }
 
 message ListPluginRuntimeEventsResponse {
@@ -866,11 +940,13 @@ message GetPluginPolicyConvergenceRequest {
 
 message PluginPolicyViolation {
   string game_instance_id = 1;
-  string plugin_id = 2;
-  string active_plugin_version_id = 3;
-  string reason = 4;
-  int64 last_changed_at_ms = 5;
-  PluginPublicationLink active_publication = 6;
+  string runtime_region_id = 2;
+  int64 runtime_region_epoch = 3;
+  string plugin_id = 4;
+  string active_plugin_version_id = 5;
+  string reason = 6;
+  int64 last_changed_at_ms = 7;
+  PluginPublicationLink active_publication = 8;
 }
 
 message GetPluginPolicyConvergenceResponse {

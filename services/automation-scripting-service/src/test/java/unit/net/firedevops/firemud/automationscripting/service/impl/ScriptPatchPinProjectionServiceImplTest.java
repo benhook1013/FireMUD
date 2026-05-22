@@ -28,7 +28,7 @@ class ScriptPatchPinProjectionServiceImplTest {
         .thenReturn(Optional.empty());
     Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -72,6 +72,46 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void collapsesPartialRuntimeRoutingBundleWhenRefreshingProjection() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-7")
+                        .setWorldSlug("demo")
+                        .build())
+                .build());
+
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.errorCode()).isBlank();
+    assertThat(lookup.summary()).isPresent();
+    assertThat(lookup.summary().get().worldSlug()).isBlank();
+    assertThat(lookup.summary().get().realmSlug()).isBlank();
+    assertThat(lookup.summary().get().pointerVersion()).isBlank();
+  }
+
+  @Test
   void returnsStoredProjectionWhenRefreshFails() {
     ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
     existing.setTenantId("1");
@@ -92,7 +132,8 @@ class ScriptPatchPinProjectionServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(Optional.of(existing));
-    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+    Mockito.when(
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-4"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setError(

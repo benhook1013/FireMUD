@@ -12,7 +12,18 @@ service SocialGroupsService {
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc CreateGuild(CreateGuildRequest) returns (CreateGuildResponse);
   rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
+  rpc RemoveFriend(RemoveFriendRequest) returns (RemoveFriendResponse);
+  rpc GetFriend(GetFriendRequest) returns (GetFriendResponse);
+  rpc GetFriendByOrdinal(GetFriendByOrdinalRequest) returns (GetFriendByOrdinalResponse);
+  rpc RemoveFriendByOrdinal(RemoveFriendByOrdinalRequest) returns (RemoveFriendByOrdinalResponse);
+  rpc ListFriends(ListFriendsRequest) returns (ListFriendsResponse);
+  rpc GetFriendRosterSummary(GetFriendRosterSummaryRequest)
+      returns (GetFriendRosterSummaryResponse);
   rpc ListFriendPresence(ListFriendPresenceRequest) returns (ListFriendPresenceResponse);
+  rpc GetFriendPresencePolicy(GetFriendPresencePolicyRequest)
+      returns (GetFriendPresencePolicyResponse);
+  rpc UpdateFriendPresencePolicy(UpdateFriendPresencePolicyRequest)
+      returns (UpdateFriendPresencePolicyResponse);
   rpc SendMail(SendMailRequest) returns (SendMailResponse);
 }
 
@@ -55,7 +66,6 @@ message AddFriendRequest {
   string tenant_id = 1;
   string account_id = 2;
   string friend_account_id = 3;
-  bool account_level = 4;
 }
 
 message AddFriendResponse {
@@ -63,9 +73,121 @@ message AddFriendResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message RemoveFriendRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string friend_account_id = 3;
+}
+
+message RemoveFriendResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetFriendRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string friend_account_id = 3;
+}
+
+message ListFriendsRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  FriendRosterFilter filter = 3;
+}
+
+enum FriendRosterFilter {
+  FRIEND_ROSTER_FILTER_UNSPECIFIED = 0;
+  FRIEND_ROSTER_FILTER_ALL = 1;
+  FRIEND_ROSTER_FILTER_ONLINE = 2;
+  FRIEND_ROSTER_FILTER_OFFLINE = 3;
+  FRIEND_ROSTER_FILTER_RECENT = 4;
+  FRIEND_ROSTER_FILTER_PUBLIC = 5;
+  FRIEND_ROSTER_FILTER_FRIENDS_ONLY = 6;
+  FRIEND_ROSTER_FILTER_PRIVATE = 7;
+  FRIEND_ROSTER_FILTER_HIDDEN_STAFF = 8;
+  FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY = 9;
+  FRIEND_ROSTER_FILTER_SHARED = 10;
+  FRIEND_ROSTER_FILTER_ISOLATED = 11;
+  FRIEND_ROSTER_FILTER_UNSPECIFIED_SCOPE = 12;
+}
+
+message FriendRosterEntry {
+  int32 ordinal = 1;
+  string friend_link_id = 2;
+  string tenant_id = 3;
+  string account_id = 4;
+  string friend_account_id = 5;
+  string status = 6;
+  int64 created_at_ms = 7;
+  FriendPresenceEntry presence = 8;
+}
+
+message ListFriendsResponse {
+  repeated FriendRosterEntry friends = 1;
+  shared.v1.ErrorDetail error = 2;
+  FriendRosterFilter filter = 3;
+  int32 total_count = 4;
+  int32 match_count = 5;
+}
+
+message GetFriendResponse {
+  FriendRosterEntry friend = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetFriendByOrdinalRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  int32 ordinal = 3;
+}
+
+message GetFriendByOrdinalResponse {
+  FriendRosterEntry friend = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RemoveFriendByOrdinalRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  int32 ordinal = 3;
+}
+
+message RemoveFriendByOrdinalResponse {
+  bool success = 1;
+  FriendRosterEntry removed_friend = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message GetFriendRosterSummaryRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+}
+
+message FriendRosterSummary {
+  int32 total_count = 1;
+  int32 online_count = 2;
+  int32 offline_count = 3;
+  int32 recent_count = 4;
+  int32 public_count = 5;
+  int32 friends_only_count = 6;
+  int32 private_count = 7;
+  int32 hidden_staff_count = 8;
+  int32 unspecified_visibility_count = 9;
+  int32 shared_count = 10;
+  int32 isolated_count = 11;
+  int32 unspecified_scope_count = 12;
+}
+
+message GetFriendRosterSummaryResponse {
+  FriendRosterSummary summary = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
 message ListFriendPresenceRequest {
   string tenant_id = 1;
   string account_id = 2;
+  FriendRosterFilter filter = 3;
 }
 
 enum FriendPresenceActivityState {
@@ -80,6 +202,14 @@ enum FriendRecentPresenceDisposition {
   FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
   FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT = 2;
   FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER = 3;
+}
+
+enum FriendPresenceVisibilityPolicy {
+  FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED = 0;
+  FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC = 1;
+  FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY = 2;
+  FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE = 3;
+  FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
 }
 
 message FriendPresenceEntry {
@@ -97,11 +227,37 @@ message FriendPresenceEntry {
   FriendRecentPresenceDisposition recent_disposition = 12;
   int64 pointer_version = 13;
   entity_management.v1.PlayableStateScope playable_state_scope = 14;
+  FriendPresenceVisibilityPolicy visibility_policy = 15;
 }
 
 message ListFriendPresenceResponse {
   repeated FriendPresenceEntry presences = 1;
   shared.v1.ErrorDetail error = 2;
+  FriendRosterFilter filter = 3;
+  int32 total_count = 4;
+  int32 match_count = 5;
+}
+
+message GetFriendPresencePolicyRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+}
+
+message GetFriendPresencePolicyResponse {
+  FriendPresenceVisibilityPolicy current_policy = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message UpdateFriendPresencePolicyRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  FriendPresenceVisibilityPolicy visibility_policy = 3;
+}
+
+message UpdateFriendPresencePolicyResponse {
+  bool success = 1;
+  FriendPresenceVisibilityPolicy current_policy = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message SendMailRequest {

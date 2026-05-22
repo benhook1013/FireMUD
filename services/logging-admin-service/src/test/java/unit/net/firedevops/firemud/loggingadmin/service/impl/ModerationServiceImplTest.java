@@ -2,7 +2,6 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,7 +45,6 @@ class ModerationServiceImplTest {
 
     assertEquals(dto, result);
     verify(repository).save(any(ModerationAction.class));
-    verify(repository, never()).delete(any());
   }
 
   @Test

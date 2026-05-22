@@ -1,9 +1,9 @@
 import TextField from '@mui/material/TextField';
 import Box from '@mui/material/Box';
-import { useGetGreetingQuery } from './api/firemudApi';
+import { useGreetingQuery } from './api/firemudApi';
 
 export default function GameEditor() {
-  const { data, isLoading } = useGetGreetingQuery();
+  const { data, isLoading } = useGreetingQuery();
   return (
     <Box sx={{ p: 2 }}>
       <h2>Game Editor</h2>

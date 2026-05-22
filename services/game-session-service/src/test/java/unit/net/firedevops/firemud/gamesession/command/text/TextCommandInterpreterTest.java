@@ -44,6 +44,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
+import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -63,6 +64,8 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -111,6 +114,8 @@ class TextCommandInterpreterTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
+  private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+      Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
   private final AccountRecentPresenceService accountRecentPresenceService =
       Mockito.mock(AccountRecentPresenceService.class);
   private final TextPlayerOutputRenderer outputRenderer =
@@ -125,7 +130,16 @@ class TextCommandInterpreterTest {
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
-          gameplayPresenceService, accountRecentPresenceService);
+          gameplayPresenceService,
+          accountRecentPresenceService,
+          sessionContextService,
+          scriptEventPublisher);
+  private final AuthoredActionCommandHandler authoredActionHandler =
+      new AuthoredActionCommandHandler(
+          new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+  private final TextCommandRegistry registry =
+      new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
+  private final TextCommandParser parser = new TextCommandParser();
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -294,6 +308,10 @@ class TextCommandInterpreterTest {
                 .build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(pointerAuthorityService.findPointer("sandbox", "production"))
+        .thenReturn(Optional.of(pointer("sandbox", "production", 22L, 2L, 1L)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -307,17 +325,14 @@ class TextCommandInterpreterTest {
 
     sessionAuthenticationService =
         new SessionAuthenticationService(
-            sessionContextService, gameSessionProperties, gameInstanceRepository);
+            sessionContextService,
+            gameSessionProperties,
+            gameInstanceRepository,
+            pointerAuthorityService);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
-    net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
-        pointerAuthorityService =
-            Mockito.mock(
-                net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService
-                    .class);
-
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
@@ -345,7 +360,8 @@ class TextCommandInterpreterTest {
     WhoCommandHandler whoHandler =
         new WhoCommandHandler(
             gameplayPresenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()));
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            scriptEventPublisher);
     LookCommandHandler lookHandler =
         new LookCommandHandler(
             gameLogicClient,
@@ -436,16 +452,22 @@ class TextCommandInterpreterTest {
             afkHandler,
             helpHandler,
             whoHandler,
-            new FriendsCommandHandler(Mockito.mock(SocialGroupsClient.class)),
+            new FriendsCommandHandler(
+                Mockito.mock(SocialGroupsClient.class),
+                entityManagementClient,
+                scriptEventPublisher),
+            authoredActionHandler,
             inventoryHandler,
             equipmentHandler,
             containerHandler,
             sessionAuthenticationService,
+            scriptEventPublisher,
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
-            new TextCommandParser());
+            registry,
+            parser,
+            meterRegistry);
   }
 
   @Test
@@ -960,6 +982,23 @@ class TextCommandInterpreterTest {
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;
+  }
+
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldSlug,
+        realmSlug,
+        realmSlug,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW");
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

@@ -17,6 +17,6 @@ final class FriendsTextCommandDispatchHandler implements TextCommandDispatchHand
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    return friendsHandler.handle(request.sessionContext().orElseThrow());
+    return friendsHandler.handle(request.command(), request.sessionContext().orElseThrow());
   }
 }

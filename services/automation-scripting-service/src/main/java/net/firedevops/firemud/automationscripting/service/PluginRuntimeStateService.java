@@ -63,6 +63,8 @@ public interface PluginRuntimeStateService {
 
   record PluginPolicyViolation(
       String gameInstanceId,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
       String pluginId,
       String activePluginVersionId,
       String reason,
@@ -73,6 +75,8 @@ public interface PluginRuntimeStateService {
       String eventId,
       String tenantId,
       String gameInstanceId,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
       String pluginId,
       String previousPluginVersionId,
       String activePluginVersionId,
@@ -87,6 +91,8 @@ public interface PluginRuntimeStateService {
   record PluginRuntimeStatus(
       String activePluginVersionId,
       String pendingPluginVersionId,
+      String runtimeRegionId,
+      long runtimeRegionEpoch,
       PluginState pluginState,
       String statusReason,
       long lastChangedAtMs,

@@ -18,6 +18,8 @@ This directory contains core documentation for the shared infrastructure that po
 | [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
 | [Redis Architecture](../system-architecture-redis.md) | Describes where Redis is deployed and how session state is stored. |
 | [Security Architecture](../system-architecture-security.md) | TLS termination, mTLS usage, and network policy overview. |
+| [Database Migrations](../system-architecture-database-migrations.md) | Canonical SQL schema authority, Flyway workflow, and the repo-wide persistence convergence direction. |
+| [Temporal Control-Plane Workflows](../system-architecture-temporal-workflows.md) | Canonical durable workflow substrate and the boundary between Temporal and short synchronous saga usage. |
 | [CI/CD Pipeline](../system-architecture-cicd.md) | Overview of GitHub Actions workflows for building, testing, and promotion evidence, plus the operator-applied deployment model for staging and production. |
 | [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
 

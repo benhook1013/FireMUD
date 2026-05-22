@@ -2,21 +2,12 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.api.trace.Tracer;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
-import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
-import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
-import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
-import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
-import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
@@ -28,8 +19,6 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
-import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
-import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
@@ -39,7 +28,6 @@ import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.health.contributor.Health;
@@ -51,13 +39,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
-import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -66,7 +48,6 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
-import reactor.core.publisher.Mono;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -104,8 +85,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @LocalServerPort private int port;
   @Autowired private TelnetServer telnetServer;
   @Autowired private ConfigurableApplicationContext applicationContext;
-  @Autowired private StringRedisTemplate stringRedisTemplate;
-
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @DynamicPropertySource
@@ -185,14 +164,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     accountStub().setGameplayAdmissionAllowed(false);
 
-    try (GameplayTelnetDriver secondClient = openTelnetClient()) {
-      secondClient.awaitInitialGuidance();
-      secondClient.login("demo@example.com", "swordfish");
-
-      secondClient.sendLine("PLAY demo");
-      assertThat(secondClient.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
-          .contains("ERROR WORLD_ACCESS_DENIED")
-          .contains("You are not allowed to enter that world.");
+    try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
+        GameplayTelnetScenarios.loginThenAttemptPlay(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            client ->
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .contains("You are not allowed to enter that world."))) {
+      assertThat(scenario.responses())
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .anyMatch(response -> response.contains("You are not allowed to enter that world."));
     }
   }
 
@@ -354,12 +337,16 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     accountStub().setGameplayAdmissionAllowed(false);
 
-    try (GameplayTelnetDriver secondClient = openTelnetClient()) {
-      secondClient.awaitInitialGuidance();
-      secondClient.login("demo@example.com", "swordfish");
-      secondClient.sendLine("PLAY demo");
-      assertThat(secondClient.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
-          .contains("ERROR WORLD_ACCESS_DENIED");
+    try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
+        GameplayTelnetScenarios.loginThenAttemptPlay(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            client ->
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED"))) {
+      assertThat(scenario.responses())
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"));
     }
   }
 
@@ -383,7 +370,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .sessionId();
     sessionContextService.deleteBySessionId(TENANT_ID, activeGameplaySessionId);
 
-    try (GameplayTelnetDriver client = openAdmittedTelnetClient()) {
+    try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
+        GameplayTelnetScenarios.loginThenAttemptPlay(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.Admission.unnamed(
+                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            client ->
+                assertThat(client.readLineContaining("OK PLAY Entered world: demo"))
+                    .isNotBlank())) {
+      GameplayTelnetDriver client = scenario.driver();
       telnetReplayResponse = client.readBlockContainingOrTimeout("OK LOOK");
       client.sendLine("LOOK");
       telnetReconnectLookResponse = client.readBlockContainingOrTimeout("OK LOOK");
@@ -561,7 +556,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                         "readinessState,db,redis,gameplayPathReadiness"))
                 .withGameLogicConfigs(NestedReadinessOverrides.class)
                 .withGameSessionConfigs(
-                    GameSessionTestOverrides.class, NestedReadinessOverrides.class)
+                    GatewayBackedGameSessionTestOverrides.class, NestedReadinessOverrides.class)
                 .start();
         DEFAULT_GAME_INSTANCE_ID =
             STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
@@ -576,16 +571,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private void seedLiveTargetSession() {
     STACK.seedLiveSession(
-        new SessionContext(
-            90210L,
-            TENANT_ID,
-            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-            "sora@example.com",
-            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-            "Sora",
-            DEMO_WORLD_INSTANCE_ID,
-            LookTestFixtures.ROOM_ID,
-            "target-jwt"));
+        90210L,
+        TENANT_ID,
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        "sora@example.com",
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        "Sora",
+        DEMO_WORLD_INSTANCE_ID,
+        LookTestFixtures.ROOM_ID,
+        "target-jwt");
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {
@@ -649,141 +643,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     void close() {
       context.close();
-    }
-  }
-
-  @TestConfiguration
-  static class GameSessionTestOverrides {
-
-    @Bean
-    RedisConnectionFactory redisConnectionFactory() {
-      LettuceConnectionFactory factory =
-          new LettuceConnectionFactory(REDIS.getHost(), REDIS.getMappedPort(6379));
-      factory.afterPropertiesSet();
-      return factory;
-    }
-
-    @Bean
-    RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
-      RedisTemplate<String, Object> template = new RedisTemplate<>();
-      template.setConnectionFactory(factory);
-      template.afterPropertiesSet();
-      return template;
-    }
-
-    @Bean
-    StringRedisTemplate stringRedisTemplate(RedisConnectionFactory factory) {
-      StringRedisTemplate template = new StringRedisTemplate();
-      template.setConnectionFactory(factory);
-      template.afterPropertiesSet();
-      return template;
-    }
-
-    @Bean
-    @Primary
-    ConflictTracker conflictTracker() {
-      return key -> {};
-    }
-
-    @Bean
-    @Primary
-    ModerationPolicyClient moderationPolicyClient() {
-      ModerationPolicyClient client = Mockito.mock(ModerationPolicyClient.class);
-      Mockito.when(client.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
-          .thenReturn(
-              net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
-                  .setAllowed(true)
-                  .build());
-      return client;
-    }
-
-    @Bean(name = "gameInstanceServiceImpl")
-    @Primary
-    GameInstanceService stubGameInstanceService() {
-      return new GameInstanceService() {
-        @Override
-        public GameInstanceDto startSession(
-            StartSessionRequest request, boolean replaceExistingFirst) {
-          return new GameInstanceDto(
-              request.ownerAccountId(),
-              request.tenantId(),
-              "stub-template-" + request.gameTemplateId(),
-              null,
-              request.gameTemplateId(),
-              null,
-              null,
-              null,
-              null,
-              null,
-              request.ownerAccountId(),
-              "RUNNING");
-        }
-
-        @Override
-        public GameInstanceDto stopSession(long sessionId) {
-          return new GameInstanceDto(
-              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "STOPPED");
-        }
-
-        @Override
-        public GameInstanceDto restartSession(long sessionId) {
-          return new GameInstanceDto(
-              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
-        }
-      };
-    }
-
-    @Bean
-    @Primary
-    LookCacheService lookCacheService() {
-      return new LookCacheService() {
-        @Override
-        public void cache(
-            long tenantId,
-            long sessionId,
-            String roomId,
-            String renderedText,
-            String protocolText) {}
-
-        @Override
-        public Optional<LookCacheService.CachedLook> get(long tenantId, long sessionId) {
-          return Optional.empty();
-        }
-      };
-    }
-
-    @Bean
-    @Primary
-    GatewayRouteService gatewayRouteService() {
-      return new GatewayRouteService() {
-        @Override
-        public Mono<GatewayRoute> upsert(GatewayRoute route) {
-          return Mono.just(route);
-        }
-
-        @Override
-        public Mono<Boolean> remove(String routeId) {
-          return Mono.just(true);
-        }
-      };
-    }
-
-    @Bean
-    @Primary
-    Tracer tracer() {
-      return GlobalOpenTelemetry.getTracer("test");
-    }
-
-    @Bean
-    @Primary
-    GrpcServiceDiscoverer grpcServiceDiscoverer() {
-      return Mockito.mock(GrpcServiceDiscoverer.class);
-    }
-
-    @Bean
-    @Primary
-    GrpcServerLifecycle grpcServerLifecycle() {
-      return Mockito.mock(GrpcServerLifecycle.class);
     }
   }
 

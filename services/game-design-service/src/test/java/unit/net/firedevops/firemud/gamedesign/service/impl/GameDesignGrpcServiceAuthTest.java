@@ -7,6 +7,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -46,6 +47,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
 
     AtomicReference<ListVersionsResponse> ref = new AtomicReference<>();
@@ -105,6 +107,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
 
     SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "gs-1");

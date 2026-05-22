@@ -4,7 +4,9 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,6 +34,16 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   private static final Logger logger = LoggingUtil.getLogger(RedisGameplayPresenceService.class);
   private static final String PRESENCE_KEY_TEMPLATE = "gameplaypresence:session:%d";
   private static final String GAME_INSTANCE_SET_TEMPLATE = "gameplaypresence:%d:%d:sessions";
+  private static final String ACCOUNT_SET_TEMPLATE = "gameplaypresence:%d:account:%d:sessions";
+  private static final Comparator<GameplayPresence> ACCOUNT_PRESENCE_PREFERENCE =
+      Comparator.comparing(
+              GameplayPresence::lastMeaningfulActivityAtEpochMs,
+              Comparator.nullsFirst(Long::compareTo))
+          .thenComparing(
+              GameplayPresence::lastAcceptedCommandAtEpochMs,
+              Comparator.nullsFirst(Long::compareTo))
+          .thenComparingLong(GameplayPresence::connectedAtEpochMs)
+          .thenComparingLong(GameplayPresence::sessionId);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration presenceTtl;
@@ -87,10 +99,13 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             null);
     String presenceKey = presenceKey(context.sessionId());
     String gameInstanceKey = gameInstanceKey(context.tenantId(), context.gameInstanceId());
+    String accountKey = accountKey(context.tenantId(), context.accountId());
     valueOps.set(presenceKey, presence, presenceTtl);
     if (setOps != null) {
       setOps.add(gameInstanceKey, Long.toString(context.sessionId()));
+      setOps.add(accountKey, Long.toString(context.sessionId()));
       redisTemplate.expire(gameInstanceKey, presenceTtl);
+      redisTemplate.expire(accountKey, presenceTtl);
     }
   }
 
@@ -104,9 +119,11 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     redisTemplate.delete(presenceKey(sessionId));
     if (existing != null) {
       String gameInstanceKey = gameInstanceKey(existing.tenantId(), existing.gameInstanceId());
+      String accountKey = accountKey(existing.tenantId(), existing.accountId());
       SetOperations<String, Object> setOps = redisTemplate.opsForSet();
       if (setOps != null) {
         setOps.remove(gameInstanceKey, Long.toString(sessionId));
+        setOps.remove(accountKey, Long.toString(sessionId));
       }
     }
   }
@@ -141,6 +158,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     valueOps.set(presenceKey(sessionId), updated, presenceTtl);
     redisTemplate.expire(
         gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
+    redisTemplate.expire(accountKey(existing.tenantId(), existing.accountId()), presenceTtl);
   }
 
   @Override
@@ -176,6 +194,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     valueOps.set(presenceKey(sessionId), updated, presenceTtl);
     redisTemplate.expire(
         gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
+    redisTemplate.expire(accountKey(existing.tenantId(), existing.accountId()), presenceTtl);
   }
 
   @Override
@@ -215,6 +234,51 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   }
 
   @Override
+  public Map<Long, GameplayPresence> findConnectedByAccountIds(
+      long tenantId, Collection<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return Map.of();
+    }
+    SetOperations<String, Object> setOps = redisTemplate.opsForSet();
+    ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    if (setOps == null || valueOps == null) {
+      return Map.of();
+    }
+
+    LinkedHashMap<Long, GameplayPresence> matches = new LinkedHashMap<>();
+    for (Long accountId : accountIds) {
+      if (accountId == null || accountId <= 0) {
+        continue;
+      }
+      String accountKey = accountKey(tenantId, accountId);
+      Set<Object> members = setOps.members(accountKey);
+      if (members == null || members.isEmpty()) {
+        continue;
+      }
+      GameplayPresence preferred = null;
+      for (Object member : members) {
+        String sessionIdText = String.valueOf(member);
+        GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey(sessionIdText));
+        if (presence == null) {
+          setOps.remove(accountKey, sessionIdText);
+          continue;
+        }
+        if (presence.tenantId() != tenantId || presence.accountId() != accountId) {
+          setOps.remove(accountKey, sessionIdText);
+          continue;
+        }
+        if (preferred == null || ACCOUNT_PRESENCE_PREFERENCE.compare(preferred, presence) < 0) {
+          preferred = presence;
+        }
+      }
+      if (preferred != null) {
+        matches.put(accountId, preferred);
+      }
+    }
+    return Map.copyOf(matches);
+  }
+
+  @Override
   public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
     if (valueOps == null) {
@@ -233,6 +297,10 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   private String gameInstanceKey(long tenantId, long gameInstanceId) {
     return String.format(GAME_INSTANCE_SET_TEMPLATE, tenantId, gameInstanceId);
+  }
+
+  private String accountKey(long tenantId, long accountId) {
+    return String.format(ACCOUNT_SET_TEMPLATE, tenantId, accountId);
   }
 
   private GameplayPresenceRole classifyRole(SessionContext context) {

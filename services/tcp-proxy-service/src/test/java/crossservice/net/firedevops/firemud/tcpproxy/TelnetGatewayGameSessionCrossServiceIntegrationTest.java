@@ -19,6 +19,7 @@ import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
 import net.firedevops.firemud.test.TestAsyncAssertions;
 import net.firedevops.firemud.test.WebSocketTestProbe;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -30,6 +31,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.util.StringUtils;
@@ -51,6 +53,7 @@ import reactor.core.publisher.Mono;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)
 @Import(NoGrpcServerTestConfiguration.class)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static GameSessionStubHolder GAME_SESSION_STUB;
@@ -74,6 +77,11 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @LocalServerPort private int port;
 
   @Autowired private TelnetServer telnetServer;
+
+  @AfterEach
+  void resetSharedBridgeState() {
+    stopTestServices();
+  }
 
   @AfterAll
   static synchronized void stopTestServices() {

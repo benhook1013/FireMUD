@@ -104,8 +104,19 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       String transportSessionId,
       String jwtSecret,
       Map<String, Object> connectClaims) {
+    return connectFirstPartyWeb(
+        uri, waitTimeout, transportSessionId, jwtSecret, "123", connectClaims);
+  }
+
+  public static GameplayWebSocketDriver connectFirstPartyWeb(
+      URI uri,
+      Duration waitTimeout,
+      String transportSessionId,
+      String jwtSecret,
+      String accountId,
+      Map<String, Object> connectClaims) {
     String connectContextToken =
-        new JwtUtil(jwtSecret, 60_000L).generateToken("123", connectClaims);
+        new JwtUtil(jwtSecret, 60_000L).generateToken(accountId, connectClaims);
     return connect(
         uri,
         waitTimeout,

@@ -1,69 +1,49 @@
-# React + TypeScript + Vite
+# FireMUD Web Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This module contains FireMUD's browser client work. Today it is still a lightweight starter application, but the intended frontend baseline is already decided:
 
-Currently, two official plugins are available:
+- **React**
+- **TypeScript**
+- **Vite**
+- **Material UI**
+- **TanStack Query** for server state
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Current Direction
 
-## Expanding the ESLint configuration
+The repo's canonical frontend direction is:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- use `TanStack Query` for reads, mutations, caching, invalidation, polling, and retry behavior;
+- keep local component/form/editor state close to the owning feature;
+- introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+See:
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+- [Frontend Architecture](../design/architecture/system-architecture-frontend.md)
+- [02.21 Frontend Server-State Baseline and Query Convergence](../design/project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Local Development
+
+Install dependencies from WSL/Linux-native Node.js:
+
+```bash
+npm ci
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Common commands:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
+npm run build
+npm run preview
+npm run lint
+npm run format -- -c
+npm run accessibility
 ```
+
+The accessibility audit depends on Google Chrome. See [Developer Setup](../DEVELOPER_SETUP.md#frontend-lint--accessibility) for the expected local toolchain and installation notes.
+
+## Notes
+
+- Treat this module as FireMUD application code, not a generic Vite template.
+- Keep browser auth/session handling aligned with the canonical architecture docs.
+- When frontend architecture changes, update both this README and the high-level docs in `design/architecture/`.
