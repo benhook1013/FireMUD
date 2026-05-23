@@ -58,11 +58,12 @@ jobs:
       COMPOSE_PROJECT_NAME: smoke-full-${{ github.run_id }}-${{ github.run_attempt }}
       SMOKE_TIMEOUT_SECONDS: 20
       SMOKE_IMAGE_TAG: ${{ inputs.image_tag }}
+      CHECKOUT_REF: ${{ inputs.pr_number != '' && format('refs/pull/{0}/merge', inputs.pr_number) || inputs.head_sha }}
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.head_sha }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Generate Dev Certificates
         run: ./dev-tools/certs/generate-dev-certs.sh
