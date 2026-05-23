@@ -73,7 +73,7 @@ jobs:
             );
 
             const codeqlRunForHead = codeqlRuns.find((workflowRun) =>
-              workflowRun.name === "CodeQL Analysis" && workflowRun.head_sha === headSha
+              workflowRun?.name === "CodeQL Analysis" && workflowRun?.head_sha === headSha
             );
 
             const normalizeStatus = (checkRun, checkName) => {
@@ -125,8 +125,8 @@ jobs:
 
             const resolveStatuses = (checkRuns) =>
               [...gateChecks, ...detailChecks].map(([label, checkName]) => {
-                const candidates = checkRuns
-                  .filter((checkRun) => checkRun.name === checkName)
+                const candidates = (Array.isArray(checkRuns) ? checkRuns : [])
+                  .filter((checkRun) => checkRun?.name === checkName)
                   .map((checkRun) => ({
                     checkRun,
                     status: normalizeStatus(checkRun, checkName),
@@ -136,7 +136,7 @@ jobs:
                     if (priorityDiff !== 0) {
                       return priorityDiff;
                     }
-                    return b.checkRun.id - a.checkRun.id;
+                    return (b.checkRun?.id ?? 0) - (a.checkRun?.id ?? 0);
                   });
                 return [label, candidates[0]?.status ?? normalizeStatus(null, checkName)];
               });
