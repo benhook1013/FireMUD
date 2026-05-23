@@ -51,6 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
+      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
     steps:
@@ -59,8 +60,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHECKOUT_REF="refs/pull/${{ github.event.pull_request.number }}/merge"
           else
             HEAD_SHA="${GITHUB_SHA}"
+            CHECKOUT_REF="${GITHUB_SHA}"
           fi
 
           IMAGE_TAG="${HEAD_SHA}"
@@ -68,6 +71,7 @@ jobs:
 
           {
             echo "head_sha=${HEAD_SHA}"
+            echo "checkout_ref=${CHECKOUT_REF}"
             echo "image_tag=${IMAGE_TAG}"
             echo "base_image=${BASE_IMAGE}"
           } >> "$GITHUB_OUTPUT"
@@ -80,7 +84,7 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.image-meta.outputs.head_sha }}
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -93,6 +97,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime base image
+        id: build_base_image_first
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/base.Dockerfile
+          push: true
+          tags: ${{ needs.image-meta.outputs.base_image }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
+            type=gha,mode=max
+
+      - name: Retry build and push runtime base image
+        if: ${{ steps.build_base_image_first.outcome == 'failure' }}
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -130,7 +152,7 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.image-meta.outputs.head_sha }}
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v5
@@ -160,6 +182,28 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime service image
+        id: build_runtime_image_first
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: ./services/${{ matrix.service }}/build/libs
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          build-contexts: |
+            repo_root=.
+          build-args: |
+            BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
+            type=gha,mode=max
+
+      - name: Retry build and push runtime service image
+        if: ${{ steps.build_runtime_image_first.outcome == 'failure' }}
         uses: docker/build-push-action@v7
         with:
           context: ./services/${{ matrix.service }}/build/libs
