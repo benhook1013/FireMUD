@@ -4,11 +4,16 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.util.AntPathMatcher;
+import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 public class HttpJwtAuthInterceptor implements HandlerInterceptor {
+  private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+
   private final JwtUtil jwtUtil;
   private final HttpAuthProperties props;
 
@@ -23,6 +28,10 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
   @Override
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
+    if (isPublicPath(request)) {
+      return true;
+    }
+
     String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
@@ -48,5 +57,28 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
       HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
       throws Exception {
     SessionContext.clear();
+  }
+
+  private boolean isPublicPath(HttpServletRequest request) {
+    List<String> publicPathPatterns = props.getPublicPathPatterns();
+    if (publicPathPatterns.isEmpty()) {
+      return false;
+    }
+
+    String path = request.getRequestURI();
+    String contextPath = request.getContextPath();
+    if (StringUtils.hasText(contextPath) && path.startsWith(contextPath)) {
+      path = path.substring(contextPath.length());
+    }
+    if (!StringUtils.hasText(path)) {
+      path = "/";
+    }
+
+    for (String pattern : publicPathPatterns) {
+      if (PATH_MATCHER.match(pattern, path)) {
+        return true;
+      }
+    }
+    return false;
   }
 }

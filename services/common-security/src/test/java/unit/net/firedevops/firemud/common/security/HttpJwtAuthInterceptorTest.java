@@ -40,6 +40,35 @@ class HttpJwtAuthInterceptorTest {
   }
 
   @Test
+  void allowsConfiguredPublicPathWithoutToken() throws Exception {
+    HttpAuthProperties props = authenticatedProperties();
+    props.setPublicPathPatterns(List.of("/auth/player-bootstrap", "/accounts", "/accounts/"));
+    HttpJwtAuthInterceptor interceptor = new HttpJwtAuthInterceptor(jwtUtil, props);
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/auth/player-bootstrap");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(HttpStatus.OK.value(), response.getStatus());
+  }
+
+  @Test
+  void allowsWildcardConfiguredPublicPathWithoutToken() throws Exception {
+    HttpAuthProperties props = authenticatedProperties();
+    props.setPublicPathPatterns(List.of("/auth/bootstrap/**"));
+    HttpJwtAuthInterceptor interceptor = new HttpJwtAuthInterceptor(jwtUtil, props);
+    MockHttpServletRequest request =
+        new MockHttpServletRequest("GET", "/auth/bootstrap/worlds/demo/realms");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(HttpStatus.OK.value(), response.getStatus());
+  }
+
+  @Test
   void populatesSessionForAuthenticatedRequest() throws Exception {
     HttpJwtAuthInterceptor interceptor =
         new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
