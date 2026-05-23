@@ -42,6 +42,20 @@ public class RoomRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<Room> findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+      Long tenantId, Long versionId, Long zoneId, String name) {
+    return dsl.selectFrom(ROOM)
+        .where(
+            ROOM.TENANT_ID
+                .eq(tenantId)
+                .and(ROOM.VERSION_ID.eq(versionId))
+                .and(ROOM.ZONE_ID.eq(zoneId))
+                .and(ROOM.NAME.eq(name)))
+        .orderBy(ROOM.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public Optional<Room> findById(Long id) {
     return dsl.selectFrom(ROOM).where(ROOM.ID.eq(id)).fetchOptional(this::toEntity);
   }

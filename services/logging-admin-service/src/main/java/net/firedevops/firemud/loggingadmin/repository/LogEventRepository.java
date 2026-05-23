@@ -36,6 +36,20 @@ public class LogEventRepository {
         .fetch(this::toEntity);
   }
 
+  public Optional<LogEvent> findFirstByTenantIdAndTypeAndMessage(
+      Long tenantId, String type, String message) {
+    return dsl.selectFrom(LOG_EVENTS)
+        .where(
+            LOG_EVENTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(LOG_EVENTS.TYPE.eq(type))
+                .and(LOG_EVENTS.MESSAGE.eq(message)))
+        .orderBy(LOG_EVENTS.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public LogEvent save(LogEvent entity) {
     if (entity.getId() == null) {
       LogEventsRecord record = dsl.newRecord(LOG_EVENTS);

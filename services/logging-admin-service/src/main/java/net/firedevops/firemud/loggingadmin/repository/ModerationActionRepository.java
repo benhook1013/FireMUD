@@ -30,6 +30,21 @@ public class ModerationActionRepository {
     return dsl.fetchCount(MODERATION_ACTIONS);
   }
 
+  public Optional<ModerationAction> findFirstByTenantIdAndAccountIdAndActionAndReason(
+      Long tenantId, Long accountId, String action, String reason) {
+    return dsl.selectFrom(MODERATION_ACTIONS)
+        .where(
+            MODERATION_ACTIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(MODERATION_ACTIONS.ACCOUNT_ID.eq(accountId))
+                .and(MODERATION_ACTIONS.ACTION.eq(action))
+                .and(MODERATION_ACTIONS.REASON.eq(reason)))
+        .orderBy(MODERATION_ACTIONS.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public List<ModerationAction> findActivePolicyActions(
       Long tenantId, Long accountId, List<String> actions, Instant now) {
     return dsl.selectFrom(MODERATION_ACTIONS)

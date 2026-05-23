@@ -27,6 +27,21 @@ public class PlayerReportRepository {
     return dsl.fetchCount(PLAYER_REPORTS);
   }
 
+  public Optional<PlayerReport> findFirstByTenantIdAndReporterAccountIdAndTargetAccountIdAndType(
+      Long tenantId, Long reporterAccountId, Long targetAccountId, String type) {
+    return dsl.selectFrom(PLAYER_REPORTS)
+        .where(
+            PLAYER_REPORTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(PLAYER_REPORTS.REPORTER_ACCOUNT_ID.eq(reporterAccountId))
+                .and(PLAYER_REPORTS.TARGET_ACCOUNT_ID.eq(targetAccountId))
+                .and(PLAYER_REPORTS.TYPE.eq(type)))
+        .orderBy(PLAYER_REPORTS.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public PlayerReport save(PlayerReport entity) {
     if (entity.getId() == null) {
       PlayerReportsRecord record = dsl.newRecord(PLAYER_REPORTS);
