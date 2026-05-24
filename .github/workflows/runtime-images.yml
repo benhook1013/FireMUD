@@ -60,7 +60,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            CHECKOUT_REF="refs/pull/${{ github.event.pull_request.number }}/merge"
+            CHECKOUT_REF="${GITHUB_SHA}"
           else
             HEAD_SHA="${GITHUB_SHA}"
             CHECKOUT_REF="${GITHUB_SHA}"
@@ -230,6 +230,7 @@ jobs:
     with:
       action: full
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
+      checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.image_tag }}
       pr_number: ${{ github.event_name == 'pull_request' && format('{0}', github.event.pull_request.number) || '' }}
     secrets: inherit
