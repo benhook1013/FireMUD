@@ -1,0 +1,71 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "timezone": "Pacific/Auckland",
+  "baseBranchPatterns": [
+    "develop"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "enabledManagers": [
+    "dockerfile",
+    "github-actions",
+    "gradle",
+    "helmv3",
+    "kubernetes",
+    "kustomize",
+    "npm"
+  ],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 10,
+  "packageRules": [
+    {
+      "matchManagers": [
+        "gradle"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "gradle non-major updates"
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "npm non-major updates"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "github actions non-major updates"
+    },
+    {
+      "matchManagers": [
+        "dockerfile",
+        "helmv3",
+        "kubernetes",
+        "kustomize"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "infrastructure non-major updates"
+    }
+  ]
+}
