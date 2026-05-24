@@ -15,6 +15,9 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    base_branches:
+      - "develop"
+      - "main"
   path_instructions:
     - path: "services/**"
       instructions: |
