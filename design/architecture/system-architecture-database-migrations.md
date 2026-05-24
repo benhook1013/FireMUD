@@ -20,6 +20,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
 - Shared saga migrations live in the `common-saga` module under `src/main/resources/db/migration/saga` and are bundled onto consuming service classpaths as the additional `classpath:db/migration/saga` Flyway location alongside the owning service's `classpath:db/migration`.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
+- SQL-backed service `application.yml` files also carry an explicit `spring.flyway.table` contract in the same `flyway_schema_history_<service_schema>` form used by local destructive reset tooling and hosted/runtime manifests, so plain service boot does not silently fall back to bare `flyway_schema_history`.
 - Generated `jOOQ` sources derive from these migrated schemas rather than from a second hand-maintained SQL model.
 - The shared `jOOQ` foundation exposes a canonical `:service:generateJooq` task that derives DSL code directly from `src/main/resources/db/migration/*.sql`.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in

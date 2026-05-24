@@ -27,6 +27,7 @@ public final class PostgresBackedServiceTestSupport {
   public static void registerPostgresService(
       DynamicPropertyRegistry registry, PostgreSQLContainer<?> postgres, String serviceSchema) {
     String flywayLocations = filesystemFlywayLocations(serviceSchema);
+    String flywayTable = flywayHistoryTable(serviceSchema);
     registry.add("firemud.postgres.host", postgres::getHost);
     registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
     registry.add("firemud.postgres.database", postgres::getDatabaseName);
@@ -38,12 +39,14 @@ public final class PostgresBackedServiceTestSupport {
     registry.add("spring.flyway.locations", () -> flywayLocations);
     registry.add("spring.flyway.schemas", () -> serviceSchema);
     registry.add("spring.flyway.default-schema", () -> serviceSchema);
+    registry.add("spring.flyway.table", () -> flywayTable);
     registry.add("spring.flyway.placeholders.serviceSchema", () -> serviceSchema);
   }
 
   public static void registerEmbeddedFlywayService(
       DynamicPropertyRegistry registry, String jdbcUrl, String serviceSchema) {
     String flywayLocations = filesystemFlywayLocations(serviceSchema);
+    String flywayTable = flywayHistoryTable(serviceSchema);
     registry.add("spring.flyway.enabled", () -> true);
     registry.add("spring.flyway.url", () -> jdbcUrl);
     registry.add("spring.flyway.user", () -> "sa");
@@ -51,6 +54,7 @@ public final class PostgresBackedServiceTestSupport {
     registry.add("spring.flyway.locations", () -> flywayLocations);
     registry.add("spring.flyway.schemas", () -> serviceSchema);
     registry.add("spring.flyway.default-schema", () -> serviceSchema);
+    registry.add("spring.flyway.table", () -> flywayTable);
     registry.add("spring.flyway.placeholders.serviceSchema", () -> serviceSchema);
   }
 
@@ -82,6 +86,10 @@ public final class PostgresBackedServiceTestSupport {
           "No service module mapping defined for schema " + serviceSchema);
     }
     return moduleDirectory;
+  }
+
+  private static String flywayHistoryTable(String serviceSchema) {
+    return "flyway_schema_history_" + serviceSchema;
   }
 
   private static Path findRepoRoot() {

@@ -159,3 +159,8 @@ Entry format:
   - Context: hosted preview bootstrap triage exposed that several services still treated `count() == 0` as their smoke-fixture contract, which let persistent preview namespaces drift into unusable state even though the canonical demo rows were known.
   - Observation: create-once seeders are too weak for restart-heavy preview/demo environments because any surviving stale row can block the bootstrap path while still looking "seeded" to the service.
   - Expected pattern: seeders that support canonical smoke, preview, or operator demo flows should find rows by stable business identity and reassert the intended state on every run, while authored/runtime proof scripts should be able to rely on that repair behavior instead of manual database cleanup.
+
+- `2026-05-24`: Shared Postgres-backed test support must carry the full Flyway history-table contract
+  - Context: closing the remaining `02.19` SQL audit tail exposed that runtime containers, Helm values, and reset tooling were all using service-local `flyway_schema_history_<service_schema>` tables while plain service boot and `PostgresBackedServiceTestSupport` could still fall back to bare `flyway_schema_history`.
+  - Observation: proving only schema, locations, and default schema is not enough once services stop sharing one history table; tests can look green while validating a different Flyway contract than runtime.
+  - Expected pattern: shared Postgres-backed test helpers and base service config should register `spring.flyway.table` explicitly alongside schema/default-schema so fresh boot, integration tests, and local reset tooling all exercise the same service-local history table identity.
