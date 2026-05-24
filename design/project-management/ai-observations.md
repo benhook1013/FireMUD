@@ -174,3 +174,8 @@ Entry format:
   - Context: the first Temporal adopters already used stable workflow family constants internally, but the world lifecycle, script-patch readiness, and publish read models still dropped `workflowFamily` while the shared Temporal contract claimed operators would see it.
   - Observation: keeping workflow-family truth only in workflow ids and internal constants leaves operator surfaces and docs drifting even though the runtime already knows the answer.
   - Expected pattern: when a shared workflow contract defines `workflowFamily` as part of the canonical identity, adopter DTOs/protos/read APIs should expose it directly rather than forcing operators to parse it back out of workflow ids or infer it from service-specific context.
+
+- `2026-05-25`: Expected-binding manifests should own exact rendered binding identity, not just schema fields
+  - Context: tightening `02.15.8` showed that preflight already required `internalBindings.registry.imagePullSecretRef`, but staging/production overlays still rendered no matching image-pull binding and the contract tests only exercised a synthetic hobby manifest.
+  - Observation: a manifest can look authoritative while still being advisory if the proof checks only presence of fields and not whether the rendered workloads actually reference the named Secrets or pull credentials.
+  - Expected pattern: environment binding manifests should drive exact rendered Secret and image-pull binding names, and contract proof should run against the real staging/production renders in addition to synthetic examples.

@@ -94,6 +94,13 @@ type: Opaque
 stringData:
   jwks.json: '{"keys":[]}'
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-app
+imagePullSecrets:
+  - name: ghcr-pull-hobby
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -101,6 +108,7 @@ metadata:
 spec:
   template:
     spec:
+      serviceAccountName: firemud-app
       containers:
         - name: tcp-proxy-service
           image: ghcr.io/benhook1013/tcp-proxy-service:latest
@@ -128,6 +136,7 @@ metadata:
 spec:
   template:
     spec:
+      serviceAccountName: firemud-app
       containers:
         - name: account-service
           image: ghcr.io/benhook1013/account-service:latest
@@ -234,5 +243,28 @@ backup_003 = [
 if len(backup_003) != 1 or backup_003[0]["status"] != "pass":
     raise SystemExit(f"PREFLIGHT-BACKUP-003 did not pass: {backup_003}")
 PY
+
+for env in staging production; do
+  REPORT="$TMP_DIR/preflight-$env.json"
+  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+    FIREMUD_DEPLOYMENT_REF="contract-$env" \
+    FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
+    python3 "$SCRIPT" "$env" >/tmp/firemud-preflight-contract-"$env".out
+
+  python3 - <<'PY' "$REPORT" "$env"
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+env = sys.argv[2]
+expected_ref = f"design/operations/environments/{env}/expected-bindings.yaml"
+if report.get("expectedBindingsRef") != expected_ref:
+    raise SystemExit(f"{env}: expectedBindingsRef mismatch: {report.get('expectedBindingsRef')}")
+failures = [check for check in report["checkResults"] if check["status"] == "fail"]
+if failures:
+    raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
+PY
+done
 
 echo "preflight contract checks passed"

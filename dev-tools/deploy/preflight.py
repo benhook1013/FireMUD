@@ -124,6 +124,27 @@ def rendered_references_secret(documents: list[dict[str, Any]], name: str) -> bo
     return False
 
 
+def secret_binding_name(ref: Any) -> str | None:
+    if not isinstance(ref, str) or not ref.startswith("secret://"):
+        return None
+    return ref.rstrip("/").split("/")[-1] or None
+
+
+def rendered_references_image_pull_secret(documents: list[dict[str, Any]], name: str) -> bool:
+    for document in documents:
+        if document.get("kind") == "ServiceAccount":
+            for entry in document.get("imagePullSecrets") or []:
+                if isinstance(entry, dict) and entry.get("name") == name:
+                    return True
+        for node in walk(document):
+            if not isinstance(node, dict):
+                continue
+            for entry in node.get("imagePullSecrets") or []:
+                if isinstance(entry, dict) and entry.get("name") == name:
+                    return True
+    return False
+
+
 def config_value(documents: list[dict[str, Any]], name: str) -> str | None:
     for document in documents:
         if document.get("kind") != "ConfigMap":
@@ -253,10 +274,10 @@ def expected_binding_checks(
         ]
         missing_rendered_refs = []
         for ref_value in secret_refs:
-            if isinstance(ref_value, str) and ref_value.startswith("secret://"):
-                name = ref_value.rstrip("/").split("/")[-1]
-                if not rendered_references_secret(documents, name):
-                    missing_rendered_refs.append(name)
+            name = secret_binding_name(ref_value)
+            if name and not rendered_references_secret(documents, name):
+                missing_rendered_refs.append(name)
+        registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
         if missing:
             results.append(
                 CheckResult(
@@ -275,6 +296,15 @@ def expected_binding_checks(
                     "Rendered workloads do not reference expected Secret bindings: " + ", ".join(missing_rendered_refs),
                 )
             )
+        elif registry_pull_secret and not rendered_references_image_pull_secret(documents, registry_pull_secret):
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    f"Rendered workloads do not reference expected image pull Secret binding: {registry_pull_secret}",
+                )
+            )
         else:
             results.append(
                 CheckResult(
@@ -285,7 +315,15 @@ def expected_binding_checks(
                 )
             )
 
-    bootstrap_names = ["postgres-credentials", "jwt-signing-keys", "jwt-jwks"]
+    bootstrap_names = [
+        name
+        for name in (
+            secret_binding_name(get(data, "internalBindings.postgres.credentialsRef")),
+            secret_binding_name(get(data, "internalBindings.jwt.signingKeysRef")),
+            secret_binding_name(get(data, "internalBindings.jwt.jwksRef")),
+        )
+        if name
+    ]
     missing_bootstrap = [name for name in bootstrap_names if not rendered_references_secret(documents, name)]
     if missing_bootstrap:
         results.append(
