@@ -533,6 +533,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v5
@@ -582,7 +583,7 @@ jobs:
           path: services/${{ matrix.service }}/build/reports/jacoco/test/
 
       - name: ☂️ Upload Coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
         with:
           use_oidc: true
           fail_ci_if_error: false
