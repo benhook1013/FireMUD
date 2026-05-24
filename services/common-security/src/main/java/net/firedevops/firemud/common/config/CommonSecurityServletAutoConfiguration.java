@@ -38,10 +38,7 @@ public class CommonSecurityServletAutoConfiguration {
     return new WebMvcConfigurer() {
       @Override
       public void addInterceptors(InterceptorRegistry registry) {
-        registry
-            .addInterceptor(interceptor)
-            .addPathPatterns(props.getIncludePathPatterns())
-            .excludePathPatterns(props.getPublicPathPatterns());
+        registry.addInterceptor(interceptor).addPathPatterns(props.getIncludePathPatterns());
       }
     };
   }

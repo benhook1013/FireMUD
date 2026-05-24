@@ -68,7 +68,7 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
 - The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
-- To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `firemud-common` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
+- To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
   - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
   - Encapsulates the canonical guard pattern (insert-if-absent, treat conflicts as replay) and throws well-defined exceptions on guard violations.
   - Emits a simple, standardized counter such as `tick_effect_outcome_total{service, effect_type, outcome}` so operators can distinguish first-apply vs replay behavior across services without per-tenant configuration.
@@ -241,7 +241,7 @@ FireMUD uses a **shared short synchronous saga orchestration library**, not a se
 ### Characteristics:
 
 - **Orchestration**:
-  - Centralized in the **firemud-common** library (saga package) located under
+  - Centralized in the **common-saga** library located under
     `services/common-saga`
   - The engine and its shared Flyway migrations live in `services/common-saga/src/main/resources/db/migration/saga`
   - Consuming services expose those migrations through the shared `classpath:db/migration/saga` Flyway location alongside their service-local `classpath:db/migration` chain

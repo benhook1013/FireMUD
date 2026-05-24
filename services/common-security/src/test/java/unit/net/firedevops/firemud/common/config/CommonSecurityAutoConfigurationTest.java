@@ -67,12 +67,15 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.http.enabled=true",
-            "firemud.auth.http.public-path-patterns[0]=/ping")
+            "firemud.auth.http.public-routes[0].method=GET",
+            "firemud.auth.http.public-routes[0].path-pattern=/ping")
         .run(
             ctx -> {
               assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
               HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
-              assertThat(props.getPublicPathPatterns()).containsExactly("/ping");
+              assertThat(props.getPublicRoutes()).hasSize(1);
+              assertThat(props.getPublicRoutes().get(0).getMethod()).isEqualTo("GET");
+              assertThat(props.getPublicRoutes().get(0).getPathPattern()).isEqualTo("/ping");
             });
   }
 

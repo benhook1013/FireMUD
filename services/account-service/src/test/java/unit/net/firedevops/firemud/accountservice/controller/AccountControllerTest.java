@@ -36,8 +36,10 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudHttpAuthTestProperties
 @TestPropertySource(
     properties = {
-      "firemud.auth.http.public-path-patterns[0]=/accounts",
-      "firemud.auth.http.public-path-patterns[1]=/accounts/"
+      "firemud.auth.http.public-routes[0].method=POST",
+      "firemud.auth.http.public-routes[0].path-pattern=/accounts",
+      "firemud.auth.http.public-routes[1].method=POST",
+      "firemud.auth.http.public-routes[1].path-pattern=/accounts/"
     })
 class AccountControllerTest {
 

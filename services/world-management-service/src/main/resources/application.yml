@@ -67,11 +67,15 @@ firemud:
   auth:
     http:
       enabled: true
-      public-path-patterns:
-        - /actuator/**
-        - /ping
-        - /ping/
-        - /.well-known/**
+      public-routes:
+        - method: GET
+          path-pattern: /actuator/**
+        - method: GET
+          path-pattern: /ping
+        - method: GET
+          path-pattern: /ping/
+        - method: GET
+          path-pattern: /.well-known/**
     grpc:
       public-methods:
         - world_management.v1.WorldManagementService/Ping

@@ -42,7 +42,11 @@ class HttpJwtAuthInterceptorTest {
   @Test
   void allowsConfiguredPublicPathWithoutToken() throws Exception {
     HttpAuthProperties props = authenticatedProperties();
-    props.setPublicPathPatterns(List.of("/auth/player-bootstrap", "/accounts", "/accounts/"));
+    props.setPublicRoutes(
+        List.of(
+            publicRoute("POST", "/auth/player-bootstrap"),
+            publicRoute("POST", "/accounts"),
+            publicRoute("POST", "/accounts/")));
     HttpJwtAuthInterceptor interceptor = new HttpJwtAuthInterceptor(jwtUtil, props);
     MockHttpServletRequest request = new MockHttpServletRequest("POST", "/auth/player-bootstrap");
     MockHttpServletResponse response = new MockHttpServletResponse();
@@ -56,7 +60,7 @@ class HttpJwtAuthInterceptorTest {
   @Test
   void allowsWildcardConfiguredPublicPathWithoutToken() throws Exception {
     HttpAuthProperties props = authenticatedProperties();
-    props.setPublicPathPatterns(List.of("/auth/bootstrap/**"));
+    props.setPublicRoutes(List.of(publicRoute("GET", "/auth/bootstrap/**")));
     HttpJwtAuthInterceptor interceptor = new HttpJwtAuthInterceptor(jwtUtil, props);
     MockHttpServletRequest request =
         new MockHttpServletRequest("GET", "/auth/bootstrap/worlds/demo/realms");
@@ -130,6 +134,20 @@ class HttpJwtAuthInterceptorTest {
     assertEquals("game-session-service-1", SessionContext.getServiceInstanceId());
   }
 
+  @Test
+  void methodMismatchStillRequiresTokenForConfiguredPublicPath() throws Exception {
+    HttpAuthProperties props = authenticatedProperties();
+    props.setPublicRoutes(List.of(publicRoute("POST", "/accounts")));
+    HttpJwtAuthInterceptor interceptor = new HttpJwtAuthInterceptor(jwtUtil, props);
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/accounts");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertFalse(result);
+    assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatus());
+  }
+
   private HttpAuthProperties authenticatedProperties() {
     HttpAuthProperties props = new HttpAuthProperties();
     props.setEnabled(true);
@@ -141,5 +159,12 @@ class HttpJwtAuthInterceptorTest {
     HttpAuthProperties props = authenticatedProperties();
     props.setRoleRequirement(HttpAuthRoleRequirement.PRIVILEGED);
     return props;
+  }
+
+  private HttpAuthProperties.HttpPublicRoute publicRoute(String method, String pathPattern) {
+    HttpAuthProperties.HttpPublicRoute route = new HttpAuthProperties.HttpPublicRoute();
+    route.setMethod(method);
+    route.setPathPattern(pathPattern);
+    return route;
   }
 }

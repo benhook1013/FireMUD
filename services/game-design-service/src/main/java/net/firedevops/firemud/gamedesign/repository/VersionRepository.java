@@ -63,6 +63,14 @@ public class VersionRepository {
             .fetchOne(this::toEntity));
   }
 
+  public Optional<Version> findByTenantIdAndVersionNumber(String tenantId, Integer versionNumber) {
+    return Optional.ofNullable(
+        dsl.selectFrom(VERSION_TABLE)
+            .where(TENANT_ID.eq(tenantId).and(VERSION_NUMBER.eq(versionNumber)))
+            .limit(1)
+            .fetchOne(this::toEntity));
+  }
+
   public Optional<Version> findByTenantIdAndId(String tenantId, Long id) {
     return Optional.ofNullable(
         dsl.selectFrom(VERSION_TABLE)

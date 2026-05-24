@@ -5,6 +5,7 @@ import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.util.AntPathMatcher;
@@ -28,7 +29,7 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
   @Override
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
-    if (isPublicPath(request)) {
+    if (isPublicRoute(request)) {
       return true;
     }
 
@@ -59,12 +60,13 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
     SessionContext.clear();
   }
 
-  private boolean isPublicPath(HttpServletRequest request) {
-    List<String> publicPathPatterns = props.getPublicPathPatterns();
-    if (publicPathPatterns.isEmpty()) {
+  private boolean isPublicRoute(HttpServletRequest request) {
+    List<HttpAuthProperties.HttpPublicRoute> publicRoutes = props.getPublicRoutes();
+    if (publicRoutes.isEmpty()) {
       return false;
     }
 
+    String method = request.getMethod();
     String path = request.getRequestURI();
     String contextPath = request.getContextPath();
     if (StringUtils.hasText(contextPath) && path.startsWith(contextPath)) {
@@ -74,8 +76,14 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
       path = "/";
     }
 
-    for (String pattern : publicPathPatterns) {
-      if (PATH_MATCHER.match(pattern, path)) {
+    for (HttpAuthProperties.HttpPublicRoute route : publicRoutes) {
+      if (route == null
+          || !StringUtils.hasText(route.getMethod())
+          || !StringUtils.hasText(route.getPathPattern())) {
+        continue;
+      }
+      if (route.getMethod().trim().toUpperCase(Locale.ROOT).equals(method)
+          && PATH_MATCHER.match(route.getPathPattern(), path)) {
         return true;
       }
     }

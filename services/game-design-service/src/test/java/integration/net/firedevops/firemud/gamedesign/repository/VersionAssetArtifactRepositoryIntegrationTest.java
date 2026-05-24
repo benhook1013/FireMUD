@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDateTime;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
@@ -63,5 +64,14 @@ class VersionAssetArtifactRepositoryIntegrationTest {
     assertThat(reloaded.getUpdatedAt()).isNotNull();
     assertThat(reloaded.getManifestHash()).isEqualTo("demo-manifest-hash");
     assertThat(reloaded.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
+
+    LocalDateTime updatedAt = LocalDateTime.of(2026, 1, 1, 0, 0);
+    reloaded.setUpdatedAt(updatedAt);
+    reloaded.setManifestHash("demo-manifest-hash-2");
+    repository.save(reloaded);
+
+    VersionAssetArtifact updated = repository.findByTenantIdAndVersionId("1", 7L).orElseThrow();
+    assertThat(updated.getUpdatedAt()).isEqualTo(updatedAt);
+    assertThat(updated.getManifestHash()).isEqualTo("demo-manifest-hash-2");
   }
 }

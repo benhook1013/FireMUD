@@ -41,6 +41,8 @@ public class TestDataSeeder implements ApplicationRunner {
   private static final String DEMO_GENERATION_CONFIG_REVISION = "genrev:demo";
   private static final String DEMO_PUBLISH_WORKFLOW_ID = "demo-seed-publish";
   private static final String DEMO_REVISION_KIND = "GENERIC";
+  private static final int DEMO_VERSION_NUMBER = 1;
+  private static final String DEMO_TEMPLATE_NAME = "Default Template";
 
   @Override
   @Transactional
@@ -55,12 +57,14 @@ public class TestDataSeeder implements ApplicationRunner {
     gameRepository.save(game);
 
     Version version =
-        versionRepository.findTopByTenantIdOrderByVersionNumberDesc(DEMO_TENANT_ID).orElse(null);
+        versionRepository
+            .findByTenantIdAndVersionNumber(DEMO_TENANT_ID, DEMO_VERSION_NUMBER)
+            .orElse(null);
     if (version == null) {
       version = new Version();
+      version.setTenantId(DEMO_TENANT_ID);
+      version.setVersionNumber(DEMO_VERSION_NUMBER);
     }
-    version.setTenantId(DEMO_TENANT_ID);
-    version.setVersionNumber(1);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(1L);
     version.setScriptPatchVersion(null);
@@ -71,12 +75,12 @@ public class TestDataSeeder implements ApplicationRunner {
     Long versionId = version.getId();
 
     GameTemplate template =
-        templateRepository.findAll().stream()
-            .filter(candidate -> DEMO_TENANT_ID.equals(candidate.getTenantId()))
-            .findFirst()
-            .orElseGet(GameTemplate::new);
-    template.setTenantId(DEMO_TENANT_ID);
-    template.setName("Default Template");
+        templateRepository.findByTenantIdAndName(DEMO_TENANT_ID, DEMO_TEMPLATE_NAME).orElse(null);
+    if (template == null) {
+      template = new GameTemplate();
+      template.setTenantId(DEMO_TENANT_ID);
+      template.setName(DEMO_TEMPLATE_NAME);
+    }
     template.setDescription("Demo template");
     template.setConfig("{}");
     template.setDefaultVersionId(version.getId());
@@ -85,15 +89,18 @@ public class TestDataSeeder implements ApplicationRunner {
     templateRepository.save(template);
 
     Revision revision =
-        revisionRepository.findAll().stream()
-            .filter(candidate -> versionId.equals(candidate.getVersionId()))
-            .findFirst()
-            .orElseGet(Revision::new);
-    revision.setTenantId(DEMO_TENANT_ID);
-    revision.setVersionId(versionId);
+        revisionRepository
+            .findByTenantIdAndVersionIdAndRevisionKind(
+                DEMO_TENANT_ID, versionId, DEMO_REVISION_KIND)
+            .orElse(null);
+    if (revision == null) {
+      revision = new Revision();
+      revision.setTenantId(DEMO_TENANT_ID);
+      revision.setVersionId(versionId);
+      revision.setRevisionKind(DEMO_REVISION_KIND);
+    }
     revision.setAuthorAccountId(1L);
     revision.setData("{}");
-    revision.setRevisionKind(DEMO_REVISION_KIND);
     revisionRepository.save(revision);
 
     PublishedReleaseBundle bundle =

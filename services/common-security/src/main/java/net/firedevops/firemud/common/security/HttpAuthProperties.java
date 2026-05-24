@@ -7,7 +7,7 @@ public class HttpAuthProperties {
   private boolean enabled;
   private HttpAuthRoleRequirement roleRequirement = HttpAuthRoleRequirement.AUTHENTICATED;
   private List<String> includePathPatterns = new ArrayList<>(List.of("/**"));
-  private List<String> publicPathPatterns = new ArrayList<>();
+  private List<HttpPublicRoute> publicRoutes = new ArrayList<>();
 
   public boolean isEnabled() {
     return enabled;
@@ -34,12 +34,32 @@ public class HttpAuthProperties {
         includePathPatterns == null ? new ArrayList<>() : new ArrayList<>(includePathPatterns);
   }
 
-  public List<String> getPublicPathPatterns() {
-    return List.copyOf(publicPathPatterns);
+  public List<HttpPublicRoute> getPublicRoutes() {
+    return List.copyOf(publicRoutes);
   }
 
-  public void setPublicPathPatterns(List<String> publicPathPatterns) {
-    this.publicPathPatterns =
-        publicPathPatterns == null ? new ArrayList<>() : new ArrayList<>(publicPathPatterns);
+  public void setPublicRoutes(List<HttpPublicRoute> publicRoutes) {
+    this.publicRoutes = publicRoutes == null ? new ArrayList<>() : new ArrayList<>(publicRoutes);
+  }
+
+  public static class HttpPublicRoute {
+    private String method;
+    private String pathPattern;
+
+    public String getMethod() {
+      return method;
+    }
+
+    public void setMethod(String method) {
+      this.method = method;
+    }
+
+    public String getPathPattern() {
+      return pathPattern;
+    }
+
+    public void setPathPattern(String pathPattern) {
+      this.pathPattern = pathPattern;
+    }
   }
 }

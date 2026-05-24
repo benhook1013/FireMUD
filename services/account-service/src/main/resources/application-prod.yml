@@ -39,20 +39,33 @@ firemud:
     http:
       enabled: true
       role-requirement: AUTHENTICATED
-      public-path-patterns:
-        - /auth/login
-        - /auth/player-bootstrap
-        - /auth/bootstrap/**
-        - /auth/connect-token
-        - /auth/request-password-reset
-        - /auth/complete-password-reset
-        - /auth/request-email-verification
-        - /auth/verify-email
-        - /auth/recover-username
-        - /accounts
-        - /accounts/
-        - /ping
-        - /.well-known/**
+      public-routes:
+        - method: POST
+          path-pattern: /auth/login
+        - method: POST
+          path-pattern: /auth/player-bootstrap
+        - method: GET
+          path-pattern: /auth/bootstrap/**
+        - method: POST
+          path-pattern: /auth/connect-token
+        - method: POST
+          path-pattern: /auth/request-password-reset
+        - method: POST
+          path-pattern: /auth/complete-password-reset
+        - method: POST
+          path-pattern: /auth/request-email-verification
+        - method: GET
+          path-pattern: /auth/verify-email
+        - method: POST
+          path-pattern: /auth/recover-username
+        - method: POST
+          path-pattern: /accounts
+        - method: POST
+          path-pattern: /accounts/
+        - method: GET
+          path-pattern: /ping
+        - method: GET
+          path-pattern: /.well-known/**
     grpc:
       public-methods:
         - account.v1.AccountService/Authenticate

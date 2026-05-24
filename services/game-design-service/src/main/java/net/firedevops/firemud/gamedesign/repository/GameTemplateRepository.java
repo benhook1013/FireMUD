@@ -71,6 +71,14 @@ public class GameTemplateRepository {
             .fetchOne(this::toEntity));
   }
 
+  public Optional<GameTemplate> findByTenantIdAndName(String tenantId, String name) {
+    return Optional.ofNullable(
+        dsl.selectFrom(TABLE_REF)
+            .where(TENANT_ID.eq(tenantId).and(NAME.eq(name)))
+            .limit(1)
+            .fetchOne(this::toEntity));
+  }
+
   public Optional<GameTemplateLaunchConfigView> findLaunchConfigByTenantIdAndId(
       String tenantId, Long id) {
     return Optional.ofNullable(
