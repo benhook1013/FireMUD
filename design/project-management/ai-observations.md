@@ -164,3 +164,13 @@ Entry format:
   - Context: closing the remaining `02.19` SQL audit tail exposed that runtime containers, Helm values, and reset tooling were all using service-local `flyway_schema_history_<service_schema>` tables while plain service boot and `PostgresBackedServiceTestSupport` could still fall back to bare `flyway_schema_history`.
   - Observation: proving only schema, locations, and default schema is not enough once services stop sharing one history table; tests can look green while validating a different Flyway contract than runtime.
   - Expected pattern: shared Postgres-backed test helpers and base service config should register `spring.flyway.table` explicitly alongside schema/default-schema so fresh boot, integration tests, and local reset tooling all exercise the same service-local history table identity.
+
+- `2026-05-25`: Metrics-cardinality lint must scan shipped rules and canonical catalogs, not only a few explanatory docs
+  - Context: closing the remaining observability audit tail showed that the existing `check-metrics-cardinality.py` guardrail passed while `prometheus-rules-firemud.yaml`, the Redis metrics catalog, and the scripting quotas/operations doc still taught raw `tenantId` / `regionId` / per-script label shapes.
+  - Observation: a static policy check can give false confidence if it inspects only a narrow prose subset and ignores the repo's actual shipped rules and authoritative metric catalogs.
+  - Expected pattern: metrics-cardinality enforcement should scan the canonical rule/config/doc surfaces that operators and later contributors actually copy from, including PromQL grouping/join clauses, not just metric examples embedded in one or two design docs.
+
+- `2026-05-25`: Shared workflow contracts should propagate workflow family all the way to operator read surfaces
+  - Context: the first Temporal adopters already used stable workflow family constants internally, but the world lifecycle, script-patch readiness, and publish read models still dropped `workflowFamily` while the shared Temporal contract claimed operators would see it.
+  - Observation: keeping workflow-family truth only in workflow ids and internal constants leaves operator surfaces and docs drifting even though the runtime already knows the answer.
+  - Expected pattern: when a shared workflow contract defines `workflowFamily` as part of the canonical identity, adopter DTOs/protos/read APIs should expose it directly rather than forcing operators to parse it back out of workflow ids or infer it from service-specific context.

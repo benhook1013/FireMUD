@@ -92,7 +92,7 @@ Required audit/output shape when optional step 3 is skipped:
 - The workflow must emit a durable stage outcome for the omitted step under the same `worldCreationRequestId` / `launchDescriptorId`.
 - That outcome must distinguish `SKIPPED_NOT_REQUIRED` from `FAILED` or `NOT_STARTED`.
 - Operators must be able to determine from persisted workflow state that terrain generation and/or population materialization were intentionally not required by the published launch descriptor.
-- Logging & Admin saga-status surfaces for this workflow must expose the same recorded outcome so operators do not have to inspect raw service tables to distinguish “not required” from “failed”.
+- Logging & Admin workflow-status surfaces for this workflow must expose the same recorded outcome so operators do not have to inspect raw service tables to distinguish “not required” from “failed”.
 
 Illustrative stage outcome:
 

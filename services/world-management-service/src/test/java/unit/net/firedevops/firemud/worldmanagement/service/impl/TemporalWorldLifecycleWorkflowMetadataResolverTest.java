@@ -25,6 +25,7 @@ class TemporalWorldLifecycleWorkflowMetadataResolverTest {
     WorldInstanceLifecycleSnapshotDto snapshot = resolver.attach(baseSnapshot());
 
     assertEquals("world-lifecycle:42:game-instance:101", snapshot.workflowId());
+    assertEquals("world-lifecycle", snapshot.workflowFamily());
     assertEquals("TEMPORAL_DISABLED", snapshot.workflowStatus());
   }
 
@@ -56,6 +57,7 @@ class TemporalWorldLifecycleWorkflowMetadataResolverTest {
     WorldInstanceLifecycleSnapshotDto snapshot = resolver.attach(baseSnapshot());
 
     assertEquals("world-lifecycle:42:game-instance:101", snapshot.workflowId());
+    assertEquals("world-lifecycle", snapshot.workflowFamily());
     assertEquals("run-1", snapshot.workflowRunId());
     assertEquals("WORKFLOW_EXECUTION_STATUS_RUNNING", snapshot.workflowStatus());
   }
@@ -76,6 +78,7 @@ class TemporalWorldLifecycleWorkflowMetadataResolverTest {
 
     WorldInstanceLifecycleSnapshotDto snapshot = resolver.attach(baseSnapshot());
 
+    assertEquals("world-lifecycle", snapshot.workflowFamily());
     assertEquals("NOT_FOUND", snapshot.workflowStatus());
   }
 
@@ -94,6 +97,7 @@ class TemporalWorldLifecycleWorkflowMetadataResolverTest {
         2L,
         "ACTIVE",
         "remap-1",
+        null,
         null,
         null,
         null);

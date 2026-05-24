@@ -340,6 +340,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
     assertThat(ref.get().getWorkflowId())
         .isEqualTo("script-patch-readiness:1:script-patch-version:patch-1");
+    assertThat(ref.get().getWorkflowFamily()).isEqualTo("script-patch-readiness");
     assertThat(ref.get().getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
@@ -396,6 +397,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getPatches(0).getPublication().getVersionId()).isEqualTo(18L);
     assertThat(ref.get().getPatches(0).getWorkflowId())
         .isEqualTo("script-patch-readiness:1:script-patch-version:patch-2");
+    assertThat(ref.get().getPatches(0).getWorkflowFamily()).isEqualTo("script-patch-readiness");
     assertThat(ref.get().getPatches(0).getWorkflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 

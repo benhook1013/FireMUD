@@ -26,6 +26,7 @@ class TemporalScriptPatchReadinessWorkflowMetadataResolverTest {
 
     assertThat(metadata.workflowId())
         .isEqualTo("script-patch-readiness:1:script-patch-version:patch-1");
+    assertThat(metadata.workflowFamily()).isEqualTo("script-patch-readiness");
     assertThat(metadata.workflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
@@ -59,6 +60,7 @@ class TemporalScriptPatchReadinessWorkflowMetadataResolverTest {
 
     assertThat(metadata.workflowId())
         .isEqualTo("script-patch-readiness:1:script-patch-version:patch-1");
+    assertThat(metadata.workflowFamily()).isEqualTo("script-patch-readiness");
     assertThat(metadata.workflowRunId()).isEqualTo("run-1");
     assertThat(metadata.workflowStatus()).isEqualTo("WORKFLOW_EXECUTION_STATUS_RUNNING");
   }
@@ -79,6 +81,7 @@ class TemporalScriptPatchReadinessWorkflowMetadataResolverTest {
 
     var metadata = resolver.resolve("1", "patch-1");
 
+    assertThat(metadata.workflowFamily()).isEqualTo("script-patch-readiness");
     assertThat(metadata.workflowStatus()).isEqualTo("NOT_FOUND");
   }
 }

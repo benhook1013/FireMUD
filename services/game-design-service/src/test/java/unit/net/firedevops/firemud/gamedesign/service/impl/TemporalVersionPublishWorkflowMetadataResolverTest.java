@@ -24,6 +24,7 @@ class TemporalVersionPublishWorkflowMetadataResolverTest {
     var metadata = resolver.resolve("publish:1:publish-request:req-1");
 
     assertThat(metadata.workflowId()).isEqualTo("publish:1:publish-request:req-1");
+    assertThat(metadata.workflowFamily()).isEqualTo("publish");
     assertThat(metadata.workflowStatus()).isEqualTo("TEMPORAL_DISABLED");
   }
 
@@ -55,6 +56,7 @@ class TemporalVersionPublishWorkflowMetadataResolverTest {
     var metadata = resolver.resolve("publish:1:publish-request:req-1");
 
     assertThat(metadata.workflowId()).isEqualTo("publish:1:publish-request:req-1");
+    assertThat(metadata.workflowFamily()).isEqualTo("publish");
     assertThat(metadata.workflowRunId()).isEqualTo("run-1");
     assertThat(metadata.workflowStatus()).isEqualTo("WORKFLOW_EXECUTION_STATUS_RUNNING");
   }
@@ -75,6 +77,7 @@ class TemporalVersionPublishWorkflowMetadataResolverTest {
 
     var metadata = resolver.resolve("publish:1:publish-request:req-1");
 
+    assertThat(metadata.workflowFamily()).isEqualTo("publish");
     assertThat(metadata.workflowStatus()).isEqualTo("NOT_FOUND");
   }
 }

@@ -24,10 +24,12 @@ public class TemporalVersionPublishWorkflowMetadataResolver {
 
   public WorkflowMetadata resolve(String workflowId) {
     if (workflowId == null || workflowId.isBlank()) {
-      return new WorkflowMetadata("", "", "UNAVAILABLE");
+      return new WorkflowMetadata(
+          "", TemporalVersionPublishWorkflow.WORKFLOW_FAMILY, "", "UNAVAILABLE");
     }
     if (workflowServiceStubs.isEmpty() || temporalProperties.isEmpty()) {
-      return new WorkflowMetadata(workflowId, "", "TEMPORAL_DISABLED");
+      return new WorkflowMetadata(
+          workflowId, TemporalVersionPublishWorkflow.WORKFLOW_FAMILY, "", "TEMPORAL_DISABLED");
     }
     try {
       var response =
@@ -42,14 +44,17 @@ public class TemporalVersionPublishWorkflowMetadataResolver {
                       .build());
       WorkflowExecutionStatus status = response.getWorkflowExecutionInfo().getStatus();
       String runId = response.getWorkflowExecutionInfo().getExecution().getRunId();
-      return new WorkflowMetadata(workflowId, runId, status.name());
+      return new WorkflowMetadata(
+          workflowId, TemporalVersionPublishWorkflow.WORKFLOW_FAMILY, runId, status.name());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.NOT_FOUND) {
-        return new WorkflowMetadata(workflowId, "", "NOT_FOUND");
+        return new WorkflowMetadata(
+            workflowId, TemporalVersionPublishWorkflow.WORKFLOW_FAMILY, "", "NOT_FOUND");
       }
       throw ex;
     }
   }
 
-  record WorkflowMetadata(String workflowId, String workflowRunId, String workflowStatus) {}
+  record WorkflowMetadata(
+      String workflowId, String workflowFamily, String workflowRunId, String workflowStatus) {}
 }

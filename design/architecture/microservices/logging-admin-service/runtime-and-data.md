@@ -71,6 +71,6 @@ All moderation actions are audit-recorded for compliance.
 
 ## Saga Dashboard
 
-The service exposes `/sagas` and `/sagas/{id}/steps` endpoints for operators to inspect long-running workflows coordinated via the shared Saga library. The dashboard reads from the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Prometheus gauge.
+The service exposes `/sagas` and `/sagas/{id}/steps` endpoints for operators to inspect short synchronous orchestration coordinated via the shared Saga library. Durable long-running workflow inspection belongs on the corresponding Temporal adopter read surfaces, not on the shared saga dashboard. The dashboard reads from the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Prometheus gauge.
 
 See [Transaction Strategies](../../system-architecture-transactions.md) for an overview of Saga usage across FireMUD.

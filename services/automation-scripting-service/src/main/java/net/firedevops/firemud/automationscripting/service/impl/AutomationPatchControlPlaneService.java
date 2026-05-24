@@ -107,7 +107,8 @@ final class AutomationPatchControlPlaneService {
                   .setPublication(toProto(summary.publication()))
                   .setWorkflowId(workflowMetadata.workflowId())
                   .setWorkflowRunId(workflowMetadata.workflowRunId())
-                  .setWorkflowStatus(workflowMetadata.workflowStatus());
+                  .setWorkflowStatus(workflowMetadata.workflowStatus())
+                  .setWorkflowFamily(workflowMetadata.workflowFamily());
             },
             () ->
                 response.setError(
@@ -483,6 +484,7 @@ final class AutomationPatchControlPlaneService {
         .setWorkflowId(workflowMetadata.workflowId())
         .setWorkflowRunId(workflowMetadata.workflowRunId())
         .setWorkflowStatus(workflowMetadata.workflowStatus())
+        .setWorkflowFamily(workflowMetadata.workflowFamily())
         .build();
   }
 

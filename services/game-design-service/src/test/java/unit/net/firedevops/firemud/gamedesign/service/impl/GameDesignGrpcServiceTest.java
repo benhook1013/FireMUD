@@ -190,6 +190,7 @@ class GameDesignGrpcServiceTest {
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals("publish", ref.get().getBundle().getWorkflowFamily());
     assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
   }
 

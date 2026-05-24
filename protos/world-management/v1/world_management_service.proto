@@ -57,6 +57,7 @@ message WorldInstanceLifecycleSnapshot {
   string workflow_id = 14;
   string workflow_run_id = 15;
   string workflow_status = 16;
+  string workflow_family = 17;
 }
 
 message PrepareWorldInstanceRequest {

@@ -13,13 +13,13 @@ spec:
           expr: |
             histogram_quantile(
               0.95,
-              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_time_ms_p99
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_safety_ratio_p99
           expr: tick_execution_time_ms_p99 / tick_lock_ttl_ms
@@ -36,7 +36,7 @@ spec:
             clamp_min(2000, 2 * tick_interval_ms)
         - record: redis_coordination_tail_loss_slo_breached
           expr: |
-            redis_coordination_tail_loss_ms > on (tenantId, regionId) redis_coordination_tail_loss_budget_ms
+            redis_coordination_tail_loss_ms > on (scope) redis_coordination_tail_loss_budget_ms
     - name: firemud.recording.backup
       rules:
         - record: backup_pipeline_recent_backup_slo_breached

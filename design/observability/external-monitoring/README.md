@@ -156,6 +156,12 @@ The canonical runner expects that retained authoritative result in a structured 
 
 Only `--simulate` may synthesize this external-authority object. Real prod-like smoke must point at retained authoritative evidence instead of env-fed `green/red` status flags.
 
+Freshness decision at the current repository boundary:
+
+- the repository validates the retained external-authority object for required shape and required green-state semantics only;
+- the repository does not currently parse or freshness-validate authoritative timestamps from `evidenceRef` or `checkRef`, because those references are intentionally product-specific opaque handles owned by the external monitoring system;
+- choosing retained evidence that is contemporaneous with the smoke execution window remains an environment readiness obligation and must be documented in the environment’s own monitoring evidence.
+
 ## Compatibility Mapping
 
 If a monitoring product cannot expose the canonical mirrored metric names directly, the environment must document a compatibility mapping that preserves:

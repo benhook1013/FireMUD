@@ -443,6 +443,7 @@ message GetScriptPatchStatusResponse {
   string workflow_id = 9;
   string workflow_run_id = 10;
   string workflow_status = 11;
+  string workflow_family = 12;
 }
 
 message ScriptPatchPublicationLink {
@@ -474,6 +475,7 @@ message ScriptPatchStatusEntry {
   string workflow_id = 9;
   string workflow_run_id = 10;
   string workflow_status = 11;
+  string workflow_family = 12;
 }
 
 message ListScriptPatchStatusesResponse {

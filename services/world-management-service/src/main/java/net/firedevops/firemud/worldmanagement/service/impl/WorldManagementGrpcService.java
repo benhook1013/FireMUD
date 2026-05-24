@@ -615,6 +615,7 @@ public class WorldManagementGrpcService
         .setWorkflowId(snapshot.workflowId() == null ? "" : snapshot.workflowId())
         .setWorkflowRunId(snapshot.workflowRunId() == null ? "" : snapshot.workflowRunId())
         .setWorkflowStatus(snapshot.workflowStatus() == null ? "" : snapshot.workflowStatus())
+        .setWorkflowFamily(snapshot.workflowFamily() == null ? "" : snapshot.workflowFamily())
         .build();
   }
 

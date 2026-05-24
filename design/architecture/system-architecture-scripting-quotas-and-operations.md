@@ -185,14 +185,14 @@ Budgets operate at three main levels:
   - Concurrency and queue policies cap how many runs may be active or buffered at a time.
 
 - **Per-tenant**:
-  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and metrics such as `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`.
+  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and bounded metrics such as `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`.
   - When a tenant exhausts its budget for a tier, lower-priority work for that tenant is skipped (`automation_script_skips_total{reason="tenant_budget_exceeded"}`) while other tenants continue to make progress.
 
 - **Cluster-wide**:
   - Global ceilings on automation work (for example, CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`) protect the cluster.
   - When limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work.
 
-All script-side keys and metrics are scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
+All script-side keys remain scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Operator-facing metrics, however, must use the bounded `scope`, category, family, or tier labels defined in the canonical observability contract rather than raw tenant/runtime identifiers. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
 
 ### Quota & Budget Summary
 
@@ -246,7 +246,7 @@ The canonical `script_event_audit` schema includes:
   - Optional dead-letter linkage (`deadLetterId` or equivalent) when work transitions to bounded dead-letter stores during version-fence drops or outbox failure handling.
 
 During rollback draining, operators should also expect a bounded number of old-epoch rows whose runs started before pause but were fenced before persistence or handoff. Those rows should appear as non-success canceled outcomes for the original Trigger Identity, not as silently dropped work. A typical example is `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, `finalReason=rollback_epoch_advanced`, paired with rollback/drain metrics for the same scope.
-At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{tenantId, gameInstanceId, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
+At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{scope, operation, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
 
 `script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but post-handoff execution-time version fences must also be correlated back to the same trigger:
 
@@ -279,8 +279,8 @@ Metrics such as:
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
 
-- `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
-- `automation_script_test_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
+- `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
+- `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 
@@ -291,20 +291,20 @@ A small, bounded Automation-owned inspector loop periodically samples a subset o
 
 For scripting and automation, these metrics follow shared naming and labeling conventions so dashboards and alerts remain consistent across services:
 
-- `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome, priorityTag}` – counts all observed triggers (admitted and non-admitted), tagged with final stage-aware `outcome` (must match `script_event_audit.finalOutcome`).
-- `automation_script_skips_total{tenantId, scriptId, pluginId, reason, priorityTag}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
-- `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason, priorityTag}` – counts triggers that could not be processed to tick acceptance (for example, `reason="quota"`, `reason="cluster_limit_reached"`, `reason="version_unavailable"`).
+- `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}` – counts all observed triggers (admitted and non-admitted), tagged with final stage-aware `outcome` (must match `script_event_audit.finalOutcome`).
+- `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
+- `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}` – counts triggers that could not be processed to tick acceptance (for example, `reason="quota"`, `reason="cluster_limit_reached"`, `reason="version_unavailable"`).
 - `automation_script_work_item_outcomes_total{stage, outcome, dryRun, priorityTag, sourceService}` – counts terminal durable work-item execution outcomes using the same `finalStage` / `finalOutcome` vocabulary written to `script_event_audit`, so quota, output-budget, dry-run, source-specific, and handoff outcomes can be compared without parsing audit rows.
-- `script_quota_allowed_total{tenantId, scriptId}` / `script_quota_denied_total{tenantId, scriptId, reason}` – per-script quota decisions before sandbox work begins.
-- `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
-- `automation_script_errors_total{tenantId, scriptId, pluginId, reason}` – higher-level error classification, including downstream failures.
-- `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
-- `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` – per-tenant, per-priority-tier live execution reservation decisions.
-- `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – distribution of sandbox runtime per script/plugin and event type.
-- `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
-- `automation_script_timer_catchup_truncated_total{tenantId, scriptId, eventType, reason}` – counts timer catch-up firings intentionally truncated by resume-window limits.
+- `script_quota_allowed_total{scope, script_category}` / `script_quota_denied_total{scope, script_category, reason}` – per-script quota decisions before sandbox work begins.
+- `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
+- `automation_script_errors_total{scope, script_category, plugin_family, reason}` – higher-level error classification, including downstream failures.
+- `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
+- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` – per-scope, per-priority-tier live execution reservation decisions.
+- `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}` – distribution of sandbox runtime per script/plugin and event type.
+- `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
+- `automation_script_timer_catchup_truncated_total{scope, script_category, eventType, reason}` – counts timer catch-up firings intentionally truncated by resume-window limits.
 
-Plugin executions use the same metrics but typically add `pluginId` and `pluginVersionId` labels where relevant so dashboards and alerts can distinguish plugin behavior from core automation. Policy-specific behavior is surfaced via `automation_plugin_policy_violations_total` so operators can separate policy enforcement from quota or sandbox failures.
+Plugin executions use the same metrics but distinguish plugin behavior through bounded `plugin_family` and `plugin_version_family` labels rather than raw ids. Policy-specific behavior is surfaced via `automation_plugin_policy_violations_total` so operators can separate policy enforcement from quota or sandbox failures.
 
 ### Cross-Service Correlation
 
@@ -327,7 +327,7 @@ These identifiers appear consistently in:
 A typical troubleshooting flow for a problematic script or plugin is:
 
 1. Start from a player-visible issue or a game tick log that includes `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, and `tickId`.
-2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by `scriptId`/`eventType`/`tenantId` and use audit/log queries for per-event correlation.
+2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by bounded `scope` / `script_category` / `eventType` dimensions and use audit/log queries for per-event correlation.
 3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`.
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
 
@@ -378,7 +378,7 @@ At a high level:
 
 - **Infrastructure-level failures**
   - `finalOutcome=infrastructure_error` (with a `finalStage` that reflects where it failed) – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.
-  - `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout` – rollback convergence timeout terminal state is active for scope and admission remains paused; increments `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
+  - `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout` – rollback convergence timeout terminal state is active for scope and admission remains paused; increments `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
 
 The failure-rate circuit breaker primarily considers **sandbox_error** and other logical script failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards.
 
