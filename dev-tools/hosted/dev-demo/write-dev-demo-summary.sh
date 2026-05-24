@@ -25,6 +25,18 @@ case "$mode" in
 - TCP: \`telnet ${hostname} ${telnet_port}\`
 EOF
     ;;
+  unavailable)
+    cat <<EOF
+## 🟡 Dev Demo Unavailable
+
+- Branch: \`develop\`
+- Head SHA: \`${head_sha}\`
+- Image tag: \`${image_tag}\`
+- Web: https://${hostname}
+- TCP: \`telnet ${hostname} ${telnet_port}\`
+- Unavailable stage: \`${failure_stage:-cluster-access}\`
+EOF
+    ;;
   success)
     cat <<EOF
 ## 🟢 Dev Demo Ready
