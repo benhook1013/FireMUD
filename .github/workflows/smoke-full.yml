@@ -70,15 +70,16 @@ jobs:
       CHECKOUT_REF: ${{ inputs.checkout_ref != '' && inputs.checkout_ref || inputs.head_sha }}
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ env.CHECKOUT_REF }}
+          persist-credentials: false
 
       - name: Generate Dev Certificates
         run: ./dev-tools/certs/generate-dev-certs.sh
 
       - name: Login to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -119,7 +120,7 @@ jobs:
     if: ${{ always() && inputs.pr_number != '' }}
     steps:
       - name: 💬 Publish Smoke Summary Comment
-        uses: actions/github-script@v9
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:
           script: |
             const fullResult = "${{ needs.smoke-full.result }}";

@@ -552,7 +552,7 @@ jobs:
                   f"{account_api_base}/accounts",
                   {
                     "tenantId": tenant_id,
-                    "username": username,
+                    "username": email,
                     "email": email,
                     "password": password,
                   },
