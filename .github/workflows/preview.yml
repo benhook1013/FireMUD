@@ -494,7 +494,7 @@ jobs:
           email = "demo@example.com"
           password = "swordfish"
           control_plane_request_id = f"preview-smoke-bootstrap-{int(time.time())}"
-          account_api_base = "http://spring-cloud-gateway/api/account"
+          account_api_base = "http://account-service:8080"
 
           def readiness_ok(url):
             try:
