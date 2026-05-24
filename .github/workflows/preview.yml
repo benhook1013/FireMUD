@@ -478,37 +478,18 @@ jobs:
           PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
         run: |
           echo "PREVIEW_STAGE=bootstrap" >> "$GITHUB_ENV"
-          BOOTSTRAP_SCRIPT=/tmp/preview-prereqs.py
-          cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
-          import time
-          import urllib.request
-
-          def readiness_ok(url):
-            try:
-              with urllib.request.urlopen(url, timeout=10) as response:
-                body = response.read().decode("utf-8", errors="ignore")
-                return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
-            except OSError:
-              return False
-
-          def wait_for_ready(name, url, timeout_seconds=90):
-            deadline = time.time() + timeout_seconds
-            while time.time() < deadline:
-              if readiness_ok(url):
-                print(f"{name} readiness is UP at {url}")
-                return
-              time.sleep(2)
-            raise SystemExit(f"{name} readiness did not report UP at {url}")
-
-          wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
-          wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
-          wait_for_ready("game-design-service", "http://game-design-service:8080/actuator/health/readiness")
-          wait_for_ready("game-logic-service", "http://game-logic-service:8080/actuator/health/readiness")
-          wait_for_ready("world-management-service", "http://world-management-service:8080/actuator/health/readiness")
-          wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
-          wait_for_ready("spring-cloud-gateway", "http://spring-cloud-gateway:80/actuator/health/readiness")
-          PY
-          python3 "${BOOTSTRAP_SCRIPT}"
+          for deployment in \
+            account-service \
+            entity-management-service \
+            game-design-service \
+            game-logic-service \
+            world-management-service \
+            game-session-service \
+            spring-cloud-gateway
+          do
+            echo "Waiting for deployment/${deployment} in ${PREVIEW_NAMESPACE}"
+            kubectl -n "${PREVIEW_NAMESPACE}" rollout status "deployment/${deployment}" --timeout=120s
+          done
 
       - name: Smoke hosted preview over TCP
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
