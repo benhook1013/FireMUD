@@ -12,11 +12,15 @@ This document describes the continuous integration strategy for FireMUD using **
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
-- **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
+- **Perform deep static code scanning** with CodeQL on `main`, scheduled runs, and manual dispatches, and run open source **license checks** during pull request validation.
+- **Run AI-assisted pull request review** with CodeRabbit on `develop` and `main` pull requests using repository-local review guidance plus inherited organization defaults.
+- **Benchmark repository hardening** with OSSF Scorecard on `develop` and `main` pushes plus the weekly scorecard schedule.
 - **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
+- **Publish coverage feedback** to Codecov from the service validation matrix so pull requests receive patch-coverage status and coverage comments.
 - **Run OWASP ZAP baseline scans** against the built web client preview during CI.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
+- **Propose dependency updates automatically** with Renovate against the `develop` branch across the supported dependency managers.
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
 - **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race each other for the same environment.
 
@@ -41,13 +45,13 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Generates protobuf outputs to keep generated stubs aligned with the checked-in schemas.
 - Runs formatting and lint steps (Spotless, markdownlint, link checks).
 - Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
-- Generates coverage with JaCoCo and runs Trivy scans over the workspace.
+- Generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs Trivy scans over the workspace.
 - Uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
 - Validates tracked Bash scripts across the repository with ShellCheck and validates tracked Python scripts by compiling them with `py_compile` so syntax regressions fail fast in CI.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
 - Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
-- Posts a summary comment on pull requests with test status and coverage.
+- Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
 A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
@@ -90,8 +94,11 @@ The example above checks out the repository, sets up Java 21, and runs a Gradle 
 Other workflows support additional automation:
 
 - [`docs.yml`](../../.github/workflows/docs.yml) uses the **lychee** link checker (configured via `.lycheeignore`) before building and publishing the MkDocs-rendered architecture site to GitHub Pages. Publication is allowed only from `develop` and `main`; manual runs from other branches may validate the build but must not publish Pages.
-- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on each pull request and push to `main`.
+- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on pushes to `main`, the weekly CodeQL schedule, and manual workflow dispatches.
+- [`.coderabbit.yaml`](../../.coderabbit.yaml) configures CodeRabbit pull request review behavior for the repository. CodeRabbit inherits organization-level defaults, uses the repository-local path instructions and summary guidance, auto-reviews non-draft pull requests targeting `develop` and `main`, and is currently configured as advisory rather than a merge-blocking "request changes" reviewer.
+- [`scorecards.yml`](../../.github/workflows/scorecards.yml) runs OSSF Scorecard on `develop` and `main` pushes plus a weekly schedule, uploads the SARIF artifact, and publishes the findings into GitHub code scanning.
 - [`license-scan.yml`](../../.github/workflows/license-scan.yml) checks open source dependencies for license compliance across the currently supported release dependency ecosystems (`Gradle` and `NPM`).
+- [`renovate.json`](../../renovate.json) configures Renovate dependency-update pull requests for the `develop` branch. The current repository policy keeps Renovate eager rather than schedule-restricted, labels update PRs with `dependencies`, and groups non-major updates by ecosystem to reduce branch churn.
 - [`zap-baseline.yml`](../../.github/workflows/zap-baseline.yml) runs an OWASP ZAP baseline scan against the built web client preview on pull requests and pushes to `develop` and `main`.
 - [`release-notes.yml`](../../.github/workflows/release-notes.yml) creates GitHub releases with autogenerated notes whenever a version tag is pushed, generates the release-specific `NOTICE.md`, and assembles the release `/licenses` bundle from ORT output for those same release dependency ecosystems.
 - [`release-please.yml`](../../.github/workflows/release-please.yml) creates release pull requests from the `develop` branch.

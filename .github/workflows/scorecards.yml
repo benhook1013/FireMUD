@@ -2,7 +2,7 @@ name: OSSF Scorecard
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main]
   schedule:
     - cron: "30 1 * * 6"
 

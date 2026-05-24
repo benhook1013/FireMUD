@@ -8,10 +8,16 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 | --- | --- | --- | --- |
 | CI — Build and Security | Daily at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) |
 | CodeQL Analysis | Weekly on Sundays at 00:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/codeql.yml](../../../.github/workflows/codeql.yml) |
+| OSSF Scorecard | Weekly on Saturdays at 01:30 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/scorecards.yml](../../../.github/workflows/scorecards.yml) |
 | Weekly Security Scan | Weekly on Sundays at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/weekly-security-scan.yml](../../../.github/workflows/weekly-security-scan.yml) |
 | Weekly FireMUD Base Image Refresh | Weekly on Sundays at 02:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/publish-base-image.yml](../../../.github/workflows/publish-base-image.yml) |
 | Weekly ORT Advisory Scan | Weekly on Sundays at 06:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/ort-advisory.yml](../../../.github/workflows/ort-advisory.yml) |
 | Dependabot dependency updates | Weekly on Saturdays at 16:00 (Sunday 04:00 Pacific/Auckland) | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/dependabot.yml](../../../.github/dependabot.yml) |
+
+Repository-app automation that is not driven by a GitHub Actions schedule:
+
+- CodeRabbit reviews non-draft pull requests targeting `develop` and `main` after PR creation and on subsequent commits.
+- Renovate evaluates dependency updates against `develop` as the hosted Mend app processes repository events and background jobs; it is intentionally not restricted by an in-repo schedule.
 
 Publication guardrail:
 
