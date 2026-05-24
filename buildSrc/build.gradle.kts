@@ -13,9 +13,9 @@ gradlePlugin {
             id = "net.firedevops.firemud.service-conventions"
             implementationClass = "net.firedevops.firemud.FiremudServiceConventionsPlugin"
         }
-        register("firemudJpaPostgresConventions") {
-            id = "net.firedevops.firemud.jpa-postgres-conventions"
-            implementationClass = "net.firedevops.firemud.FiremudJpaPostgresConventionsPlugin"
+        register("firemudSqlPostgresConventions") {
+            id = "net.firedevops.firemud.sql-postgres-conventions"
+            implementationClass = "net.firedevops.firemud.FiremudSqlPostgresConventionsPlugin"
         }
         register("firemudJooqConventions") {
             id = "net.firedevops.firemud.jooq-conventions"
@@ -33,9 +33,9 @@ gradlePlugin {
             id = "net.firedevops.firemud.secured-stateful-service-conventions"
             implementationClass = "net.firedevops.firemud.FiremudSecuredStatefulServiceConventionsPlugin"
         }
-        register("firemudSecuredJpaAopServiceConventions") {
-            id = "net.firedevops.firemud.secured-jpa-aop-service-conventions"
-            implementationClass = "net.firedevops.firemud.FiremudSecuredJpaAopServiceConventionsPlugin"
+        register("firemudSecuredSqlAopServiceConventions") {
+            id = "net.firedevops.firemud.secured-sql-aop-service-conventions"
+            implementationClass = "net.firedevops.firemud.FiremudSecuredSqlAopServiceConventionsPlugin"
         }
         register("firemudJwtConventions") {
             id = "net.firedevops.firemud.jwt-conventions"

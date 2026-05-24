@@ -43,8 +43,18 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Repositories are injected for seeding and not exposed")
 public class TestDataSeeder implements ApplicationRunner {
+  private static final long DEMO_TENANT_ID = 1L;
+  private static final long DEMO_VERSION_ID = 1L;
   private static final long STARTER_ROOM_INSTANCE_ID = 1021L;
   private static final long SECONDARY_ROOM_INSTANCE_ID = 2045L;
+  private static final String DEMO_REGION_NAME = "Demo Region";
+  private static final String DEMO_ZONE_NAME = "Demo Zone";
+  private static final String STARTER_ROOM_NAME = "Candle-lit Antechamber";
+  private static final String STARTER_ROOM_DESCRIPTION =
+      "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.";
+  private static final String SECONDARY_ROOM_NAME = "Smith's Annex";
+  private static final String SECONDARY_ROOM_DESCRIPTION =
+      "An anvil, banked coals, and orderly tool racks mark this alcove as a working annex off the starter chamber.";
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -60,49 +70,79 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    if (regionRepository.count() == 0) {
-      Region region = new Region();
-      region.setTenantId(1L);
-      region.setVersionId(1L);
-      region.setShardId(0);
-      region.setName("Demo Region");
-      Region savedRegion = regionRepository.save(region);
-
-      Zone zone = new Zone();
-      zone.setTenantId(1L);
-      zone.setVersionId(1L);
-      zone.setRegion(savedRegion);
-      zone.setName("Demo Zone");
-      Zone savedZone = zoneRepository.save(zone);
-
-      Room room1 = new Room();
-      room1.setTenantId(1L);
-      room1.setVersionId(1L);
-      room1.setZone(savedZone);
-      room1.setName("Candle-lit Antechamber");
-      room1.setDescription(
-          "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.");
-      Room savedRoom1 = roomRepository.save(room1);
-
-      Room room2 = new Room();
-      room2.setTenantId(1L);
-      room2.setVersionId(1L);
-      room2.setZone(savedZone);
-      room2.setName("Smith's Annex");
-      room2.setDescription(
-          "An anvil, banked coals, and orderly tool racks mark this alcove as a working annex off the starter chamber.");
-      Room savedRoom2 = roomRepository.save(room2);
-
-      RoomExit exit = new RoomExit();
-      exit.setTenantId(1L);
-      exit.setVersionId(1L);
-      exit.setFromRoom(savedRoom1);
-      exit.setToRoom(savedRoom2);
-      exit.setDirection("NORTH");
-      roomExitRepository.save(exit);
-    }
-
+    ensureDemoTopology();
     ensureRuntimeTopologyForCatalogTargets();
+  }
+
+  private void ensureDemoTopology() {
+    Region region = ensureDemoRegion();
+    Zone zone = ensureDemoZone(region);
+    Room starterRoom = ensureRoom(zone, STARTER_ROOM_NAME, STARTER_ROOM_DESCRIPTION);
+    Room secondaryRoom = ensureRoom(zone, SECONDARY_ROOM_NAME, SECONDARY_ROOM_DESCRIPTION);
+    ensureRoomExit(starterRoom, secondaryRoom, "NORTH");
+  }
+
+  private Region ensureDemoRegion() {
+    Region region =
+        regionRepository
+            .findFirstByTenantIdAndVersionIdAndShardIdAndName(
+                DEMO_TENANT_ID, DEMO_VERSION_ID, 0, DEMO_REGION_NAME)
+            .orElseGet(Region::new);
+    region.setTenantId(DEMO_TENANT_ID);
+    region.setVersionId(DEMO_VERSION_ID);
+    region.setShardId(0);
+    region.setName(DEMO_REGION_NAME);
+    if (region.getSpacingMultiplier() == null) {
+      region.setSpacingMultiplier(1.0);
+    }
+    if (region.getGenerationSeed() == null) {
+      region.setGenerationSeed(0L);
+    }
+    return regionRepository.save(region);
+  }
+
+  private Zone ensureDemoZone(Region region) {
+    Zone zone =
+        zoneRepository
+            .findFirstByTenantIdAndVersionIdAndRegionIdAndName(
+                DEMO_TENANT_ID, DEMO_VERSION_ID, region.getId(), DEMO_ZONE_NAME)
+            .orElseGet(Zone::new);
+    zone.setTenantId(DEMO_TENANT_ID);
+    zone.setVersionId(DEMO_VERSION_ID);
+    zone.setRegion(region);
+    zone.setName(DEMO_ZONE_NAME);
+    return zoneRepository.save(zone);
+  }
+
+  private Room ensureRoom(Zone zone, String name, String description) {
+    Room room =
+        roomRepository
+            .findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+                DEMO_TENANT_ID, DEMO_VERSION_ID, zone.getId(), name)
+            .orElseGet(Room::new);
+    room.setTenantId(DEMO_TENANT_ID);
+    room.setVersionId(DEMO_VERSION_ID);
+    room.setZone(zone);
+    room.setName(name);
+    room.setDescription(description);
+    room.setNameLocalizedVariantsJson(null);
+    room.setDescriptionLocalizedVariantsJson(null);
+    return roomRepository.save(room);
+  }
+
+  private void ensureRoomExit(Room fromRoom, Room toRoom, String direction) {
+    RoomExit exit =
+        roomExitRepository
+            .findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+                DEMO_TENANT_ID, DEMO_VERSION_ID, fromRoom.getId(), toRoom.getId(), direction)
+            .orElseGet(RoomExit::new);
+    exit.setTenantId(DEMO_TENANT_ID);
+    exit.setVersionId(DEMO_VERSION_ID);
+    exit.setFromRoom(fromRoom);
+    exit.setToRoom(toRoom);
+    exit.setDirection(direction);
+    exit.setCost(1);
+    roomExitRepository.save(exit);
   }
 
   private void ensureRuntimeTopologyForCatalogTargets() {

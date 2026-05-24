@@ -10,7 +10,6 @@ import org.jooq.impl.DSL;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class SagaInstanceRepository {
-  private static final org.jooq.Table<?> SAGA_INSTANCE = DSL.table(DSL.name("saga_instance"));
   private static final org.jooq.Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final org.jooq.Field<String> SAGA_NAME =
       DSL.field(DSL.name("saga_name"), String.class);
@@ -20,16 +19,18 @@ public class SagaInstanceRepository {
   private static final org.jooq.Field<java.time.LocalDateTime> UPDATED_AT =
       DSL.field(DSL.name("updated_at"), java.time.LocalDateTime.class);
 
+  private final org.jooq.Table<?> sagaInstance;
   private final DSLContext dsl;
 
-  public SagaInstanceRepository(DSLContext dsl) {
+  public SagaInstanceRepository(DSLContext dsl, String serviceSchema) {
     this.dsl = dsl;
+    this.sagaInstance = DSL.table(DSL.name(serviceSchema, "saga_instance"));
   }
 
   public SagaInstance save(SagaInstance entity) {
     if (entity.getId() == null) {
       Long id =
-          dsl.insertInto(SAGA_INSTANCE)
+          dsl.insertInto(sagaInstance)
               .set(SAGA_NAME, entity.getSagaName())
               .set(STATE, entity.getState())
               .set(CREATED_AT, JooqPersistenceSupport.toLocalDateTime(entity.getCreatedAt()))
@@ -39,7 +40,7 @@ public class SagaInstanceRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(SAGA_INSTANCE)
+    dsl.update(sagaInstance)
         .set(SAGA_NAME, entity.getSagaName())
         .set(STATE, entity.getState())
         .set(CREATED_AT, JooqPersistenceSupport.toLocalDateTime(entity.getCreatedAt()))
@@ -51,7 +52,7 @@ public class SagaInstanceRepository {
 
   public List<SagaInstance> findAll() {
     return dsl.select(ID, SAGA_NAME, STATE, CREATED_AT, UPDATED_AT)
-        .from(SAGA_INSTANCE)
+        .from(sagaInstance)
         .orderBy(ID.desc())
         .fetch(
             record -> {

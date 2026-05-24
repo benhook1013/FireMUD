@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+inheritance: true
+language: "en-US"
+early_access: false
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_instructions: |
+    Summarize the change in concise release-note style for FireMUD contributors.
+    Explicitly name the affected services, shared modules, workflows, or docs.
+    Call out contract changes, schema or migration changes, environment or deployment changes, and any validation or testing gaps.
+    Prefer factual technical language over generic praise.
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "develop"
+      - "main"
+  path_instructions:
+    - path: "services/**"
+      instructions: |
+        Prioritize bugs, regressions, missing tests, cross-service contract drift, and architecture mismatches over style nits.
+        Flag changes that violate documented FireMUD invariants, especially gRPC application-error handling, ownership boundaries, and failure-mode expectations.
+        For SQL-backed services, expect jOOQ + Flyway rather than ORM-oriented guidance.
+    - path: "web-client/**"
+      instructions: |
+        Focus on behavioral regressions, accessibility, React correctness, and consistency with the existing app patterns.
+        Avoid generic visual or stylistic advice unless it affects usability, maintainability, or documented repo conventions.
+    - path: ".github/workflows/**"
+      instructions: |
+        Focus on workflow correctness, permissions scope, secret handling, cache correctness, duplication, and CI cost.
+        Flag cases where a workflow becomes unnecessarily blocking or duplicates an existing validation path.
+    - path: "design/**/*.md"
+      instructions: |
+        Review docs for canonical-current-state consistency.
+        Flag obsolete transitional guidance, conflicts with architecture docs, broken repo links, or instructions that contradict AGENTS.md.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - ".windsurfrules"
+chat:
+  auto_reply: true

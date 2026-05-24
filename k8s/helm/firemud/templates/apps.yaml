@@ -37,7 +37,7 @@ spec:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
             - name: SPRING_FLYWAY_TABLE
-              value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
+              value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
@@ -63,7 +63,7 @@ spec:
               value: /tls/ca.crt
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
-              value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
+              value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}

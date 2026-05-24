@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameManifest.GAME_MANIFEST;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
 import net.firedevops.firemud.gamesession.entity.GameManifest;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameManifestRecord;
 import org.jooq.DSLContext;
@@ -22,6 +23,10 @@ public class GameManifestRepository {
 
   public long count() {
     return dsl.fetchCount(GAME_MANIFEST);
+  }
+
+  public List<GameManifest> findAll() {
+    return dsl.selectFrom(GAME_MANIFEST).orderBy(GAME_MANIFEST.ID.asc()).fetch(this::toEntity);
   }
 
   public GameManifest save(GameManifest entity) {

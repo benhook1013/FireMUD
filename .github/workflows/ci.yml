@@ -518,6 +518,9 @@ jobs:
     needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation]
     if: ${{ needs.changes.outputs.affected_services != '[]' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -528,6 +531,9 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v5
@@ -575,6 +581,18 @@ jobs:
         with:
           name: jacoco-${{ matrix.service }}-report-${{ github.sha }}
           path: services/${{ matrix.service }}/build/reports/jacoco/test/
+
+      - name: ☂️ Upload Coverage to Codecov
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        with:
+          use_oidc: true
+          fail_ci_if_error: false
+          handle_no_reports_found: true
+          disable_search: true
+          files: services/${{ matrix.service }}/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: ${{ matrix.service }}
+          name: ${{ matrix.service }}-jacoco
+          verbose: true
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()

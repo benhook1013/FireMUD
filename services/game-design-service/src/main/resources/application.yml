@@ -61,11 +61,15 @@ firemud:
     http:
       enabled: true
       role-requirement: PRIVILEGED
-      public-path-patterns:
-        - /actuator/**
-        - /ping
-        - /ping/
-        - /.well-known/**
+      public-routes:
+        - method: GET
+          path-pattern: /actuator/**
+        - method: GET
+          path-pattern: /ping
+        - method: GET
+          path-pattern: /ping/
+        - method: GET
+          path-pattern: /.well-known/**
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

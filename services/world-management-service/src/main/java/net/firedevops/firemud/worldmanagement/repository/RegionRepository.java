@@ -55,6 +55,21 @@ public class RegionRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<Region> findFirstByTenantIdAndVersionIdAndShardIdAndName(
+      Long tenantId, Long versionId, Integer shardId, String name) {
+    return dsl.selectFrom(REGION)
+        .where(
+            REGION
+                .TENANT_ID
+                .eq(tenantId)
+                .and(REGION.VERSION_ID.eq(versionId))
+                .and(REGION.SHARD_ID.eq(shardId))
+                .and(REGION.NAME.eq(name)))
+        .orderBy(REGION.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public List<Region> findByTenantIdAndShardId(Long tenantId, Integer shardId) {
     return dsl.selectFrom(REGION)
         .where(REGION.TENANT_ID.eq(tenantId).and(REGION.SHARD_ID.eq(shardId)))

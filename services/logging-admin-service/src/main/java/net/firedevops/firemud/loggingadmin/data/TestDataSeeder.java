@@ -26,6 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Spring injects the shared repository singletons for demo seeding.")
 public class TestDataSeeder implements ApplicationRunner {
+  private static final long DEMO_TENANT_ID = 1L;
+  private static final long DEMO_REPORTER_ACCOUNT_ID = 1L;
+  private static final long DEMO_TARGET_ACCOUNT_ID = 2L;
+
   private final LogEventRepository logEventRepository;
   private final PlayerReportRepository playerReportRepository;
   private final ModerationActionRepository moderationActionRepository;
@@ -33,34 +37,55 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    if (logEventRepository.count() == 0) {
-      LogEvent event = new LogEvent();
-      event.setTenantId(1L);
-      event.setType("INFO");
-      event.setMessage("Service started");
+    ensureStartupLogEvent();
+    ensureSamplePlayerReport();
+    ensureSampleModerationAction();
+  }
+
+  private void ensureStartupLogEvent() {
+    LogEvent event =
+        logEventRepository
+            .findFirstByTenantIdAndTypeAndMessage(DEMO_TENANT_ID, "INFO", "Service started")
+            .orElseGet(LogEvent::new);
+    event.setTenantId(DEMO_TENANT_ID);
+    event.setType("INFO");
+    event.setMessage("Service started");
+    if (event.getTimestamp() == null) {
       event.setTimestamp(Instant.now());
-      logEventRepository.save(event);
     }
+    logEventRepository.save(event);
+  }
 
-    if (playerReportRepository.count() == 0) {
-      PlayerReport report = new PlayerReport();
-      report.setTenantId(1L);
-      report.setReporterAccountId(1L);
-      report.setTargetAccountId(2L);
-      report.setType("bug");
-      report.setDescription("Sample report");
+  private void ensureSamplePlayerReport() {
+    PlayerReport report =
+        playerReportRepository
+            .findFirstByTenantIdAndReporterAccountIdAndTargetAccountIdAndType(
+                DEMO_TENANT_ID, DEMO_REPORTER_ACCOUNT_ID, DEMO_TARGET_ACCOUNT_ID, "bug")
+            .orElseGet(PlayerReport::new);
+    report.setTenantId(DEMO_TENANT_ID);
+    report.setReporterAccountId(DEMO_REPORTER_ACCOUNT_ID);
+    report.setTargetAccountId(DEMO_TARGET_ACCOUNT_ID);
+    report.setType("bug");
+    report.setDescription("Sample report");
+    if (report.getCreatedAt() == null) {
       report.setCreatedAt(Instant.now());
-      playerReportRepository.save(report);
     }
+    playerReportRepository.save(report);
+  }
 
-    if (moderationActionRepository.count() == 0) {
-      ModerationAction action = new ModerationAction();
-      action.setTenantId(1L);
-      action.setAccountId(2L);
-      action.setAction("warning");
-      action.setReason("initial seed");
+  private void ensureSampleModerationAction() {
+    ModerationAction action =
+        moderationActionRepository
+            .findFirstByTenantIdAndAccountIdAndActionAndReason(
+                DEMO_TENANT_ID, DEMO_TARGET_ACCOUNT_ID, "warning", "initial seed")
+            .orElseGet(ModerationAction::new);
+    action.setTenantId(DEMO_TENANT_ID);
+    action.setAccountId(DEMO_TARGET_ACCOUNT_ID);
+    action.setAction("warning");
+    action.setReason("initial seed");
+    if (action.getCreatedAt() == null) {
       action.setCreatedAt(Instant.now());
-      moderationActionRepository.save(action);
     }
+    moderationActionRepository.save(action);
   }
 }

@@ -68,7 +68,7 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
 - The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
-- To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `firemud-common` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
+- To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
   - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
   - Encapsulates the canonical guard pattern (insert-if-absent, treat conflicts as replay) and throws well-defined exceptions on guard violations.
   - Emits a simple, standardized counter such as `tick_effect_outcome_total{service, effect_type, outcome}` so operators can distinguish first-apply vs replay behavior across services without per-tenant configuration.
@@ -241,17 +241,17 @@ FireMUD uses a **shared short synchronous saga orchestration library**, not a se
 ### Characteristics:
 
 - **Orchestration**:
-  - Centralized in the **firemud-common** library (saga package) located under
-    `services/common-library`
-  - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration/saga`
-  - Consuming services run the saga migrations in a dedicated, ordered Flyway pass before their own service-local migrations so saga history does not share a version namespace with `V1__init.sql` service baselines
+  - Centralized in the **common-saga** library located under
+    `services/common-saga`
+  - The engine and its shared Flyway migrations live in `services/common-saga/src/main/resources/db/migration/saga`
+  - Consuming services expose those migrations through the shared `classpath:db/migration/saga` Flyway location alongside their service-local `classpath:db/migration` chain
   - Hosts define short, synchronous compensation-aware flows declaratively using the fluent API
   - Saga execution is initiated by services that can own synchronous retry/failure handling, but **coordination logic lives in the library**
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library.
-  - These tables reside in a dedicated `saga` schema inside **each service’s own database**. Flyway migrations from `firemud-common` are applied per service database so saga state is local to the service that owns the workflow.
+  - These tables reside inside the owning service schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) inside **each service’s own database**. Flyway migrations from `common-saga` are applied per service database so saga state stays local to the service that owns the workflow.
   - Tracks in-progress, completed, and failed synchronous orchestration attempts.
   - Supports compensation.
   - Flyway migrations bundled with the library create these tables automatically when consuming services start.
@@ -284,10 +284,10 @@ sagaBuilder("accountCreation")
 ```
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
-The `firemud-common` library provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
-Services include the library and the accompanying Flyway migrations located in
-`services/common-library/src/main/resources/db/migration/saga` to persist saga state
-in the `saga_instance` and `saga_step` tables.
+The `common-saga` module provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
+Services include the library and the accompanying Flyway migrations exposed via
+`classpath:db/migration/saga` to persist saga state in the owning service schema's
+`saga_instance` and `saga_step` tables.
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
 and in the Logging & Admin Service README.
 

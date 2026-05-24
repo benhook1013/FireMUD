@@ -81,6 +81,8 @@ previewStack:
     FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE: logging-admin-service:6565
     FIREMUD_AUTH_JWT_SECRET_PATH: /var/run/secrets/firemud/jwt/current.key
     FIREMUD_AUTH_JWKS_PATH: /var/run/secrets/firemud/jwks/jwks.json
+    FIREMUD_SMOKE_SEED_DEMO_ACCOUNT_ENABLED: "true"
+    FIREMUD_SMOKE_SEED_DEMO_RUNTIME_ENABLED: "true"
 
   sharedSecret:
     FIREMUD_POSTGRES_USER: firemud

@@ -44,11 +44,15 @@ public class TestDataSeeder implements ApplicationRunner {
                   Account seeded = new Account();
                   seeded.setUsername(DEMO_USERNAME);
                   seeded.setEmail(DEMO_EMAIL);
-                  seeded.setPasswordHash(hashPassword(DEMO_PASSWORD));
-                  seeded.setRole("player");
-                  seeded.setEmailVerified(true);
-                  return accountRepository.save(seeded);
+                  return seeded;
                 });
+
+    account.setUsername(DEMO_USERNAME);
+    account.setEmail(DEMO_EMAIL);
+    account.setPasswordHash(hashPassword(DEMO_PASSWORD));
+    account.setRole("player");
+    account.setEmailVerified(true);
+    account = accountRepository.save(account);
 
     if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(
         account.getId(), DEMO_TENANT_ID)) {

@@ -42,6 +42,20 @@ public class ZoneRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<Zone> findFirstByTenantIdAndVersionIdAndRegionIdAndName(
+      Long tenantId, Long versionId, Long regionId, String name) {
+    return dsl.selectFrom(ZONE)
+        .where(
+            ZONE.TENANT_ID
+                .eq(tenantId)
+                .and(ZONE.VERSION_ID.eq(versionId))
+                .and(ZONE.REGION_ID.eq(regionId))
+                .and(ZONE.NAME.eq(name)))
+        .orderBy(ZONE.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public Optional<Zone> findById(Long id) {
     return dsl.selectFrom(ZONE).where(ZONE.ID.eq(id)).fetchOptional(this::toEntity);
   }

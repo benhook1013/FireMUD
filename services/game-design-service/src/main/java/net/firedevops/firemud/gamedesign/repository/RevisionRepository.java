@@ -7,6 +7,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import org.jooq.DSLContext;
@@ -74,6 +75,19 @@ public class RevisionRepository {
 
   public long count() {
     return dsl.fetchCount(TABLE_REF);
+  }
+
+  public Optional<Revision> findByTenantIdAndVersionIdAndRevisionKind(
+      String tenantId, Long versionId, String revisionKind) {
+    return Optional.ofNullable(
+        dsl.selectFrom(TABLE_REF)
+            .where(
+                TENANT_ID
+                    .eq(tenantId)
+                    .and(VERSION_ID.eq(versionId))
+                    .and(REVISION_KIND.eq(revisionKind)))
+            .limit(1)
+            .fetchOne(this::toEntity));
   }
 
   public List<Revision> findAll() {

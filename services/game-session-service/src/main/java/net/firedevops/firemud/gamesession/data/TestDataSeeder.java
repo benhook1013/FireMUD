@@ -29,28 +29,30 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    if (gameManifestRepository.count() == 0) {
-      GameManifest manifest = new GameManifest();
-      manifest.setVersionId("v1.0.0");
-      manifest.setDescription("Demo version");
-      gameManifestRepository.save(manifest);
-    }
+    GameManifest manifest =
+        gameManifestRepository.findAll().stream()
+            .filter(candidate -> "v1.0.0".equals(candidate.getVersionId()))
+            .findFirst()
+            .orElseGet(GameManifest::new);
+    manifest.setVersionId("v1.0.0");
+    manifest.setDescription("Demo version");
+    gameManifestRepository.save(manifest);
 
-    if (featureFlagRepository.count() == 0) {
-      FeatureFlag flag = new FeatureFlag();
-      flag.setTenantId(1L);
-      flag.setName("double_xp");
-      flag.setEnabled(true);
-      featureFlagRepository.save(flag);
-    }
+    FeatureFlag flag =
+        featureFlagRepository.findByTenantIdAndName(1L, "double_xp").orElseGet(FeatureFlag::new);
+    flag.setTenantId(1L);
+    flag.setName("double_xp");
+    flag.setEnabled(true);
+    featureFlagRepository.save(flag);
 
-    if (gameInstanceRepository.count() == 0) {
-      GameInstance instance = new GameInstance();
-      instance.setTenantId(1L);
-      instance.setRuntimeVersion("v1.0.0");
-      instance.setOwnerAccountId(1L);
-      instance.setStatus("RUNNING");
-      gameInstanceRepository.save(instance);
-    }
+    GameInstance instance =
+        gameInstanceRepository
+            .findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 1L, "RUNNING")
+            .orElseGet(GameInstance::new);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("v1.0.0");
+    instance.setOwnerAccountId(1L);
+    instance.setStatus("RUNNING");
+    gameInstanceRepository.save(instance);
   }
 }

@@ -22,14 +22,41 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
   "externalAuthority": {
     "deadmanAuthority": {
       "status": "green",
-      "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z"
+      "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
+      "target": "staging-deadman-authority",
+      "checkRef": "check://staging/deadman"
     },
     "entrypointChecks": {
-      "prometheus": "green",
-      "alertmanager": "green",
-      "grafana": "green",
-      "kibana_log_query": "green",
-      "jaeger_query": "green"
+      "prometheus": {
+        "status": "green",
+        "evidenceRef": "pager://staging/prometheus/2026-03-19T10:51:00Z",
+        "target": "staging-prometheus",
+        "checkRef": "check://staging/prometheus"
+      },
+      "alertmanager": {
+        "status": "green",
+        "evidenceRef": "pager://staging/alertmanager/2026-03-19T10:51:00Z",
+        "target": "staging-alertmanager",
+        "checkRef": "check://staging/alertmanager"
+      },
+      "grafana": {
+        "status": "green",
+        "evidenceRef": "pager://staging/grafana/2026-03-19T10:51:00Z",
+        "target": "staging-grafana",
+        "checkRef": "check://staging/grafana"
+      },
+      "kibana_log_query": {
+        "status": "green",
+        "evidenceRef": "pager://staging/kibana-log-query/2026-03-19T10:51:00Z",
+        "target": "staging-kibana-log-query",
+        "checkRef": "check://staging/kibana-log-query"
+      },
+      "jaeger_query": {
+        "status": "green",
+        "evidenceRef": "pager://staging/jaeger-query/2026-03-19T10:51:00Z",
+        "target": "staging-jaeger-query",
+        "checkRef": "check://staging/jaeger-query"
+      }
     }
   },
   "mirroredSignals": {
@@ -65,7 +92,7 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
 
 This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the same canonical checks and operator accountability.
 
-Use `python3 dev-tools/observability/run-player-experience-smoke.py --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate canonical prod-like smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record.
+Use `python3 dev-tools/observability/run-player-experience-smoke.py --external-authority-evidence <authority.json> --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate canonical prod-like smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record. `authority.json` must be the retained result from the authoritative external monitor for the deadman pager and the required observability entrypoint checks; only `--simulate` may synthesize that authority object.
 
 ---
 

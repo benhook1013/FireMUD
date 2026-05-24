@@ -51,6 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
+      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
     steps:
@@ -59,8 +60,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHECKOUT_REF="${GITHUB_SHA}"
           else
             HEAD_SHA="${GITHUB_SHA}"
+            CHECKOUT_REF="${GITHUB_SHA}"
           fi
 
           IMAGE_TAG="${HEAD_SHA}"
@@ -68,6 +71,7 @@ jobs:
 
           {
             echo "head_sha=${HEAD_SHA}"
+            echo "checkout_ref=${CHECKOUT_REF}"
             echo "image_tag=${IMAGE_TAG}"
             echo "base_image=${BASE_IMAGE}"
           } >> "$GITHUB_OUTPUT"
@@ -78,22 +82,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ needs.image-meta.outputs.head_sha }}
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime base image
-        uses: docker/build-push-action@v7
+        id: build_base_image_first
+        continue-on-error: true
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
+        with:
+          context: .
+          file: ./docker/base.Dockerfile
+          push: true
+          tags: ${{ needs.image-meta.outputs.base_image }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
+            type=gha,mode=max
+
+      - name: Retry build and push runtime base image
+        if: ${{ steps.build_base_image_first.outcome == 'failure' }}
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
         with:
           context: .
           file: ./docker/base.Dockerfile
@@ -128,18 +151,19 @@ jobs:
           - world-management-service
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ needs.image-meta.outputs.head_sha }}
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -150,17 +174,39 @@ jobs:
         run: ./gradlew :${{ matrix.service }}:bootJar
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime service image
-        uses: docker/build-push-action@v7
+        id: build_runtime_image_first
+        continue-on-error: true
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
+        with:
+          context: ./services/${{ matrix.service }}/build/libs
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          build-contexts: |
+            repo_root=.
+          build-args: |
+            BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
+            type=gha,mode=max
+
+      - name: Retry build and push runtime service image
+        if: ${{ steps.build_runtime_image_first.outcome == 'failure' }}
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
         with:
           context: ./services/${{ matrix.service }}/build/libs
           file: ./services/${{ matrix.service }}/Dockerfile
@@ -186,6 +232,7 @@ jobs:
     with:
       action: full
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
+      checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.image_tag }}
       pr_number: ${{ github.event_name == 'pull_request' && format('{0}', github.event.pull_request.number) || '' }}
     secrets: inherit

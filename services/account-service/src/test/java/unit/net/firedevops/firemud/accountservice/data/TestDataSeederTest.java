@@ -14,6 +14,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -51,19 +52,29 @@ class TestDataSeederTest {
   }
 
   @Test
-  void runLeavesExistingDemoBootstrapInPlace() throws Exception {
+  void runReassertsExistingDemoBootstrapAccountState() throws Exception {
     Account account = new Account();
     account.setId(1L);
     account.setEmail("demo@example.com");
 
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.save(any(Account.class))).thenReturn(account);
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(1L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(new Profile()));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(accountRepository, never()).save(any(Account.class));
+    ArgumentCaptor<Account> accountCaptor = ArgumentCaptor.forClass(Account.class);
+    verify(accountRepository).save(accountCaptor.capture());
+    Account saved = accountCaptor.getValue();
+    org.junit.jupiter.api.Assertions.assertAll(
+        () -> org.junit.jupiter.api.Assertions.assertEquals("demo", saved.getUsername()),
+        () -> org.junit.jupiter.api.Assertions.assertEquals("demo@example.com", saved.getEmail()),
+        () -> org.junit.jupiter.api.Assertions.assertEquals("player", saved.getRole()),
+        () -> org.junit.jupiter.api.Assertions.assertTrue(saved.isEmailVerified()),
+        () -> org.junit.jupiter.api.Assertions.assertNotNull(saved.getPasswordHash()),
+        () -> org.junit.jupiter.api.Assertions.assertFalse(saved.getPasswordHash().isBlank()));
     verify(accountTenantMembershipRepository, never()).save(any(AccountTenantMembership.class));
     verify(profileRepository, never()).save(any(Profile.class));
   }

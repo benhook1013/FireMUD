@@ -32,10 +32,12 @@ class TestDataSeederTest {
   }
 
   @Test
-  void runSeedsDataWhenRepositoriesEmpty() throws Exception {
-    when(gameManifestRepository.count()).thenReturn(0L);
-    when(featureFlagRepository.count()).thenReturn(0L);
-    when(gameInstanceRepository.count()).thenReturn(0L);
+  void runSeedsAndReassertsCanonicalRuntimeData() throws Exception {
+    when(gameManifestRepository.findAll()).thenReturn(java.util.List.of());
+    when(featureFlagRepository.findByTenantIdAndName(1L, "double_xp"))
+        .thenReturn(java.util.Optional.empty());
+    when(gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 1L, "RUNNING"))
+        .thenReturn(java.util.Optional.empty());
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 

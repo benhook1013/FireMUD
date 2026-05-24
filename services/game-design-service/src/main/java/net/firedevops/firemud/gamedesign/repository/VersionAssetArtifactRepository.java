@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import org.jooq.DSLContext;
@@ -36,8 +38,8 @@ public class VersionAssetArtifactRepository {
       DSL.field(DSL.name("last_error_message"), String.class);
   private static final Field<String> EXPORTED_MANIFEST_ASSET_KEYS_JSON =
       DSL.field(DSL.name("exported_manifest_asset_keys_json"), String.class);
-  private static final Field<LocalDateTime> UPDATED_AT =
-      DSL.field(DSL.name("updated_at"), LocalDateTime.class);
+  private static final Field<Timestamp> UPDATED_AT =
+      DSL.field(DSL.name("updated_at"), Timestamp.class);
 
   private final DSLContext dsl;
 
@@ -70,7 +72,7 @@ public class VersionAssetArtifactRepository {
               .set(LAST_ERROR_CODE, artifact.getLastErrorCode())
               .set(LAST_ERROR_MESSAGE, artifact.getLastErrorMessage())
               .set(EXPORTED_MANIFEST_ASSET_KEYS_JSON, artifact.getExportedManifestAssetKeysJson())
-              .set(UPDATED_AT, updatedAt)
+              .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
               .returning()
               .fetchOne();
       return toEntity(record);
@@ -86,7 +88,7 @@ public class VersionAssetArtifactRepository {
         .set(LAST_ERROR_CODE, artifact.getLastErrorCode())
         .set(LAST_ERROR_MESSAGE, artifact.getLastErrorMessage())
         .set(EXPORTED_MANIFEST_ASSET_KEYS_JSON, artifact.getExportedManifestAssetKeysJson())
-        .set(UPDATED_AT, updatedAt)
+        .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
         .where(ID.eq(artifact.getId()))
         .execute();
     return findByTenantIdAndVersionId(artifact.getTenantId(), artifact.getVersionId())
@@ -111,7 +113,7 @@ public class VersionAssetArtifactRepository {
     artifact.setLastErrorCode(record.get(LAST_ERROR_CODE));
     artifact.setLastErrorMessage(record.get(LAST_ERROR_MESSAGE));
     artifact.setExportedManifestAssetKeysJson(record.get(EXPORTED_MANIFEST_ASSET_KEYS_JSON));
-    artifact.setUpdatedAt(record.get(UPDATED_AT));
+    artifact.setUpdatedAt(JooqPersistenceSupport.toLocalDateTime(record.get(UPDATED_AT)));
     return artifact;
   }
 }

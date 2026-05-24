@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import socket
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -59,6 +58,18 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--external-authority-evidence",
+        type=Path,
+        default=Path(os.environ["PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE"])
+        if os.environ.get("PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE")
+        else None,
+        help=(
+            "Path to retained authoritative external-monitor evidence for the "
+            "deadman and observability-entrypoint checks. Required for non-simulated "
+            "prod-like smoke."
+        ),
+    )
+    parser.add_argument(
         "--failure-injection",
         default=os.environ.get("PLAYER_EXPERIENCE_FAILURE_INJECTION", ""),
         help=(
@@ -83,10 +94,13 @@ def main() -> int:
     args = parser.parse_args()
 
     injected = parse_failure_injection(args.failure_injection)
-    config = SmokeConfig.from_env(args.source, args.canary_path)
+    config = SmokeConfig.from_env(
+        args.source, args.canary_path, args.external_authority_evidence
+    )
+    external_authority = resolve_external_authority(config, injected, args.simulate)
 
     mirrored_signals = execute_smoke(config, args.simulate, injected)
-    evidence = build_evidence(config, mirrored_signals, injected)
+    evidence = build_evidence(config, mirrored_signals, external_authority, injected)
     args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
     args.evidence_out.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
 
@@ -123,8 +137,7 @@ class SmokeConfig:
         world: str,
         timeout_seconds: int,
         startup_wait_seconds: int,
-        external_checks: dict[str, str],
-        deadman_authority_check: str,
+        external_authority_evidence: Path | None,
         auth_api_base: str,
         auth_api_prefix: str,
         verified_by: str,
@@ -151,8 +164,7 @@ class SmokeConfig:
         self.world = world
         self.timeout_seconds = timeout_seconds
         self.startup_wait_seconds = startup_wait_seconds
-        self.external_checks = external_checks
-        self.deadman_authority_check = deadman_authority_check
+        self.external_authority_evidence = external_authority_evidence
         self.auth_api_base = auth_api_base
         self.auth_api_prefix = auth_api_prefix
         self.verified_by = verified_by
@@ -160,7 +172,9 @@ class SmokeConfig:
         self.deployment_ref = deployment_ref
 
     @classmethod
-    def from_env(cls, source: str, canary_path: str) -> "SmokeConfig":
+    def from_env(
+        cls, source: str, canary_path: str, external_authority_evidence: Path | None
+    ) -> "SmokeConfig":
         return cls(
             source=source,
             canary_path=canary_path,
@@ -197,24 +211,7 @@ class SmokeConfig:
             world=os.environ.get("PLAYER_EXPERIENCE_WORLD", "demo"),
             timeout_seconds=int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10")),
             startup_wait_seconds=int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90")),
-            external_checks={
-                "prometheus": os.environ.get(
-                    "PLAYER_EXPERIENCE_PROMETHEUS_CHECK", "green"
-                ),
-                "alertmanager": os.environ.get(
-                    "PLAYER_EXPERIENCE_ALERTMANAGER_CHECK", "green"
-                ),
-                "grafana": os.environ.get("PLAYER_EXPERIENCE_GRAFANA_CHECK", "green"),
-                "kibana_log_query": os.environ.get(
-                    "PLAYER_EXPERIENCE_KIBANA_LOG_QUERY_CHECK", "green"
-                ),
-                "jaeger_query": os.environ.get(
-                    "PLAYER_EXPERIENCE_JAEGER_QUERY_CHECK", "green"
-                ),
-            },
-            deadman_authority_check=os.environ.get(
-                "PLAYER_EXPERIENCE_DEADMAN_AUTHORITY_CHECK", "green"
-            ),
+            external_authority_evidence=external_authority_evidence,
             auth_api_base=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_BASE")
             or os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080"),
             auth_api_prefix=os.environ.get(
@@ -523,20 +520,17 @@ def canary_target(config: SmokeConfig) -> str:
 
 
 def build_evidence(
-    config: SmokeConfig, mirrored_signals: dict[str, Any], injected: set[str]
+    config: SmokeConfig,
+    mirrored_signals: dict[str, Any],
+    external_authority: dict[str, Any],
+    injected: set[str],
 ) -> dict[str, Any]:
     return {
         "deploymentRef": config.deployment_ref,
         "verifiedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "verifiedBy": config.verified_by,
         "preflightEvidenceRef": config.preflight_ref,
-        "externalAuthority": {
-            "deadmanAuthority": resolve_deadman_authority(config, injected),
-            "entrypointChecks": {
-                name: resolve_external_check(name, configured, injected)
-                for name, configured in config.external_checks.items()
-            },
-        },
+        "externalAuthority": external_authority,
         "mirroredSignals": mirrored_signals,
         "canaryAlerts": [
             alert_record("PlayerFlowCanaryLoginFailed", "P0", injected),
@@ -546,25 +540,114 @@ def build_evidence(
     }
 
 
-def resolve_external_check(name: str, configured: str, injected: set[str]) -> str:
-    if name in injected:
-        return "red"
-    if configured in {"green", "red"}:
-        return configured
+def resolve_external_authority(
+    config: SmokeConfig, injected: set[str], simulate: bool
+) -> dict[str, Any]:
+    authority = load_external_authority(config, simulate)
+    authority = copy.deepcopy(authority)
+    if "deadman" in injected:
+        authority["deadmanAuthority"]["status"] = "red"
+    for name, value in authority["entrypointChecks"].items():
+        if name in injected:
+            value["status"] = "red"
+    return authority
+
+
+def load_external_authority(config: SmokeConfig, simulate: bool) -> dict[str, Any]:
+    path = config.external_authority_evidence
+    if path is None:
+        if simulate:
+            return simulated_external_authority()
+        raise RuntimeError(
+            "Non-simulated player-experience smoke requires "
+            "--external-authority-evidence or PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE"
+        )
     try:
-        request = urllib.request.Request(configured, method="GET")
-        with urllib.request.urlopen(request, timeout=5) as response:
-            return "green" if response.status < 500 else "red"
-    except (urllib.error.URLError, OSError, ValueError):
-        return "red"
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to read external authority evidence from {path}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"External authority evidence at {path} must be a JSON object"
+        )
+    validate_external_authority_shape(data, path)
+    return data
 
 
-def resolve_deadman_authority(config: SmokeConfig, injected: set[str]) -> dict[str, str]:
-    status = resolve_external_check("deadman", config.deadman_authority_check, injected)
+def simulated_external_authority() -> dict[str, Any]:
     return {
-        "status": status,
-        "evidenceRef": config.deadman_authority_check,
+        "deadmanAuthority": {
+            "status": "green",
+            "evidenceRef": "synthetic://external-authority/deadman",
+            "target": "synthetic-deadman-authority",
+            "checkRef": "synthetic-deadman-check",
+        },
+        "entrypointChecks": {
+            name: {
+                "status": "green",
+                "evidenceRef": f"synthetic://external-authority/{name}",
+                "target": f"synthetic-{name}",
+                "checkRef": f"synthetic-{name}-check",
+            }
+            for name in (
+                "prometheus",
+                "alertmanager",
+                "grafana",
+                "kibana_log_query",
+                "jaeger_query",
+            )
+        },
     }
+
+
+def validate_external_authority_shape(data: dict[str, Any], path: Path) -> None:
+    deadman = data.get("deadmanAuthority")
+    if not isinstance(deadman, dict):
+        raise RuntimeError(
+            f"External authority evidence at {path} must include deadmanAuthority"
+        )
+    validate_authority_record(deadman, "deadmanAuthority", path)
+    checks = data.get("entrypointChecks")
+    if not isinstance(checks, dict):
+        raise RuntimeError(
+            f"External authority evidence at {path} must include entrypointChecks"
+        )
+    required_checks = {
+        "prometheus",
+        "alertmanager",
+        "grafana",
+        "kibana_log_query",
+        "jaeger_query",
+    }
+    missing = sorted(required_checks - set(checks.keys()))
+    if missing:
+        raise RuntimeError(
+            f"External authority evidence at {path} is missing entrypoint checks: "
+            + ", ".join(missing)
+        )
+    for name in required_checks:
+        record = checks.get(name)
+        if not isinstance(record, dict):
+            raise RuntimeError(
+                f"External authority evidence at {path} must define {name} as an object"
+            )
+        validate_authority_record(record, f"entrypointChecks.{name}", path)
+
+
+def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> None:
+    status = record.get("status")
+    if status not in {"green", "red"}:
+        raise RuntimeError(
+            f"External authority evidence at {path} has invalid {key}.status: {status!r}"
+        )
+    for field in ("evidenceRef", "target", "checkRef"):
+        value = record.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(
+                f"External authority evidence at {path} must define {key}.{field}"
+            )
 
 
 def first_party_connect_context(config: SmokeConfig) -> dict[str, Any]:

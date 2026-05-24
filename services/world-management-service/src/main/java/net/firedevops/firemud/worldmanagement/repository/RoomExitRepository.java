@@ -63,6 +63,22 @@ public class RoomExitRepository {
     return dsl.selectFrom(ROOM_EXIT).where(ROOM_EXIT.ID.eq(id)).fetchOptional(this::toEntity);
   }
 
+  public Optional<RoomExit> findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+      Long tenantId, Long versionId, Long fromRoomId, Long toRoomId, String direction) {
+    return dsl.selectFrom(ROOM_EXIT)
+        .where(
+            ROOM_EXIT
+                .TENANT_ID
+                .eq(tenantId)
+                .and(ROOM_EXIT.VERSION_ID.eq(versionId))
+                .and(ROOM_EXIT.FROM_ROOM_ID.eq(fromRoomId))
+                .and(ROOM_EXIT.TO_ROOM_ID.eq(toRoomId))
+                .and(ROOM_EXIT.DIRECTION.eq(direction)))
+        .orderBy(ROOM_EXIT.ID.asc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
   public RoomExit save(RoomExit entity) {
     if (entity.getId() == null) {
       RoomExitRecord record = dsl.newRecord(ROOM_EXIT);

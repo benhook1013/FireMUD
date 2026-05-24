@@ -154,3 +154,8 @@ Entry format:
   - Context: closing the remaining audit findings showed that a player-experience harness can look "real" while still bypassing edge bugs if it defaults to direct service URLs for bootstrap and token issuance. The first honest rerun against `/api/account/**` exposed a real gateway rate-limiter keying gap that never appeared when the harness called `account-service` directly.
   - Observation: for first-party browser-style flows, proving the connect-token handshake on a direct internal service URL is not operationally equivalent to proving the public edge contract.
   - Expected pattern: public-ingress smoke should default to Gateway-owned routes and only allow direct-service endpoints as explicit overrides for isolated debugging, so edge policy, routing, and rate-limiter regressions stay visible.
+
+- `2026-05-23`: Demo/runtime seeders for prod-like smoke must reassert canonical state, not just seed empty tables
+  - Context: hosted preview bootstrap triage exposed that several services still treated `count() == 0` as their smoke-fixture contract, which let persistent preview namespaces drift into unusable state even though the canonical demo rows were known.
+  - Observation: create-once seeders are too weak for restart-heavy preview/demo environments because any surviving stale row can block the bootstrap path while still looking "seeded" to the service.
+  - Expected pattern: seeders that support canonical smoke, preview, or operator demo flows should find rows by stable business identity and reassert the intended state on every run, while authored/runtime proof scripts should be able to rely on that repair behavior instead of manual database cleanup.
