@@ -2,7 +2,7 @@
 
 This directory stores the canonical expected-binding manifests used by deployment preflight and restore validation.
 
-Implementation note: the files in this directory are the intended source-of-truth location, and preflight evidence must prove it consumed the matching manifest via `expectedBindingsRef` before any first player-facing deployment or traffic-open decision. The current tooling now validates that link for hobby traffic-open evidence and for staging deployment records referenced by production promotion attestation, but richer live-state evidence still needs to keep converging around the same manifest contract.
+Implementation note: the files in this directory are the intended source-of-truth location, and preflight evidence must prove it consumed the matching manifest via `expectedBindingsRef` before any first player-facing deployment or traffic-open decision. The current tooling now validates that link for hobby traffic-open evidence, for production traffic-open evidence, and for staging deployment records referenced by production promotion attestation, but richer live-state evidence still needs to keep converging around the same manifest contract.
 
 - `<environment>/expected-bindings.yaml` is the single source of truth for the environment-isolation contract for that player-facing environment.
 - These manifests cover both internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credentials).

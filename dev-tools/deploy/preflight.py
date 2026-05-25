@@ -80,6 +80,58 @@ def parse_documents(rendered_text: str) -> list[dict[str, Any]]:
     return [doc for doc in yaml.safe_load_all(rendered_text) if isinstance(doc, dict)]
 
 
+def resolve_repo_path(root_dir: Path, ref: str) -> Path:
+    path = Path(ref)
+    return path if path.is_absolute() else root_dir / ref
+
+
+def load_preflight_report(
+    path_ref: str,
+    environment: str,
+    expected_bindings_ref: str,
+    deployment_ref: str,
+    root_dir: Path,
+) -> tuple[str, str]:
+    if not path_ref:
+        return ("fail", f"{environment.capitalize()} traffic-open evidence missing preflightReportPath")
+    path = resolve_repo_path(root_dir, path_ref)
+    if not path.exists():
+        return ("fail", f"{environment.capitalize()} preflight report not found: {path_ref}")
+    try:
+        report = load_json(path)
+    except Exception as exc:
+        return ("fail", f"{environment.capitalize()} preflight report unreadable: {exc}")
+    if report.get("environment") != environment:
+        return ("fail", f"{environment.capitalize()} preflight report must target {environment}")
+    if report.get("expectedBindingsRef") != expected_bindings_ref:
+        return ("fail", f"{environment.capitalize()} preflight report expectedBindingsRef mismatch")
+    deployment_ref_obj = report.get("deploymentRef", {})
+    manifest_ref = ""
+    overlay_sha = ""
+    if isinstance(deployment_ref_obj, dict):
+        manifest_ref = str(deployment_ref_obj.get("manifestRef", ""))
+        overlay_sha = str(deployment_ref_obj.get("overlayCommitSha", ""))
+    if deployment_ref not in {manifest_ref, overlay_sha}:
+        return ("fail", f"{environment.capitalize()} preflight report deploymentRef mismatch")
+    preflight_results = report.get("checkResults")
+    if not isinstance(preflight_results, list) or not preflight_results:
+        return ("fail", f"{environment.capitalize()} preflight report missing checkResults")
+    required_failures = [
+        check.get("policyId")
+        for check in preflight_results
+        if isinstance(check, dict)
+        and check.get("status") == "fail"
+        and check.get("policyId") != "PREFLIGHT-DIGEST-002"
+    ]
+    if required_failures:
+        return (
+            "fail",
+            f"{environment.capitalize()} preflight report contains failing required checks: "
+            + ", ".join(required_failures),
+        )
+    return ("pass", "")
+
+
 def walk(node: Any):
     if isinstance(node, dict):
         yield node
@@ -722,25 +774,47 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     return ("pass", "Backup-readiness evidence is valid for roll-forward-only promotion")
 
 
-def production_traffic_check(path: Path, event: str, deployment_ref: str) -> tuple[str, str]:
+def production_traffic_check(
+    path: Path, event: str, deployment_ref: str, root_dir: Path
+) -> tuple[str, str]:
     if not path.exists():
         return ("fail", f"Production traffic-open evidence not found: {path}")
     try:
         data = load_json(path)
     except Exception as exc:
         return ("fail", f"Production traffic-open evidence unreadable: {exc}")
+    if data.get("schemaVersion") != "traffic-open-record/v1":
+        return ("fail", "Production traffic-open evidence schemaVersion mismatch")
     if data.get("environment") != "production":
         return ("fail", "Production traffic-open evidence must target production")
     if data.get("eventType") != event:
         return ("fail", "Production traffic-open evidence eventType mismatch")
     if str(data.get("deploymentRef", "")) != str(deployment_ref):
         return ("fail", "Production traffic-open evidence deploymentRef mismatch")
+    if not data.get("assessedAt"):
+        return ("fail", "Production traffic-open evidence missing assessedAt")
+    if not data.get("assessedBy"):
+        return ("fail", "Production traffic-open evidence missing assessedBy")
+    evidence_refs = data.get("evidenceRefs")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        return ("fail", "Production traffic-open evidence missing evidenceRefs")
     for key in ("backupLastSuccessAt", "backupVerifyLastSuccessAt", "restoreDrillLastSuccessAt"):
         if not data.get(key):
             return ("fail", f"Production traffic-open evidence missing {key}")
+    preflight_status, preflight_message = load_preflight_report(
+        str(data.get("preflightReportPath", "")),
+        "production",
+        "design/operations/environments/production/expected-bindings.yaml",
+        deployment_ref,
+        root_dir,
+    )
+    if preflight_status != "pass":
+        return ("fail", preflight_message)
     scope = data.get("coordinatedBackupScope", {})
     if scope.get("type") != "tenant_region":
         return ("fail", "Production traffic-open evidence must use canonical tenant_id + region_id coordinated-backup scope")
+    if not scope.get("tenantId") or not scope.get("regionId"):
+        return ("fail", "Production traffic-open evidence coordinatedBackupScope missing tenantId or regionId")
     try:
         drill = dt.datetime.fromisoformat(str(data["restoreDrillLastSuccessAt"]).replace("Z", "+00:00"))
     except Exception as exc:
@@ -761,50 +835,34 @@ def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, d
         traffic = load_json(traffic_path)
     except Exception as exc:
         return ("fail", f"Hobby traffic-open evidence unreadable: {exc}")
+    if traffic.get("schemaVersion") != "traffic-open-record/v1":
+        return ("fail", "Hobby traffic-open evidence schemaVersion mismatch")
     if compliance.get("environment") != "hobby-self-hosted" or traffic.get("environment") != "hobby-self-hosted":
         return ("fail", "Hobby traffic-open evidence must target hobby-self-hosted")
     if traffic.get("eventType") != event:
         return ("fail", "Hobby traffic-open evidence eventType mismatch")
     if str(traffic.get("deploymentRef", "")) != str(deployment_ref):
         return ("fail", "Hobby traffic-open evidence deploymentRef mismatch")
+    if not traffic.get("assessedAt"):
+        return ("fail", "Hobby traffic-open evidence missing assessedAt")
+    if not traffic.get("assessedBy"):
+        return ("fail", "Hobby traffic-open evidence missing assessedBy")
+    evidence_refs = traffic.get("evidenceRefs")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        return ("fail", "Hobby traffic-open evidence missing evidenceRefs")
     if traffic.get("backupComplianceRef") != "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml":
         return ("fail", "Hobby traffic-open evidence must reference the canonical backup-compliance record")
     if compliance.get("status") != "pass":
         return ("fail", "Hobby backup-compliance status must be pass")
-    preflight_ref = traffic.get("preflightReportPath")
-    if not preflight_ref:
-        return ("fail", "Hobby traffic-open evidence missing preflightReportPath")
-    preflight_path = Path(preflight_ref)
-    if not preflight_path.is_absolute():
-        preflight_path = root_dir / str(preflight_ref)
-    if not preflight_path.exists():
-        return ("fail", f"Hobby preflight report not found: {preflight_ref}")
-    try:
-        preflight_report = load_json(preflight_path)
-    except Exception as exc:
-        return ("fail", f"Hobby preflight report unreadable: {exc}")
-    if preflight_report.get("environment") != "hobby-self-hosted":
-        return ("fail", "Hobby preflight report must target hobby-self-hosted")
-    if preflight_report.get("expectedBindingsRef") != "design/operations/environments/hobby-self-hosted/expected-bindings.yaml":
-        return ("fail", "Hobby preflight report expectedBindingsRef mismatch")
-    deployment_ref_obj = preflight_report.get("deploymentRef", {})
-    if not isinstance(deployment_ref_obj, dict) or str(deployment_ref_obj.get("manifestRef", "")) != str(deployment_ref):
-        return ("fail", "Hobby preflight report deploymentRef mismatch")
-    preflight_results = preflight_report.get("checkResults")
-    if not isinstance(preflight_results, list) or not preflight_results:
-        return ("fail", "Hobby preflight report missing checkResults")
-    required_failures = [
-        check.get("policyId")
-        for check in preflight_results
-        if isinstance(check, dict)
-        and check.get("status") == "fail"
-        and check.get("policyId") != "PREFLIGHT-DIGEST-002"
-    ]
-    if required_failures:
-        return (
-            "fail",
-            "Hobby preflight report contains failing required checks: " + ", ".join(required_failures),
-        )
+    preflight_status, preflight_message = load_preflight_report(
+        str(traffic.get("preflightReportPath", "")),
+        "hobby-self-hosted",
+        "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+        deployment_ref,
+        root_dir,
+    )
+    if preflight_status != "pass":
+        return ("fail", preflight_message)
     return ("pass", "Hobby traffic-open backup compliance evidence is valid")
 
 
@@ -1053,7 +1111,9 @@ def main() -> int:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
             traffic_evidence_path = Path(traffic_open_evidence) if traffic_open_evidence else root_dir / "design" / "operations" / "deployments" / "production" / "backup-readiness" / f"{traffic_open_event}-{deployment_ref}.json"
-            traffic_status, traffic_message = production_traffic_check(traffic_evidence_path, traffic_open_event, deployment_ref)
+            traffic_status, traffic_message = production_traffic_check(
+                traffic_evidence_path, traffic_open_event, deployment_ref, root_dir
+            )
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", True, traffic_status, traffic_message) or has_required_failure
     else:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to production") or has_required_failure

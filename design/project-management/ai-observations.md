@@ -179,3 +179,8 @@ Entry format:
   - Context: tightening `02.15.8` showed that preflight already required `internalBindings.registry.imagePullSecretRef`, but staging/production overlays still rendered no matching image-pull binding and the contract tests only exercised a synthetic hobby manifest.
   - Observation: a manifest can look authoritative while still being advisory if the proof checks only presence of fields and not whether the rendered workloads actually reference the named Secrets or pull credentials.
   - Expected pattern: environment binding manifests should drive exact rendered Secret and image-pull binding names, and contract proof should run against the real staging/production renders in addition to synthetic examples.
+
+- `2026-05-25`: Traffic-open evidence should be generated from canonical preflight proof instead of hand-authored JSON
+  - Context: continuing `02.15.8` showed that the repo could validate hobby/production traffic-open evidence shape, but still left operators to assemble those records manually even though the same gates already depended on canonical preflight reports and deployment refs.
+  - Observation: once traffic-open records are hand-authored, they drift toward decorative JSON and can omit the exact report linkage or operator evidence fields the gate is supposed to enforce.
+  - Expected pattern: traffic-open records should be emitted by a repo-owned writer that validates the referenced preflight report before writing the evidence file, and the preflight consumer should reject traffic-open evidence that is missing that canonical preflight linkage.

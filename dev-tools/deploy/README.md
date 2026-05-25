@@ -18,6 +18,11 @@ They are not generic CI utilities. They enforce the deployment contract for play
   - Supports `staging`, `production`, and `hobby-self-hosted` environment classes.
   - Used by operator deployment workflows and by CI static-policy validation.
 
+- `write-traffic-open-evidence.py`
+  - Canonical writer for production and hobby traffic-open evidence records.
+  - Use this after a successful preflight report when recording `first-live` or `reopen` decisions.
+  - It validates the referenced preflight report before emitting the evidence JSON so traffic-open records stay bound to the canonical deployment report instead of drifting into hand-authored notes.
+
 - `validate-kustomize-overlays.sh`
   - CI-focused validator for the checked-in Kubernetes overlay definitions in the repo.
   - Use this when validating overlay changes in a PR, not as the main gate for a real environment deploy.
