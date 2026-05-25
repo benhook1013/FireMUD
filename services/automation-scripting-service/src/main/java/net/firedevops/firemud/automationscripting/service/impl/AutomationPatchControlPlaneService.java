@@ -847,7 +847,10 @@ final class AutomationPatchControlPlaneService {
         continue;
       }
       GetGameInstanceRuntimeStateResponse runtime =
-          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, targetGameInstanceId);
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              tenantId,
+              targetGameInstanceId,
+              AutomationControlPlaneSupport.emptyIfNull(summary.targetRegionId()));
       if (runtime == null
           || runtime.hasError()
           || AutomationControlPlaneSupport.emptyIfNull(

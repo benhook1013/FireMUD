@@ -1140,7 +1140,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     null)));
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2", "region-2"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -1307,7 +1307,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     null)));
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2"))
+    Mockito.when(gameSessionClient.getGameInstanceRuntimeState("1", "game-2", "region-2"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(

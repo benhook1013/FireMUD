@@ -296,10 +296,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       String tenantId, String gameInstanceId, int maxResults) {
     requireText(tenantId, "tenant_id");
     int limit = Math.max(1, maxResults <= 0 ? 100 : maxResults);
-    RuntimeScope runtimeScope =
-        normalize(gameInstanceId).isBlank()
-            ? RuntimeScope.UNKNOWN
-            : currentRuntimeScope(tenantId, gameInstanceId);
     List<PluginRuntimeState> activeStates =
         normalize(gameInstanceId).isBlank()
             ? repository
@@ -312,6 +308,10 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     PluginState.PLUGIN_STATE_ENABLED.name(),
                     "",
                     PageRequest.of(0, limit));
+    RuntimeScope runtimeScope =
+        normalize(gameInstanceId).isBlank()
+            ? RuntimeScope.UNKNOWN
+            : currentRuntimeScope(tenantId, gameInstanceId, preferredRuntimeRegionId(activeStates));
     activeStates =
         activeStates.stream().filter(state -> matchesRuntimeScope(state, runtimeScope)).toList();
     long evaluatedAtMs = Instant.now().toEpochMilli();
@@ -386,9 +386,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     reconcileSchedules(saved);
   }
 
-  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
+  private RuntimeScope currentRuntimeScope(
+      String tenantId, String gameInstanceId, String preferredRegionId) {
     GetGameInstanceRuntimeStateResponse runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            tenantId, gameInstanceId, preferredRegionId);
     if (runtime == null
         || (runtime.hasError() && !runtime.getError().getCode().isBlank())
         || !runtime.hasRuntimeState()) {
@@ -397,6 +399,16 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return new RuntimeScope(
         normalize(runtime.getRuntimeState().getRegionId()),
         runtime.getRuntimeState().getRegionEpoch());
+  }
+
+  private static String preferredRuntimeRegionId(List<PluginRuntimeState> activeStates) {
+    for (PluginRuntimeState state : activeStates) {
+      String runtimeRegionId = normalize(state.getRuntimeRegionId());
+      if (!runtimeRegionId.isBlank() && zeroIfNull(state.getRuntimeRegionEpoch()) > 0) {
+        return runtimeRegionId;
+      }
+    }
+    return "";
   }
 
   private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
