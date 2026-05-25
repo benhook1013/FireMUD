@@ -328,6 +328,40 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
+    Optional<
+            net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay>
+        cachedReplay =
+            sessionService.getConnectTokenReplay(
+                scopeContext.tenantId(),
+                bootstrapContext.accountId(),
+                request.connectScopeId(),
+                request.requestId());
+    if (cachedReplay.isPresent()) {
+      var replay = cachedReplay.orElseThrow();
+      if (replay.success()) {
+        return replay.result();
+      }
+      throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
+    }
+    try {
+      return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
+    } catch (AuthenticationException ex) {
+      sessionService.storeConnectTokenReplay(
+          scopeContext.tenantId(),
+          bootstrapContext.accountId(),
+          request.connectScopeId(),
+          request.requestId(),
+          new net.firedevops.firemud.accountservice.service.session.SessionService
+              .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
+          remainingConnectScopeReplayTtl(scopeContext));
+      throw ex;
+    }
+  }
+
+  private ConnectTokenResult issueConnectTokenFresh(
+      BootstrapContext bootstrapContext,
+      ConnectScopeContext scopeContext,
+      ConnectTokenRequest request) {
     net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer currentRealm =
         requireAdmissibleRealm(
             bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
@@ -410,6 +444,27 @@ public class AccountServiceImpl implements AccountService {
         bootstrapContext.accountId(),
         connectToken,
         tokenProperties.getConnectTokenExpirationMs());
+    ConnectTokenResult result =
+        new ConnectTokenResult(
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.gameInstanceId(),
+            scopeContext.realmSlug(),
+            request.connectScopeId(),
+            connectToken,
+            jti,
+            Instant.ofEpochMilli(issuedAt).toString(),
+            Instant.ofEpochMilli(expiresAt).toString());
+    sessionService.storeConnectTokenReplay(
+        scopeContext.tenantId(),
+        bootstrapContext.accountId(),
+        request.connectScopeId(),
+        request.requestId(),
+        new net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay(
+            true, result, "", ""),
+        Math.min(
+            tokenProperties.getConnectTokenExpirationMs(),
+            remainingConnectScopeReplayTtl(scopeContext)));
     logger.info(
         "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
         bootstrapContext.accountId(),
@@ -419,16 +474,7 @@ public class AccountServiceImpl implements AccountService {
         scopeContext.gameInstanceId(),
         request.requestId(),
         jti);
-    return new ConnectTokenResult(
-        bootstrapContext.accountId(),
-        scopeContext.tenantId(),
-        scopeContext.gameInstanceId(),
-        scopeContext.realmSlug(),
-        request.connectScopeId(),
-        connectToken,
-        jti,
-        Instant.ofEpochMilli(issuedAt).toString(),
-        Instant.ofEpochMilli(expiresAt).toString());
+    return result;
   }
 
   @Override
@@ -759,16 +805,24 @@ public class AccountServiceImpl implements AccountService {
     Long pointerVersion = parseLong(claims.get("pointerVersion"));
     String worldSlug = claimText(claims.get("worldSlug"));
     String realmSlug = claimText(claims.get("realmSlug"));
+    Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
     if (accountId == null
         || tenantId == null
         || gameInstanceId == null
         || pointerVersion == null
+        || connectScopeExpiresAt == null
         || worldSlug.isBlank()
         || realmSlug.isBlank()) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope");
     }
     return new ConnectScopeContext(
-        accountId, tenantId, worldSlug, realmSlug, gameInstanceId, pointerVersion);
+        accountId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        gameInstanceId,
+        pointerVersion,
+        connectScopeExpiresAt);
   }
 
   private void validateConnectScopeAgainstBootstrap(
@@ -777,6 +831,12 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
     }
+  }
+
+  private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
+    long remainingMs =
+        scopeContext.connectScopeExpiresAt().toEpochMilli() - System.currentTimeMillis();
+    return Math.max(1L, remainingMs);
   }
 
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
@@ -862,6 +922,17 @@ public class AccountServiceImpl implements AccountService {
     try {
       return Long.valueOf(value.toString());
     } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+
+  private Instant parseInstant(Object value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      return Instant.parse(value.toString());
+    } catch (RuntimeException ex) {
       return null;
     }
   }
@@ -1255,5 +1326,6 @@ public class AccountServiceImpl implements AccountService {
       String worldSlug,
       String realmSlug,
       long gameInstanceId,
-      long pointerVersion) {}
+      long pointerVersion,
+      Instant connectScopeExpiresAt) {}
 }
