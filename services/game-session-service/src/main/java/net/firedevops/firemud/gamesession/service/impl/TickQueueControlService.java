@@ -201,7 +201,12 @@ final class TickQueueControlService {
       Optional<RuntimeRegionStatus> byRegionId =
           runtimeRegionStatusRepository.findByTenantIdAndRegionId(tenantId, regionId);
       if (byRegionId.isPresent()) {
-        return byRegionId.orElseThrow();
+        RuntimeRegionStatus status = byRegionId.orElseThrow();
+        if (gameInstanceId != null && !gameInstanceId.equals(status.getGameInstanceId())) {
+          throw new StaleOwnershipException(
+              "regionId %s does not match gameInstanceId %d".formatted(regionId, gameInstanceId));
+        }
+        return status;
       }
     }
     return runtimeRegionStatusRepository
