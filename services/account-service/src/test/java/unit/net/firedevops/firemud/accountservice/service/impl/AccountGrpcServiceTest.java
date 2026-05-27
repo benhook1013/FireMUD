@@ -266,7 +266,7 @@ class AccountGrpcServiceTest {
             accountService.ensurePublicProductionPlayerMembership(2L, 1L, "production", "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
-                2L, 1L, "production", 55L, true, "2026-03-30T00:00:00Z"));
+                2L, 1L, "production", 55L, true, "req-1", "2026-03-30T00:00:00Z", false));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
@@ -296,6 +296,8 @@ class AccountGrpcServiceTest {
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(55L, ref.get().getMembershipVersion());
     assertTrue(ref.get().getCreated());
+    assertEquals("req-1", ref.get().getRequestId());
+    assertTrue(!ref.get().getReplayed());
   }
 
   @Test

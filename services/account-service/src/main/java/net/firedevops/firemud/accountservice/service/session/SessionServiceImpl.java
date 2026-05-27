@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
+import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -72,8 +73,10 @@ public class SessionServiceImpl implements SessionService {
               stringValue(stored.get("connectScopeId")),
               stringValue(stored.get("connectToken")),
               stringValue(stored.get("jti")),
+              stringValue(stored.get("requestId")),
               stringValue(stored.get("issuedAt")),
-              stringValue(stored.get("expiresAt")));
+              stringValue(stored.get("expiresAt")),
+              false);
       return Optional.of(new ConnectTokenReplay(true, result, "", ""));
     }
     String errorCode = stringValue(stored.get("errorCode"));
@@ -105,6 +108,7 @@ public class SessionServiceImpl implements SessionService {
       stored.put("connectScopeId", result.connectScopeId());
       stored.put("connectToken", result.connectToken());
       stored.put("jti", result.jti());
+      stored.put("requestId", result.requestId());
       stored.put("issuedAt", result.issuedAt());
       stored.put("expiresAt", result.expiresAt());
     } else {
@@ -114,6 +118,72 @@ public class SessionServiceImpl implements SessionService {
     redisTemplate
         .opsForValue()
         .set(connectTokenReplayKey(tenantId, accountId, connectScopeId, requestId), stored, ttl);
+  }
+
+  @Override
+  @Timed(value = "session.public_production_membership_replay.get")
+  public Optional<PublicProductionMembershipReplay> getPublicProductionMembershipReplay(
+      Long tenantId, Long accountId, String realmSlug, String requestId) {
+    Object value =
+        redisTemplate
+            .opsForValue()
+            .get(publicProductionMembershipReplayKey(tenantId, accountId, realmSlug, requestId));
+    if (!(value instanceof Map<?, ?> stored)) {
+      return Optional.empty();
+    }
+    boolean success = Boolean.parseBoolean(stringValue(stored.get("success")));
+    if (success) {
+      PublicProductionMembershipResult result =
+          new PublicProductionMembershipResult(
+              parseLong(stored.get("accountId")),
+              parseLong(stored.get("tenantId")),
+              stringValue(stored.get("realmSlug")),
+              parseLong(stored.get("membershipVersion")),
+              Boolean.parseBoolean(stringValue(stored.get("created"))),
+              stringValue(stored.get("requestId")),
+              stringValue(stored.get("evaluatedAt")),
+              false);
+      return Optional.of(new PublicProductionMembershipReplay(true, result, "", ""));
+    }
+    String errorCode = stringValue(stored.get("errorCode"));
+    String errorMessage = stringValue(stored.get("errorMessage"));
+    if (errorCode.isBlank() || errorMessage.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(new PublicProductionMembershipReplay(false, null, errorCode, errorMessage));
+  }
+
+  @Override
+  @Timed(value = "session.public_production_membership_replay.store")
+  public void storePublicProductionMembershipReplay(
+      Long tenantId,
+      Long accountId,
+      String realmSlug,
+      String requestId,
+      PublicProductionMembershipReplay replay,
+      long expirationMs) {
+    Duration ttl = Duration.ofMillis(expirationMs);
+    Map<String, String> stored = new HashMap<>();
+    stored.put("success", Boolean.toString(replay.success()));
+    if (replay.success()) {
+      PublicProductionMembershipResult result = replay.result();
+      stored.put("accountId", Long.toString(result.accountId()));
+      stored.put("tenantId", Long.toString(result.tenantId()));
+      stored.put("realmSlug", result.realmSlug());
+      stored.put("membershipVersion", Long.toString(result.membershipVersion()));
+      stored.put("created", Boolean.toString(result.created()));
+      stored.put("requestId", result.requestId());
+      stored.put("evaluatedAt", result.evaluatedAt());
+    } else {
+      stored.put("errorCode", replay.errorCode());
+      stored.put("errorMessage", replay.errorMessage());
+    }
+    redisTemplate
+        .opsForValue()
+        .set(
+            publicProductionMembershipReplayKey(tenantId, accountId, realmSlug, requestId),
+            stored,
+            ttl);
   }
 
   private String accountKey(Long accountId, String token) {
@@ -132,6 +202,18 @@ public class SessionServiceImpl implements SessionService {
         + accountId
         + ":scope:"
         + tokenHash(connectScopeId)
+        + ":request:"
+        + tokenHash(requestId);
+  }
+
+  private String publicProductionMembershipReplayKey(
+      Long tenantId, Long accountId, String realmSlug, String requestId) {
+    return "session:public-production-membership:tenant:"
+        + tenantId
+        + ":account:"
+        + accountId
+        + ":realm:"
+        + tokenHash(realmSlug)
         + ":request:"
         + tokenHash(requestId);
   }

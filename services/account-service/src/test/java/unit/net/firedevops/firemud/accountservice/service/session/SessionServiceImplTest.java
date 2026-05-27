@@ -75,8 +75,10 @@ class SessionServiceImplTest {
                 "scope-1",
                 "connect-1",
                 "jti-1",
+                "req-7",
                 "2026-05-25T00:00:00Z",
-                "2026-05-25T00:00:30Z"),
+                "2026-05-25T00:00:30Z",
+                false),
             "",
             "");
 
@@ -88,27 +90,18 @@ class SessionServiceImplTest {
                 + sha256("scope-1")
                 + ":request:"
                 + sha256("req-7"),
-            Map.of(
-                "success",
-                "true",
-                "accountId",
-                "11",
-                "tenantId",
-                "7",
-                "gameInstanceId",
-                "44",
-                "realmSlug",
-                "production",
-                "connectScopeId",
-                "scope-1",
-                "connectToken",
-                "connect-1",
-                "jti",
-                "jti-1",
-                "issuedAt",
-                "2026-05-25T00:00:00Z",
-                "expiresAt",
-                "2026-05-25T00:00:30Z"),
+            Map.ofEntries(
+                Map.entry("success", "true"),
+                Map.entry("accountId", "11"),
+                Map.entry("tenantId", "7"),
+                Map.entry("gameInstanceId", "44"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("connectScopeId", "scope-1"),
+                Map.entry("connectToken", "connect-1"),
+                Map.entry("jti", "jti-1"),
+                Map.entry("requestId", "req-7"),
+                Map.entry("issuedAt", "2026-05-25T00:00:00Z"),
+                Map.entry("expiresAt", "2026-05-25T00:00:30Z")),
             Duration.ofMillis(30000L));
   }
 
@@ -131,6 +124,45 @@ class SessionServiceImplTest {
     assertThat(replay).isPresent();
     assertThat(replay.orElseThrow().success()).isFalse();
     assertThat(replay.orElseThrow().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void storePublicProductionMembershipReplayWritesHashedRealmAndRequestKey() {
+    SessionService.PublicProductionMembershipReplay replay =
+        new SessionService.PublicProductionMembershipReplay(
+            true,
+            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
+                11L, 7L, "production", 711L, true, "req-join-1", "2026-05-25T00:00:00Z", false),
+            "",
+            "");
+
+    service.storePublicProductionMembershipReplay(
+        7L, 11L, "production", "req-join-1", replay, 30000L);
+
+    verify(valueOperations)
+        .set(
+            "session:public-production-membership:tenant:7:account:11:realm:"
+                + sha256("production")
+                + ":request:"
+                + sha256("req-join-1"),
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "realmSlug",
+                "production",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"),
+            Duration.ofMillis(30000L));
   }
 
   private static String sha256(String token) {

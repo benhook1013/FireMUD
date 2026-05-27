@@ -51,7 +51,7 @@ class InternalRuntimeControllerTest {
     when(accountService.ensurePublicProductionPlayerMembership(11L, 7L, "production", "req-1"))
         .thenReturn(
             new PublicProductionMembershipResult(
-                11L, 7L, "production", 711L, true, "2026-04-13T10:00:00Z"));
+                11L, 7L, "production", 711L, true, "req-1", "2026-04-13T10:00:00Z", false));
 
     mockMvc
         .perform(
@@ -62,6 +62,8 @@ class InternalRuntimeControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.membershipVersion").value(711))
-        .andExpect(jsonPath("$.data.created").value(true));
+        .andExpect(jsonPath("$.data.created").value(true))
+        .andExpect(jsonPath("$.data.requestId").value("req-1"))
+        .andExpect(jsonPath("$.data.replayed").value(false));
   }
 }

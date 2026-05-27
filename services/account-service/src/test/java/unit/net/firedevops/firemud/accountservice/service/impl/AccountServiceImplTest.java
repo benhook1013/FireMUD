@@ -141,6 +141,12 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(Optional.empty());
+    when(sessionService.getPublicProductionMembershipReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
     service =
@@ -410,8 +416,10 @@ class AccountServiceImplTest {
     assertEquals(connectScopeId, result.connectScopeId());
     assertNotNull(result.connectToken());
     assertNotNull(result.jti());
+    assertEquals("req-3", result.requestId());
     assertNotNull(result.issuedAt());
     assertNotNull(result.expiresAt());
+    assertTrue(!result.replayed());
     var connectTokenClaims =
         new JwtUtil("mysecretkey123456789012345678901", 30000L)
             .parseToken(result.connectToken())
@@ -471,6 +479,9 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-4")));
 
     assertEquals("CONNECT_SCOPE_MISMATCH", ex.getCode());
+    assertEquals(
+        "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope",
+        ex.getMessage());
   }
 
   @Test
@@ -524,6 +535,8 @@ class AccountServiceImplTest {
     assertEquals(firstResult.connectToken(), replayed.connectToken());
     assertEquals(firstResult.issuedAt(), replayed.issuedAt());
     assertEquals(firstResult.expiresAt(), replayed.expiresAt());
+    assertEquals(firstResult.requestId(), replayed.requestId());
+    assertTrue(replayed.replayed());
   }
 
   @Test
@@ -562,8 +575,38 @@ class AccountServiceImplTest {
     assertEquals("production", result.realmSlug());
     assertEquals(711L, result.membershipVersion());
     assertTrue(result.created());
+    assertEquals("req-join-1", result.requestId());
+    assertTrue(!result.replayed());
     org.mockito.Mockito.verify(loggingAdminClient)
         .logPublicProductionMembershipCreated(7L, 11L, "production", 711L, "req-join-1");
+  }
+
+  @Test
+  void ensurePublicProductionMembershipReplaysSameResultForSameRequestId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    PublicProductionMembershipResult firstResult =
+        new PublicProductionMembershipResult(
+            11L, 7L, "production", 711L, true, "req-join-1", "2026-03-30T00:00:00Z", false);
+    when(sessionService.getPublicProductionMembershipReplay(7L, 11L, "production", "req-join-1"))
+        .thenReturn(
+            Optional.of(
+                new SessionService.PublicProductionMembershipReplay(true, firstResult, "", "")));
+
+    PublicProductionMembershipResult replayed =
+        service.ensurePublicProductionPlayerMembership(11L, 7L, "production", "req-join-1");
+
+    assertEquals(firstResult.membershipVersion(), replayed.membershipVersion());
+    assertEquals(firstResult.requestId(), replayed.requestId());
+    assertEquals(firstResult.created(), replayed.created());
+    assertTrue(replayed.replayed());
   }
 
   @Test
@@ -610,6 +653,8 @@ class AccountServiceImplTest {
 
     assertEquals(11L, result.accountId());
     assertEquals(7L, result.tenantId());
+    assertEquals("req-join-2", result.requestId());
+    assertTrue(!result.replayed());
     org.mockito.Mockito.verify(accountTenantMembershipRepository)
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
@@ -692,6 +737,9 @@ class AccountServiceImplTest {
 
     assertEquals("CONNECT_SCOPE_MISMATCH", replayedFailure.getCode());
     assertEquals(firstFailure.getMessage(), replayedFailure.getMessage());
+    assertEquals(
+        "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope",
+        replayedFailure.getMessage());
   }
 
   @Test

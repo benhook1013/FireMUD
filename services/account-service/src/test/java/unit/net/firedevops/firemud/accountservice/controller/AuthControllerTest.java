@@ -89,8 +89,10 @@ class AuthControllerTest {
                 "scope-1",
                 "conn123",
                 "jti-1",
+                "req-7",
                 "2026-03-30T00:00:00Z",
-                "2026-03-30T00:00:30Z"));
+                "2026-03-30T00:00:30Z",
+                false));
 
     mockMvc
         .perform(
@@ -108,7 +110,9 @@ class AuthControllerTest {
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Strict")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/ws/game")))
-        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"));
+        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
+        .andExpect(jsonPath("$.data.requestId").value("req-7"))
+        .andExpect(jsonPath("$.data.replayed").value(false));
   }
 
   @Test

@@ -84,6 +84,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Service
 public class AccountServiceImpl implements AccountService {
   private static final Logger logger = LoggingUtil.getLogger(AccountServiceImpl.class);
+  private static final String STALE_CONNECT_SCOPE_MESSAGE =
+      "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
+  private static final String INVALID_CONNECT_SCOPE_MESSAGE =
+      "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
 
   private final AccountRepository accountRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
@@ -339,8 +343,23 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
-        return replay.result();
+        logger.info(
+            "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug(),
+            request.requestId());
+        return replayedConnectTokenResult(replay.result());
       }
+      logger.info(
+          "Replayed failed connect-token attempt for account {} tenant {} world {} realm {} requestId {} code {}",
+          bootstrapContext.accountId(),
+          scopeContext.tenantId(),
+          scopeContext.worldSlug(),
+          scopeContext.realmSlug(),
+          request.requestId(),
+          replay.errorCode());
       throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
     }
     try {
@@ -368,8 +387,7 @@ public class AccountServiceImpl implements AccountService {
     if (Long.parseLong(currentRealm.getTenantId()) != scopeContext.tenantId()
         || Long.parseLong(currentRealm.getGameInstanceId()) != scopeContext.gameInstanceId()
         || currentRealm.getPointerVersion() != scopeContext.pointerVersion()) {
-      throw new AuthenticationException(
-          "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
 
     boolean nonPublicGrant =
@@ -453,8 +471,10 @@ public class AccountServiceImpl implements AccountService {
             request.connectScopeId(),
             connectToken,
             jti,
+            request.requestId(),
             Instant.ofEpochMilli(issuedAt).toString(),
-            Instant.ofEpochMilli(expiresAt).toString());
+            Instant.ofEpochMilli(expiresAt).toString(),
+            false);
     sessionService.storeConnectTokenReplay(
         scopeContext.tenantId(),
         bootstrapContext.accountId(),
@@ -482,6 +502,59 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.public_production_membership")
   public PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
       Long accountId, Long tenantId, String realmSlug, String requestId) {
+    Optional<
+            net.firedevops.firemud.accountservice.service.session.SessionService
+                .PublicProductionMembershipReplay>
+        cachedReplay =
+            sessionService.getPublicProductionMembershipReplay(
+                tenantId, accountId, realmSlug, requestId);
+    if (cachedReplay.isPresent()) {
+      var replay = cachedReplay.orElseThrow();
+      if (replay.success()) {
+        logger.info(
+            "Replayed public-production membership attempt for account {} tenant {} realm {} requestId {}",
+            accountId,
+            tenantId,
+            realmSlug,
+            requestId);
+        return replayedPublicProductionMembershipResult(replay.result());
+      }
+      logger.info(
+          "Replayed failed public-production membership attempt for account {} tenant {} realm {} requestId {} code {}",
+          accountId,
+          tenantId,
+          realmSlug,
+          requestId,
+          replay.errorCode());
+      throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
+    }
+    try {
+      PublicProductionMembershipResult result =
+          ensurePublicProductionPlayerMembershipFresh(accountId, tenantId, realmSlug, requestId);
+      sessionService.storePublicProductionMembershipReplay(
+          tenantId,
+          accountId,
+          realmSlug,
+          requestId,
+          new net.firedevops.firemud.accountservice.service.session.SessionService
+              .PublicProductionMembershipReplay(true, result, "", ""),
+          tokenProperties.getSessionExpirationMs());
+      return result;
+    } catch (AuthenticationException ex) {
+      sessionService.storePublicProductionMembershipReplay(
+          tenantId,
+          accountId,
+          realmSlug,
+          requestId,
+          new net.firedevops.firemud.accountservice.service.session.SessionService
+              .PublicProductionMembershipReplay(false, null, ex.getCode(), ex.getMessage()),
+          tokenProperties.getSessionExpirationMs());
+      throw ex;
+    }
+  }
+
+  private PublicProductionMembershipResult ensurePublicProductionPlayerMembershipFresh(
+      Long accountId, Long tenantId, String realmSlug, String requestId) {
     requireAccount(accountId);
     var realm = requirePublicProductionRealm(tenantId, realmSlug);
     RuntimeEntitlementsDto entitlements = getTenantEntitlementsForRuntime(tenantId, requestId);
@@ -504,7 +577,9 @@ public class AccountServiceImpl implements AccountService {
           realm.getRealmSlug(),
           membership.getId(),
           false,
-          Instant.now().toString());
+          requestId,
+          Instant.now().toString(),
+          false);
     }
 
     AccountTenantMembership created = new AccountTenantMembership();
@@ -528,7 +603,9 @@ public class AccountServiceImpl implements AccountService {
           realm.getRealmSlug(),
           concurrent.getId(),
           false,
-          Instant.now().toString());
+          requestId,
+          Instant.now().toString(),
+          false);
     }
 
     long membershipVersion = created.getId();
@@ -549,7 +626,9 @@ public class AccountServiceImpl implements AccountService {
         realm.getRealmSlug(),
         membershipVersion,
         true,
-        Instant.now().toString());
+        requestId,
+        Instant.now().toString(),
+        false);
   }
 
   @Override
@@ -688,12 +767,15 @@ public class AccountServiceImpl implements AccountService {
           gameSessionClient.getAdmissionPointer(worldSlug, realmSlug);
       if (!isRealmAdmissible(bootstrapContext, realm)) {
         throw new AuthenticationException(
-            "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
+            "ADMISSION_POINTER_UNAVAILABLE",
+            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
       }
       return realm;
     } catch (IllegalStateException ex) {
       throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry",
+          ex);
     }
   }
 
@@ -794,10 +876,10 @@ public class AccountServiceImpl implements AccountService {
     try {
       claims = jwtUtil.parseToken(connectScopeId).getPayload();
     } catch (RuntimeException ex) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope", ex);
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
     if (!"bootstrap-connect-scope".equals(claimText(claims.get("aud")))) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope");
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
     Long accountId = parseLong(claims.get("accountId"));
     Long tenantId = parseLong(claims.get("tenantId"));
@@ -813,7 +895,7 @@ public class AccountServiceImpl implements AccountService {
         || connectScopeExpiresAt == null
         || worldSlug.isBlank()
         || realmSlug.isBlank()) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", "Invalid connect scope");
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
     return new ConnectScopeContext(
         accountId,
@@ -828,8 +910,7 @@ public class AccountServiceImpl implements AccountService {
   private void validateConnectScopeAgainstBootstrap(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
     if (scopeContext.accountId() != bootstrapContext.accountId()) {
-      throw new AuthenticationException(
-          "CONNECT_SCOPE_MISMATCH", "Selected gameplay target is no longer admissible");
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
   }
 
@@ -1268,6 +1349,34 @@ public class AccountServiceImpl implements AccountService {
         true,
         result.membershipVersion(),
         result.evaluatedAt());
+  }
+
+  private ConnectTokenResult replayedConnectTokenResult(ConnectTokenResult result) {
+    return new ConnectTokenResult(
+        result.accountId(),
+        result.tenantId(),
+        result.gameInstanceId(),
+        result.realmSlug(),
+        result.connectScopeId(),
+        result.connectToken(),
+        result.jti(),
+        result.requestId(),
+        result.issuedAt(),
+        result.expiresAt(),
+        true);
+  }
+
+  private PublicProductionMembershipResult replayedPublicProductionMembershipResult(
+      PublicProductionMembershipResult result) {
+    return new PublicProductionMembershipResult(
+        result.accountId(),
+        result.tenantId(),
+        result.realmSlug(),
+        result.membershipVersion(),
+        result.created(),
+        result.requestId(),
+        result.evaluatedAt(),
+        true);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer
