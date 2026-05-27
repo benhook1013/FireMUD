@@ -106,7 +106,7 @@ class InMemoryGameplayPresenceServiceTest {
   }
 
   @Test
-  void findConnectedByAccountIdsPrefersMostRecentlyActivePresencePerAccount() {
+  void listConnectedByAccountIdsReturnsAllSessionsForAccount() {
     AtomicLong now = new AtomicLong(100L);
     InMemoryGameplayPresenceService service =
         new InMemoryGameplayPresenceService(jwtUtil, now::get);
@@ -118,10 +118,12 @@ class InMemoryGameplayPresenceServiceTest {
     now.set(140L);
     service.recordCommandActivity(3L, true);
 
-    var result = service.findConnectedByAccountIds(22L, new LinkedHashSet<>(List.of(102L)));
+    var result = service.listConnectedByAccountIds(22L, new LinkedHashSet<>(List.of(102L)));
 
     assertEquals(1, result.size());
-    assertEquals(3L, result.get(102L).sessionId());
-    assertEquals(Long.valueOf(140L), result.get(102L).lastMeaningfulActivityAtEpochMs());
+    assertEquals(2, result.get(102L).size());
+    assertEquals(
+        List.of(2L, 3L),
+        result.get(102L).stream().map(GameplayPresence::sessionId).sorted().toList());
   }
 }

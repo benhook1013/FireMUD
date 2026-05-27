@@ -240,7 +240,7 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
-  void findConnectedByAccountIdsUsesAccountIndexAndPrefersMostRecentlyActivePresence() {
+  void listConnectedByAccountIdsUsesAccountIndexAndReturnsAllMatches() {
     when(setOperations.members("gameplaypresence:22:account:102:sessions"))
         .thenReturn(new LinkedHashSet<>(List.of("3", "4")));
     when(valueOperations.get("gameplaypresence:session:3"))
@@ -280,9 +280,11 @@ class RedisGameplayPresenceServiceTest {
                 110L,
                 120L));
 
-    var result = service.findConnectedByAccountIds(22L, List.of(102L));
+    var result = service.listConnectedByAccountIds(22L, List.of(102L));
 
     assertEquals(1, result.size());
-    assertEquals(4L, result.get(102L).sessionId());
+    assertEquals(2, result.get(102L).size());
+    assertEquals(4L, result.get(102L).get(0).sessionId());
+    assertEquals(3L, result.get(102L).get(1).sessionId());
   }
 }

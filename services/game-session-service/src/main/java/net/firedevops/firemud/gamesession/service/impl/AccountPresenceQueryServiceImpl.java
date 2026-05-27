@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,6 +23,16 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryService {
+  private static final Comparator<GameplayPresence> ACCOUNT_PRESENCE_PREFERENCE =
+      Comparator.comparing(
+              GameplayPresence::lastMeaningfulActivityAtEpochMs,
+              Comparator.nullsFirst(Long::compareTo))
+          .thenComparing(
+              GameplayPresence::lastAcceptedCommandAtEpochMs,
+              Comparator.nullsFirst(Long::compareTo))
+          .thenComparingLong(GameplayPresence::connectedAtEpochMs)
+          .thenComparingLong(GameplayPresence::sessionId);
+
   private final GameplayPresenceService gameplayPresenceService;
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
@@ -65,11 +76,11 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
     }
 
-    Map<Long, GameplayPresence> activePresences =
-        gameplayPresenceService.findConnectedByAccountIds(tenantId, requestedIds);
-    for (Map.Entry<Long, GameplayPresence> entry : activePresences.entrySet()) {
+    Map<Long, List<GameplayPresence>> activePresences =
+        gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
+    for (Map.Entry<Long, List<GameplayPresence>> entry : activePresences.entrySet()) {
       Long accountId = entry.getKey();
-      GameplayPresence presence = entry.getValue();
+      GameplayPresence presence = selectCurrentPresence(tenantId, entry.getValue());
       if (presence == null) {
         continue;
       }
@@ -113,6 +124,40 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                   : visibilityPolicyResolver.resolve(tenantId, accountId, presence.role())));
     }
     return List.copyOf(new ArrayList<>(results.values()));
+  }
+
+  private GameplayPresence selectCurrentPresence(long tenantId, List<GameplayPresence> presences) {
+    if (presences == null || presences.isEmpty()) {
+      return null;
+    }
+    return presences.stream()
+        .filter(Objects::nonNull)
+        .filter(presence -> isCurrentPresence(tenantId, presence))
+        .max(ACCOUNT_PRESENCE_PREFERENCE)
+        .orElse(null);
+  }
+
+  private boolean isCurrentPresence(long tenantId, GameplayPresence presence) {
+    if (presence == null
+        || presence.tenantId() != tenantId
+        || presence.gameInstanceId() <= 0
+        || presence.pointerVersion() <= 0
+        || presence.worldSlug() == null
+        || presence.worldSlug().isBlank()
+        || presence.realmSlug() == null
+        || presence.realmSlug().isBlank()) {
+      return false;
+    }
+    return gameplayWorldCatalog
+        .resolveWorld(presence.worldSlug())
+        .flatMap(
+            world ->
+                gameplayWorldCatalog
+                    .resolveRealm(world, presence.realmSlug())
+                    .filter(realm -> realm.tenantId() == tenantId)
+                    .filter(realm -> realm.gameInstanceId() == presence.gameInstanceId())
+                    .filter(realm -> realm.pointerVersion() == presence.pointerVersion()))
+        .isPresent();
   }
 
   private AccountPresenceSnapshot offline(
