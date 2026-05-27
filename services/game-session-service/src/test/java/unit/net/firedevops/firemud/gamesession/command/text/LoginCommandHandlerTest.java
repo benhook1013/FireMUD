@@ -137,7 +137,7 @@ class LoginCommandHandlerTest {
   void missingCredentialsReturnsPromptError() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContext(7L)));
+        .thenReturn(Optional.of(staleGameplayContextWithoutSelector(7L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, true);
 
@@ -155,7 +155,7 @@ class LoginCommandHandlerTest {
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 7L);
+    assertClearedSessionContext(captor.getValue(), 7L, null, null);
   }
 
   @Test
@@ -183,6 +183,41 @@ class LoginCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(commandService).enqueue("1", "LOGIN", false);
+  }
+
+  @Test
+  void bareLoginFallsBackToPersistedFirstPartyContextWhenRegistryEntryIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    SessionContext persisted =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(persisted));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(Optional.of(persisted));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(commandService).enqueue("1", "LOGIN", false);
   }
 
@@ -566,10 +601,39 @@ class LoginCommandHandlerTest {
         "demo",
         "production",
         pointerVersion,
+        "LIVE",
+        "scope-stale",
+        "req-stale");
+  }
+
+  private static SessionContext staleGameplayContextWithoutSelector(long pointerVersion) {
+    return new SessionContext(
+        1L,
+        22L,
+        77L,
+        "demo@example.com",
+        88L,
+        "Sora",
+        1L,
+        "room-2045",
+        AUTH_TOKEN,
+        "en-NZ",
+        1L,
+        "demo",
+        "production",
+        pointerVersion,
         "LIVE");
   }
 
   private static void assertClearedSessionContext(SessionContext context, long pointerVersion) {
+    assertClearedSessionContext(context, pointerVersion, "scope-stale", "req-stale");
+  }
+
+  private static void assertClearedSessionContext(
+      SessionContext context,
+      long pointerVersion,
+      String expectedConnectScopeId,
+      String expectedConnectRequestId) {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertEquals(0L, context.accountId());
@@ -585,5 +649,7 @@ class LoginCommandHandlerTest {
     assertEquals("production", context.realmSlug());
     assertEquals(pointerVersion, context.pointerVersion());
     assertNull(context.playableStateScope());
+    assertEquals(expectedConnectScopeId, context.connectScopeId());
+    assertEquals(expectedConnectRequestId, context.connectRequestId());
   }
 }

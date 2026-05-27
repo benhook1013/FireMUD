@@ -541,7 +541,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                         context.worldSlug(),
                         context.realmSlug(),
                         context.pointerVersion(),
-                        context.playableStateScope())));
+                        context.playableStateScope(),
+                        context.connectScopeId(),
+                        context.connectRequestId())));
   }
 
   private PlayerOutput renderReconnectLook(String sessionId) {
@@ -573,6 +575,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 resolveWorldSlug(session),
                 resolveRealmSlug(session),
                 resolvePointerVersion(session),
+                null,
+                null,
                 resolveLocaleTag(session)));
         return;
       }
@@ -584,6 +588,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               resolveWorldSlug(session),
               resolveRealmSlug(session),
               resolvePointerVersion(session),
+              null,
+              null,
               resolveLocaleTag(session)));
     } catch (NumberFormatException ex) {
       logger.debug(
@@ -616,6 +622,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               connectContext.worldSlug(),
               connectContext.realmSlug(),
               connectContext.pointerVersion(),
+              connectContext.connectScopeId(),
+              connectContext.connectRequestId(),
               resolveLocaleTag(session)));
       return;
     }
@@ -627,13 +635,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             connectContext.worldSlug(),
             connectContext.realmSlug(),
             connectContext.pointerVersion(),
+            connectContext.connectScopeId(),
+            connectContext.connectRequestId(),
             resolveLocaleTag(session)));
   }
 
   private void maybeRefreshBootstrapShell(SessionContext existing, SessionContext incomingShell) {
     if (sameBootstrapRoute(existing, incomingShell)) {
-      if (StringUtils.hasText(incomingShell.localeTag())
-          && !incomingShell.localeTag().equals(existing.localeTag())) {
+      boolean localeChanged =
+          StringUtils.hasText(incomingShell.localeTag())
+              && !incomingShell.localeTag().equals(existing.localeTag());
+      boolean selectorChanged =
+          !java.util.Objects.equals(incomingShell.connectScopeId(), existing.connectScopeId())
+              || !java.util.Objects.equals(
+                  incomingShell.connectRequestId(), existing.connectRequestId());
+      if (localeChanged || selectorChanged) {
         sessionContextService.save(
             new SessionContext(
                 existing.sessionId(),
@@ -650,7 +666,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 existing.worldSlug(),
                 existing.realmSlug(),
                 existing.pointerVersion(),
-                existing.playableStateScope()));
+                existing.playableStateScope(),
+                incomingShell.connectScopeId(),
+                incomingShell.connectRequestId()));
       }
       return;
     }
@@ -670,7 +688,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             incomingShell.worldSlug(),
             incomingShell.realmSlug(),
             incomingShell.pointerVersion(),
-            null));
+            null,
+            incomingShell.connectScopeId(),
+            incomingShell.connectRequestId()));
   }
 
   private boolean sameBootstrapRoute(SessionContext existing, SessionContext incomingShell) {
@@ -699,6 +719,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String worldSlug,
       String realmSlug,
       long pointerVersion,
+      String connectScopeId,
+      String connectRequestId,
       String localeTag) {
     return new SessionContext(
         sessionId,
@@ -715,7 +737,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         worldSlug,
         realmSlug,
         pointerVersion,
-        null);
+        null,
+        connectScopeId,
+        connectRequestId);
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {

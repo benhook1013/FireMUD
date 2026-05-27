@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.io.Serializable;
 import java.util.Locale;
+import java.util.Optional;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
@@ -19,7 +20,9 @@ public record SessionContext(
     String worldSlug,
     String realmSlug,
     long pointerVersion,
-    String playableStateScope)
+    String playableStateScope,
+    String connectScopeId,
+    String connectRequestId)
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
@@ -30,6 +33,44 @@ public record SessionContext(
     worldSlug = normalizeSlug(worldSlug);
     realmSlug = normalizeSlug(realmSlug);
     playableStateScope = normalizeScope(playableStateScope);
+    connectScopeId = normalizeText(connectScopeId);
+    connectRequestId = normalizeText(connectRequestId);
+  }
+
+  public SessionContext(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt,
+      String localeTag,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String playableStateScope) {
+    this(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        jwt,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        null,
+        null);
   }
 
   public SessionContext(
@@ -58,6 +99,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -88,6 +131,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -114,6 +159,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -139,6 +186,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -166,6 +215,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -194,6 +245,8 @@ public record SessionContext(
         null,
         null,
         0L,
+        null,
+        null,
         null);
   }
 
@@ -206,10 +259,7 @@ public record SessionContext(
   }
 
   private static String normalizeSlug(String slug) {
-    if (slug == null || slug.isBlank()) {
-      return null;
-    }
-    return slug.trim();
+    return normalizeText(slug);
   }
 
   private static String normalizeScope(String scope) {
@@ -217,5 +267,39 @@ public record SessionContext(
       return null;
     }
     return scope.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private static String normalizeText(String text) {
+    if (text == null || text.isBlank()) {
+      return null;
+    }
+    return text.trim();
+  }
+
+  public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
+    if (accountId <= 0
+        || tenantId <= 0
+        || bootstrapGameInstanceId <= 0
+        || !hasRoutingBundle()
+        || connectScopeId == null
+        || connectRequestId == null) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new FirstPartyConnectContext(
+            accountId,
+            tenantId,
+            worldSlug,
+            realmSlug,
+            bootstrapGameInstanceId,
+            pointerVersion,
+            connectScopeId,
+            null,
+            connectRequestId,
+            null));
+  }
+
+  private boolean hasRoutingBundle() {
+    return worldSlug != null && realmSlug != null && pointerVersion > 0;
   }
 }

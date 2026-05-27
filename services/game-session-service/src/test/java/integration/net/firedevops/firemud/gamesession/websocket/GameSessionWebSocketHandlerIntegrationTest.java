@@ -776,6 +776,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.worldSlug()).isEqualTo("demo");
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
+              assertThat(context.connectScopeId()).isEqualTo("scope-1");
+              assertThat(context.connectRequestId()).isEqualTo("connect-req-1");
             });
   }
 
@@ -1390,6 +1392,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.worldSlug()).isEqualTo("sandbox");
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
+              assertThat(context.connectScopeId()).isEqualTo("scope-route-b");
+              assertThat(context.connectRequestId()).isEqualTo("connect-req-route-b");
             });
   }
 

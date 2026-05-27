@@ -145,7 +145,9 @@ public class MoveCommandHandler {
         current.worldSlug(),
         current.realmSlug(),
         current.pointerVersion(),
-        current.playableStateScope());
+        current.playableStateScope(),
+        current.connectScopeId(),
+        current.connectRequestId());
   }
 
   private PreparedMoveCommandResult failureResult(

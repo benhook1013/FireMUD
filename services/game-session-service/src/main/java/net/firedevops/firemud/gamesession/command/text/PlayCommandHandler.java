@@ -293,7 +293,9 @@ public class PlayCommandHandler {
                   selectedWorld.slug(),
                   selectedRealm.slug(),
                   selectedRealm.pointerVersion(),
-                  selectedRealm.stateScope());
+                  selectedRealm.stateScope(),
+                  context.connectScopeId(),
+                  context.connectRequestId());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
           publishCommandEvent(updated);
@@ -349,8 +351,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld,
       GameplayWorldCatalog.RealmView selectedRealm,
       String tenantTag) {
-    return firstPartyConnectContextRegistry
-        .find(context.sessionId())
+    return resolveFirstPartyConnectContext(context)
         .filter(
             connectContext ->
                 connectContext.tenantId() != selectedRealm.tenantId()
@@ -892,8 +893,7 @@ public class PlayCommandHandler {
 
   private Optional<GameplayWorldCatalog.RealmView> selectDefaultRealm(
       SessionContext context, GameplayWorldCatalog.WorldView selectedWorld) {
-    Optional<FirstPartyConnectContext> connectContext =
-        firstPartyConnectContextRegistry.find(context.sessionId());
+    Optional<FirstPartyConnectContext> connectContext = resolveFirstPartyConnectContext(context);
     if (connectContext.isPresent()
         && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
       Optional<GameplayWorldCatalog.RealmView> hintedRealm =
@@ -954,6 +954,13 @@ public class PlayCommandHandler {
   private record ResolvedPlaySelection(
       String worldSelector, String explicitRealmSelector, String characterSelector) {}
 
+  private Optional<FirstPartyConnectContext> resolveFirstPartyConnectContext(
+      SessionContext context) {
+    return firstPartyConnectContextRegistry
+        .find(context.sessionId())
+        .or(() -> context.persistedFirstPartyConnectContext());
+  }
+
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
       String requestedWorldSlug,
@@ -989,7 +996,9 @@ public class PlayCommandHandler {
             requestedWorldSlug,
             requestedRealmSlug,
             requestedPointerVersion,
-            null));
+            null,
+            context.connectScopeId(),
+            context.connectRequestId()));
     LOG.debug(
         "Cleared stale gameplay binding after denied reconnect-style PLAY for tenant {} session {} world {} realm {} reason {}",
         tenantTag,

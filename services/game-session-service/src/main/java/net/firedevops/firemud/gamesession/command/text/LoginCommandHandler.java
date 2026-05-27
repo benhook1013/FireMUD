@@ -137,8 +137,16 @@ public final class LoginCommandHandler {
     if (numericSessionId == null) {
       return invalidSessionFailure();
     }
+    SessionContext existingSession =
+        sessionContextService.findBySessionId(numericSessionId).orElse(null);
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
-        firstPartyConnectContextRegistry.find(numericSessionId);
+        firstPartyConnectContextRegistry
+            .find(numericSessionId)
+            .or(
+                () ->
+                    existingSession == null
+                        ? Optional.empty()
+                        : existingSession.persistedFirstPartyConnectContext());
     if (maybeContext.isEmpty()) {
       clearFailedLoginSessionState(numericSessionId, 0L, 0L, null, null, 0L);
       return failure(
@@ -258,7 +266,9 @@ public final class LoginCommandHandler {
                 existing.worldSlug(),
                 existing.realmSlug(),
                 existing.pointerVersion(),
-                existing.playableStateScope());
+                existing.playableStateScope(),
+                existing.connectScopeId(),
+                existing.connectRequestId());
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",
@@ -332,7 +342,9 @@ public final class LoginCommandHandler {
             preservedWorldSlug,
             preservedRealmSlug,
             preservedPointerVersion,
-            null));
+            null,
+            existing != null ? existing.connectScopeId() : null,
+            existing != null ? existing.connectRequestId() : null));
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

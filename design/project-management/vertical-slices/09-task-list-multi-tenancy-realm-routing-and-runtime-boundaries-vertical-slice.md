@@ -20,11 +20,12 @@ The first implementation cut is now real:
 - public-production first join now exists as a concrete `EnsurePublicProductionPlayerMembership(...)` boundary in `account-service`;
 - public-production membership checks now consume the same Game Session routing authority as bootstrap/connect-token issuance instead of local config copies;
 - `CHARS`, `PLAY`, bootstrap character discovery, and `TELL` now resolve character lookup through a scope-aware gameplay roster contract, with shared-state realms reusing one tenant-live namespace and isolated-state realms using an instance-local roster namespace;
-- live gameplay presence now also preserves admitted world/realm slugs, so account-presence and related reads do not have to reverse-map that identity from runtime ids alone when the session already knows the canonical routing choice.
+- live gameplay presence now also preserves admitted world/realm slugs, so account-presence and related reads do not have to reverse-map that identity from runtime ids alone when the session already knows the canonical routing choice;
+- first-party reconnect/login/`PLAY` now also persist and reuse `connectScopeId` plus `connectRequestId` on the durable bootstrap shell, so reconnect-style consumers fail closed on the same selector freshness contract even when the transient connect-context registry entry is unavailable.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 
-Within this family, the docs are now good enough to use as the primary review surface for `02.1.6` and the current-boundary routing model in `09.1`, but the broader `09.x` family still has enough active follow-through that later consumers should not be treated as code-free review territory yet.
+Within this family, the docs are now good enough to use as the primary review surface for `02.1.6`, the current-boundary routing model in `09.1`, and the closed bootstrap/connect-scope contract in `09.4`, but the broader `09.x` family still has enough active follow-through that later consumers should not be treated as code-free review territory yet.
 
 ## Why This Slice Exists
 

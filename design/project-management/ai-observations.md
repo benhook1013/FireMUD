@@ -118,6 +118,11 @@ Entry format:
 - `2026-05-20`: H2-backed test profiles need lowercase identifier mode once a service starts using generated `jOOQ` table metadata
   - Context: the first `02.19.3` Game Session `jOOQ` repositories initially passed focused unit proof but failed broad integration startup because the existing H2 test URLs created unquoted uppercase table names while the generated `jOOQ` metadata queried quoted lowercase identifiers like `gameplay_admission_pointer`.
   - Observation: a service can look fine under JPA/Hibernate and still break the moment generated `jOOQ` code starts issuing explicit identifier SQL if the local H2 profile is not aligned with the repo's canonical lowercase schema naming.
+
+- `2026-05-28`: Reconnect-sensitive first-party selector identity should ride the durable session shell, not only a transient side registry
+  - Context: extending the `09.4` bootstrap/connect-scope work in Game Session showed that websocket handshake/login/PLAY consumers already preserved `worldSlug`, `realmSlug`, and `pointerVersion`, but `connectScopeId` and `connectRequestId` still lived only in the auxiliary first-party registry entry.
+  - Observation: when reconnect-style consumers depend on selector freshness, preserving only the routing bundle on the durable session shell is not enough; losing the side registry silently weakens behavior back toward route hints instead of true selector identity.
+  - Expected pattern: if a reconnect or replay-sensitive contract includes an explicit selector or request id, persist that selector identity on the same durable shell as the routing bundle so later consumers can stay fail-closed even when transient caches or helper registries are missing.
   - Expected pattern: when migrating a service onto generated `jOOQ` tables while it still uses H2-backed Spring test contexts, make the H2 URLs opt into lowercase identifier behavior (for example `DATABASE_TO_LOWER=TRUE`) before treating the repository conversion as complete.
 
 - `2026-05-21`: Heavy Gradle test tasks need clean result directories or strictly sequential execution once the same module is rerun

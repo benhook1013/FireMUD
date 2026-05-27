@@ -586,6 +586,53 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void firstPartyPlayFallsBackToPersistedSelectorWhenRegistryEntryIsMissing() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "first-party:123",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L,
+            "sandbox",
+            "preview",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7002")
+                    .setName("Sora")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 41L, 7002L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+  }
+
+  @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
     SessionContext context =
         new SessionContext(

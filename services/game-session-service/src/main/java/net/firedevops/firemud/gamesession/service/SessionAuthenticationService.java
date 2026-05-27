@@ -95,7 +95,9 @@ public final class SessionAuthenticationService {
             null,
             null,
             0L,
-            null);
+            null,
+            context.connectScopeId(),
+            context.connectRequestId());
     sessionContextService.save(cleared);
     return cleared;
   }
