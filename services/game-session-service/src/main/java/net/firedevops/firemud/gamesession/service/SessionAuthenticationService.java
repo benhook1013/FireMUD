@@ -40,6 +40,10 @@ public final class SessionAuthenticationService {
   }
 
   public Optional<SessionContext> resolveSessionContext(String sessionIdText) {
+    return resolveUnverifiedSessionContext(sessionIdText).filter(this::isAuthenticatedContext);
+  }
+
+  public Optional<SessionContext> resolveUnverifiedSessionContext(String sessionIdText) {
     Optional<Long> maybeSessionId = parseSessionId(sessionIdText);
     if (maybeSessionId.isEmpty()) {
       return Optional.empty();
@@ -51,8 +55,7 @@ public final class SessionAuthenticationService {
     }
     return sessionContextService
         .findByTenantAndSessionId(maybeTenantId.get(), sessionId)
-        .map(this::normalizeGameplayAdmissionContext)
-        .filter(this::isAuthenticatedContext);
+        .map(this::normalizeResolvedContext);
   }
 
   public boolean isAuthenticated(String sessionIdText) {
@@ -71,9 +74,14 @@ public final class SessionAuthenticationService {
     long tenantId = maybeTenantId.get();
     return sessionContextService
         .findByTenantAndSessionId(tenantId, sessionId)
-        .map(this::normalizeGameplayAdmissionContext)
+        .map(this::normalizeResolvedContext)
         .filter(this::isAuthenticatedContext)
         .isPresent();
+  }
+
+  public SessionContext normalizeResolvedContext(SessionContext context) {
+    return normalizeGameplayAdmissionContext(
+        Objects.requireNonNull(context, "context must not be null"));
   }
 
   private boolean isAuthenticatedContext(SessionContext context) {

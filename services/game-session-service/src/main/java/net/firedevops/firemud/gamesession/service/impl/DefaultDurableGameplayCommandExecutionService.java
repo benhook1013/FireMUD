@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyServi
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final MoveCommandHandler moveCommandHandler;
   private final ItemCommandHandler itemCommandHandler;
@@ -48,6 +50,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   public DefaultDurableGameplayCommandExecutionService(
       MeterRegistry meterRegistry,
       TextCommandParser textCommandParser,
+      SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       MoveCommandHandler moveCommandHandler,
       ItemCommandHandler itemCommandHandler,
@@ -60,6 +63,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       ScriptEventPublisher scriptEventPublisher) {
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
+    this.sessionAuthenticationService = sessionAuthenticationService;
     this.sessionContextService = sessionContextService;
     this.moveCommandHandler = moveCommandHandler;
     this.itemCommandHandler = itemCommandHandler;
@@ -133,7 +137,9 @@ public final class DefaultDurableGameplayCommandExecutionService
   private Optional<SessionContext> resolveExecutionContext(GameplayCommand command) {
     if (command.getSessionId() != null && command.getSessionId() > 0) {
       Optional<SessionContext> bySession =
-          sessionContextService.findBySessionId(command.getSessionId());
+          sessionContextService
+              .findBySessionId(command.getSessionId())
+              .map(sessionAuthenticationService::normalizeResolvedContext);
       if (bySession.isPresent()) {
         return bySession;
       }
@@ -147,8 +153,9 @@ public final class DefaultDurableGameplayCommandExecutionService
         || command.getGameInstanceId() <= 0) {
       return Optional.empty();
     }
-    return sessionContextService.findByGameplayIdentity(
-        command.getTenantId(), command.getGameInstanceId(), characterId);
+    return sessionContextService
+        .findByGameplayIdentity(command.getTenantId(), command.getGameInstanceId(), characterId)
+        .map(sessionAuthenticationService::normalizeResolvedContext);
   }
 
   private static Long gameplayCharacterId(GameplayCommand command) {
