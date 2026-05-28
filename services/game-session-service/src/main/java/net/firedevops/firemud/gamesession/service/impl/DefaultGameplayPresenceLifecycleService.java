@@ -7,7 +7,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -16,21 +16,23 @@ public final class DefaultGameplayPresenceLifecycleService
     implements GameplayPresenceLifecycleService {
   private final GameplayPresenceService gameplayPresenceService;
   private final AccountRecentPresenceService accountRecentPresenceService;
-  private final SessionContextService sessionContextService;
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final ScriptEventPublisher scriptEventPublisher;
 
   public DefaultGameplayPresenceLifecycleService(
       GameplayPresenceService gameplayPresenceService,
       AccountRecentPresenceService accountRecentPresenceService,
-      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
       ScriptEventPublisher scriptEventPublisher) {
     this.gameplayPresenceService =
         Objects.requireNonNull(gameplayPresenceService, "gameplayPresenceService must not be null");
     this.accountRecentPresenceService =
         Objects.requireNonNull(
             accountRecentPresenceService, "accountRecentPresenceService must not be null");
-    this.sessionContextService =
-        Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+    this.sessionRoutingNormalizationService =
+        Objects.requireNonNull(
+            sessionRoutingNormalizationService,
+            "sessionRoutingNormalizationService must not be null");
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
   }
@@ -61,8 +63,8 @@ public final class DefaultGameplayPresenceLifecycleService
 
   @Override
   public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
-    sessionContextService
-        .findBySessionId(sessionId)
+    sessionRoutingNormalizationService
+        .resolveProjectedSessionContext(Long.toString(sessionId))
         .filter(this::hasGameplayRegionBinding)
         .ifPresent(
             context ->

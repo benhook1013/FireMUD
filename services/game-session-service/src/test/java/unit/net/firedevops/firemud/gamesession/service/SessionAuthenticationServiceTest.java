@@ -26,16 +26,19 @@ class SessionAuthenticationServiceTest {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final GameSessionProperties properties = new GameSessionProperties();
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private SessionAuthenticationService service;
 
   @BeforeEach
   void setUp() {
+    sessionRoutingNormalizationService =
+        new SessionRoutingNormalizationService(
+            sessionContextService, gameInstanceRepository, pointerAuthorityService);
     service =
         new SessionAuthenticationService(
             sessionContextService,
             properties,
-            gameInstanceRepository,
-            pointerAuthorityService,
+            sessionRoutingNormalizationService,
             gameplayPresenceLifecycleService);
   }
 

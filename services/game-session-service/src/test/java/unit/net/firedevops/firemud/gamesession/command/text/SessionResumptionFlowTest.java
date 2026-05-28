@@ -57,6 +57,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -103,6 +104,7 @@ class SessionResumptionFlowTest {
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
@@ -115,7 +117,7 @@ class SessionResumptionFlowTest {
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
           accountRecentPresenceService,
-          sessionContextService,
+          sessionRoutingNormalizationService(),
           scriptEventPublisher);
   private final AuthoredActionCommandHandler authoredActionHandler =
       new AuthoredActionCommandHandler(
@@ -192,8 +194,7 @@ class SessionResumptionFlowTest {
         new SessionAuthenticationService(
             sessionContextService,
             properties,
-            instanceRepository,
-            pointerAuthorityService,
+            sessionRoutingNormalizationService(),
             gameplayPresenceLifecycleService);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
@@ -291,6 +292,15 @@ class SessionResumptionFlowTest {
             registry,
             parser,
             meterRegistry);
+  }
+
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService() {
+    if (sessionRoutingNormalizationService == null) {
+      sessionRoutingNormalizationService =
+          new SessionRoutingNormalizationService(
+              sessionContextService, instanceRepository, pointerAuthorityService);
+    }
+    return sessionRoutingNormalizationService;
   }
 
   @Test

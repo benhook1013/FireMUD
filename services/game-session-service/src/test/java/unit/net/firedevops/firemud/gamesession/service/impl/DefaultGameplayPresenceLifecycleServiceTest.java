@@ -10,7 +10,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -19,15 +19,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
       Mockito.mock(GameplayPresenceService.class);
   private final AccountRecentPresenceService accountRecentPresenceService =
       Mockito.mock(AccountRecentPresenceService.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService =
+      Mockito.mock(SessionRoutingNormalizationService.class);
   private final ScriptEventPublisher scriptEventPublisher =
       Mockito.mock(ScriptEventPublisher.class);
   private final DefaultGameplayPresenceLifecycleService service =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
           accountRecentPresenceService,
-          sessionContextService,
+          sessionRoutingNormalizationService,
           scriptEventPublisher);
 
   @Test
@@ -128,7 +128,25 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   }
 
   private void whenGameplayContextPresent(SessionContext context) {
-    Mockito.when(sessionContextService.findBySessionId(context.sessionId()))
+    Mockito.when(
+            sessionRoutingNormalizationService.resolveProjectedSessionContext(
+                Long.toString(context.sessionId())))
         .thenReturn(Optional.of(context));
+  }
+
+  @Test
+  void recordDisconnectedSkipsExitWhenNormalizationClearsStaleGameplayBinding() {
+    SessionContext cleared =
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "");
+    Mockito.when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
+        .thenReturn(Optional.of(cleared));
+
+    service.recordDisconnected(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+
+    verify(scriptEventPublisher, never())
+        .publishRegionExitEvent(Mockito.any(SessionContext.class), anyString(), anyString());
+    verify(accountRecentPresenceService)
+        .recordDisconnect(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    verify(gameplayPresenceService).removeBySessionId(41L);
   }
 }
