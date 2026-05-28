@@ -342,6 +342,7 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            sessionRoutingNormalizationService(),
             pointerAuthorityService,
             gameplayPresenceLifecycleService,
             meterRegistry);

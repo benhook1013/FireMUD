@@ -203,6 +203,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            sessionRoutingNormalizationService(),
             pointerAuthorityService,
             gameplayPresenceLifecycleService,
             meterRegistry);

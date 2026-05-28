@@ -26,6 +26,7 @@ The first implementation cut is now real:
 - queued and durable gameplay-command execution now also consumes the same stale-pointer shell normalization, so command staging, replay-time execution, and gameplay-scoped script-event publish do not silently preserve an older in-world binding once cutover or reconnect fencing has already collapsed the live session back to a logged-in shell.
 - reconnect-facing websocket helpers, communication-recipient delivery, and operator effective-settings reads now also consume that same normalized shell path, so redraw/buffer recovery, recipient fan-out, and session-scoped settings inspection no longer bypass the admission fence by reading raw persisted gameplay bindings directly.
 - disconnect lifecycle and account-recent presence projection now also consume that same normalized shell path, so logout/takeover/transport-loss lifecycle signals and recent-presence routing snapshots do not keep stale gameplay routing alive after the admission fence has already collapsed the session back to a login-only shell.
+- credential and first-party `LOGIN` refresh paths now also consume that same normalized shell path before they preserve bootstrap or gameplay state, so relogin can continue a still-current in-world binding but can no longer silently carry stale gameplay routing forward just because the refresh happened through account authentication instead of later gameplay commands.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 

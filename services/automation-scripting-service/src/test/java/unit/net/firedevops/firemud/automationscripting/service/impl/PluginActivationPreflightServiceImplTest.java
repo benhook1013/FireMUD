@@ -206,7 +206,7 @@ class PluginActivationPreflightServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(
             List.of(
-                binding("plugin-market-bell", "onEnterRegion", "REGION", "stale-square", false),
+                binding("plugin-market-bell", "onEnterRegion", "REGION", "market-square", false),
                 binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
     PluginRuntimeState staleEpoch = activePlugin("market-bell", "market-bell-v1");
     staleEpoch.setRuntimeRegionEpoch(6L);
@@ -268,6 +268,8 @@ class PluginActivationPreflightServiceImplTest {
     service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2");
 
     Mockito.verify(gameSessionClient).getGameInstanceRuntimeState("1", "game-1", "region-live");
+    Mockito.verify(gameSessionClient, Mockito.never())
+        .getGameInstanceRuntimeState("1", "game-1", "region-stale");
   }
 
   private static ScriptDefinition baseScript(String scriptId) {

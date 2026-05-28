@@ -39,6 +39,7 @@ public final class SessionRoutingNormalizationService {
     }
     return sessionContextService
         .findByTenantAndSessionId(maybeTenantId.get(), sessionId)
+        .or(() -> sessionContextService.findBySessionId(sessionId))
         .map(this::normalizeProjectedContext);
   }
 
