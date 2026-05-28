@@ -980,6 +980,7 @@ public class PlayCommandHandler {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();
+    gameplayPresenceLifecycleService.clearGameplayBinding(context, reason);
     sessionContextService.save(
         new SessionContext(
             context.sessionId(),

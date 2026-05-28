@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -52,6 +53,8 @@ class LoginCommandHandlerTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      Mockito.mock(GameplayPresenceLifecycleService.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private LoginCommandHandler handler;
 
@@ -74,6 +77,7 @@ class LoginCommandHandlerTest {
             commandService,
             firstPartyConnectContextRegistry,
             gameplayAdmissionPointerAuthorityService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
   }
 
@@ -155,6 +159,8 @@ class LoginCommandHandlerTest {
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(staleGameplayContextWithoutSelector(7L), "LOGIN_FAILED");
     assertClearedSessionContext(captor.getValue(), 7L, null, null);
   }
 

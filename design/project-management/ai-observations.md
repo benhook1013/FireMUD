@@ -209,3 +209,8 @@ Entry format:
   - Context: `account-service` public-production first admission originally became idempotent only through the eventual membership row and durable audit log, while `connect-token` retries already replayed cached results for the same selector/request pair.
   - Observation: when operators or first-party clients care about one logical attempt, "resource already exists" is not the same thing as "this request id was replayed"; without an explicit replay marker, repeated attempts and later no-op reads look the same even though they mean different things operationally.
   - Expected pattern: when a service declares `requestId` as the retry boundary for a write-like flow, replayed responses should surface the original outcome together with an explicit `replayed` marker and the same `requestId`, instead of leaving callers to infer replay from logs or from eventual resource state alone.
+
+- `2026-05-28`: Shell resets must retire live gameplay presence, not only rewrite session state
+  - Context: Game Session already fenced stale admission-pointer and reconnect failures back to a logged-in bootstrap shell, but several of those paths only rewrote `SessionContext` in Redis and left the old gameplay-presence row intact.
+  - Observation: clearing command-time authority without clearing the corresponding live presence lets cutover and reconnect fences fail closed for commands while still leaking ghost online or in-room presence from the stale gameplay binding.
+  - Expected pattern: any path that intentionally collapses an admitted gameplay session back to a bootstrap or logged-in shell should clear the matching gameplay-presence entry and emit the same bounded region-exit lifecycle signal when the old binding had still been in a concrete room.

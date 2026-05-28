@@ -6,5 +6,7 @@ public interface GameplayPresenceLifecycleService {
 
   void recordActivity(long sessionId, boolean meaningfulGameplayActivity);
 
+  void clearGameplayBinding(SessionContext context, String clearReason);
+
   void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition);
 }

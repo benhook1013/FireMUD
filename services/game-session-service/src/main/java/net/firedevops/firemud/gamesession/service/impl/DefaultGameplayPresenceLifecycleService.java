@@ -48,6 +48,18 @@ public final class DefaultGameplayPresenceLifecycleService
   }
 
   @Override
+  public void clearGameplayBinding(SessionContext context, String clearReason) {
+    if (context == null) {
+      return;
+    }
+    if (hasGameplayRegionBinding(context)) {
+      scriptEventPublisher.publishRegionExitEvent(
+          context, clearedBindingEventId(context, clearReason), clearReason);
+    }
+    gameplayPresenceService.removeBySessionId(context.sessionId());
+  }
+
+  @Override
   public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionContextService
         .findBySessionId(sessionId)
@@ -78,6 +90,21 @@ public final class DefaultGameplayPresenceLifecycleService
     }
     return "disconnect:"
         + disposition.name().toLowerCase(java.util.Locale.ROOT)
+        + ":"
+        + context.sessionId()
+        + ":"
+        + context.gameInstanceId()
+        + ":"
+        + context.characterId();
+  }
+
+  private static String clearedBindingEventId(SessionContext context, String clearReason) {
+    String normalizedReason =
+        clearReason == null || clearReason.isBlank()
+            ? "cleared"
+            : clearReason.trim().toLowerCase(java.util.Locale.ROOT).replace(' ', '_');
+    return "clear:"
+        + normalizedReason
         + ":"
         + context.sessionId()
         + ":"

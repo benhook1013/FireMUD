@@ -1205,6 +1205,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
             });
+    assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
   }
 
   @Test
@@ -1422,6 +1423,69 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void websocketFirstPartySelectorChangeOnReusedTransportClearsOldGameplayBeforeRelogin()
+      throws Exception {
+    try (GameplayWebSocketDriver first =
+        openFirstPartyDriver(
+            "2", firstPartyClaims("demo", "production", "1", "1", "scope-selector-a"))) {
+      first.send("LOGIN");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      first.send("PLAY demo");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      first.send("LOOK");
+      first.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+    }
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver second =
+        openFirstPartyDriver(
+            "2", firstPartyClaims("demo", "production", "1", "1", "scope-selector-b"))) {
+      second.send("LOOK");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      second.send("LOGIN");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+      payloads = second.responses();
+    }
+
+    JsonNode lookFailure =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOOK"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(lookFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
+
+    JsonNode loginSuccess =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "LOGIN"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
+
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.gameInstanceId()).isZero();
+              assertThat(context.characterId()).isZero();
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);
+              assertThat(context.worldSlug()).isEqualTo("demo");
+              assertThat(context.realmSlug()).isEqualTo("production");
+              assertThat(context.pointerVersion()).isEqualTo(1L);
+              assertThat(context.connectScopeId()).isEqualTo("scope-scope-selector-b");
+              assertThat(context.connectRequestId()).isEqualTo("connect-req-scope-selector-b");
+            });
+    assertThat(gameplayPresenceService.findConnectedBySessionId(2L)).isEmpty();
   }
 
   private GameplayWebSocketDriver openGameplayDriver(String sessionId) {

@@ -714,6 +714,8 @@ class PlayCommandHandlerTest {
                 .counter("gamesession.session.resume_denied", "reason", "tenant_unavailable")
                 .count())
         .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "tenant_unavailable");
   }
 
   @Test
@@ -742,6 +744,8 @@ class PlayCommandHandlerTest {
                 .counter("gamesession.session.resume_denied", "reason", "authority_unavailable")
                 .count())
         .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "authority_unavailable");
   }
 
   @Test

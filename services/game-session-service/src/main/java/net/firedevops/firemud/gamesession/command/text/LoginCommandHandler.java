@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -35,6 +36,7 @@ public final class LoginCommandHandler {
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @Autowired
   public LoginCommandHandler(
@@ -44,6 +46,7 @@ public final class LoginCommandHandler {
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
@@ -58,6 +61,9 @@ public final class LoginCommandHandler {
         Objects.requireNonNull(
             gameplayAdmissionPointerAuthorityService,
             "gameplayAdmissionPointerAuthorityService must not be null");
+    this.gameplayPresenceLifecycleService =
+        Objects.requireNonNull(
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
@@ -326,6 +332,9 @@ public final class LoginCommandHandler {
         existing != null && existing.bootstrapGameInstanceId() > 0
             ? existing.bootstrapGameInstanceId()
             : fallbackBootstrapGameInstanceId;
+    if (existing != null) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(existing, "LOGIN_FAILED");
+    }
     sessionContextService.save(
         new SessionContext(
             sessionId,

@@ -22,6 +22,7 @@ The first implementation cut is now real:
 - `CHARS`, `PLAY`, bootstrap character discovery, and `TELL` now resolve character lookup through a scope-aware gameplay roster contract, with shared-state realms reusing one tenant-live namespace and isolated-state realms using an instance-local roster namespace;
 - live gameplay presence now also preserves admitted world/realm slugs, so account-presence and related reads do not have to reverse-map that identity from runtime ids alone when the session already knows the canonical routing choice;
 - first-party reconnect/login/`PLAY` now also persist and reuse `connectScopeId` plus `connectRequestId` on the durable bootstrap shell, so reconnect-style consumers fail closed on the same selector freshness contract even when the transient connect-context registry entry is unavailable.
+- stale-shell cleanup now also retires the matching live gameplay presence row instead of only clearing the Redis session shell, and reused websocket selector changes on the same route now fail closed the same way as route changes instead of preserving an older authenticated or in-world binding under a fresh first-party selector.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 

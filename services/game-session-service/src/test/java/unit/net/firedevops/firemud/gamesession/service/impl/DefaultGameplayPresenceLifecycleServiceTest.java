@@ -50,6 +50,37 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   }
 
   @Test
+  void clearGameplayBindingPublishesExitAndRemovesLivePresenceWithoutDisconnecting() {
+    SessionContext context =
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", "");
+
+    service.clearGameplayBinding(context, "STALE_ADMISSION_POINTER");
+
+    org.mockito.InOrder inOrder = Mockito.inOrder(scriptEventPublisher, gameplayPresenceService);
+    inOrder
+        .verify(scriptEventPublisher)
+        .publishRegionExitEvent(
+            context, "clear:stale_admission_pointer:41:1:7001", "STALE_ADMISSION_POINTER");
+    inOrder.verify(gameplayPresenceService).removeBySessionId(41L);
+    verify(accountRecentPresenceService, never())
+        .recordDisconnect(Mockito.anyLong(), Mockito.any());
+  }
+
+  @Test
+  void clearGameplayBindingSkipsExitWithoutGameplayRegionBinding() {
+    SessionContext context =
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "");
+
+    service.clearGameplayBinding(context, "LOGIN_FAILED");
+
+    verify(scriptEventPublisher, never())
+        .publishRegionExitEvent(Mockito.any(SessionContext.class), anyString(), anyString());
+    verify(gameplayPresenceService).removeBySessionId(41L);
+    verify(accountRecentPresenceService, never())
+        .recordDisconnect(Mockito.anyLong(), Mockito.any());
+  }
+
+  @Test
   void recordDisconnectedWritesRecentPresenceBeforeRemovingLivePresence() {
     whenGameplayContextPresent(
         new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", ""));

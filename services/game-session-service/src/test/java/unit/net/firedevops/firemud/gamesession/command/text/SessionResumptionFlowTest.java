@@ -190,7 +190,11 @@ class SessionResumptionFlowTest {
                 .build());
     sessionAuthenticationService =
         new SessionAuthenticationService(
-            sessionContextService, properties, instanceRepository, pointerAuthorityService);
+            sessionContextService,
+            properties,
+            instanceRepository,
+            pointerAuthorityService,
+            gameplayPresenceLifecycleService);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             instanceRepository,
@@ -199,6 +203,7 @@ class SessionResumptionFlowTest {
             commandService,
             firstPartyConnectContextRegistry,
             pointerAuthorityService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     lookHandler =
         new LookCommandHandler(

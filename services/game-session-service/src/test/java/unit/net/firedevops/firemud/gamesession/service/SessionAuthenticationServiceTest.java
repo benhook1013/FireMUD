@@ -23,6 +23,8 @@ class SessionAuthenticationServiceTest {
       Mockito.mock(GameInstanceRepository.class);
   private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      Mockito.mock(GameplayPresenceLifecycleService.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private SessionAuthenticationService service;
 
@@ -30,7 +32,11 @@ class SessionAuthenticationServiceTest {
   void setUp() {
     service =
         new SessionAuthenticationService(
-            sessionContextService, properties, gameInstanceRepository, pointerAuthorityService);
+            sessionContextService,
+            properties,
+            gameInstanceRepository,
+            pointerAuthorityService,
+            gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -65,6 +71,7 @@ class SessionAuthenticationServiceTest {
     assertEquals(0L, resolved.orElseThrow().characterId());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
     assertEquals(123L, captor.getValue().accountId());
     assertEquals(0L, captor.getValue().gameInstanceId());
     assertEquals(0L, captor.getValue().pointerVersion());
@@ -85,6 +92,8 @@ class SessionAuthenticationServiceTest {
     assertEquals(123L, resolved.orElseThrow().accountId());
     assertEquals(0L, resolved.orElseThrow().gameInstanceId());
     verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(incomplete, "STALE_ADMISSION_POINTER");
   }
 
   @Test
@@ -116,6 +125,8 @@ class SessionAuthenticationServiceTest {
     assertTrue(resolved.isPresent());
     assertSame(current, resolved.orElseThrow());
     verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
   }
 
   @Test

@@ -16,13 +16,15 @@ public final class SessionAuthenticationService {
   private final GameSessionProperties properties;
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @Autowired
   public SessionAuthenticationService(
       SessionContextService sessionContextService,
       GameSessionProperties properties,
       GameInstanceRepository gameInstanceRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService) {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.properties = Objects.requireNonNull(properties, "properties must not be null");
@@ -32,6 +34,9 @@ public final class SessionAuthenticationService {
         Objects.requireNonNull(
             gameplayAdmissionPointerAuthorityService,
             "gameplayAdmissionPointerAuthorityService must not be null");
+    this.gameplayPresenceLifecycleService =
+        Objects.requireNonNull(
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
   }
 
   public Optional<SessionContext> resolveSessionContext(String sessionIdText) {
@@ -98,6 +103,7 @@ public final class SessionAuthenticationService {
             null,
             context.connectScopeId(),
             context.connectRequestId());
+    gameplayPresenceLifecycleService.clearGameplayBinding(context, "STALE_ADMISSION_POINTER");
     sessionContextService.save(cleared);
     return cleared;
   }

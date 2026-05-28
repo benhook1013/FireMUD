@@ -328,7 +328,8 @@ class TextCommandInterpreterTest {
             sessionContextService,
             gameSessionProperties,
             gameInstanceRepository,
-            pointerAuthorityService);
+            pointerAuthorityService,
+            gameplayPresenceLifecycleService);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
@@ -341,6 +342,7 @@ class TextCommandInterpreterTest {
             commandService,
             firstPartyConnectContextRegistry,
             pointerAuthorityService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(

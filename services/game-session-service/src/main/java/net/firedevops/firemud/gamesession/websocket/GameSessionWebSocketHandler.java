@@ -649,6 +649,30 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           !java.util.Objects.equals(incomingShell.connectScopeId(), existing.connectScopeId())
               || !java.util.Objects.equals(
                   incomingShell.connectRequestId(), existing.connectRequestId());
+      if (selectorChanged && hasAuthenticatedOrGameplayBinding(existing)) {
+        gameplayPresenceLifecycleService.clearGameplayBinding(
+            existing, "FIRST_PARTY_SELECTOR_CHANGED");
+        sessionContextService.save(
+            new SessionContext(
+                existing.sessionId(),
+                existing.tenantId(),
+                0L,
+                null,
+                0L,
+                null,
+                0L,
+                null,
+                null,
+                incomingShell.localeTag(),
+                existing.bootstrapGameInstanceId(),
+                existing.worldSlug(),
+                existing.realmSlug(),
+                existing.pointerVersion(),
+                null,
+                incomingShell.connectScopeId(),
+                incomingShell.connectRequestId()));
+        return;
+      }
       if (localeChanged || selectorChanged) {
         sessionContextService.save(
             new SessionContext(
@@ -672,6 +696,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       return;
     }
+    gameplayPresenceLifecycleService.clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     sessionContextService.save(
         new SessionContext(
             incomingShell.sessionId(),
@@ -691,6 +716,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             null,
             incomingShell.connectScopeId(),
             incomingShell.connectRequestId()));
+  }
+
+  private boolean hasAuthenticatedOrGameplayBinding(SessionContext context) {
+    return context.accountId() > 0
+        || context.characterId() > 0
+        || context.gameInstanceId() > 0
+        || StringUtils.hasText(context.roomInstanceId())
+        || StringUtils.hasText(context.jwt());
   }
 
   private boolean sameBootstrapRoute(SessionContext existing, SessionContext incomingShell) {
