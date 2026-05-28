@@ -206,7 +206,7 @@ class PluginActivationPreflightServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(
             List.of(
-                binding("plugin-market-bell", "onEnterRegion", "REGION", "market-square", false),
+                binding("plugin-market-bell", "onEnterRegion", "REGION", "stale-square", false),
                 binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
     PluginRuntimeState staleEpoch = activePlugin("market-bell", "market-bell-v1");
     staleEpoch.setRuntimeRegionEpoch(6L);
@@ -223,6 +223,51 @@ class PluginActivationPreflightServiceImplTest {
             new ObjectMapper());
 
     service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2");
+  }
+
+  @Test
+  void selectsHighestRuntimeRegionEpochFromEnabledPluginRows() {
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    PluginRuntimeStateRepository runtimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(definitionRepository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                pluginScript("plugin-market-bell", "market-bell", "market-bell-v1"),
+                pluginScript("plugin-town-crier", "town-crier", "town-crier-v2")));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("plugin-market-bell", "onEnterRegion", "REGION", "stale-square", false),
+                binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
+    PluginRuntimeState staleRuntime = activePlugin("market-bell", "market-bell-v1");
+    staleRuntime.setRuntimeRegionId("region-stale");
+    staleRuntime.setRuntimeRegionEpoch(3L);
+    PluginRuntimeState currentRuntime = activePlugin("market-bell", "market-bell-v1");
+    currentRuntime.setRuntimeRegionId("region-live");
+    currentRuntime.setRuntimeRegionEpoch(7L);
+    when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(staleRuntime, currentRuntime));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-live"))
+        .thenReturn(runtimeStateResponse("region-live", 7L));
+    PluginActivationPreflightServiceImpl service =
+        new PluginActivationPreflightServiceImpl(
+            definitionRepository,
+            bindingRepository,
+            runtimeStateRepository,
+            gameSessionClient,
+            new ObjectMapper());
+
+    service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2");
+
+    Mockito.verify(gameSessionClient).getGameInstanceRuntimeState("1", "game-1", "region-live");
   }
 
   private static ScriptDefinition baseScript(String scriptId) {

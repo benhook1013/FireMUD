@@ -1110,7 +1110,11 @@ def main() -> int:
         if not traffic_open_event:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
-            traffic_evidence_path = Path(traffic_open_evidence) if traffic_open_evidence else root_dir / "design" / "operations" / "deployments" / "production" / "backup-readiness" / f"{traffic_open_event}-{deployment_ref}.json"
+            traffic_evidence_path = (
+                Path(traffic_open_evidence)
+                if traffic_open_evidence
+                else root_dir / "design" / "operations" / "deployments" / "production" / "traffic-open" / f"{traffic_open_event}-{deployment_ref}.json"
+            )
             traffic_status, traffic_message = production_traffic_check(
                 traffic_evidence_path, traffic_open_event, deployment_ref, root_dir
             )

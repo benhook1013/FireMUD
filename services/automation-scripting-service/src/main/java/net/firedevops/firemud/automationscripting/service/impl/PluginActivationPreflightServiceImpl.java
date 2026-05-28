@@ -192,16 +192,23 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
   }
 
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> runtimeStates) {
+    String preferredRegionId = "";
+    long preferredRegionEpoch = 0L;
     for (PluginRuntimeState state : runtimeStates) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
       String runtimeRegionId = blankToEmpty(state.getRuntimeRegionId());
-      if (!runtimeRegionId.isBlank() && zeroIfNull(state.getRuntimeRegionEpoch()) > 0) {
-        return runtimeRegionId;
+      long runtimeRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+      if (runtimeRegionId.isBlank() || runtimeRegionEpoch <= 0) {
+        continue;
+      }
+      if (runtimeRegionEpoch > preferredRegionEpoch) {
+        preferredRegionId = runtimeRegionId;
+        preferredRegionEpoch = runtimeRegionEpoch;
       }
     }
-    return "";
+    return preferredRegionId;
   }
 
   private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {

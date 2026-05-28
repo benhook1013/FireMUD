@@ -31,6 +31,7 @@ public final class CommunicationRecipientDeliveryService {
   private static final Logger LOG =
       LoggerFactory.getLogger(CommunicationRecipientDeliveryService.class);
 
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
@@ -41,6 +42,7 @@ public final class CommunicationRecipientDeliveryService {
   private final MeterRegistry meterRegistry;
 
   public CommunicationRecipientDeliveryService(
+      SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService,
@@ -49,6 +51,7 @@ public final class CommunicationRecipientDeliveryService {
       EffectiveSettingsResolver settingsResolver,
       WebSocketOutputProjector outputProjector,
       MeterRegistry meterRegistry) {
+    this.sessionAuthenticationService = sessionAuthenticationService;
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
@@ -127,14 +130,16 @@ public final class CommunicationRecipientDeliveryService {
               actorContext.gameInstanceId(),
               maybeRecipientId.orElseThrow());
       if (byIdentity.isPresent()) {
-        return byIdentity;
+        return byIdentity.map(sessionAuthenticationService::normalizeResolvedContext);
       }
     }
     if (!StringUtils.hasText(view.getRecipientName())) {
       return Optional.empty();
     }
-    return sessionContextService.findByGameplayName(
-        actorContext.tenantId(), actorContext.gameInstanceId(), view.getRecipientName());
+    return sessionContextService
+        .findByGameplayName(
+            actorContext.tenantId(), actorContext.gameInstanceId(), view.getRecipientName())
+        .map(sessionAuthenticationService::normalizeResolvedContext);
   }
 
   private void push(

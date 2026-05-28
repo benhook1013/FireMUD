@@ -731,7 +731,11 @@ class CommunicationWebSocketCrossServiceTest {
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         ChatTestFixtures.ROOM_ID,
-        "target-jwt");
+        "target-jwt",
+        "demo",
+        "production",
+        1L,
+        "SHARED");
   }
 
   private List<String> runCommunicationSequence(

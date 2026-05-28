@@ -45,6 +45,26 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void browseRealmsToleratesNullRealmEnums() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setCharacterCreationPolicy(null);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
+
+    RealmBrowseViewOutput response = localHandler.browseRealms("demo").orElseThrow();
+
+    assertThat(response.realms().getFirst().stateScope()).isEqualTo("UNSPECIFIED");
+    assertThat(response.realms().getFirst().characterCreationPolicy()).isEqualTo("UNSPECIFIED");
+  }
+
+  @Test
   void browseCharactersReturnsStructuredCharacterList() {
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
@@ -121,6 +141,27 @@ class WorldsCommandHandlerTest {
     assertThat(output.characters())
         .extracting(CharacterBrowseViewOutput.CharacterEntry::characterName)
         .containsExactly("Forkline");
+  }
+
+  @Test
+  void browseCharactersFallsBackToUnspecifiedRosterScopeForNullRealmScope() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
+    Mockito.when(
+            entityManagementClient.listCharactersByAccount(
+                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED))
+        .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
+
+    WorldsCommandHandler.CharacterBrowseResult result =
+        localHandler.browseCharacters(
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            "demo",
+            null);
+
+    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
   }
 
   private static GameplayCatalogProperties.World world(

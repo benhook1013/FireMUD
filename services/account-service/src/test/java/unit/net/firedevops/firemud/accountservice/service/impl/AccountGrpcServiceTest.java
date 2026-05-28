@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -297,7 +298,7 @@ class AccountGrpcServiceTest {
     assertEquals(55L, ref.get().getMembershipVersion());
     assertTrue(ref.get().getCreated());
     assertEquals("req-1", ref.get().getRequestId());
-    assertTrue(!ref.get().getReplayed());
+    assertFalse(ref.get().getReplayed());
   }
 
   @Test

@@ -64,11 +64,17 @@ public class SessionServiceImpl implements SessionService {
     }
     boolean success = Boolean.parseBoolean(stringValue(stored.get("success")));
     if (success) {
+      Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
+      Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
+      Optional<Long> gameInstanceId = parseRequiredLong(stored.get("gameInstanceId"));
+      if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || gameInstanceId.isEmpty()) {
+        return Optional.empty();
+      }
       ConnectTokenResult result =
           new ConnectTokenResult(
-              parseLong(stored.get("accountId")),
-              parseLong(stored.get("tenantId")),
-              parseLong(stored.get("gameInstanceId")),
+              replayAccountId.orElseThrow(),
+              replayTenantId.orElseThrow(),
+              gameInstanceId.orElseThrow(),
               stringValue(stored.get("realmSlug")),
               stringValue(stored.get("connectScopeId")),
               stringValue(stored.get("connectToken")),
@@ -100,7 +106,7 @@ public class SessionServiceImpl implements SessionService {
     Map<String, String> stored = new HashMap<>();
     stored.put("success", Boolean.toString(replay.success()));
     if (replay.success()) {
-      ConnectTokenResult result = replay.result();
+      ConnectTokenResult result = requireResult(replay.result(), "connect token replay");
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
       stored.put("gameInstanceId", Long.toString(result.gameInstanceId()));
@@ -133,12 +139,18 @@ public class SessionServiceImpl implements SessionService {
     }
     boolean success = Boolean.parseBoolean(stringValue(stored.get("success")));
     if (success) {
+      Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
+      Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
+      Optional<Long> membershipVersion = parseRequiredLong(stored.get("membershipVersion"));
+      if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || membershipVersion.isEmpty()) {
+        return Optional.empty();
+      }
       PublicProductionMembershipResult result =
           new PublicProductionMembershipResult(
-              parseLong(stored.get("accountId")),
-              parseLong(stored.get("tenantId")),
+              replayAccountId.orElseThrow(),
+              replayTenantId.orElseThrow(),
               stringValue(stored.get("realmSlug")),
-              parseLong(stored.get("membershipVersion")),
+              membershipVersion.orElseThrow(),
               Boolean.parseBoolean(stringValue(stored.get("created"))),
               stringValue(stored.get("requestId")),
               stringValue(stored.get("evaluatedAt")),
@@ -166,7 +178,8 @@ public class SessionServiceImpl implements SessionService {
     Map<String, String> stored = new HashMap<>();
     stored.put("success", Boolean.toString(replay.success()));
     if (replay.success()) {
-      PublicProductionMembershipResult result = replay.result();
+      PublicProductionMembershipResult result =
+          requireResult(replay.result(), "public production membership replay");
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
       stored.put("realmSlug", result.realmSlug());
@@ -231,7 +244,21 @@ public class SessionServiceImpl implements SessionService {
     return value == null ? "" : value.toString();
   }
 
-  private static long parseLong(Object value) {
-    return value == null ? 0L : Long.parseLong(value.toString());
+  private static Optional<Long> parseRequiredLong(Object value) {
+    if (value == null) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(Long.parseLong(value.toString()));
+    } catch (NumberFormatException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private static <T> T requireResult(T result, String replayType) {
+    if (result == null) {
+      throw new IllegalArgumentException("Missing result for successful " + replayType);
+    }
+    return result;
   }
 }

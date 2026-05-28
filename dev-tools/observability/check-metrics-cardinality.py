@@ -92,7 +92,7 @@ def forbidden_grouping_labels(labels: str) -> list[str]:
     findings: list[str] = []
     for raw_label in labels.split(","):
         label = raw_label.strip()
-        if label and label in FORBIDDEN_EXACT_LABELS:
+        if label and is_forbidden_label(label):
             findings.append(label)
     return findings
 

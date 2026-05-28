@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.controller;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -11,8 +10,8 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,24 +23,21 @@ import org.springframework.web.server.ResponseStatusException;
 /** Operator/debug surface for inspecting effective pre-06 settings in Game Session. */
 @RestController
 @RequestMapping("/actuator/settings")
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected collaborators are framework-managed and retained internally")
 public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
-  private final SessionContextService sessionContextService;
+  private final SessionAuthenticationService sessionAuthenticationService;
 
   public EffectiveSettingsController(
       EffectiveSettingsResolver settingsResolver,
       EffectiveReconnectionSettingsResolver reconnectionSettingsResolver,
       SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver,
-      SessionContextService sessionContextService) {
+      SessionAuthenticationService sessionAuthenticationService) {
     this.settingsResolver = settingsResolver;
     this.reconnectionSettingsResolver = reconnectionSettingsResolver;
     this.sharedEffectiveSettingsResolver = sharedEffectiveSettingsResolver;
-    this.sessionContextService = sessionContextService;
+    this.sessionAuthenticationService = sessionAuthenticationService;
   }
 
   @GetMapping("/effective")
@@ -109,8 +105,8 @@ public class EffectiveSettingsController {
       Long sessionId, Long tenantId, Long gameInstanceId, Long bootstrapGameInstanceId) {
     if (sessionId != null) {
       SessionContext context =
-          sessionContextService
-              .findBySessionId(sessionId)
+          sessionAuthenticationService
+              .resolveUnverifiedSessionContext(Long.toString(sessionId))
               .orElseThrow(
                   () ->
                       new ResponseStatusException(

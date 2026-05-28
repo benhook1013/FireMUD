@@ -119,7 +119,11 @@ public class WorldsCommandHandler {
   }
 
   private PlayableStateScope toPlayableStateScope(GameplayWorldCatalog.RealmView realm) {
-    return switch (realm.stateScope()) {
+    String scope =
+        realm.stateScope() == null
+            ? ""
+            : realm.stateScope().trim().toUpperCase(java.util.Locale.ROOT);
+    return switch (scope) {
       case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;

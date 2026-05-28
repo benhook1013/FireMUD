@@ -270,6 +270,12 @@ public final class GameplayWorldCatalog {
   }
 
   private static RealmView copyRealm(GameplayCatalogProperties.Realm input) {
+    String stateScope =
+        input.getStateScope() == null ? "UNSPECIFIED" : input.getStateScope().name();
+    String characterCreationPolicy =
+        input.getCharacterCreationPolicy() == null
+            ? "UNSPECIFIED"
+            : input.getCharacterCreationPolicy().name();
     return new RealmView(
         input.getSlug(),
         input.getDisplayName(),
@@ -279,8 +285,8 @@ public final class GameplayWorldCatalog {
         input.isVisible(),
         input.isPublicProductionRealm(),
         input.isRequiresCharacterSelection(),
-        input.getStateScope().name(),
-        input.getCharacterCreationPolicy().name());
+        stateScope,
+        characterCreationPolicy);
   }
 
   private static RealmView copyRealmView(RealmView input) {

@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -47,6 +48,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private final TextCommandInterpreter interpreter;
   private final LookCommandHandler lookHandler;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
@@ -65,6 +67,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   public GameSessionWebSocketHandler(
       TextCommandInterpreter interpreter,
       LookCommandHandler lookHandler,
+      SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
@@ -80,6 +83,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandParser parser) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
+    this.sessionAuthenticationService = sessionAuthenticationService;
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
@@ -140,8 +144,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       recordGameplayActivity(sessionId, interpretation);
-      Optional<SessionContext> maybeContext =
-          parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
+      Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(sessionId);
       PresentationProperties effectivePresentation =
           settingsResolver.presentation(maybeContext.orElse(null));
       java.util.List<PlayerOutput> outputs =
@@ -238,11 +241,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String resolveLocaleTag(WebSocketSession session, String sessionId) {
-    return parseNumericSessionId(sessionId)
-        .flatMap(sessionContextService::findBySessionId)
+    return resolveNormalizedSessionContext(sessionId)
         .map(SessionContext::localeTag)
         .filter(StringUtils::hasText)
         .orElse(resolveLocaleTag(session));
+  }
+
+  private Optional<SessionContext> resolveNormalizedSessionContext(String sessionId) {
+    return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionId);
   }
 
   private String formatResponse(
@@ -315,8 +321,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!shouldBuffer(interpretation, replayEntries)) {
       return;
     }
-    sessionContextService
-        .findBySessionId(Long.parseLong(sessionId))
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context ->
@@ -341,8 +346,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         || !reconnectRestoreRequested) {
       return;
     }
-    sessionContextService
-        .findBySessionId(Long.parseLong(sessionId))
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context -> {
@@ -495,8 +499,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
     GameplayLoggingContext gameplayContext =
-        parseNumericSessionId(correlationId)
-            .flatMap(sessionContextService::findBySessionId)
+        resolveNormalizedSessionContext(correlationId)
             .map(GameplayLoggingContext::from)
             .orElseGet(GameplayLoggingContext::empty);
     return new CombinedLoggingContext(runtimeContext, gameplayContext);
@@ -520,8 +523,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!StringUtils.hasText(localeTag)) {
       return;
     }
-    parseNumericSessionId(sessionId)
-        .flatMap(sessionContextService::findBySessionId)
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> !StringUtils.hasText(context.localeTag()))
         .ifPresent(
             context ->
@@ -663,7 +665,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 0L,
                 null,
                 null,
-                incomingShell.localeTag(),
+                StringUtils.hasText(incomingShell.localeTag())
+                    ? incomingShell.localeTag()
+                    : existing.localeTag(),
                 existing.bootstrapGameInstanceId(),
                 existing.worldSlug(),
                 existing.realmSlug(),

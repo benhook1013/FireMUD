@@ -24,6 +24,7 @@ The first implementation cut is now real:
 - first-party reconnect/login/`PLAY` now also persist and reuse `connectScopeId` plus `connectRequestId` on the durable bootstrap shell, so reconnect-style consumers fail closed on the same selector freshness contract even when the transient connect-context registry entry is unavailable.
 - stale-shell cleanup now also retires the matching live gameplay presence row instead of only clearing the Redis session shell, and reused websocket selector changes on the same route now fail closed the same way as route changes instead of preserving an older authenticated or in-world binding under a fresh first-party selector.
 - queued and durable gameplay-command execution now also consumes the same stale-pointer shell normalization, so command staging, replay-time execution, and gameplay-scoped script-event publish do not silently preserve an older in-world binding once cutover or reconnect fencing has already collapsed the live session back to a logged-in shell.
+- reconnect-facing websocket helpers, communication-recipient delivery, and operator effective-settings reads now also consume that same normalized shell path, so redraw/buffer recovery, recipient fan-out, and session-scoped settings inspection no longer bypass the admission fence by reading raw persisted gameplay bindings directly.
 
 The remaining work is to finish the deeper runtime/control-plane follow-through instead of leaving the new family as design-only.
 
