@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,7 @@ public class PlayCommandHandler {
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
@@ -62,6 +64,7 @@ public class PlayCommandHandler {
   public PlayCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
       GameplayWorldCatalog gameplayWorldCatalog,
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
@@ -76,6 +79,10 @@ public class PlayCommandHandler {
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+    this.sessionRoutingNormalizationService =
+        Objects.requireNonNull(
+            sessionRoutingNormalizationService,
+            "sessionRoutingNormalizationService must not be null");
     this.gameplayWorldCatalog =
         Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
     this.gameLogicProperties =
@@ -262,8 +269,10 @@ public class PlayCommandHandler {
                   context, selectedRealm, character, gameInstanceId, characterId);
 
           Optional<SessionContext> existingBinding =
-              sessionContextService.findByGameplayIdentity(
-                  selectedRealm.tenantId(), gameInstanceId, characterId);
+              sessionContextService
+                  .findByGameplayIdentity(selectedRealm.tenantId(), gameInstanceId, characterId)
+                  .map(sessionRoutingNormalizationService::normalizeProjectedContext)
+                  .filter(PlayCommandHandler::hasGameplayBinding);
           boolean resumedOrTookOver =
               existingBinding
                   .map(
@@ -495,6 +504,12 @@ public class PlayCommandHandler {
 
   private String normalizeName(String value) {
     return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private static boolean hasGameplayBinding(SessionContext context) {
+    return context.gameInstanceId() > 0
+        || context.characterId() > 0
+        || StringUtils.hasText(context.roomInstanceId());
   }
 
   private void publishSpawnEvent(SessionContext context) {

@@ -244,6 +244,7 @@ class SessionResumptionFlowTest {
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            sessionRoutingNormalizationService(),
             worldCatalog,
             gameLogicProperties,
             accountClient,

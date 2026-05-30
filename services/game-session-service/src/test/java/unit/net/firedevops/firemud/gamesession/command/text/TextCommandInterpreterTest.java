@@ -350,6 +350,7 @@ class TextCommandInterpreterTest {
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            sessionRoutingNormalizationService(),
             worldCatalog,
             gameLogicProperties,
             accountClient,
