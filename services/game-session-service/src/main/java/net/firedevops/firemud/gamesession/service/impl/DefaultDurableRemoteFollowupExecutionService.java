@@ -199,21 +199,19 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   followup.getTargetRegionId(),
                   followup.getTargetRegionEpoch(),
                   "AUTOMATION",
-                  requiredTextOrFallback(
-                      root, "automationDispatchId", coordinator.getAutomationDispatchId()),
-                  requiredTextOrFallback(
-                      root, "automationWorkItemId", coordinator.getAutomationWorkItemId()),
-                  requiredTextOrFallback(root, "scriptId", coordinator.getScriptId()),
-                  requiredTextOrFallback(
-                      root, "scriptPatchVersion", coordinator.getScriptPatchVersion()),
-                  firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId()),
-                  firstNonBlank(
-                      optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId()),
-                  firstNonBlank(
-                      optionalText(root, "playableStateScope"), followup.getPlayableStateScope()),
-                  firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
-                  firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
-                  firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
+                  requiredAuthoritativeText(
+                      coordinator.getAutomationDispatchId(), root, "automationDispatchId"),
+                  requiredAuthoritativeText(
+                      coordinator.getAutomationWorkItemId(), root, "automationWorkItemId"),
+                  requiredAuthoritativeText(coordinator.getScriptId(), root, "scriptId"),
+                  requiredAuthoritativeText(
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
+                  authoritativeText(coordinator.getPluginId(), root, "pluginId"),
+                  authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
+                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"),
+                  authoritativeText(followup.getWorldSlug(), root, "worldSlug"),
+                  authoritativeText(followup.getRealmSlug(), root, "realmSlug"),
+                  authoritativeLong(followup.getPointerVersion(), root, "pointerVersion"),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -228,10 +226,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       optionalLong(root, "originSourceDueTickId", followup.getDueTickId())),
                   firstNonNull(
                       followup.getOriginSourceDueAtMs(), optionalLong(root, "originSourceDueAtMs")),
-                  textOrDefault(root, "targetEntityId", followup.getTargetEntityId()),
+                  authoritativeTextOrDefault(followup.getTargetEntityId(), root, "targetEntityId"),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
-                  requiredTextOrFallback(root, "command", requestedCommand),
+                  requiredAuthoritativeText(requestedCommand, root, "command"),
                   requiresSoloTick,
                   followup.getDueTickId()),
               gameInstanceRepository,
@@ -283,18 +281,15 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   "REMOTE_FOLLOWUP",
                   null,
                   null,
-                  firstNonBlank(optionalText(root, "scriptId"), coordinator.getScriptId()),
-                  firstNonBlank(
-                      optionalText(root, "scriptPatchVersion"),
-                      coordinator.getScriptPatchVersion()),
-                  firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId()),
-                  firstNonBlank(
-                      optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId()),
-                  firstNonBlank(
-                      optionalText(root, "playableStateScope"), followup.getPlayableStateScope()),
-                  firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug()),
-                  firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug()),
-                  firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion()),
+                  authoritativeText(coordinator.getScriptId(), root, "scriptId"),
+                  authoritativeText(
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
+                  authoritativeText(coordinator.getPluginId(), root, "pluginId"),
+                  authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
+                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"),
+                  authoritativeText(followup.getWorldSlug(), root, "worldSlug"),
+                  authoritativeText(followup.getRealmSlug(), root, "realmSlug"),
+                  authoritativeLong(followup.getPointerVersion(), root, "pointerVersion"),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -309,10 +304,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       optionalLong(root, "originSourceDueTickId", followup.getDueTickId())),
                   firstNonNull(
                       followup.getOriginSourceDueAtMs(), optionalLong(root, "originSourceDueAtMs")),
-                  requiredTextOrFallback(root, "targetEntityId", followup.getTargetEntityId()),
+                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "targetEntityId"),
                   coordinator.getCoordinatorId(),
                   followup.getFollowupId(),
-                  requiredTextOrFallback(root, "command", requestedCommand),
+                  requiredAuthoritativeText(requestedCommand, root, "command"),
                   requiresSoloTick,
                   followup.getDueTickId()),
               gameInstanceRepository,
@@ -350,14 +345,13 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private PayloadExecution executeTriggerScriptEvent(
       JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
     try {
-      String scriptId = firstNonBlank(optionalText(root, "scriptId"), coordinator.getScriptId());
-      String pluginId = firstNonBlank(optionalText(root, "pluginId"), coordinator.getPluginId());
+      String scriptId = authoritativeText(coordinator.getScriptId(), root, "scriptId");
+      String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
       String pluginVersionId =
-          firstNonBlank(optionalText(root, "pluginVersionId"), coordinator.getPluginVersionId());
-      String worldSlug = firstNonBlank(optionalText(root, "worldSlug"), followup.getWorldSlug());
-      String realmSlug = firstNonBlank(optionalText(root, "realmSlug"), followup.getRealmSlug());
-      Long pointerVersion =
-          firstNonNull(optionalLong(root, "pointerVersion"), followup.getPointerVersion());
+          authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
+      String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
+      String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
+      Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
       RoutingBundle routingBundle = resolveRoutingBundle(worldSlug, realmSlug, pointerVersion);
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequest.newBuilder()
@@ -365,22 +359,24 @@ public final class DefaultDurableRemoteFollowupExecutionService
               .setGameInstanceId(Long.toString(followup.getTargetGameInstanceId()))
               .setRegionId(followup.getTargetRegionId())
               .setRegionEpoch(followup.getTargetRegionEpoch())
-              .setEntityId(requiredTextOrFallback(root, "entityId", followup.getTargetEntityId()))
-              .setEventType(requiredTextOrFallback(root, "eventType", followup.getEventType()))
+              .setEntityId(
+                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId"))
+              .setEventType(requiredAuthoritativeText(followup.getEventType(), root, "eventType"))
               .setScriptPatchVersion(
-                  requiredTextOrFallback(
-                      root, "scriptPatchVersion", coordinator.getScriptPatchVersion()))
+                  requiredAuthoritativeText(
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"))
               .setScriptEventId(
-                  requiredTextOrFallback(root, "scriptEventId", followup.getScriptEventId()))
+                  requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"))
               .setTriggerMode(triggerMode(root, followup))
               .setPayloadJson(eventPayloadJson(root, followup))
               .setEventSchemaVersion(
                   firstNonBlank(
-                      optionalText(root, "eventSchemaVersion"),
+                      authoritativeText(
+                          followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
                       firstNonBlank(followup.getEventSchemaVersion(), "v1")))
               .setReadSnapshotToken(
-                  requiredTextOrFallback(
-                      root, "readSnapshotToken", followup.getReadSnapshotToken()))
+                  requiredAuthoritativeText(
+                      followup.getReadSnapshotToken(), root, "readSnapshotToken"))
               .setPlayableStateScope(playableStateScope(followup.getPlayableStateScope()));
       if (scriptId != null) {
         request.setScriptId(scriptId);
@@ -396,7 +392,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
         request.setRealmSlug(routingBundle.realmSlug());
         request.setPointerVersion(Long.toString(routingBundle.pointerVersion()));
       }
-      Long dueTickId = optionalLong(root, "dueTickId", followup.getDueTickId());
+      Long dueTickId = authoritativeLong(followup.getDueTickId(), root, "dueTickId");
       if (dueTickId != null) {
         request.setDueTickId(dueTickId);
       }
@@ -462,13 +458,27 @@ public final class DefaultDurableRemoteFollowupExecutionService
         failureMessage);
   }
 
-  private static String requiredTextOrFallback(
-      JsonNode root, String fieldName, String fallbackValue) {
-    String value = firstNonBlank(optionalText(root, fieldName), fallbackValue);
+  private static String requiredAuthoritativeText(
+      String authoritativeValue, JsonNode root, String fieldName) {
+    String value = authoritativeText(authoritativeValue, root, fieldName);
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
     }
     return value;
+  }
+
+  private static String authoritativeText(
+      String authoritativeValue, JsonNode root, String fieldName) {
+    return firstNonBlank(authoritativeValue, optionalText(root, fieldName));
+  }
+
+  private static String authoritativeTextOrDefault(
+      String authoritativeValue, JsonNode root, String fieldName) {
+    return firstNonBlank(authoritativeValue, optionalText(root, fieldName));
+  }
+
+  private static Long authoritativeLong(Long authoritativeValue, JsonNode root, String fieldName) {
+    return firstNonNull(authoritativeValue, optionalLong(root, fieldName));
   }
 
   private static String optionalText(JsonNode root, String fieldName) {
@@ -485,7 +495,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static TriggerMode triggerMode(JsonNode root, RemoteFollowup followup) {
-    String mode = firstNonBlank(optionalText(root, "triggerMode"), followup.getTriggerMode());
+    String mode = firstNonBlank(followup.getTriggerMode(), optionalText(root, "triggerMode"));
     if (mode == null) {
       return TriggerMode.TRIGGER_MODE_NORMAL;
     }
@@ -497,12 +507,12 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private String eventPayloadJson(JsonNode root, RemoteFollowup followup) {
+    if (followup.getEventPayloadJson() != null && !followup.getEventPayloadJson().isBlank()) {
+      return followup.getEventPayloadJson();
+    }
     JsonNode payloadNode = root.path("eventPayload");
     if (!payloadNode.isMissingNode() && !payloadNode.isNull()) {
       return payloadNode.toString();
-    }
-    if (followup.getEventPayloadJson() != null && !followup.getEventPayloadJson().isBlank()) {
-      return followup.getEventPayloadJson();
     }
     throw new IllegalArgumentException("eventPayload is required");
   }
