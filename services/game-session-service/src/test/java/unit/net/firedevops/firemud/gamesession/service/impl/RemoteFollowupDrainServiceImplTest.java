@@ -65,14 +65,14 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(1L, first.getClaimOrdinal());
     assertEquals("REMOTE_FOLLOWUP", first.getQueueSourceKind());
     assertEquals("TARGET_REGION_CLAIMED", first.getQueueSourceState());
-    assertEquals(1L, first.getQueueSourceOrdinal());
+    assertEquals(101L, first.getQueueSourceOrdinal());
     assertEquals(10L, first.getQueueSourceDueTickId());
     assertEquals(null, first.getFailureCode());
     assertEquals(null, first.getFailureMessage());
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, second.getStatus());
     assertEquals(2L, second.getClaimOrdinal());
     assertEquals("TARGET_REGION_CLAIMED", second.getQueueSourceState());
-    assertEquals(2L, second.getQueueSourceOrdinal());
+    assertEquals(102L, second.getQueueSourceOrdinal());
   }
 
   @Test
@@ -125,6 +125,8 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(2L, ninth.getClaimOrdinal());
     assertEquals("TARGET_REGION_CLAIMED", first.getQueueSourceState());
     assertEquals("TARGET_REGION_CLAIMED", ninth.getQueueSourceState());
+    assertEquals(101L, first.getQueueSourceOrdinal());
+    assertEquals(109L, ninth.getQueueSourceOrdinal());
   }
 
   @Test
@@ -143,7 +145,7 @@ class RemoteFollowupDrainServiceImplTest {
     assertEquals(null, first.getClaimOrdinal());
     assertEquals("REMOTE_FOLLOWUP", first.getQueueSourceKind());
     assertEquals("TARGET_REGION_SCHEDULED", first.getQueueSourceState());
-    assertEquals(null, first.getQueueSourceOrdinal());
+    assertEquals(101L, first.getQueueSourceOrdinal());
     assertEquals(10L, first.getQueueSourceDueTickId());
     assertEquals("REMOTE_DRAIN_ABORTED", first.getFailureCode());
     assertEquals("rollback", first.getFailureMessage());
@@ -179,6 +181,7 @@ class RemoteFollowupDrainServiceImplTest {
 
   private static RemoteFollowup followup(String followupId, long dueTickId) {
     RemoteFollowup followup = new RemoteFollowup();
+    followup.setId(100L + dueTickId - 9L);
     followup.setFollowupId(followupId);
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);

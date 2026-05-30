@@ -78,7 +78,7 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       followup.setQueueSourceKind(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND);
       followup.setQueueSourceState(
           RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED);
-      followup.setQueueSourceOrdinal((long) index + 1L);
+      followup.setQueueSourceOrdinal(durableQueueSourceOrdinal(followup, (long) index + 1L));
       followup.setQueueSourceDueTickId(followup.getDueTickId());
       followup.setFailureCode(null);
       followup.setFailureMessage(null);
@@ -115,7 +115,7 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
       followup.setQueueSourceKind(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND);
       followup.setQueueSourceState(
           RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_SCHEDULED);
-      followup.setQueueSourceOrdinal(null);
+      followup.setQueueSourceOrdinal(durableQueueSourceOrdinal(followup, null));
       followup.setQueueSourceDueTickId(followup.getDueTickId());
       followup.setFailureCode(failureCode);
       followup.setFailureMessage(truncate(failureMessage));
@@ -152,6 +152,16 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
 
   private static int candidateWindow(int limit) {
     return Math.max(limit, limit * 4);
+  }
+
+  private static Long durableQueueSourceOrdinal(RemoteFollowup followup, Long fallbackOrdinal) {
+    if (followup.getQueueSourceOrdinal() != null && followup.getQueueSourceOrdinal() > 0L) {
+      return followup.getQueueSourceOrdinal();
+    }
+    if (followup.getId() != null && followup.getId() > 0L) {
+      return followup.getId();
+    }
+    return fallbackOrdinal;
   }
 
   private List<RemoteFollowup> fairSelectedCandidates(
