@@ -2,25 +2,19 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
 public final class SessionRoutingNormalizationService {
   private final SessionContextService sessionContextService;
-  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
   public SessionRoutingNormalizationService(
       SessionContextService sessionContextService,
-      GameInstanceRepository gameInstanceRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
-    this.gameInstanceRepository =
-        Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
     this.gameplayAdmissionPointerAuthorityService =
         Objects.requireNonNull(
             gameplayAdmissionPointerAuthorityService,
@@ -101,11 +95,6 @@ public final class SessionRoutingNormalizationService {
         sessionContextService.findBySessionId(sessionId).map(SessionContext::tenantId);
     if (tenantFromContext.isPresent()) {
       return tenantFromContext;
-    }
-    Optional<Long> tenantFromRepository =
-        gameInstanceRepository.findById(sessionId).map(GameInstance::getTenantId);
-    if (tenantFromRepository.isPresent()) {
-      return tenantFromRepository;
     }
     return Optional.empty();
   }

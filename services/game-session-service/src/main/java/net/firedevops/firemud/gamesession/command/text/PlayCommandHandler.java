@@ -271,7 +271,7 @@ public class PlayCommandHandler {
           Optional<SessionContext> existingBinding =
               sessionContextService
                   .findByGameplayIdentity(selectedRealm.tenantId(), gameInstanceId, characterId)
-                  .map(sessionRoutingNormalizationService::normalizeProjectedContext)
+                  .map(sessionAuthenticationService::normalizeResolvedContext)
                   .filter(PlayCommandHandler::hasGameplayBinding);
           boolean resumedOrTookOver =
               existingBinding

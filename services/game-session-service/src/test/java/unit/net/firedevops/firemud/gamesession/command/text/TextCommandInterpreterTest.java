@@ -478,8 +478,7 @@ class TextCommandInterpreterTest {
   private SessionRoutingNormalizationService sessionRoutingNormalizationService() {
     if (sessionRoutingNormalizationService == null) {
       sessionRoutingNormalizationService =
-          new SessionRoutingNormalizationService(
-              sessionContextService, gameInstanceRepository, pointerAuthorityService);
+          new SessionRoutingNormalizationService(sessionContextService, pointerAuthorityService);
     }
     return sessionRoutingNormalizationService;
   }

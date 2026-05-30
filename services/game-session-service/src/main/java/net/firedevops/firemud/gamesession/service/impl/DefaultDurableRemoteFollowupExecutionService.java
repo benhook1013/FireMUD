@@ -478,7 +478,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static Long authoritativeLong(Long authoritativeValue, JsonNode root, String fieldName) {
-    return firstNonNull(authoritativeValue, optionalLong(root, fieldName));
+    if (authoritativeValue != null && authoritativeValue > 0L) {
+      return authoritativeValue;
+    }
+    return optionalLong(root, fieldName);
   }
 
   private static String optionalText(JsonNode root, String fieldName) {

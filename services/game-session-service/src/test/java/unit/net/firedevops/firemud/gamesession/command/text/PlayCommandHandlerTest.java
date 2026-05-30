@@ -126,6 +126,8 @@ class PlayCommandHandlerTest {
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -406,7 +408,7 @@ class PlayCommandHandlerTest {
                     .build()));
     when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.of(staleExisting));
-    when(sessionRoutingNormalizationService.normalizeProjectedContext(staleExisting))
+    when(sessionAuthenticationService.normalizeResolvedContext(staleExisting))
         .thenReturn(clearedExisting);
 
     PlayCommandHandlingResult result =
@@ -435,6 +437,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .recordDisconnected(Mockito.eq(9L), Mockito.any());
     Mockito.verify(sessionContextService, never()).deleteBySessionId(22L, 9L);
+    Mockito.verify(sessionAuthenticationService).normalizeResolvedContext(staleExisting);
   }
 
   @Test

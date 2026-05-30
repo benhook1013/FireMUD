@@ -108,6 +108,7 @@ firemud:
     regions-enabled: false
   auth:
     grpc:
+      force-internal-service-outbound: true
       public-methods:
         - game_session.v1.GameSessionService/Ping
   grpc:

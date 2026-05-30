@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -19,8 +18,6 @@ import org.mockito.Mockito;
 class SessionAuthenticationServiceTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
-  private final GameInstanceRepository gameInstanceRepository =
-      Mockito.mock(GameInstanceRepository.class);
   private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
@@ -32,8 +29,7 @@ class SessionAuthenticationServiceTest {
   @BeforeEach
   void setUp() {
     sessionRoutingNormalizationService =
-        new SessionRoutingNormalizationService(
-            sessionContextService, gameInstanceRepository, pointerAuthorityService);
+        new SessionRoutingNormalizationService(sessionContextService, pointerAuthorityService);
     service =
         new SessionAuthenticationService(
             sessionContextService,

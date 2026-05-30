@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
@@ -71,7 +72,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         gameplayPresenceService.findConnectedBySessionId(context.sessionId()).orElse(null);
     AccountPresenceVisibilityPolicy policy =
         visibilityPolicyResolver.resolve(
-            context.tenantId(), context.accountId(), presence == null ? null : presence.role());
+            context.tenantId(), context.accountId(), effectivePresenceRole(context, presence));
     write(
         routingSnapshot(context, presence),
         AccountRecentPresenceDisposition.TRANSPORT_LOSS,
@@ -92,7 +93,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                   visibilityPolicyResolver.resolve(
                       context.tenantId(),
                       context.accountId(),
-                      presence == null ? null : presence.role());
+                      effectivePresenceRole(context, presence));
               write(
                   snapshot,
                   AccountRecentPresenceDisposition.TRANSPORT_LOSS,
@@ -114,7 +115,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                   visibilityPolicyResolver.resolve(
                       context.tenantId(),
                       context.accountId(),
-                      presence == null ? null : presence.role());
+                      effectivePresenceRole(context, presence));
               write(snapshot, disposition, policy, currentTimeMillisSupplier.getAsLong());
             });
   }
@@ -191,6 +192,11 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
             ? presence.pointerVersion()
             : context.pointerVersion();
     return pointerVersion > 0 ? pointerVersion : null;
+  }
+
+  private GameplayPresenceRole effectivePresenceRole(
+      SessionContext context, GameplayPresence presence) {
+    return hasGameplayBinding(context) && presence != null ? presence.role() : null;
   }
 
   private boolean hasGameplayBinding(SessionContext context) {

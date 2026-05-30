@@ -73,9 +73,7 @@ class LoginCommandHandlerTest {
         .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
     sessionRoutingNormalizationService =
         new SessionRoutingNormalizationService(
-            sessionContextService,
-            gameInstanceRepository,
-            gameplayAdmissionPointerAuthorityService);
+            sessionContextService, gameplayAdmissionPointerAuthorityService);
     handler =
         new LoginCommandHandler(
             gameInstanceRepository,

@@ -167,7 +167,7 @@ class RedisAccountRecentPresenceServiceTest {
         .thenReturn(Optional.of(cleared));
     when(gameplayPresenceService.findConnectedBySessionId(41L))
         .thenReturn(Optional.of(stalePresence));
-    when(visibilityPolicyResolver.resolve(22L, 123L, GameplayPresenceRole.PLAYER))
+    when(visibilityPolicyResolver.resolve(22L, 123L, (GameplayPresenceRole) null))
         .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     RedisAccountRecentPresenceService service =
@@ -184,6 +184,7 @@ class RedisAccountRecentPresenceServiceTest {
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
         .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+    verify(visibilityPolicyResolver).resolve(22L, 123L, (GameplayPresenceRole) null);
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());

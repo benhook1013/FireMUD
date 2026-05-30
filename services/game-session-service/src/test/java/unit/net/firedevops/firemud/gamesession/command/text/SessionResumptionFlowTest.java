@@ -299,8 +299,7 @@ class SessionResumptionFlowTest {
   private SessionRoutingNormalizationService sessionRoutingNormalizationService() {
     if (sessionRoutingNormalizationService == null) {
       sessionRoutingNormalizationService =
-          new SessionRoutingNormalizationService(
-              sessionContextService, instanceRepository, pointerAuthorityService);
+          new SessionRoutingNormalizationService(sessionContextService, pointerAuthorityService);
     }
     return sessionRoutingNormalizationService;
   }
