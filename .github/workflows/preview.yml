@@ -65,7 +65,7 @@ jobs:
     steps:
       - name: Resolve preview eligibility
         id: eligibility
-        uses: actions/github-script@v9
+        uses: actions/github-script@v9.0.0
         with:
           script: |
             let prAuthor;
@@ -154,7 +154,7 @@ jobs:
 
       - name: Clear previous preview summary comments
         if: ${{ steps.eligibility.outputs.eligible == 'true' }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@v9.0.0
         env:
           PREVIEW_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         with:
@@ -538,7 +538,7 @@ jobs:
 
       - name: Publish preview summary comment
         if: ${{ always() }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@v9.0.0
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
@@ -681,7 +681,7 @@ jobs:
             "${{ needs.preview-plan.outputs.release_name }}"
 
       - name: Publish preview destroyed comment
-        uses: actions/github-script@v9
+        uses: actions/github-script@v9.0.0
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}

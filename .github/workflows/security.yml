@@ -118,7 +118,7 @@ jobs:
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Security Summary Comment
-        uses: actions/github-script@v9
+        uses: actions/github-script@v9.0.0
         with:
           script: |
             const statusIcon = (value) => {
