@@ -261,3 +261,7 @@ Routing-fence cleanup does not end once downstream delivery normalizes stale gam
 ## 2026-06-01 - Session-scoped reads must not guess tenant authority from runtime ids
 
 `QueryState(sessionId)` was still willing to derive tenant scope by treating the transport `sessionId` as if it were also a runtime `gameInstanceId`. Numeric identifier reuse across session, runtime, and operator surfaces is exactly the kind of shortcut that bypasses routing-fence work later if read-model paths are left behind. Session-scoped operator/debug reads should fail closed when the session shell is absent or tenantless instead of projecting a guessed Redis key from a different authority domain.
+
+## 2026-06-01 - Pre-login bootstrap resolution needs explicit shell authority too
+
+Removing transport-id fallbacks from post-login and operator paths is not enough if credential `LOGIN` can still guess a bootstrap runtime from the same numeric `sessionId`. Pre-login flows should either resolve a runtime target from the canonical bootstrap shell or fail closed; otherwise a missing shell can still reopen admission whenever a transport id happens to collide with a real runtime id.

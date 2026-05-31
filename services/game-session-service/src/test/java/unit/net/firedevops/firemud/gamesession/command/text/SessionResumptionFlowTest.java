@@ -130,6 +130,8 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
+    sessionContextService.save(bootstrapShell(1L, 1L));
+    sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     when(pointerAuthorityService.findPointer("demo", "production"))
@@ -566,6 +568,25 @@ class SessionResumptionFlowTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
+    return new SessionContext(
+        sessionId,
+        22L,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        null,
+        bootstrapGameInstanceId,
+        "demo",
+        "production",
+        1L,
+        null);
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

@@ -88,6 +88,10 @@ public final class LoginCommandHandler {
     }
 
     long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
+    if (bootstrapGameInstanceId <= 0) {
+      clearFailedLoginSessionState(numericSessionId, 0L, 0L, null, null, 0L);
+      return failure("SESSION_NOT_FOUND", "Session not found");
+    }
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
     if (maybeInstance.isEmpty()) {
       clearFailedLoginSessionState(numericSessionId, 0L, bootstrapGameInstanceId, null, null, 0L);
@@ -302,7 +306,7 @@ public final class LoginCommandHandler {
                     ? context.bootstrapGameInstanceId()
                     : context.gameInstanceId())
         .filter(candidate -> candidate > 0)
-        .orElse(sessionId);
+        .orElse(0L);
   }
 
   private boolean currentAdmissionPointerMatches(

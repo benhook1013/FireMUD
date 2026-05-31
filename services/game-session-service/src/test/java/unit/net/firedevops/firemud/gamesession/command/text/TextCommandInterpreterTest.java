@@ -146,6 +146,7 @@ class TextCommandInterpreterTest {
 
   @BeforeEach
   void setUp() {
+    sessionContextService.save(bootstrapShell(1L, 1L));
     meterRegistry.clear();
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1013,6 +1014,25 @@ class TextCommandInterpreterTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
+    return new SessionContext(
+        sessionId,
+        22L,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        null,
+        bootstrapGameInstanceId,
+        "demo",
+        "production",
+        1L,
+        null);
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

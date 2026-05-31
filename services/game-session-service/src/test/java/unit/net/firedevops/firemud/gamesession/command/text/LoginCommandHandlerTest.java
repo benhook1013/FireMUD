@@ -63,6 +63,7 @@ class LoginCommandHandlerTest {
   @BeforeEach
   void setUp() {
     meterRegistry.clear();
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(bootstrapShell(1L, 1L)));
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -311,6 +312,26 @@ class LoginCommandHandlerTest {
     verify(gameInstanceRepository).findById(99L);
     verify(gameInstanceRepository, never()).findById(12345L);
     verify(commandService).enqueue("12345", command.rawLine(), false);
+  }
+
+  @Test
+  void loginFailsClosedWhenNoBootstrapAuthorityExistsEvenIfTransportIdMatchesRuntime() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    GameInstance collidingRuntime = buildInstance(12345L, 22L, 77L);
+    when(gameInstanceRepository.findById(12345L)).thenReturn(Optional.of(collidingRuntime));
+
+    LoginCommandHandlingResult result = handler.handle("12345", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
+    assertEquals("ERROR SESSION_NOT_FOUND Session not found", joinedOutputText(result.outputs()));
+    verify(gameInstanceRepository, never()).findById(12345L);
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -615,6 +636,7 @@ class LoginCommandHandlerTest {
     instance.setId(2L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(77L);
+    when(sessionContextService.findBySessionId(2L)).thenReturn(Optional.of(bootstrapShell(2L, 2L)));
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     handler.handle("2", command, false);
 
@@ -671,6 +693,25 @@ class LoginCommandHandlerTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
+    return new SessionContext(
+        sessionId,
+        22L,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        "en-NZ",
+        bootstrapGameInstanceId,
+        "demo",
+        "production",
+        1L,
+        null);
   }
 
   private static SessionContext staleGameplayContext(long pointerVersion) {

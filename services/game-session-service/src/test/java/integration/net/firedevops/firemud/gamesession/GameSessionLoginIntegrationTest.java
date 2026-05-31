@@ -106,7 +106,7 @@ class GameSessionLoginIntegrationTest {
         GameplayWebSocketDriver.connect(
             URI.create("ws://localhost:" + port + "/ws/game"),
             java.time.Duration.ofSeconds(5),
-            java.util.Map.of("X-Game-Instance-Id", "1"))) {
+            java.util.Map.of("X-Game-Instance-Id", "1", "X-Tenant-Id", "42"))) {
       client.login("demo@example.com", "swordfish");
       payloads = client.responses();
     }
