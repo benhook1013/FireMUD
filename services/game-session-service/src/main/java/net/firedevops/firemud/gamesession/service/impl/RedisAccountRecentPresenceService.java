@@ -12,9 +12,10 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -25,7 +26,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%d";
 
   private final RedisTemplate<String, Object> redisTemplate;
-  private final SessionContextService sessionContextService;
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final GameplayPresenceService gameplayPresenceService;
   private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
   private final Duration ttl;
@@ -34,13 +35,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   @Autowired
   public RedisAccountRecentPresenceService(
       RedisTemplate<String, Object> redisTemplate,
-      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
       GameplayPresenceService gameplayPresenceService,
       AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
       PresenceProperties presenceProperties) {
     this(
         redisTemplate,
-        sessionContextService,
+        sessionRoutingNormalizationService,
         gameplayPresenceService,
         visibilityPolicyResolver,
         presenceProperties,
@@ -49,13 +50,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   RedisAccountRecentPresenceService(
       RedisTemplate<String, Object> redisTemplate,
-      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
       GameplayPresenceService gameplayPresenceService,
       AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
       PresenceProperties presenceProperties,
       LongSupplier currentTimeMillisSupplier) {
     this.redisTemplate = redisTemplate;
-    this.sessionContextService = sessionContextService;
+    this.sessionRoutingNormalizationService = sessionRoutingNormalizationService;
     this.gameplayPresenceService = gameplayPresenceService;
     this.visibilityPolicyResolver = visibilityPolicyResolver;
     this.ttl = Duration.ofMillis(presenceProperties.getRecentPresenceTtlMs());
@@ -71,7 +72,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         gameplayPresenceService.findConnectedBySessionId(context.sessionId()).orElse(null);
     AccountPresenceVisibilityPolicy policy =
         visibilityPolicyResolver.resolve(
-            context.tenantId(), context.accountId(), presence == null ? null : presence.role());
+            context.tenantId(), context.accountId(), effectivePresenceRole(context, presence));
     write(
         routingSnapshot(context, presence),
         AccountRecentPresenceDisposition.TRANSPORT_LOSS,
@@ -81,8 +82,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordActivity(long sessionId) {
-    sessionContextService
-        .findBySessionId(sessionId)
+    sessionRoutingNormalizationService
+        .resolveProjectedSessionContext(Long.toString(sessionId))
         .ifPresent(
             context -> {
               GameplayPresence presence =
@@ -92,7 +93,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                   visibilityPolicyResolver.resolve(
                       context.tenantId(),
                       context.accountId(),
-                      presence == null ? null : presence.role());
+                      effectivePresenceRole(context, presence));
               write(
                   snapshot,
                   AccountRecentPresenceDisposition.TRANSPORT_LOSS,
@@ -103,8 +104,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition) {
-    sessionContextService
-        .findBySessionId(sessionId)
+    sessionRoutingNormalizationService
+        .resolveProjectedSessionContext(Long.toString(sessionId))
         .ifPresent(
             context -> {
               GameplayPresence presence =
@@ -114,7 +115,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                   visibilityPolicyResolver.resolve(
                       context.tenantId(),
                       context.accountId(),
-                      presence == null ? null : presence.role());
+                      effectivePresenceRole(context, presence));
               write(snapshot, disposition, policy, currentTimeMillisSupplier.getAsLong());
             });
   }
@@ -166,19 +167,23 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
       return null;
     }
+    GameplayPresence effectivePresence = hasGameplayBinding(context) ? presence : null;
     long gameInstanceId =
-        presence != null && presence.gameInstanceId() > 0
-            ? presence.gameInstanceId()
+        effectivePresence != null && effectivePresence.gameInstanceId() > 0
+            ? effectivePresence.gameInstanceId()
             : context.gameInstanceId() > 0 ? context.gameInstanceId() : 0L;
     return new RoutingSnapshot(
         context.tenantId(),
         context.accountId(),
         gameInstanceId > 0 ? gameInstanceId : null,
         firstNonBlank(
-            presence == null ? null : presence.playableStateScope(), context.playableStateScope()),
-        firstNonBlank(presence == null ? null : presence.worldSlug(), context.worldSlug()),
-        firstNonBlank(presence == null ? null : presence.realmSlug(), context.realmSlug()),
-        pointerVersion(context, presence));
+            effectivePresence == null ? null : effectivePresence.playableStateScope(),
+            context.playableStateScope()),
+        firstNonBlank(
+            effectivePresence == null ? null : effectivePresence.worldSlug(), context.worldSlug()),
+        firstNonBlank(
+            effectivePresence == null ? null : effectivePresence.realmSlug(), context.realmSlug()),
+        pointerVersion(context, effectivePresence));
   }
 
   private Long pointerVersion(SessionContext context, GameplayPresence presence) {
@@ -187,6 +192,17 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
             ? presence.pointerVersion()
             : context.pointerVersion();
     return pointerVersion > 0 ? pointerVersion : null;
+  }
+
+  private GameplayPresenceRole effectivePresenceRole(
+      SessionContext context, GameplayPresence presence) {
+    return hasGameplayBinding(context) && presence != null ? presence.role() : null;
+  }
+
+  private boolean hasGameplayBinding(SessionContext context) {
+    return context.gameInstanceId() > 0
+        || context.characterId() > 0
+        || (context.roomInstanceId() != null && !context.roomInstanceId().isBlank());
   }
 
   private String firstNonBlank(String primary, String fallback) {

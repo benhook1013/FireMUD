@@ -15,6 +15,7 @@ public record WorldInstanceLifecycleSnapshotDto(
     String status,
     String remapSetId,
     String workflowId,
+    String workflowFamily,
     String workflowRunId,
     String workflowStatus) {
   public WorldInstanceLifecycleSnapshotDto(
@@ -43,6 +44,7 @@ public record WorldInstanceLifecycleSnapshotDto(
         versionStateEpoch,
         lifecycleEpoch,
         status,
+        null,
         null,
         null,
         null,
@@ -79,11 +81,12 @@ public record WorldInstanceLifecycleSnapshotDto(
         remapSetId,
         null,
         null,
+        null,
         null);
   }
 
   public WorldInstanceLifecycleSnapshotDto withWorkflowMetadata(
-      String workflowId, String workflowRunId, String workflowStatus) {
+      String workflowId, String workflowFamily, String workflowRunId, String workflowStatus) {
     return new WorldInstanceLifecycleSnapshotDto(
         tenantId,
         gameInstanceId,
@@ -99,6 +102,7 @@ public record WorldInstanceLifecycleSnapshotDto(
         status,
         remapSetId,
         workflowId,
+        workflowFamily,
         workflowRunId,
         workflowStatus);
   }

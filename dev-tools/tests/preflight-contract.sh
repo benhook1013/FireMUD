@@ -4,12 +4,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/dev-tools/deploy/preflight.py"
+WRITER="$ROOT_DIR/dev-tools/deploy/write-traffic-open-evidence.py"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
+PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
+PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -94,6 +97,13 @@ type: Opaque
 stringData:
   jwks.json: '{"keys":[]}'
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-app
+imagePullSecrets:
+  - name: ghcr-pull-hobby
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -101,6 +111,7 @@ metadata:
 spec:
   template:
     spec:
+      serviceAccountName: firemud-app
       containers:
         - name: tcp-proxy-service
           image: ghcr.io/benhook1013/tcp-proxy-service:latest
@@ -128,6 +139,7 @@ metadata:
 spec:
   template:
     spec:
+      serviceAccountName: firemud-app
       containers:
         - name: account-service
           image: ghcr.io/benhook1013/account-service:latest
@@ -196,21 +208,11 @@ if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
 PY
 
-cat >"$TRAFFIC_EVIDENCE" <<JSON
-{
-  "schemaVersion": "traffic-open-record/v1",
-  "environment": "hobby-self-hosted",
-  "eventType": "first-live",
-  "deploymentRef": "contract-hobby",
-  "assessedAt": "2026-04-22T00:00:00Z",
-  "assessedBy": "preflight-contract",
-  "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
-  "preflightReportPath": "$REPORT_PATH",
-  "evidenceRefs": [
-    "contract-test"
-  ]
-}
-JSON
+python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
+  --assessed-by preflight-contract \
+  --preflight-report "$REPORT_PATH" \
+  --evidence-ref contract-test \
+  --output "$TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-hobby.out
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
@@ -234,5 +236,66 @@ backup_003 = [
 if len(backup_003) != 1 or backup_003[0]["status"] != "pass":
     raise SystemExit(f"PREFLIGHT-BACKUP-003 did not pass: {backup_003}")
 PY
+
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
+  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
+
+python3 "$WRITER" production contract-production reopen \
+  --assessed-by preflight-contract \
+  --preflight-report "$PRODUCTION_REPORT" \
+  --backup-last-success-at "$(date -u -Is)" \
+  --backup-verify-last-success-at "$(date -u -Is)" \
+  --restore-drill-last-success-at "$(date -u -Is)" \
+  --tenant-id tenant-1 \
+  --region-id region-1 \
+  --evidence-ref contract-test \
+  --output "$PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out
+
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
+  FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
+  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$PRODUCTION_TRAFFIC_EVIDENCE" \
+  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out
+
+python3 - <<'PY' "$PRODUCTION_REPORT"
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+backup_002 = [
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-BACKUP-002"
+]
+if len(backup_002) != 1 or backup_002[0]["status"] != "pass":
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not pass: {backup_002}")
+PY
+
+for env in staging production; do
+  REPORT="$TMP_DIR/preflight-$env.json"
+  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+    FIREMUD_DEPLOYMENT_REF="contract-$env" \
+    FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
+    python3 "$SCRIPT" "$env" >/tmp/firemud-preflight-contract-"$env".out
+
+  python3 - <<'PY' "$REPORT" "$env"
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+env = sys.argv[2]
+expected_ref = f"design/operations/environments/{env}/expected-bindings.yaml"
+if report.get("expectedBindingsRef") != expected_ref:
+    raise SystemExit(f"{env}: expectedBindingsRef mismatch: {report.get('expectedBindingsRef')}")
+failures = [check for check in report["checkResults"] if check["status"] == "fail"]
+if failures:
+    raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
+PY
+done
 
 echo "preflight contract checks passed"

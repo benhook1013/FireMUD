@@ -73,6 +73,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -95,6 +96,7 @@ class TextCommandInterpreterTest {
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService = new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
@@ -132,7 +134,7 @@ class TextCommandInterpreterTest {
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
           accountRecentPresenceService,
-          sessionContextService,
+          sessionRoutingNormalizationService(),
           scriptEventPublisher);
   private final AuthoredActionCommandHandler authoredActionHandler =
       new AuthoredActionCommandHandler(
@@ -327,8 +329,8 @@ class TextCommandInterpreterTest {
         new SessionAuthenticationService(
             sessionContextService,
             gameSessionProperties,
-            gameInstanceRepository,
-            pointerAuthorityService);
+            sessionRoutingNormalizationService(),
+            gameplayPresenceLifecycleService);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
@@ -340,12 +342,15 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            sessionRoutingNormalizationService(),
             pointerAuthorityService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            sessionRoutingNormalizationService(),
             worldCatalog,
             gameLogicProperties,
             accountClient,
@@ -443,6 +448,7 @@ class TextCommandInterpreterTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
+                worldCatalog,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService,
@@ -468,6 +474,14 @@ class TextCommandInterpreterTest {
             registry,
             parser,
             meterRegistry);
+  }
+
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService() {
+    if (sessionRoutingNormalizationService == null) {
+      sessionRoutingNormalizationService =
+          new SessionRoutingNormalizationService(sessionContextService, pointerAuthorityService);
+    }
+    return sessionRoutingNormalizationService;
   }
 
   @Test

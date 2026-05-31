@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -37,6 +38,8 @@ class PlayCommandHandlerTest {
       Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService =
+      Mockito.mock(SessionRoutingNormalizationService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
@@ -74,6 +77,7 @@ class PlayCommandHandlerTest {
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            sessionRoutingNormalizationService,
             worldCatalog,
             gameLogicProperties,
             accountClient,
@@ -119,6 +123,11 @@ class PlayCommandHandlerTest {
                 .setCreated(true)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(sessionRoutingNormalizationService.normalizeProjectedContext(
+            Mockito.any(SessionContext.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -366,6 +375,72 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playIgnoresStaleExistingBindingAfterNormalization() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    SessionContext staleExisting =
+        new SessionContext(
+            9L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "demo",
+            1L,
+            "room-stale",
+            "old-jwt",
+            null,
+            1L,
+            "demo",
+            "production",
+            0L,
+            "SHARED");
+    SessionContext clearedExisting =
+        new SessionContext(9L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "old-jwt", 1L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("demo")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.of(staleExisting));
+    when(sessionAuthenticationService.normalizeResolvedContext(staleExisting))
+        .thenReturn(clearedExisting);
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
+    Mockito.verify(sessionContextService)
+        .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .recordDisconnected(Mockito.eq(9L), Mockito.any());
+    Mockito.verify(sessionContextService, never()).deleteBySessionId(22L, 9L);
+    Mockito.verify(sessionAuthenticationService).normalizeResolvedContext(staleExisting);
+  }
+
+  @Test
   void firstPartyPlayRejectsMismatchedConnectScope() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
@@ -586,6 +661,53 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void firstPartyPlayFallsBackToPersistedSelectorWhenRegistryEntryIsMissing() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "first-party:123",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L,
+            "sandbox",
+            "preview",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7002")
+                    .setName("Sora")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 41L, 7002L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+  }
+
+  @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
     SessionContext context =
         new SessionContext(
@@ -667,6 +789,8 @@ class PlayCommandHandlerTest {
                 .counter("gamesession.session.resume_denied", "reason", "tenant_unavailable")
                 .count())
         .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "tenant_unavailable");
   }
 
   @Test
@@ -695,6 +819,8 @@ class PlayCommandHandlerTest {
                 .counter("gamesession.session.resume_denied", "reason", "authority_unavailable")
                 .count())
         .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "authority_unavailable");
   }
 
   @Test

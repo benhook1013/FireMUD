@@ -107,7 +107,8 @@ final class AutomationPatchControlPlaneService {
                   .setPublication(toProto(summary.publication()))
                   .setWorkflowId(workflowMetadata.workflowId())
                   .setWorkflowRunId(workflowMetadata.workflowRunId())
-                  .setWorkflowStatus(workflowMetadata.workflowStatus());
+                  .setWorkflowStatus(workflowMetadata.workflowStatus())
+                  .setWorkflowFamily(workflowMetadata.workflowFamily());
             },
             () ->
                 response.setError(
@@ -483,6 +484,7 @@ final class AutomationPatchControlPlaneService {
         .setWorkflowId(workflowMetadata.workflowId())
         .setWorkflowRunId(workflowMetadata.workflowRunId())
         .setWorkflowStatus(workflowMetadata.workflowStatus())
+        .setWorkflowFamily(workflowMetadata.workflowFamily())
         .build();
   }
 
@@ -845,7 +847,10 @@ final class AutomationPatchControlPlaneService {
         continue;
       }
       GetGameInstanceRuntimeStateResponse runtime =
-          gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, targetGameInstanceId);
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              tenantId,
+              targetGameInstanceId,
+              AutomationControlPlaneSupport.emptyIfNull(summary.targetRegionId()));
       if (runtime == null
           || runtime.hasError()
           || AutomationControlPlaneSupport.emptyIfNull(

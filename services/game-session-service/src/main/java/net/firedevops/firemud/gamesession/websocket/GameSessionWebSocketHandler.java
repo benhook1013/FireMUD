@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -47,6 +48,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private final TextCommandInterpreter interpreter;
   private final LookCommandHandler lookHandler;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
@@ -65,6 +67,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   public GameSessionWebSocketHandler(
       TextCommandInterpreter interpreter,
       LookCommandHandler lookHandler,
+      SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
@@ -80,6 +83,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandParser parser) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
+    this.sessionAuthenticationService = sessionAuthenticationService;
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
@@ -140,8 +144,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       recordGameplayActivity(sessionId, interpretation);
-      Optional<SessionContext> maybeContext =
-          parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
+      Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(sessionId);
       PresentationProperties effectivePresentation =
           settingsResolver.presentation(maybeContext.orElse(null));
       java.util.List<PlayerOutput> outputs =
@@ -238,11 +241,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String resolveLocaleTag(WebSocketSession session, String sessionId) {
-    return parseNumericSessionId(sessionId)
-        .flatMap(sessionContextService::findBySessionId)
+    return resolveNormalizedSessionContext(sessionId)
         .map(SessionContext::localeTag)
         .filter(StringUtils::hasText)
         .orElse(resolveLocaleTag(session));
+  }
+
+  private Optional<SessionContext> resolveNormalizedSessionContext(String sessionId) {
+    return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionId);
   }
 
   private String formatResponse(
@@ -315,8 +321,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!shouldBuffer(interpretation, replayEntries)) {
       return;
     }
-    sessionContextService
-        .findBySessionId(Long.parseLong(sessionId))
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context ->
@@ -341,8 +346,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         || !reconnectRestoreRequested) {
       return;
     }
-    sessionContextService
-        .findBySessionId(Long.parseLong(sessionId))
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context -> {
@@ -495,8 +499,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
     GameplayLoggingContext gameplayContext =
-        parseNumericSessionId(correlationId)
-            .flatMap(sessionContextService::findBySessionId)
+        resolveNormalizedSessionContext(correlationId)
             .map(GameplayLoggingContext::from)
             .orElseGet(GameplayLoggingContext::empty);
     return new CombinedLoggingContext(runtimeContext, gameplayContext);
@@ -520,8 +523,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!StringUtils.hasText(localeTag)) {
       return;
     }
-    parseNumericSessionId(sessionId)
-        .flatMap(sessionContextService::findBySessionId)
+    resolveNormalizedSessionContext(sessionId)
         .filter(context -> !StringUtils.hasText(context.localeTag()))
         .ifPresent(
             context ->
@@ -541,7 +543,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                         context.worldSlug(),
                         context.realmSlug(),
                         context.pointerVersion(),
-                        context.playableStateScope())));
+                        context.playableStateScope(),
+                        context.connectScopeId(),
+                        context.connectRequestId())));
   }
 
   private PlayerOutput renderReconnectLook(String sessionId) {
@@ -573,6 +577,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 resolveWorldSlug(session),
                 resolveRealmSlug(session),
                 resolvePointerVersion(session),
+                null,
+                null,
                 resolveLocaleTag(session)));
         return;
       }
@@ -584,6 +590,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               resolveWorldSlug(session),
               resolveRealmSlug(session),
               resolvePointerVersion(session),
+              null,
+              null,
               resolveLocaleTag(session)));
     } catch (NumberFormatException ex) {
       logger.debug(
@@ -616,6 +624,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               connectContext.worldSlug(),
               connectContext.realmSlug(),
               connectContext.pointerVersion(),
+              connectContext.connectScopeId(),
+              connectContext.connectRequestId(),
               resolveLocaleTag(session)));
       return;
     }
@@ -627,13 +637,47 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             connectContext.worldSlug(),
             connectContext.realmSlug(),
             connectContext.pointerVersion(),
+            connectContext.connectScopeId(),
+            connectContext.connectRequestId(),
             resolveLocaleTag(session)));
   }
 
   private void maybeRefreshBootstrapShell(SessionContext existing, SessionContext incomingShell) {
     if (sameBootstrapRoute(existing, incomingShell)) {
-      if (StringUtils.hasText(incomingShell.localeTag())
-          && !incomingShell.localeTag().equals(existing.localeTag())) {
+      boolean localeChanged =
+          StringUtils.hasText(incomingShell.localeTag())
+              && !incomingShell.localeTag().equals(existing.localeTag());
+      boolean selectorChanged =
+          !java.util.Objects.equals(incomingShell.connectScopeId(), existing.connectScopeId())
+              || !java.util.Objects.equals(
+                  incomingShell.connectRequestId(), existing.connectRequestId());
+      if (selectorChanged && hasAuthenticatedOrGameplayBinding(existing)) {
+        gameplayPresenceLifecycleService.clearGameplayBinding(
+            existing, "FIRST_PARTY_SELECTOR_CHANGED");
+        sessionContextService.save(
+            new SessionContext(
+                existing.sessionId(),
+                existing.tenantId(),
+                0L,
+                null,
+                0L,
+                null,
+                0L,
+                null,
+                null,
+                StringUtils.hasText(incomingShell.localeTag())
+                    ? incomingShell.localeTag()
+                    : existing.localeTag(),
+                existing.bootstrapGameInstanceId(),
+                existing.worldSlug(),
+                existing.realmSlug(),
+                existing.pointerVersion(),
+                null,
+                incomingShell.connectScopeId(),
+                incomingShell.connectRequestId()));
+        return;
+      }
+      if (localeChanged || selectorChanged) {
         sessionContextService.save(
             new SessionContext(
                 existing.sessionId(),
@@ -650,10 +694,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 existing.worldSlug(),
                 existing.realmSlug(),
                 existing.pointerVersion(),
-                existing.playableStateScope()));
+                existing.playableStateScope(),
+                incomingShell.connectScopeId(),
+                incomingShell.connectRequestId()));
       }
       return;
     }
+    gameplayPresenceLifecycleService.clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     sessionContextService.save(
         new SessionContext(
             incomingShell.sessionId(),
@@ -670,7 +717,17 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             incomingShell.worldSlug(),
             incomingShell.realmSlug(),
             incomingShell.pointerVersion(),
-            null));
+            null,
+            incomingShell.connectScopeId(),
+            incomingShell.connectRequestId()));
+  }
+
+  private boolean hasAuthenticatedOrGameplayBinding(SessionContext context) {
+    return context.accountId() > 0
+        || context.characterId() > 0
+        || context.gameInstanceId() > 0
+        || StringUtils.hasText(context.roomInstanceId())
+        || StringUtils.hasText(context.jwt());
   }
 
   private boolean sameBootstrapRoute(SessionContext existing, SessionContext incomingShell) {
@@ -699,6 +756,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String worldSlug,
       String realmSlug,
       long pointerVersion,
+      String connectScopeId,
+      String connectRequestId,
       String localeTag) {
     return new SessionContext(
         sessionId,
@@ -715,7 +774,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         worldSlug,
         realmSlug,
         pointerVersion,
-        null);
+        null,
+        connectScopeId,
+        connectRequestId);
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {

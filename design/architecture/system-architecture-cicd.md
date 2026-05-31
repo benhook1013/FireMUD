@@ -12,7 +12,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
-- **Perform deep static code scanning** with CodeQL on `main`, scheduled runs, and manual dispatches, and run open source **license checks** during pull request validation.
+- **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate only for `main` pull requests, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
 - **Run AI-assisted pull request review** with CodeRabbit on `develop` and `main` pull requests using repository-local review guidance plus inherited organization defaults.
 - **Benchmark repository hardening** with OSSF Scorecard on `develop` and `main` pushes plus the weekly scorecard schedule.
 - **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
@@ -94,7 +94,7 @@ The example above checks out the repository, sets up Java 21, and runs a Gradle 
 Other workflows support additional automation:
 
 - [`docs.yml`](../../.github/workflows/docs.yml) uses the **lychee** link checker (configured via `.lycheeignore`) before building and publishing the MkDocs-rendered architecture site to GitHub Pages. Publication is allowed only from `develop` and `main`; manual runs from other branches may validate the build but must not publish Pages.
-- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on pushes to `main`, the weekly CodeQL schedule, and manual workflow dispatches.
+- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on pull requests targeting `develop` and `main`, on pushes to `main`, and on the weekly CodeQL schedule plus manual workflow dispatches. The dedicated `CodeQL Gate` is enforced only for pull requests targeting `main`, so `develop` pull requests still receive CodeQL findings without carrying the merge gate.
 - [`.coderabbit.yaml`](../../.coderabbit.yaml) configures CodeRabbit pull request review behavior for the repository. CodeRabbit inherits organization-level defaults, uses the repository-local path instructions and summary guidance, auto-reviews non-draft pull requests targeting `develop` and `main`, and is currently configured as advisory rather than a merge-blocking "request changes" reviewer.
 - [`scorecards.yml`](../../.github/workflows/scorecards.yml) runs OSSF Scorecard on `develop` and `main` pushes plus a weekly schedule, uploads the SARIF artifact, and publishes the findings into GitHub code scanning.
 - [`license-scan.yml`](../../.github/workflows/license-scan.yml) checks open source dependencies for license compliance across the currently supported release dependency ecosystems (`Gradle` and `NPM`).

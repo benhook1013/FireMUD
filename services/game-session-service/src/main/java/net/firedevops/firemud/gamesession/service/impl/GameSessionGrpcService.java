@@ -5,10 +5,11 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.RealmView;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.WorldView;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -497,8 +498,8 @@ public final class GameSessionGrpcService
                     .map(
                         world ->
                             net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
-                                .setWorldSlug(world.getSlug())
-                                .setDisplayName(world.getDisplayName())
+                                .setWorldSlug(world.slug())
+                                .setDisplayName(world.displayName())
                                 .build())
                     .toList())
             .build();
@@ -512,7 +513,7 @@ public final class GameSessionGrpcService
       ListGameplayRealmsRequest request,
       StreamObserver<ListGameplayRealmsResponse> responseObserver) {
     try {
-      GameplayCatalogProperties.World world =
+      WorldView world =
           gameplayWorldCatalog
               .resolveWorld(request.getWorldSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
@@ -520,7 +521,7 @@ public final class GameSessionGrpcService
           ListGameplayRealmsResponse.newBuilder()
               .addAllRealms(
                   gameplayWorldCatalog.visibleRealms(world).stream()
-                      .map(realm -> toGameplayRealm(world.getSlug(), realm))
+                      .map(realm -> toGameplayRealm(world.slug(), realm))
                       .toList())
               .build();
       responseObserver.onNext(response);
@@ -541,11 +542,11 @@ public final class GameSessionGrpcService
       GetAdmissionPointerRequest request,
       StreamObserver<GetAdmissionPointerResponse> responseObserver) {
     try {
-      GameplayCatalogProperties.World world =
+      WorldView world =
           gameplayWorldCatalog
               .resolveWorld(request.getWorldSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
-      GameplayCatalogProperties.Realm realm =
+      RealmView realm =
           gameplayWorldCatalog
               .resolveRealm(world, request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
@@ -553,18 +554,18 @@ public final class GameSessionGrpcService
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(
                   net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
-                      .setWorldSlug(world.getSlug())
-                      .setWorldDisplayName(world.getDisplayName())
-                      .setRealmSlug(realm.getSlug())
-                      .setRealmDisplayName(realm.getDisplayName())
-                      .setTenantId(Long.toString(realm.getTenantId()))
-                      .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
-                      .setPointerVersion(realm.getPointerVersion())
-                      .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
-                      .setVisible(realm.isVisible())
-                      .setPublicProductionRealm(realm.isPublicProductionRealm())
-                      .setStateScope(realm.getStateScope().name())
-                      .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
+                      .setWorldSlug(world.slug())
+                      .setWorldDisplayName(world.displayName())
+                      .setRealmSlug(realm.slug())
+                      .setRealmDisplayName(realm.displayName())
+                      .setTenantId(Long.toString(realm.tenantId()))
+                      .setGameInstanceId(Long.toString(realm.gameInstanceId()))
+                      .setPointerVersion(realm.pointerVersion())
+                      .setRequiresCharacterSelection(realm.requiresCharacterSelection())
+                      .setVisible(realm.visible())
+                      .setPublicProductionRealm(realm.publicProductionRealm())
+                      .setStateScope(realm.stateScope())
+                      .setCharacterCreationPolicy(realm.characterCreationPolicy())
                       .build())
               .build();
       responseObserver.onNext(response);
@@ -737,19 +738,19 @@ public final class GameSessionGrpcService
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(
-      String worldSlug, GameplayCatalogProperties.Realm realm) {
+      String worldSlug, RealmView realm) {
     return net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
         .setWorldSlug(worldSlug)
-        .setRealmSlug(realm.getSlug())
-        .setDisplayName(realm.getDisplayName())
-        .setTenantId(Long.toString(realm.getTenantId()))
-        .setGameInstanceId(Long.toString(realm.getGameInstanceId()))
-        .setPointerVersion(realm.getPointerVersion())
-        .setRequiresCharacterSelection(realm.isRequiresCharacterSelection())
-        .setVisible(realm.isVisible())
-        .setPublicProductionRealm(realm.isPublicProductionRealm())
-        .setStateScope(realm.getStateScope().name())
-        .setCharacterCreationPolicy(realm.getCharacterCreationPolicy().name())
+        .setRealmSlug(realm.slug())
+        .setDisplayName(realm.displayName())
+        .setTenantId(Long.toString(realm.tenantId()))
+        .setGameInstanceId(Long.toString(realm.gameInstanceId()))
+        .setPointerVersion(realm.pointerVersion())
+        .setRequiresCharacterSelection(realm.requiresCharacterSelection())
+        .setVisible(realm.visible())
+        .setPublicProductionRealm(realm.publicProductionRealm())
+        .setStateScope(realm.stateScope())
+        .setCharacterCreationPolicy(realm.characterCreationPolicy())
         .build();
   }
 

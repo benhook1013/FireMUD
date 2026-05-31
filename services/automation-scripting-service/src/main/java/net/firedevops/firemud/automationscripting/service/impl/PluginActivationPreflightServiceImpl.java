@@ -89,9 +89,11 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       return;
     }
 
-    RuntimeScope runtimeScope = currentRuntimeScope(tenantId, gameInstanceId);
-    Map<String, String> activePluginVersions =
-        activePluginVersions(tenantId, gameInstanceId, runtimeScope);
+    List<PluginRuntimeState> runtimeStates =
+        pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+    RuntimeScope runtimeScope =
+        currentRuntimeScope(tenantId, gameInstanceId, preferredRuntimeRegionId(runtimeStates));
+    Map<String, String> activePluginVersions = activePluginVersions(runtimeStates, runtimeScope);
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
             .filter(ResolvedBinding::enabled)
@@ -158,10 +160,9 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
   }
 
   private Map<String, String> activePluginVersions(
-      String tenantId, String gameInstanceId, RuntimeScope runtimeScope) {
+      List<PluginRuntimeState> runtimeStates, RuntimeScope runtimeScope) {
     Map<String, String> active = new LinkedHashMap<>();
-    for (PluginRuntimeState state :
-        pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
+    for (PluginRuntimeState state : runtimeStates) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
@@ -177,15 +178,37 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     return active;
   }
 
-  private RuntimeScope currentRuntimeScope(String tenantId, String gameInstanceId) {
+  private RuntimeScope currentRuntimeScope(
+      String tenantId, String gameInstanceId, String preferredRegionId) {
     GetGameInstanceRuntimeStateResponse runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId, "");
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+            tenantId, gameInstanceId, preferredRegionId);
     if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
       return RuntimeScope.UNKNOWN;
     }
     return new RuntimeScope(
         blankToEmpty(runtime.getRuntimeState().getRegionId()),
         runtime.getRuntimeState().getRegionEpoch());
+  }
+
+  private static String preferredRuntimeRegionId(List<PluginRuntimeState> runtimeStates) {
+    String preferredRegionId = "";
+    long preferredRegionEpoch = 0L;
+    for (PluginRuntimeState state : runtimeStates) {
+      if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      String runtimeRegionId = blankToEmpty(state.getRuntimeRegionId());
+      long runtimeRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
+      if (runtimeRegionId.isBlank() || runtimeRegionEpoch <= 0) {
+        continue;
+      }
+      if (runtimeRegionEpoch > preferredRegionEpoch) {
+        preferredRegionId = runtimeRegionId;
+        preferredRegionEpoch = runtimeRegionEpoch;
+      }
+    }
+    return preferredRegionId;
   }
 
   private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {

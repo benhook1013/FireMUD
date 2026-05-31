@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -19,18 +18,24 @@ import org.mockito.Mockito;
 class SessionAuthenticationServiceTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
-  private final GameInstanceRepository gameInstanceRepository =
-      Mockito.mock(GameInstanceRepository.class);
   private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      Mockito.mock(GameplayPresenceLifecycleService.class);
   private final GameSessionProperties properties = new GameSessionProperties();
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private SessionAuthenticationService service;
 
   @BeforeEach
   void setUp() {
+    sessionRoutingNormalizationService =
+        new SessionRoutingNormalizationService(sessionContextService, pointerAuthorityService);
     service =
         new SessionAuthenticationService(
-            sessionContextService, properties, gameInstanceRepository, pointerAuthorityService);
+            sessionContextService,
+            properties,
+            sessionRoutingNormalizationService,
+            gameplayPresenceLifecycleService);
   }
 
   @Test
@@ -65,6 +70,7 @@ class SessionAuthenticationServiceTest {
     assertEquals(0L, resolved.orElseThrow().characterId());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
     assertEquals(123L, captor.getValue().accountId());
     assertEquals(0L, captor.getValue().gameInstanceId());
     assertEquals(0L, captor.getValue().pointerVersion());
@@ -85,6 +91,8 @@ class SessionAuthenticationServiceTest {
     assertEquals(123L, resolved.orElseThrow().accountId());
     assertEquals(0L, resolved.orElseThrow().gameInstanceId());
     verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(incomplete, "STALE_ADMISSION_POINTER");
   }
 
   @Test
@@ -116,6 +124,8 @@ class SessionAuthenticationServiceTest {
     assertTrue(resolved.isPresent());
     assertSame(current, resolved.orElseThrow());
     verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
   }
 
   @Test

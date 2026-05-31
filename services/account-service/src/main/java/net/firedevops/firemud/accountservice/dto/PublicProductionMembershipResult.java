@@ -7,4 +7,6 @@ public record PublicProductionMembershipResult(
     String realmSlug,
     long membershipVersion,
     boolean created,
-    String evaluatedAt) {}
+    String requestId,
+    String evaluatedAt,
+    boolean replayed) {}

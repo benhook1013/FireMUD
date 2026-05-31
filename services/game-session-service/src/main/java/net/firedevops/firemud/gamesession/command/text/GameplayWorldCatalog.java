@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 /** Resolves the canonical public world list and selector forms used by WORLDS/PLAY. */
 @Component
 public final class GameplayWorldCatalog {
-  private final Supplier<List<GameplayCatalogProperties.World>> worldSupplier;
+  private final Supplier<List<WorldView>> worldSupplier;
 
   @Autowired
   public GameplayWorldCatalog(GameplayAdmissionPointerAuthorityService authorityService) {
@@ -29,7 +29,7 @@ public final class GameplayWorldCatalog {
 
   public GameplayWorldCatalog(GameplayCatalogProperties properties) {
     Objects.requireNonNull(properties, "properties must not be null");
-    this.worldSupplier = () -> normalizeWorlds(properties.getWorlds());
+    this.worldSupplier = () -> normalizePropertyWorlds(properties.getWorlds());
   }
 
   public WorldsViewOutput browseView() {
@@ -38,14 +38,14 @@ public final class GameplayWorldCatalog {
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
     return resolveWorld(worldSelector)
-        .map(world -> new RealmBrowseViewOutput(world.getSlug(), realmEntries(world)));
+        .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
 
-  public Optional<GameplayCatalogProperties.World> resolveWorld(String selector) {
+  public Optional<WorldView> resolveWorld(String selector) {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<GameplayCatalogProperties.World> worlds = visibleWorlds();
+    List<WorldView> worlds = visibleWorlds();
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= worlds.size()) {
@@ -56,50 +56,47 @@ public final class GameplayWorldCatalog {
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
     return worlds.stream()
-        .filter(world -> normalized.equals(world.getSlug().toLowerCase(Locale.ROOT)))
+        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
         .findFirst();
   }
 
-  public Optional<GameplayCatalogProperties.Realm> resolveRealm(
-      GameplayCatalogProperties.World world, String selector) {
+  public Optional<RealmView> resolveRealm(WorldView world, String selector) {
     if (world == null || selector == null || selector.isBlank()) {
       return Optional.empty();
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
     return visibleRealms(world).stream()
-        .filter(realm -> normalized.equals(realm.getSlug().toLowerCase(Locale.ROOT)))
+        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
         .findFirst();
   }
 
-  public boolean hasVisibleRealm(GameplayCatalogProperties.World world, String selector) {
+  public boolean hasVisibleRealm(WorldView world, String selector) {
     return resolveRealm(world, selector).isPresent();
   }
 
-  public Optional<GameplayCatalogProperties.Realm> resolveDefaultRealm(
-      GameplayCatalogProperties.World world) {
+  public Optional<RealmView> resolveDefaultRealm(WorldView world) {
     if (world == null) {
       return Optional.empty();
     }
-    List<GameplayCatalogProperties.Realm> visibleRealms = visibleRealms(world);
+    List<RealmView> visibleRealms = visibleRealms(world);
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
     return visibleRealms.stream()
-        .filter(GameplayCatalogProperties.Realm::isPublicProductionRealm)
+        .filter(RealmView::publicProductionRealm)
         .findFirst()
         .or(() -> Optional.of(visibleRealms.get(0)));
   }
 
-  public boolean requiresExplicitRealmSelection(GameplayCatalogProperties.World world) {
+  public boolean requiresExplicitRealmSelection(WorldView world) {
     return visibleRealms(world).size() > 1;
   }
 
-  public Optional<GameplayCatalogProperties.Realm> resolveRealmByRuntimeTarget(
-      long tenantId, long gameInstanceId) {
+  public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
     return visibleWorlds().stream()
         .flatMap(world -> visibleRealms(world).stream())
-        .filter(realm -> realm.getTenantId() == tenantId)
-        .filter(realm -> realm.getGameInstanceId() == gameInstanceId)
+        .filter(realm -> realm.tenantId() == tenantId)
+        .filter(realm -> realm.gameInstanceId() == gameInstanceId)
         .findFirst();
   }
 
@@ -108,15 +105,15 @@ public final class GameplayWorldCatalog {
         .flatMap(
             world ->
                 visibleRealms(world).stream()
-                    .filter(realm -> realm.getTenantId() == tenantId)
-                    .filter(realm -> realm.getGameInstanceId() == gameInstanceId)
+                    .filter(realm -> realm.tenantId() == tenantId)
+                    .filter(realm -> realm.gameInstanceId() == gameInstanceId)
                     .map(
                         realm ->
                             new RuntimeRealmTarget(
-                                world.getSlug(),
-                                world.getDisplayName(),
-                                realm.getSlug(),
-                                realm.getDisplayName())))
+                                world.slug(),
+                                world.displayName(),
+                                realm.slug(),
+                                realm.displayName())))
         .findFirst();
   }
 
@@ -127,85 +124,116 @@ public final class GameplayWorldCatalog {
     String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
     String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
     return visibleWorlds().stream()
-        .filter(world -> normalizedWorld.equals(world.getSlug().toLowerCase(Locale.ROOT)))
+        .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
         .flatMap(
             world ->
                 visibleRealms(world).stream()
-                    .filter(
-                        realm -> normalizedRealm.equals(realm.getSlug().toLowerCase(Locale.ROOT)))
+                    .filter(realm -> normalizedRealm.equals(realm.slug().toLowerCase(Locale.ROOT)))
                     .map(
                         realm ->
                             new RuntimeRealmTarget(
-                                world.getSlug(),
-                                world.getDisplayName(),
-                                realm.getSlug(),
-                                realm.getDisplayName())))
+                                world.slug(),
+                                world.displayName(),
+                                realm.slug(),
+                                realm.displayName())))
         .findFirst();
   }
 
-  public List<GameplayCatalogProperties.Realm> visibleRealms(
-      GameplayCatalogProperties.World world) {
-    if (world == null || world.getRealms() == null) {
+  public List<RealmView> visibleRealms(WorldView world) {
+    if (world == null || world.realms() == null) {
       return List.of();
     }
-    return world.getRealms().stream()
-        .filter(Objects::nonNull)
-        .filter(GameplayCatalogProperties.Realm::isVisible)
-        .toList();
+    return world.realms().stream().filter(RealmView::visible).toList();
   }
 
-  public List<GameplayCatalogProperties.World> visibleWorlds() {
+  public List<WorldView> visibleWorlds() {
     return normalizeWorlds(worldSupplier.get());
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<GameplayCatalogProperties.World> worlds = visibleWorlds();
+    List<WorldView> worlds = visibleWorlds();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (int i = 0; i < worlds.size(); i++) {
-      GameplayCatalogProperties.World world = worlds.get(i);
-      GameplayCatalogProperties.Realm defaultRealm = defaultRealm(world);
+      WorldView world = worlds.get(i);
+      RealmView defaultRealm = defaultRealm(world);
       entries.add(
           new WorldsViewOutput.WorldEntry(
               i + 1,
-              world.getSlug(),
-              world.getDisplayName(),
-              defaultRealm.getGameInstanceId(),
-              defaultRealm.isRequiresCharacterSelection()));
+              world.slug(),
+              world.displayName(),
+              defaultRealm.gameInstanceId(),
+              defaultRealm.requiresCharacterSelection()));
     }
     return List.copyOf(entries);
   }
 
-  private List<RealmBrowseViewOutput.RealmEntry> realmEntries(
-      GameplayCatalogProperties.World world) {
-    List<GameplayCatalogProperties.Realm> realms = visibleRealms(world);
+  private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
+    List<RealmView> realms = visibleRealms(world);
     ArrayList<RealmBrowseViewOutput.RealmEntry> entries = new ArrayList<>(realms.size());
     for (int i = 0; i < realms.size(); i++) {
-      GameplayCatalogProperties.Realm realm = realms.get(i);
+      RealmView realm = realms.get(i);
       entries.add(
           new RealmBrowseViewOutput.RealmEntry(
               i + 1,
-              realm.getSlug(),
-              realm.getDisplayName(),
-              realm.getGameInstanceId(),
-              realm.isRequiresCharacterSelection(),
-              realm.getStateScope().name(),
-              realm.getCharacterCreationPolicy().name()));
+              realm.slug(),
+              realm.displayName(),
+              realm.gameInstanceId(),
+              realm.requiresCharacterSelection(),
+              realm.stateScope(),
+              realm.characterCreationPolicy()));
     }
     return List.copyOf(entries);
   }
 
-  private GameplayCatalogProperties.Realm defaultRealm(GameplayCatalogProperties.World world) {
+  private RealmView defaultRealm(WorldView world) {
     return resolveDefaultRealm(world)
         .orElseGet(
             () -> {
-              GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-              realm.setSlug("production");
-              realm.setDisplayName("Live Realm");
-              return realm;
+              return new RealmView(
+                  "production", "Live Realm", 0L, 0L, 1L, true, true, false, "SHARED", "ALLOW_NEW");
             });
   }
 
-  private static List<GameplayCatalogProperties.World> normalizeWorlds(
+  private static List<WorldView> normalizeWorlds(List<WorldView> worlds) {
+    if (worlds == null) {
+      return List.of();
+    }
+    return worlds.stream()
+        .filter(Objects::nonNull)
+        .filter(world -> world.slug() != null && !world.slug().isBlank())
+        .map(GameplayWorldCatalog::copyWorldView)
+        .toList();
+  }
+
+  private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
+    Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      MutableWorldAccumulator world =
+          worlds.computeIfAbsent(
+              pointer.worldSlug(),
+              ignored ->
+                  new MutableWorldAccumulator(
+                      pointer.worldSlug(), pointer.worldDisplayName(), new ArrayList<>()));
+      world.realms.add(
+          new RealmView(
+              pointer.realmSlug(),
+              pointer.realmDisplayName(),
+              pointer.tenantId(),
+              pointer.gameInstanceId(),
+              pointer.pointerVersion(),
+              pointer.visible(),
+              pointer.publicProductionRealm(),
+              pointer.requiresCharacterSelection(),
+              pointer.stateScope(),
+              pointer.characterCreationPolicy()));
+    }
+    return normalizeWorlds(
+        worlds.values().stream()
+            .map(world -> new WorldView(world.slug, world.displayName, world.realms))
+            .toList());
+  }
+
+  private static List<WorldView> normalizePropertyWorlds(
       List<GameplayCatalogProperties.World> worlds) {
     if (worlds == null) {
       return List.of();
@@ -217,43 +245,8 @@ public final class GameplayWorldCatalog {
         .toList();
   }
 
-  private static List<GameplayCatalogProperties.World> toWorlds(
-      List<GameplayAdmissionPointerSnapshot> pointers) {
-    Map<String, GameplayCatalogProperties.World> worlds = new LinkedHashMap<>();
-    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      GameplayCatalogProperties.World world =
-          worlds.computeIfAbsent(
-              pointer.worldSlug(),
-              ignored -> {
-                GameplayCatalogProperties.World entry = new GameplayCatalogProperties.World();
-                entry.setSlug(pointer.worldSlug());
-                entry.setDisplayName(pointer.worldDisplayName());
-                entry.setRealms(new ArrayList<>());
-                return entry;
-              });
-      GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-      realm.setSlug(pointer.realmSlug());
-      realm.setDisplayName(pointer.realmDisplayName());
-      realm.setTenantId(pointer.tenantId());
-      realm.setGameInstanceId(pointer.gameInstanceId());
-      realm.setPointerVersion(pointer.pointerVersion());
-      realm.setVisible(pointer.visible());
-      realm.setPublicProductionRealm(pointer.publicProductionRealm());
-      realm.setRequiresCharacterSelection(pointer.requiresCharacterSelection());
-      realm.setStateScope(GameplayCatalogProperties.RealmStateScope.valueOf(pointer.stateScope()));
-      realm.setCharacterCreationPolicy(
-          GameplayCatalogProperties.CharacterCreationPolicy.valueOf(
-              pointer.characterCreationPolicy()));
-      world.getRealms().add(realm);
-    }
-    return normalizeWorlds(new ArrayList<>(worlds.values()));
-  }
-
-  private static GameplayCatalogProperties.World copyWorld(GameplayCatalogProperties.World input) {
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug(input.getSlug());
-    world.setDisplayName(input.getDisplayName());
-    ArrayList<GameplayCatalogProperties.Realm> realms = new ArrayList<>();
+  private static WorldView copyWorld(GameplayCatalogProperties.World input) {
+    ArrayList<RealmView> realms = new ArrayList<>();
     if (input.getRealms() != null) {
       for (GameplayCatalogProperties.Realm realm : input.getRealms()) {
         if (realm != null) {
@@ -261,25 +254,85 @@ public final class GameplayWorldCatalog {
         }
       }
     }
-    world.setRealms(realms);
-    return world;
+    return new WorldView(input.getSlug(), input.getDisplayName(), realms);
   }
 
-  private static GameplayCatalogProperties.Realm copyRealm(GameplayCatalogProperties.Realm input) {
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug(input.getSlug());
-    realm.setDisplayName(input.getDisplayName());
-    realm.setTenantId(input.getTenantId());
-    realm.setGameInstanceId(input.getGameInstanceId());
-    realm.setPointerVersion(input.getPointerVersion());
-    realm.setVisible(input.isVisible());
-    realm.setPublicProductionRealm(input.isPublicProductionRealm());
-    realm.setRequiresCharacterSelection(input.isRequiresCharacterSelection());
-    realm.setStateScope(input.getStateScope());
-    realm.setCharacterCreationPolicy(input.getCharacterCreationPolicy());
-    return realm;
+  private static WorldView copyWorldView(WorldView input) {
+    return new WorldView(
+        input.slug(),
+        input.displayName(),
+        input.realms() == null
+            ? List.of()
+            : input.realms().stream()
+                .filter(Objects::nonNull)
+                .map(GameplayWorldCatalog::copyRealmView)
+                .toList());
   }
+
+  private static RealmView copyRealm(GameplayCatalogProperties.Realm input) {
+    String stateScope =
+        input.getStateScope() == null ? "UNSPECIFIED" : input.getStateScope().name();
+    String characterCreationPolicy =
+        input.getCharacterCreationPolicy() == null
+            ? "UNSPECIFIED"
+            : input.getCharacterCreationPolicy().name();
+    return new RealmView(
+        input.getSlug(),
+        input.getDisplayName(),
+        input.getTenantId(),
+        input.getGameInstanceId(),
+        input.getPointerVersion(),
+        input.isVisible(),
+        input.isPublicProductionRealm(),
+        input.isRequiresCharacterSelection(),
+        stateScope,
+        characterCreationPolicy);
+  }
+
+  private static RealmView copyRealmView(RealmView input) {
+    return new RealmView(
+        input.slug(),
+        input.displayName(),
+        input.tenantId(),
+        input.gameInstanceId(),
+        input.pointerVersion(),
+        input.visible(),
+        input.publicProductionRealm(),
+        input.requiresCharacterSelection(),
+        input.stateScope(),
+        input.characterCreationPolicy());
+  }
+
+  public record WorldView(String slug, String displayName, List<RealmView> realms) {
+    public WorldView {
+      realms = realms == null ? List.of() : List.copyOf(realms);
+    }
+  }
+
+  public record RealmView(
+      String slug,
+      String displayName,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean visible,
+      boolean publicProductionRealm,
+      boolean requiresCharacterSelection,
+      String stateScope,
+      String characterCreationPolicy) {}
 
   public record RuntimeRealmTarget(
       String worldSlug, String worldDisplayName, String realmSlug, String realmDisplayName) {}
+
+  private static final class MutableWorldAccumulator {
+    private final String slug;
+    private final String displayName;
+    private final List<RealmView> realms;
+
+    private MutableWorldAccumulator(String slug, String displayName, List<RealmView> realms) {
+      this.slug = slug;
+      this.displayName = displayName;
+      this.realms = realms;
+    }
+  }
 }

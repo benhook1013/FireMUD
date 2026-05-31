@@ -223,7 +223,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setGameplayAdmissionAllowed(true)
               .setMembershipVersion(dto.membershipVersion())
               .setCreated(dto.created())
+              .setRequestId(dto.requestId())
               .setEvaluatedAt(dto.evaluatedAt())
+              .setReplayed(dto.replayed())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

@@ -77,10 +77,10 @@ class SagaPersistenceRepositoryIntegrationTest {
     assertThat(all).hasSize(1);
     assertThat(all.get(0).getSagaName()).isEqualTo("publish");
     Long rowCount =
-        dsl.fetchOne(
+        dsl.fetchSingle(
                 "select count(*) from " + SERVICE_SCHEMA + ".saga_instance where id = ?",
                 saved.getId())
-            .into(Long.class);
+            .get(0, Long.class);
     assertThat(rowCount).isEqualTo(1L);
   }
 
@@ -111,10 +111,10 @@ class SagaPersistenceRepositoryIntegrationTest {
     assertThat(steps).hasSize(1);
     assertThat(steps.get(0).getName()).isEqualTo("validate");
     Long rowCount =
-        dsl.fetchOne(
+        dsl.fetchSingle(
                 "select count(*) from " + SERVICE_SCHEMA + ".saga_step where id = ?",
                 savedStep.getId())
-            .into(Long.class);
+            .get(0, Long.class);
     assertThat(rowCount).isEqualTo(1L);
   }
 

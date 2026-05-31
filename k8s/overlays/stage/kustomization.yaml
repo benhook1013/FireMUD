@@ -4,6 +4,9 @@ kind: Kustomization
 resources:
   - ../../base
 
+patchesStrategicMerge:
+  - firemud-app-image-pull-secret.yaml
+
 images:
   - name: ghcr.io/benhook1013/account-service
     digest: sha256:00816d58cbbd84b7a61ecf863984eb4c39f882dd82e9f4f381a02ef680c3f0c7

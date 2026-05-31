@@ -27,7 +27,8 @@ public class TemporalWorldLifecycleWorkflowMetadataResolver {
   public WorldInstanceLifecycleSnapshotDto attach(WorldInstanceLifecycleSnapshotDto snapshot) {
     String workflowId = workflowId(snapshot.tenantId(), snapshot.gameInstanceId());
     if (workflowServiceStubs.isEmpty() || temporalProperties.isEmpty()) {
-      return snapshot.withWorkflowMetadata(workflowId, null, "TEMPORAL_DISABLED");
+      return snapshot.withWorkflowMetadata(
+          workflowId, TemporalWorldLifecycleWorkflow.WORKFLOW_FAMILY, null, "TEMPORAL_DISABLED");
     }
     try {
       var response =
@@ -42,10 +43,12 @@ public class TemporalWorldLifecycleWorkflowMetadataResolver {
                       .build());
       WorkflowExecutionStatus status = response.getWorkflowExecutionInfo().getStatus();
       String runId = response.getWorkflowExecutionInfo().getExecution().getRunId();
-      return snapshot.withWorkflowMetadata(workflowId, runId, status.name());
+      return snapshot.withWorkflowMetadata(
+          workflowId, TemporalWorldLifecycleWorkflow.WORKFLOW_FAMILY, runId, status.name());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.NOT_FOUND) {
-        return snapshot.withWorkflowMetadata(workflowId, null, "NOT_FOUND");
+        return snapshot.withWorkflowMetadata(
+            workflowId, TemporalWorldLifecycleWorkflow.WORKFLOW_FAMILY, null, "NOT_FOUND");
       }
       throw ex;
     }

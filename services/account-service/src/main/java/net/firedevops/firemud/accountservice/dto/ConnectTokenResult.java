@@ -9,5 +9,7 @@ public record ConnectTokenResult(
     String connectScopeId,
     String connectToken,
     String jti,
+    String requestId,
     String issuedAt,
-    String expiresAt) {}
+    String expiresAt,
+    boolean replayed) {}

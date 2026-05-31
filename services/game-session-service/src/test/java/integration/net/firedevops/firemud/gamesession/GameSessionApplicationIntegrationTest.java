@@ -266,7 +266,7 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"persistedSession\":true");
     assertThat(body).contains("\"sessionId\":999");
     assertThat(body).contains("\"tenantId\":42");
-    assertThat(body).contains("\"gameInstanceId\":7");
+    assertThat(body).contains("\"gameInstanceId\":0");
     assertThat(body).contains("\"briefEnabledByDefault\":true");
     assertThat(body).contains("\"defaultColorMode\":\"BASIC\"");
     assertThat(body).contains("\"prompt\":");

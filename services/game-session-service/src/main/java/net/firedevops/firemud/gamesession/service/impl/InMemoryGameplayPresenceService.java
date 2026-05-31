@@ -142,7 +142,7 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
   }
 
   @Override
-  public Map<Long, GameplayPresence> findConnectedByAccountIds(
+  public Map<Long, List<GameplayPresence>> listConnectedByAccountIds(
       long tenantId, Collection<Long> accountIds) {
     if (accountIds == null || accountIds.isEmpty()) {
       return Map.of();
@@ -156,24 +156,19 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
     if (requestedIds.isEmpty()) {
       return Map.of();
     }
-    Comparator<GameplayPresence> preference =
-        Comparator.comparing(
-                GameplayPresence::lastMeaningfulActivityAtEpochMs,
-                Comparator.nullsFirst(Long::compareTo))
-            .thenComparing(
-                GameplayPresence::lastAcceptedCommandAtEpochMs,
-                Comparator.nullsFirst(Long::compareTo))
-            .thenComparingLong(GameplayPresence::connectedAtEpochMs)
-            .thenComparingLong(GameplayPresence::sessionId);
-    Map<Long, GameplayPresence> results = new LinkedHashMap<>();
+    Map<Long, ArrayList<GameplayPresence>> grouped = new LinkedHashMap<>();
     for (GameplayPresence presence : presences.values()) {
       if (presence.tenantId() != tenantId || !requestedIds.contains(presence.accountId())) {
         continue;
       }
-      results.merge(
-          presence.accountId(),
-          presence,
-          (left, right) -> preference.compare(left, right) >= 0 ? left : right);
+      grouped.computeIfAbsent(presence.accountId(), ignored -> new ArrayList<>()).add(presence);
+    }
+    Map<Long, List<GameplayPresence>> results = new LinkedHashMap<>();
+    for (Long accountId : requestedIds) {
+      List<GameplayPresence> matches = grouped.get(accountId);
+      if (matches != null && !matches.isEmpty()) {
+        results.put(accountId, List.copyOf(matches));
+      }
     }
     return Map.copyOf(results);
   }

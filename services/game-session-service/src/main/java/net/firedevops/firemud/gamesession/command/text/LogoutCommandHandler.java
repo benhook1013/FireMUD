@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Handles deliberate player logout distinct from reconnect-loss recovery. */
 @Component
@@ -24,6 +25,7 @@ public final class LogoutCommandHandler {
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final GameInstanceService gameInstanceService;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
@@ -33,6 +35,7 @@ public final class LogoutCommandHandler {
       SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       GameInstanceService gameInstanceService,
+      GameplayWorldCatalog gameplayWorldCatalog,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
@@ -44,6 +47,8 @@ public final class LogoutCommandHandler {
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.gameInstanceService =
         Objects.requireNonNull(gameInstanceService, "gameInstanceService must not be null");
+    this.gameplayWorldCatalog =
+        Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
     this.gameplayPresenceLifecycleService =
         Objects.requireNonNull(
             gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
@@ -69,7 +74,8 @@ public final class LogoutCommandHandler {
       if (context.gameInstanceId() > 0 && context.characterId() > 0) {
         scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
       }
-      if (context.gameInstanceId() > 0) {
+      boolean stopSession = shouldStopSession(context);
+      if (stopSession) {
         gameInstanceService.stopSession(context.gameInstanceId());
       }
       if (context.gameInstanceId() > 0 && context.characterId() > 0) {
@@ -110,5 +116,34 @@ public final class LogoutCommandHandler {
             + context.characterId());
     gameplayCommand.setCommandName(TextCommandType.LOGOUT.name());
     return gameplayCommand;
+  }
+
+  private boolean shouldStopSession(SessionContext context) {
+    return context.gameInstanceId() > 0 && !isSharedRuntime(context);
+  }
+
+  private boolean isSharedRuntime(SessionContext context) {
+    if ("SHARED".equals(context.playableStateScope())) {
+      return true;
+    }
+    if (sharedRealmFromSelectors(context).isPresent()) {
+      return true;
+    }
+    return gameplayWorldCatalog
+        .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+        .map(GameplayWorldCatalog.RealmView::stateScope)
+        .filter("SHARED"::equals)
+        .isPresent();
+  }
+
+  private Optional<GameplayWorldCatalog.RealmView> sharedRealmFromSelectors(
+      SessionContext context) {
+    if (!StringUtils.hasText(context.worldSlug()) || !StringUtils.hasText(context.realmSlug())) {
+      return Optional.empty();
+    }
+    return gameplayWorldCatalog
+        .resolveWorld(context.worldSlug())
+        .flatMap(world -> gameplayWorldCatalog.resolveRealm(world, context.realmSlug()))
+        .filter(realm -> "SHARED".equals(realm.stateScope()));
   }
 }

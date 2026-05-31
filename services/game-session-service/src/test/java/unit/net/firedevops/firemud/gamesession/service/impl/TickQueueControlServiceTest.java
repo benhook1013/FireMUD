@@ -244,6 +244,21 @@ class TickQueueControlServiceTest {
   }
 
   @Test
+  void requireRuntimeOwnershipRejectsRegionScopedRowForDifferentGameInstance() {
+    RuntimeRegionStatus regionScoped = runtimeOwnership(1L, 99L, 3L, "fence-a", false);
+    regionScoped.setRegionId("region-alpha");
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(regionScoped));
+
+    TickQueueControlService.StaleOwnershipException exception =
+        assertThrows(
+            TickQueueControlService.StaleOwnershipException.class,
+            () -> service.requireRuntimeOwnership(1L, 2L, "region-alpha"));
+
+    assertEquals("regionId region-alpha does not match gameInstanceId 2", exception.getMessage());
+  }
+
+  @Test
   void requireRuntimeOwnershipThrowsWhenNoOwnershipRowExists() {
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
         .thenReturn(Optional.empty());

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -11,8 +12,14 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.worldmanagement.entity.Region;
+import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
+import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
+import net.firedevops.firemud.worldmanagement.entity.ZoneInstance;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -46,6 +53,12 @@ class TestDataSeederTest {
   void setup() {
     MockitoAnnotations.openMocks(this);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setTenantId(1L);
+    realm.setGameInstanceId(1L);
+    world.setRealms(List.of(realm));
+    gameplayCatalogProperties.setWorlds(List.of(world));
     seeder =
         new TestDataSeeder(
             regionRepository,
@@ -97,15 +110,19 @@ class TestDataSeederTest {
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L))
         .thenReturn(Optional.empty());
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 2L))
-        .thenReturn(Optional.empty());
+    when(worldInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withWorldInstanceId(invocation.getArgument(0)));
+    when(regionInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L)).thenReturn(List.of());
+    when(regionInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRegionInstanceId(invocation.getArgument(0)));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
     verify(regionRepository).save(any());
     verify(zoneRepository).save(any());
     verify(roomRepository, times(2)).save(any());
-    verify(worldInstanceRepository, times(2)).save(any());
+    verify(worldInstanceRepository).save(any());
+    verify(regionInstanceRepository).save(any());
     ArgumentCaptor<net.firedevops.firemud.worldmanagement.entity.RoomExit> exitCaptor =
         ArgumentCaptor.forClass(net.firedevops.firemud.worldmanagement.entity.RoomExit.class);
     verify(roomExitRepository).save(exitCaptor.capture());
@@ -148,8 +165,11 @@ class TestDataSeederTest {
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L))
         .thenReturn(Optional.empty());
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 2L))
-        .thenReturn(Optional.empty());
+    when(worldInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withWorldInstanceId(invocation.getArgument(0)));
+    when(regionInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L)).thenReturn(List.of());
+    when(regionInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRegionInstanceId(invocation.getArgument(0)));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
@@ -158,5 +178,133 @@ class TestDataSeederTest {
     verify(roomRepository, times(2)).save(any());
     verify(roomExitRepository).save(any());
     verify(regionRepository, never()).count();
+  }
+
+  @Test
+  void runReassertsRuntimeTopologyWhenWorldAlreadyExistsButRoomsAreMissing() throws Exception {
+    Region existingRegion = new Region();
+    existingRegion.setId(10L);
+    Zone existingZone = new Zone();
+    existingZone.setId(20L);
+    existingZone.setRegion(existingRegion);
+    Room templateRoom1 = new Room();
+    templateRoom1.setId(30L);
+    templateRoom1.setZone(existingZone);
+    templateRoom1.setName("Candle-lit Antechamber");
+    templateRoom1.setDescription("starter");
+    Room templateRoom2 = new Room();
+    templateRoom2.setId(31L);
+    templateRoom2.setZone(existingZone);
+    templateRoom2.setName("Smith's Annex");
+    templateRoom2.setDescription("annex");
+    RoomExit templateExit = new RoomExit();
+    templateExit.setFromRoom(templateRoom1);
+    templateExit.setToRoom(templateRoom2);
+    templateExit.setDirection("NORTH");
+    templateExit.setCost(1);
+    WorldInstance existingWorld = new WorldInstance();
+    existingWorld.setId(200L);
+    existingWorld.setTenantId(1L);
+    existingWorld.setGameInstanceId(1L);
+    existingWorld.setRowVersion(0L);
+
+    when(regionRepository.findFirstByTenantIdAndVersionIdAndShardIdAndName(
+            1L, 1L, 0, "Demo Region"))
+        .thenReturn(Optional.of(existingRegion));
+    when(regionRepository.save(any())).thenReturn(existingRegion);
+    when(zoneRepository.findFirstByTenantIdAndVersionIdAndRegionIdAndName(1L, 1L, 10L, "Demo Zone"))
+        .thenReturn(Optional.of(existingZone));
+    when(zoneRepository.save(any())).thenReturn(existingZone);
+    when(roomRepository.findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+            1L, 1L, 20L, "Candle-lit Antechamber"))
+        .thenReturn(Optional.of(templateRoom1));
+    when(roomRepository.findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+            1L, 1L, 20L, "Smith's Annex"))
+        .thenReturn(Optional.of(templateRoom2));
+    when(roomRepository.save(any())).thenReturn(templateRoom1, templateRoom2);
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 30L, 31L, "NORTH"))
+        .thenReturn(Optional.of(templateExit));
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(existingZone));
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(templateRoom1, templateRoom2));
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(templateExit));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L))
+        .thenReturn(Optional.of(existingWorld));
+    when(worldInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withWorldInstanceId(invocation.getArgument(0)));
+    when(regionInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L)).thenReturn(List.of());
+    when(regionInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRegionInstanceId(invocation.getArgument(0)));
+    when(zoneInstanceRepository.findByTenantIdAndGameInstanceIdAndZoneInstanceId(1L, 1L, 20L))
+        .thenReturn(Optional.empty());
+    when(zoneInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withZoneInstanceId(invocation.getArgument(0)));
+    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(1L, 1L))
+        .thenReturn(List.of());
+    when(roomInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRoomInstanceId(invocation.getArgument(0)));
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+            1L, 1L, 1021L))
+        .thenReturn(List.of());
+    when(roomInstanceExitRepository.save(any()))
+        .thenAnswer(invocation -> withRoomInstanceExitId(invocation.getArgument(0)));
+
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(worldInstanceRepository).save(any());
+    verify(regionInstanceRepository).save(any());
+    verify(zoneInstanceRepository).save(any());
+    verify(roomInstanceRepository, times(2)).save(any());
+    ArgumentCaptor<RoomInstance> roomCaptor = ArgumentCaptor.forClass(RoomInstance.class);
+    verify(roomInstanceRepository, times(2)).save(roomCaptor.capture());
+    List<RoomInstance> savedRooms = roomCaptor.getAllValues();
+    assertEquals(1021L, savedRooms.get(0).getRoomInstanceId());
+    assertEquals(2045L, savedRooms.get(1).getRoomInstanceId());
+    ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
+    verify(roomInstanceExitRepository).save(exitCaptor.capture());
+    assertEquals("NORTH", exitCaptor.getValue().getDirection());
+    assertNotNull(exitCaptor.getValue().getFromRoomInstance());
+    assertNotNull(exitCaptor.getValue().getToRoomInstance());
+  }
+
+  private WorldInstance withWorldInstanceId(WorldInstance worldInstance) {
+    if (worldInstance.getId() == null) {
+      worldInstance.setId(200L);
+    }
+    if (worldInstance.getRowVersion() == null) {
+      worldInstance.setRowVersion(0L);
+    }
+    return worldInstance;
+  }
+
+  private RegionInstance withRegionInstanceId(RegionInstance regionInstance) {
+    if (regionInstance.getId() == null) {
+      regionInstance.setId(300L);
+    }
+    return regionInstance;
+  }
+
+  private ZoneInstance withZoneInstanceId(ZoneInstance zoneInstance) {
+    if (zoneInstance.getId() == null) {
+      zoneInstance.setId(400L + zoneInstance.getZoneInstanceId());
+    }
+    return zoneInstance;
+  }
+
+  private RoomInstance withRoomInstanceId(RoomInstance roomInstance) {
+    if (roomInstance.getId() == null) {
+      roomInstance.setId(roomInstance.getRoomInstanceId());
+    }
+    return roomInstance;
+  }
+
+  private RoomInstanceExit withRoomInstanceExitId(RoomInstanceExit roomInstanceExit) {
+    if (roomInstanceExit.getId() == null) {
+      roomInstanceExit.setId(500L);
+    }
+    return roomInstanceExit;
   }
 }

@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.data;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -164,13 +165,71 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private void ensureRuntimeTopology(long tenantId, long gameInstanceId) {
-    if (worldInstanceRepository
-        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .isPresent()) {
-      return;
+    WorldInstance savedWorldInstance = ensureWorldInstance(tenantId, gameInstanceId);
+    RegionInstance savedRegionInstance =
+        ensureRegionInstance(tenantId, gameInstanceId, savedWorldInstance);
+
+    Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
+    for (Zone templateZone : zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+      ZoneInstance savedZoneInstance =
+          ensureZoneInstance(tenantId, gameInstanceId, savedRegionInstance, templateZone);
+      zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
 
-    WorldInstance worldInstance = new WorldInstance();
+    List<Room> templateRooms = roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L);
+    Map<Long, RoomInstance> roomInstancesByRoomInstanceId = new HashMap<>();
+    for (RoomInstance existingRoomInstance :
+        roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
+            tenantId, gameInstanceId)) {
+      roomInstancesByRoomInstanceId.put(
+          existingRoomInstance.getRoomInstanceId(), existingRoomInstance);
+    }
+    Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
+    for (int index = 0; index < templateRooms.size(); index++) {
+      Room templateRoom = templateRooms.get(index);
+      ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
+      if (zoneInstance == null) {
+        continue;
+      }
+      RoomInstance savedRoomInstance =
+          ensureRoomInstance(
+              tenantId,
+              gameInstanceId,
+              savedRegionInstance,
+              zoneInstance,
+              templateRoom,
+              roomInstanceIdForTemplateOrder(index),
+              roomInstancesByRoomInstanceId);
+      roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
+    }
+
+    Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId = new HashMap<>();
+    for (RoomExit templateExit :
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+      RoomInstance fromRoomInstance =
+          roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
+      RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());
+      if (fromRoomInstance == null || toRoomInstance == null) {
+        continue;
+      }
+      ensureRoomInstanceExit(
+          tenantId,
+          gameInstanceId,
+          fromRoomInstance,
+          toRoomInstance,
+          templateExit,
+          exitsByFromRoomInstanceId);
+    }
+  }
+
+  private WorldInstance ensureWorldInstance(long tenantId, long gameInstanceId) {
+    WorldInstance worldInstance =
+        worldInstanceRepository
+            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+            .orElseGet(WorldInstance::new);
+    if (worldInstance.getCreatedAt() == null) {
+      worldInstance.setCreatedAt(Instant.now());
+    }
     worldInstance.setTenantId(tenantId);
     worldInstance.setGameInstanceId(gameInstanceId);
     worldInstance.setGameTemplateId(1L);
@@ -185,12 +244,19 @@ public class TestDataSeeder implements ApplicationRunner {
     worldInstance.setVersionStateEpoch(1L);
     worldInstance.setLifecycleEpoch(2L);
     worldInstance.setStatus("ACTIVE");
-    worldInstance.setCreatedAt(Instant.now());
     worldInstance.setUpdatedAt(Instant.now());
-    worldInstance.setRowVersion(0L);
-    WorldInstance savedWorldInstance = worldInstanceRepository.save(worldInstance);
+    if (worldInstance.getRowVersion() == null) {
+      worldInstance.setRowVersion(0L);
+    }
+    return worldInstanceRepository.save(worldInstance);
+  }
 
-    RegionInstance regionInstance = new RegionInstance();
+  private RegionInstance ensureRegionInstance(
+      long tenantId, long gameInstanceId, WorldInstance savedWorldInstance) {
+    RegionInstance regionInstance =
+        regionInstanceRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream()
+            .findFirst()
+            .orElseGet(RegionInstance::new);
     regionInstance.setTenantId(tenantId);
     regionInstance.setGameInstanceId(gameInstanceId);
     regionInstance.setWorldInstance(savedWorldInstance);
@@ -200,61 +266,82 @@ public class TestDataSeeder implements ApplicationRunner {
     regionInstance.setGeneratorType("SimpleDungeonGenerator");
     regionInstance.setGeneratorParams("{}");
     regionInstance.setSpacingMultiplier(1.0);
-    RegionInstance savedRegionInstance = regionInstanceRepository.save(regionInstance);
+    return regionInstanceRepository.save(regionInstance);
+  }
 
-    Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone : zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
-      ZoneInstance zoneInstance = new ZoneInstance();
-      zoneInstance.setTenantId(tenantId);
-      zoneInstance.setGameInstanceId(gameInstanceId);
-      zoneInstance.setZoneInstanceId(templateZone.getId());
-      zoneInstance.setTemplateZoneId(templateZone.getId());
-      zoneInstance.setRegionInstance(savedRegionInstance);
-      zoneInstance.setName(templateZone.getName());
-      ZoneInstance savedZoneInstance = zoneInstanceRepository.save(zoneInstance);
-      zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
-    }
+  private ZoneInstance ensureZoneInstance(
+      long tenantId, long gameInstanceId, RegionInstance savedRegionInstance, Zone templateZone) {
+    ZoneInstance zoneInstance =
+        zoneInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndZoneInstanceId(
+                tenantId, gameInstanceId, templateZone.getId())
+            .orElseGet(ZoneInstance::new);
+    zoneInstance.setTenantId(tenantId);
+    zoneInstance.setGameInstanceId(gameInstanceId);
+    zoneInstance.setZoneInstanceId(templateZone.getId());
+    zoneInstance.setTemplateZoneId(templateZone.getId());
+    zoneInstance.setRegionInstance(savedRegionInstance);
+    zoneInstance.setName(templateZone.getName());
+    return zoneInstanceRepository.save(zoneInstance);
+  }
 
-    List<Room> templateRooms = roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L);
-    Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
-    for (Room templateRoom : templateRooms) {
-      ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
-      if (zoneInstance == null) {
-        continue;
-      }
-      RoomInstance roomInstance = new RoomInstance();
-      roomInstance.setTenantId(tenantId);
-      roomInstance.setGameInstanceId(gameInstanceId);
-      roomInstance.setRoomInstanceId(
-          roomInstanceIdForTemplateOrder(roomInstancesByTemplateId.size()));
-      roomInstance.setTemplateRoomId(templateRoom.getId());
-      roomInstance.setRegionInstance(savedRegionInstance);
-      roomInstance.setZoneInstance(zoneInstance);
-      roomInstance.setName(templateRoom.getName());
-      roomInstance.setDescription(templateRoom.getDescription());
-      roomInstance.setNameLocalizedVariantsJson(templateRoom.getNameLocalizedVariantsJson());
-      roomInstance.setDescriptionLocalizedVariantsJson(
-          templateRoom.getDescriptionLocalizedVariantsJson());
-      RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
-      roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
-    }
+  private RoomInstance ensureRoomInstance(
+      long tenantId,
+      long gameInstanceId,
+      RegionInstance savedRegionInstance,
+      ZoneInstance zoneInstance,
+      Room templateRoom,
+      long roomInstanceId,
+      Map<Long, RoomInstance> roomInstancesByRoomInstanceId) {
+    RoomInstance roomInstance =
+        roomInstancesByRoomInstanceId.getOrDefault(roomInstanceId, new RoomInstance());
+    roomInstance.setTenantId(tenantId);
+    roomInstance.setGameInstanceId(gameInstanceId);
+    roomInstance.setRoomInstanceId(roomInstanceId);
+    roomInstance.setTemplateRoomId(templateRoom.getId());
+    roomInstance.setRegionInstance(savedRegionInstance);
+    roomInstance.setZoneInstance(zoneInstance);
+    roomInstance.setName(templateRoom.getName());
+    roomInstance.setDescription(templateRoom.getDescription());
+    roomInstance.setNameLocalizedVariantsJson(templateRoom.getNameLocalizedVariantsJson());
+    roomInstance.setDescriptionLocalizedVariantsJson(
+        templateRoom.getDescriptionLocalizedVariantsJson());
+    RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
+    roomInstancesByRoomInstanceId.put(roomInstanceId, savedRoomInstance);
+    return savedRoomInstance;
+  }
 
-    for (RoomExit templateExit :
-        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
-      RoomInstance fromRoomInstance =
-          roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
-      RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());
-      if (fromRoomInstance == null || toRoomInstance == null) {
-        continue;
-      }
-      RoomInstanceExit roomInstanceExit = new RoomInstanceExit();
-      roomInstanceExit.setTenantId(tenantId);
-      roomInstanceExit.setGameInstanceId(gameInstanceId);
-      roomInstanceExit.setFromRoomInstance(fromRoomInstance);
-      roomInstanceExit.setToRoomInstance(toRoomInstance);
-      roomInstanceExit.setDirection(templateExit.getDirection());
-      roomInstanceExit.setCost(templateExit.getCost());
-      roomInstanceExitRepository.save(roomInstanceExit);
+  private void ensureRoomInstanceExit(
+      long tenantId,
+      long gameInstanceId,
+      RoomInstance fromRoomInstance,
+      RoomInstance toRoomInstance,
+      RoomExit templateExit,
+      Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId) {
+    List<RoomInstanceExit> existingExits =
+        exitsByFromRoomInstanceId.computeIfAbsent(
+            fromRoomInstance.getId(),
+            ignored ->
+                roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+                    tenantId, gameInstanceId, fromRoomInstance.getId()));
+    RoomInstanceExit roomInstanceExit =
+        existingExits.stream()
+            .filter(
+                existingExit ->
+                    templateExit.getDirection().equals(existingExit.getDirection())
+                        && existingExit.getToRoomInstance() != null
+                        && toRoomInstance.getId().equals(existingExit.getToRoomInstance().getId()))
+            .findFirst()
+            .orElseGet(RoomInstanceExit::new);
+    roomInstanceExit.setTenantId(tenantId);
+    roomInstanceExit.setGameInstanceId(gameInstanceId);
+    roomInstanceExit.setFromRoomInstance(fromRoomInstance);
+    roomInstanceExit.setToRoomInstance(toRoomInstance);
+    roomInstanceExit.setDirection(templateExit.getDirection());
+    roomInstanceExit.setCost(templateExit.getCost());
+    RoomInstanceExit savedRoomInstanceExit = roomInstanceExitRepository.save(roomInstanceExit);
+    if (roomInstanceExit.getId() == null) {
+      existingExits.add(savedRoomInstanceExit);
     }
   }
 

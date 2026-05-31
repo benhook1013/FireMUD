@@ -643,6 +643,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setPublishWorkflowId(bundle.publishWorkflowId())
               .setWorkflowRunId(workflowMetadata.workflowRunId())
               .setWorkflowStatus(workflowMetadata.workflowStatus())
+              .setWorkflowFamily(workflowMetadata.workflowFamily())
               .setManifestHash(bundle.manifestHash())
               .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
               .addAllParticipantDigests(

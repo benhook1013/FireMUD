@@ -15,8 +15,10 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +36,9 @@ public final class LoginCommandHandler {
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @Autowired
   public LoginCommandHandler(
@@ -43,7 +47,9 @@ public final class LoginCommandHandler {
       AccountClient accountClient,
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
@@ -54,10 +60,17 @@ public final class LoginCommandHandler {
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
+    this.sessionRoutingNormalizationService =
+        Objects.requireNonNull(
+            sessionRoutingNormalizationService,
+            "sessionRoutingNormalizationService must not be null");
     this.gameplayAdmissionPointerAuthorityService =
         Objects.requireNonNull(
             gameplayAdmissionPointerAuthorityService,
             "gameplayAdmissionPointerAuthorityService must not be null");
+    this.gameplayPresenceLifecycleService =
+        Objects.requireNonNull(
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
@@ -137,8 +150,16 @@ public final class LoginCommandHandler {
     if (numericSessionId == null) {
       return invalidSessionFailure();
     }
+    SessionContext existingSession =
+        sessionRoutingNormalizationService.resolveProjectedSessionContext(sessionId).orElse(null);
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
-        firstPartyConnectContextRegistry.find(numericSessionId);
+        firstPartyConnectContextRegistry
+            .find(numericSessionId)
+            .or(
+                () ->
+                    existingSession == null
+                        ? Optional.empty()
+                        : existingSession.persistedFirstPartyConnectContext());
     if (maybeContext.isEmpty()) {
       clearFailedLoginSessionState(numericSessionId, 0L, 0L, null, null, 0L);
       return failure(
@@ -223,7 +244,10 @@ public final class LoginCommandHandler {
       return;
     }
     SessionContext existing =
-        sessionContextService.findByTenantAndSessionId(tenantId, sessionId).orElse(null);
+        sessionRoutingNormalizationService
+            .resolveProjectedSessionContext(Long.toString(sessionId))
+            .filter(context -> context.tenantId() == tenantId)
+            .orElse(null);
     // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
     // so reconnect on the same transport session can continue through PLAY without losing room
     // state.
@@ -258,7 +282,9 @@ public final class LoginCommandHandler {
                 existing.worldSlug(),
                 existing.realmSlug(),
                 existing.pointerVersion(),
-                existing.playableStateScope());
+                existing.playableStateScope(),
+                existing.connectScopeId(),
+                existing.connectRequestId());
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",
@@ -268,8 +294,8 @@ public final class LoginCommandHandler {
   }
 
   private long resolveBootstrapGameInstanceId(long sessionId) {
-    return sessionContextService
-        .findBySessionId(sessionId)
+    return sessionRoutingNormalizationService
+        .resolveProjectedSessionContext(Long.toString(sessionId))
         .map(
             context ->
                 context.bootstrapGameInstanceId() > 0
@@ -301,21 +327,45 @@ public final class LoginCommandHandler {
       String realmSlug,
       long pointerVersion) {
     SessionContext existing = sessionContextService.findBySessionId(sessionId).orElse(null);
+    SessionContext projectedExisting =
+        existing == null
+            ? null
+            : sessionRoutingNormalizationService.normalizeProjectedContext(existing);
     long tenantId =
-        existing != null ? existing.tenantId() : (fallbackTenantId > 0 ? fallbackTenantId : 0L);
+        projectedExisting != null
+            ? projectedExisting.tenantId()
+            : existing != null
+                ? existing.tenantId()
+                : (fallbackTenantId > 0 ? fallbackTenantId : 0L);
     if (tenantId <= 0) {
       return;
     }
+    boolean fallbackHasRoutingBundle =
+        StringUtils.hasText(worldSlug) && StringUtils.hasText(realmSlug) && pointerVersion > 0;
+    boolean projectedHasRoutingBundle =
+        projectedExisting != null
+            && StringUtils.hasText(projectedExisting.worldSlug())
+            && StringUtils.hasText(projectedExisting.realmSlug())
+            && projectedExisting.pointerVersion() > 0;
     String preservedWorldSlug =
-        StringUtils.hasText(worldSlug) ? worldSlug : existing != null ? existing.worldSlug() : null;
+        fallbackHasRoutingBundle
+            ? worldSlug
+            : projectedHasRoutingBundle ? projectedExisting.worldSlug() : null;
     String preservedRealmSlug =
-        StringUtils.hasText(realmSlug) ? realmSlug : existing != null ? existing.realmSlug() : null;
+        fallbackHasRoutingBundle
+            ? realmSlug
+            : projectedHasRoutingBundle ? projectedExisting.realmSlug() : null;
     long preservedPointerVersion =
-        pointerVersion > 0 ? pointerVersion : existing != null ? existing.pointerVersion() : 0L;
+        fallbackHasRoutingBundle
+            ? pointerVersion
+            : projectedHasRoutingBundle ? projectedExisting.pointerVersion() : 0L;
     long bootstrapGameInstanceId =
-        existing != null && existing.bootstrapGameInstanceId() > 0
-            ? existing.bootstrapGameInstanceId()
+        projectedExisting != null && projectedExisting.bootstrapGameInstanceId() > 0
+            ? projectedExisting.bootstrapGameInstanceId()
             : fallbackBootstrapGameInstanceId;
+    if (existing != null) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(existing, "LOGIN_FAILED");
+    }
     sessionContextService.save(
         new SessionContext(
             sessionId,
@@ -327,12 +377,14 @@ public final class LoginCommandHandler {
             0L,
             null,
             null,
-            existing != null ? existing.localeTag() : null,
+            projectedExisting != null ? projectedExisting.localeTag() : null,
             bootstrapGameInstanceId,
             preservedWorldSlug,
             preservedRealmSlug,
             preservedPointerVersion,
-            null));
+            null,
+            projectedExisting != null ? projectedExisting.connectScopeId() : null,
+            projectedExisting != null ? projectedExisting.connectRequestId() : null));
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

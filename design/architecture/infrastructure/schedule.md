@@ -19,6 +19,10 @@ Repository-app automation that is not driven by a GitHub Actions schedule:
 - CodeRabbit reviews non-draft pull requests targeting `develop` and `main` after PR creation and on subsequent commits.
 - Renovate evaluates dependency updates against `develop` as the hosted Mend app processes repository events and background jobs; it is intentionally not restricted by an in-repo schedule.
 
+GitHub Actions schedule nuance:
+
+- Scheduled workflows execute from the default branch workflow definition. In FireMUD, the weekly CodeQL and OSSF Scorecard schedules therefore run from `develop`, while `main` remains covered by its push-triggered analyses.
+
 Publication guardrail:
 
 - Scheduled and manually dispatched publication workflows may validate on other branches, but production-looking publication is allowed only from `develop` and `main`. This applies to GitHub Pages publishing and the shared base-image publication path.

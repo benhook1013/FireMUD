@@ -234,7 +234,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   }
 
   @Override
-  public Map<Long, GameplayPresence> findConnectedByAccountIds(
+  public Map<Long, List<GameplayPresence>> listConnectedByAccountIds(
       long tenantId, Collection<Long> accountIds) {
     if (accountIds == null || accountIds.isEmpty()) {
       return Map.of();
@@ -245,7 +245,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       return Map.of();
     }
 
-    LinkedHashMap<Long, GameplayPresence> matches = new LinkedHashMap<>();
+    LinkedHashMap<Long, List<GameplayPresence>> matches = new LinkedHashMap<>();
     for (Long accountId : accountIds) {
       if (accountId == null || accountId <= 0) {
         continue;
@@ -255,7 +255,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       if (members == null || members.isEmpty()) {
         continue;
       }
-      GameplayPresence preferred = null;
+      ArrayList<GameplayPresence> accountMatches = new ArrayList<>();
       for (Object member : members) {
         String sessionIdText = String.valueOf(member);
         GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey(sessionIdText));
@@ -267,12 +267,11 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
           setOps.remove(accountKey, sessionIdText);
           continue;
         }
-        if (preferred == null || ACCOUNT_PRESENCE_PREFERENCE.compare(preferred, presence) < 0) {
-          preferred = presence;
-        }
+        accountMatches.add(presence);
       }
-      if (preferred != null) {
-        matches.put(accountId, preferred);
+      if (!accountMatches.isEmpty()) {
+        accountMatches.sort(ACCOUNT_PRESENCE_PREFERENCE.reversed());
+        matches.put(accountId, List.copyOf(accountMatches));
       }
     }
     return Map.copyOf(matches);

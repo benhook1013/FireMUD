@@ -9,16 +9,32 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "services"
 DOC_POLICY_FILES = [
     REPO_ROOT / "design/architecture/system-architecture-logging-monitoring.md",
+    REPO_ROOT / "design/architecture/system-architecture-redis-metrics-catalog.md",
     REPO_ROOT / "design/architecture/system-architecture-scripting-observability-contract.md",
     REPO_ROOT / "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    REPO_ROOT / "design/architecture/system-architecture-scripting-quotas-and-operations.md",
     REPO_ROOT / "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    REPO_ROOT / "k8s/monitoring/prometheus-rules-firemud.yaml",
 ]
 
 FORBIDDEN_EXACT_LABELS = {
     "class",
+    "characterId",
+    "componentId",
+    "entityId",
+    "gameInstanceId",
+    "pluginId",
+    "pluginVersionId",
+    "regionId",
+    "scriptId",
     "script_patch_version",
     "scriptPatchVersion",
+    "serviceInstanceId",
+    "sessionId",
+    "spanId",
     "patchVersion",
+    "tenantId",
+    "traceId",
 }
 
 METRIC_ANCHORS = (
@@ -40,7 +56,13 @@ FORBIDDEN_EXACT_LITERAL_PATTERN = re.compile(
 )
 LITERAL_LABEL_PATTERN = re.compile(r'"(?P<label>[A-Za-z_][A-Za-z0-9_]*)"')
 DOC_METRIC_LABEL_PATTERN = re.compile(
-    r"\b[a-zA-Z_:][a-zA-Z0-9_:]*\{[^}\n]*\b(?P<label>tenantId|script_patch_version|scriptPatchVersion|patchVersion)\b[^}\n]*\}"
+    r"\b[a-zA-Z_:][a-zA-Z0-9_:]*\{[^}\n]*\b(?P<label>"
+    + "|".join(re.escape(label) for label in sorted(FORBIDDEN_EXACT_LABELS))
+    + r")\b[^}\n]*\}"
+)
+PROMQL_GROUPING_PATTERN = re.compile(
+    r"\b(?:sum|avg|min|max|count|stddev|stdvar|group|count_values|quantile|topk|bottomk)\s+by\s*\((?P<group_labels>[^)\n]+)\)"
+    r"|\bon\s*\((?P<join_labels>[^)\n]+)\)"
 )
 
 
@@ -64,6 +86,15 @@ def iter_source_files() -> list[Path]:
 
 def iter_doc_policy_files() -> list[Path]:
     return [path for path in DOC_POLICY_FILES if path.exists()]
+
+
+def forbidden_grouping_labels(labels: str) -> list[str]:
+    findings: list[str] = []
+    for raw_label in labels.split(","):
+        label = raw_label.strip()
+        if label and is_forbidden_label(label):
+            findings.append(label)
+    return findings
 
 
 def main() -> int:
@@ -98,12 +129,24 @@ def main() -> int:
         lines = path.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             match = DOC_METRIC_LABEL_PATTERN.search(line)
-            if match is None:
-                continue
-            findings.append(
-                f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability docs still teach forbidden raw metric label "
-                f"{match.group('label')!r}"
-            )
+            if match is not None:
+                findings.append(
+                    f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability docs still teach forbidden raw metric label "
+                    f"{match.group('label')!r}"
+                )
+            for grouping_match in PROMQL_GROUPING_PATTERN.finditer(line):
+                labels = grouping_match.group("group_labels") or grouping_match.group(
+                    "join_labels"
+                )
+                if labels is None:
+                    continue
+                forbidden = forbidden_grouping_labels(labels)
+                if not forbidden:
+                    continue
+                findings.append(
+                    f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability rules still group or join on forbidden raw metric labels "
+                    + ", ".join(repr(label) for label in forbidden)
+                )
     if findings:
         print("Metrics cardinality policy violations found:", file=sys.stderr)
         for finding in findings:

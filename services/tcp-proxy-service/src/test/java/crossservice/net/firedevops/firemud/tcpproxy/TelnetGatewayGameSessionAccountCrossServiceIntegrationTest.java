@@ -579,7 +579,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         LookTestFixtures.ROOM_ID,
-        "target-jwt");
+        "target-jwt",
+        "demo",
+        "production",
+        1L,
+        "SHARED");
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {

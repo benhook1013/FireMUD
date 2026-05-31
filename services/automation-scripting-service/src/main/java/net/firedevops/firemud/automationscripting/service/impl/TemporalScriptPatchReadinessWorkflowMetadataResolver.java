@@ -26,7 +26,11 @@ public class TemporalScriptPatchReadinessWorkflowMetadataResolver {
   public WorkflowMetadata resolve(String tenantId, String scriptPatchVersion) {
     String workflowId = workflowId(tenantId, scriptPatchVersion);
     if (workflowServiceStubs.isEmpty() || temporalProperties.isEmpty()) {
-      return new WorkflowMetadata(workflowId, "", "TEMPORAL_DISABLED");
+      return new WorkflowMetadata(
+          workflowId,
+          TemporalScriptPatchReadinessWorkflow.WORKFLOW_FAMILY,
+          "",
+          "TEMPORAL_DISABLED");
     }
     try {
       var response =
@@ -41,10 +45,12 @@ public class TemporalScriptPatchReadinessWorkflowMetadataResolver {
                       .build());
       WorkflowExecutionStatus status = response.getWorkflowExecutionInfo().getStatus();
       String runId = response.getWorkflowExecutionInfo().getExecution().getRunId();
-      return new WorkflowMetadata(workflowId, runId, status.name());
+      return new WorkflowMetadata(
+          workflowId, TemporalScriptPatchReadinessWorkflow.WORKFLOW_FAMILY, runId, status.name());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.NOT_FOUND) {
-        return new WorkflowMetadata(workflowId, "", "NOT_FOUND");
+        return new WorkflowMetadata(
+            workflowId, TemporalScriptPatchReadinessWorkflow.WORKFLOW_FAMILY, "", "NOT_FOUND");
       }
       throw ex;
     }
@@ -58,5 +64,6 @@ public class TemporalScriptPatchReadinessWorkflowMetadataResolver {
         scriptPatchVersion);
   }
 
-  record WorkflowMetadata(String workflowId, String workflowRunId, String workflowStatus) {}
+  record WorkflowMetadata(
+      String workflowId, String workflowFamily, String workflowRunId, String workflowStatus) {}
 }

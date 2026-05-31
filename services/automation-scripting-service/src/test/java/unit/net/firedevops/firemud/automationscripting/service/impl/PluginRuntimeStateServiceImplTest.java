@@ -736,7 +736,7 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(
             publishedPluginVersion(
                 PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED, false));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -790,7 +790,7 @@ class PluginRuntimeStateServiceImplTest {
                 Mockito.eq(""),
                 Mockito.any()))
         .thenReturn(List.of(active));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-stale"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
@@ -838,7 +838,7 @@ class PluginRuntimeStateServiceImplTest {
                 Mockito.eq(""),
                 Mockito.any()))
         .thenReturn(List.of(active));
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(

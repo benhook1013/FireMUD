@@ -30,8 +30,10 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +54,10 @@ class LoginCommandHandlerTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+      Mockito.mock(GameplayPresenceLifecycleService.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private SessionRoutingNormalizationService sessionRoutingNormalizationService;
   private LoginCommandHandler handler;
 
   @BeforeEach
@@ -66,6 +71,9 @@ class LoginCommandHandlerTest {
         .thenReturn(CommandEnqueueResult.success());
     when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
         .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
+    sessionRoutingNormalizationService =
+        new SessionRoutingNormalizationService(
+            sessionContextService, gameplayAdmissionPointerAuthorityService);
     handler =
         new LoginCommandHandler(
             gameInstanceRepository,
@@ -73,7 +81,9 @@ class LoginCommandHandlerTest {
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
+            sessionRoutingNormalizationService,
             gameplayAdmissionPointerAuthorityService,
+            gameplayPresenceLifecycleService,
             meterRegistry);
   }
 
@@ -137,7 +147,7 @@ class LoginCommandHandlerTest {
   void missingCredentialsReturnsPromptError() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContext(7L)));
+        .thenReturn(Optional.of(staleGameplayContextWithoutSelector(7L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, true);
 
@@ -155,7 +165,9 @@ class LoginCommandHandlerTest {
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 7L);
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(staleGameplayContextWithoutSelector(7L), "LOGIN_FAILED");
+    assertClearedSessionContext(captor.getValue(), 0L, null, null);
   }
 
   @Test
@@ -183,6 +195,41 @@ class LoginCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(commandService).enqueue("1", "LOGIN", false);
+  }
+
+  @Test
+  void bareLoginFallsBackToPersistedFirstPartyContextWhenRegistryEntryIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    SessionContext persisted =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(persisted));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(Optional.of(persisted));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(commandService).enqueue("1", "LOGIN", false);
   }
 
@@ -278,7 +325,46 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(sessionContextService.findByTenantAndSessionId(22L, 1L))
         .thenReturn(
-            Optional.of(new SessionContext(1L, 22L, 77L, 88L, 99L, "room-2045", "old-jwt")));
+            Optional.of(
+                new SessionContext(
+                    1L,
+                    22L,
+                    77L,
+                    "demo@example.com",
+                    88L,
+                    "Sora",
+                    1L,
+                    "room-2045",
+                    "old-jwt",
+                    "en-NZ",
+                    1L,
+                    "demo",
+                    "production",
+                    1L,
+                    "SHARED",
+                    "scope-live",
+                    "req-live")));
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(
+                    1L,
+                    22L,
+                    77L,
+                    "demo@example.com",
+                    88L,
+                    "Sora",
+                    1L,
+                    "room-2045",
+                    "old-jwt",
+                    "en-NZ",
+                    1L,
+                    "demo",
+                    "production",
+                    1L,
+                    "SHARED",
+                    "scope-live",
+                    "req-live")));
 
     handler.handle("1", command, false);
 
@@ -289,9 +375,46 @@ class LoginCommandHandlerTest {
     assertEquals(22L, context.tenantId());
     assertEquals(77L, context.accountId());
     assertEquals(88L, context.characterId());
-    assertEquals(99L, context.gameInstanceId());
+    assertEquals(1L, context.gameInstanceId());
     assertEquals("room-2045", context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
+  }
+
+  @Test
+  void reloginClearsStaleGameplayBindingBeforeRefreshingLoginContext() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(Optional.of(staleGameplayContext(7L)));
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(staleGameplayContext(7L)));
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext context = captor.getValue();
+    assertEquals(1L, context.sessionId());
+    assertEquals(22L, context.tenantId());
+    assertEquals(77L, context.accountId());
+    assertEquals(0L, context.characterId());
+    assertNull(context.characterName());
+    assertEquals(0L, context.gameInstanceId());
+    assertNull(context.roomInstanceId());
+    assertEquals(AUTH_TOKEN, context.jwt());
+    assertEquals(1L, context.bootstrapGameInstanceId());
+    assertNull(context.worldSlug());
+    assertNull(context.realmSlug());
+    assertEquals(0L, context.pointerVersion());
+    assertNull(context.playableStateScope());
+    assertEquals("scope-stale", context.connectScopeId());
+    assertEquals("req-stale", context.connectRequestId());
   }
 
   @Test
@@ -321,7 +444,7 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 3L);
+    assertClearedSessionContext(captor.getValue(), 0L);
   }
 
   @Test
@@ -348,7 +471,7 @@ class LoginCommandHandlerTest {
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 4L);
+    assertClearedSessionContext(captor.getValue(), 0L);
   }
 
   @Test
@@ -566,10 +689,39 @@ class LoginCommandHandlerTest {
         "demo",
         "production",
         pointerVersion,
+        "LIVE",
+        "scope-stale",
+        "req-stale");
+  }
+
+  private static SessionContext staleGameplayContextWithoutSelector(long pointerVersion) {
+    return new SessionContext(
+        1L,
+        22L,
+        77L,
+        "demo@example.com",
+        88L,
+        "Sora",
+        1L,
+        "room-2045",
+        AUTH_TOKEN,
+        "en-NZ",
+        1L,
+        "demo",
+        "production",
+        pointerVersion,
         "LIVE");
   }
 
   private static void assertClearedSessionContext(SessionContext context, long pointerVersion) {
+    assertClearedSessionContext(context, pointerVersion, "scope-stale", "req-stale");
+  }
+
+  private static void assertClearedSessionContext(
+      SessionContext context,
+      long pointerVersion,
+      String expectedConnectScopeId,
+      String expectedConnectRequestId) {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertEquals(0L, context.accountId());
@@ -581,9 +733,17 @@ class LoginCommandHandlerTest {
     assertNull(context.jwt());
     assertEquals("en-NZ", context.localeTag());
     assertEquals(1L, context.bootstrapGameInstanceId());
-    assertEquals("demo", context.worldSlug());
-    assertEquals("production", context.realmSlug());
-    assertEquals(pointerVersion, context.pointerVersion());
+    if (pointerVersion > 0) {
+      assertEquals("demo", context.worldSlug());
+      assertEquals("production", context.realmSlug());
+      assertEquals(pointerVersion, context.pointerVersion());
+    } else {
+      assertNull(context.worldSlug());
+      assertNull(context.realmSlug());
+      assertEquals(0L, context.pointerVersion());
+    }
     assertNull(context.playableStateScope());
+    assertEquals(expectedConnectScopeId, context.connectScopeId());
+    assertEquals(expectedConnectRequestId, context.connectRequestId());
   }
 }

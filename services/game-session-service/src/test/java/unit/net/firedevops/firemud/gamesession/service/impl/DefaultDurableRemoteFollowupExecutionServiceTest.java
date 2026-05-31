@@ -412,6 +412,94 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
+  void executeUsesDurableGameplayRowAuthorityOverConflictingPayloadJson() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(
+        """
+        {"kind":"enqueue_gameplay_command","command":"DROP ALL","targetEntityId":"999","worldSlug":"wrong","realmSlug":"wrong","pointerVersion":2,"originSourceKind":"BROKEN","originSourceState":"BROKEN"}
+        """);
+    followup.setPayloadKind("enqueue_gameplay_command");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(22L);
+    followup.setOriginSourceDueAtMs(1700L);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
+    GameInstance instance = new GameInstance();
+    instance.setId(9L);
+    instance.setTenantId(1L);
+    net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
+        new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
+    runtimeStatus.setTenantId(1L);
+    runtimeStatus.setGameInstanceId(9L);
+    runtimeStatus.setRegionId("region-b");
+    runtimeStatus.setRegionEpoch(8L);
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-b"))
+        .thenReturn(Optional.of(runtimeStatus));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 9L))
+        .thenReturn(Optional.of(runtimeStatus));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 9L, "region-b", 8L, "followup-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("APPLIED", result.effectStatus());
+    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
+        .save(commandCaptor.capture());
+    net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
+        commandCaptor.getAllValues().get(0);
+    assertEquals("321", admittedCommand.getTargetEntityId());
+    assertEquals(Long.valueOf(321L), admittedCommand.getCharacterId());
+    assertEquals("REMOTE_FOLLOWUP", admittedCommand.getOriginSourceKind());
+    assertEquals("TARGET_REGION_EXECUTED", admittedCommand.getOriginSourceState());
+    verify(tickService)
+        .enqueueCommand(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.Mockito.eq(9L),
+            org.mockito.Mockito.eq("rfcmd-followup-1"),
+            org.mockito.Mockito.eq("LOOK"),
+            org.mockito.Mockito.eq(true));
+  }
+
+  @Test
   void executeRejectsRemoteGameplayCommandWithPartialRoutingBundle() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
@@ -503,6 +591,81 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         "worldSlug, realmSlug, and pointerVersion must be provided together",
         result.failureMessage());
     verifyNoInteractions(automationScriptingClient);
+  }
+
+  @Test
+  void executeUsesDurableTriggerEventAuthorityOverConflictingPayloadJson() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(
+        """
+        {"kind":"trigger_script_event","entityId":"999","eventType":"badEvent","scriptEventId":"bad-id","triggerMode":"CATCH_UP","readSnapshotToken":"bad-token","eventSchemaVersion":"v9","eventPayload":{"bad":true},"worldSlug":"wrong","realmSlug":"wrong","pointerVersion":2}
+        """);
+    followup.setPayloadKind("trigger_script_event");
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("remote-enter-1");
+    followup.setTriggerMode("TRIGGER_MODE_NORMAL");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setPluginId("plugin-1");
+    coordinator.setPluginVersionId("plugin-v1");
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmitted(true)
+                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
+                .setAdmissionReason("admitted_for_handler_resolution")
+                .setResolvedHandlerCount(2)
+                .build());
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("APPLIED", result.effectStatus());
+    verify(automationScriptingClient)
+        .triggerScriptEvent(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    "321".equals(request.getEntityId())
+                        && "onEnterRegion".equals(request.getEventType())
+                        && "remote-enter-1".equals(request.getScriptEventId())
+                        && request.getTriggerMode()
+                            == net.firedevops.firemud.automationscripting.v1.TriggerMode
+                                .TRIGGER_MODE_NORMAL
+                        && "game-session:onEnterRegion:9:8:remote-enter-1"
+                            .equals(request.getReadSnapshotToken())
+                        && "demo".equals(request.getWorldSlug())
+                        && "production".equals(request.getRealmSlug())
+                        && "17".equals(request.getPointerVersion())
+                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
+                            .equals(request.getPayloadJson())));
   }
 
   @Test

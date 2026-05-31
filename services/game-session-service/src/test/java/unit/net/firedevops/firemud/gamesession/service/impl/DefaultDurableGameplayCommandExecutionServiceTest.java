@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyServi
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyStatus;
 import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,8 @@ import org.mockito.Mockito;
 
 class DefaultDurableGameplayCommandExecutionServiceTest {
   private final TextCommandParser parser = Mockito.mock(TextCommandParser.class);
+  private final SessionAuthenticationService sessionAuthenticationService =
+      Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final MoveCommandHandler moveCommandHandler = Mockito.mock(MoveCommandHandler.class);
@@ -64,6 +67,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new DefaultDurableGameplayCommandExecutionService(
             meterRegistry,
             parser,
+            sessionAuthenticationService,
             sessionContextService,
             moveCommandHandler,
             itemCommandHandler,
@@ -74,6 +78,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
             scriptEventPublisher);
+    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -252,6 +258,39 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         .save(22L, 42L, "tfx-4", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
     verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+  }
+
+  @Test
+  void executeNormalizesStaleSessionContextBeforeDurableGameplayHandling() {
+    SessionContext stale =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext cleared =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 0L, null, 0L, null, "jwt-token");
+    GameplayCommand command = gameplayCommand("GET", "GET torch");
+    TickEffect effect = tickEffect("tfx-stale", "cmd-stale");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.GET, java.util.List.of("torch"), "GET torch");
+    PlayerOutput output =
+        PlayerOutput.error(
+            "INVALID_ARGUMENT",
+            "You are not in the game.",
+            "error.play-required",
+            java.util.Map.of());
+    when(parser.parse("GET torch")).thenReturn(parsed);
+    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(stale));
+    when(sessionAuthenticationService.normalizeResolvedContext(stale)).thenReturn(cleared);
+    when(itemCommandHandler.handle(cleared, parsed, "tfx-stale"))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.failure("INVALID_ARGUMENT", "You are not in the game."),
+                java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.gameplayResult()).isEqualTo("NOT_APPLIED");
+    verify(itemCommandHandler).handle(cleared, parsed, "tfx-stale");
+    verify(playerOutputDeliveryService).deliver(cleared, java.util.List.of(output), true);
   }
 
   @Test

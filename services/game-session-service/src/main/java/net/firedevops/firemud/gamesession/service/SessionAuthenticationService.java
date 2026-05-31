@@ -3,38 +3,40 @@ package net.firedevops.firemud.gamesession.service;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /** Determines whether a session has already completed login. */
 @Component
 public final class SessionAuthenticationService {
   private final SessionContextService sessionContextService;
   private final GameSessionProperties properties;
-  private final GameInstanceRepository gameInstanceRepository;
-  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
+  private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
+  private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
 
   @Autowired
   public SessionAuthenticationService(
       SessionContextService sessionContextService,
       GameSessionProperties properties,
-      GameInstanceRepository gameInstanceRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService) {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.properties = Objects.requireNonNull(properties, "properties must not be null");
-    this.gameInstanceRepository =
-        Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
-    this.gameplayAdmissionPointerAuthorityService =
+    this.sessionRoutingNormalizationService =
         Objects.requireNonNull(
-            gameplayAdmissionPointerAuthorityService,
-            "gameplayAdmissionPointerAuthorityService must not be null");
+            sessionRoutingNormalizationService,
+            "sessionRoutingNormalizationService must not be null");
+    this.gameplayPresenceLifecycleService =
+        Objects.requireNonNull(
+            gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
   }
 
   public Optional<SessionContext> resolveSessionContext(String sessionIdText) {
+    return resolveUnverifiedSessionContext(sessionIdText).filter(this::isAuthenticatedContext);
+  }
+
+  public Optional<SessionContext> resolveUnverifiedSessionContext(String sessionIdText) {
     Optional<Long> maybeSessionId = parseSessionId(sessionIdText);
     if (maybeSessionId.isEmpty()) {
       return Optional.empty();
@@ -46,8 +48,7 @@ public final class SessionAuthenticationService {
     }
     return sessionContextService
         .findByTenantAndSessionId(maybeTenantId.get(), sessionId)
-        .map(this::normalizeGameplayAdmissionContext)
-        .filter(this::isAuthenticatedContext);
+        .map(this::normalizeResolvedContext);
   }
 
   public boolean isAuthenticated(String sessionIdText) {
@@ -66,58 +67,25 @@ public final class SessionAuthenticationService {
     long tenantId = maybeTenantId.get();
     return sessionContextService
         .findByTenantAndSessionId(tenantId, sessionId)
-        .map(this::normalizeGameplayAdmissionContext)
+        .map(this::normalizeResolvedContext)
         .filter(this::isAuthenticatedContext)
         .isPresent();
   }
 
-  private boolean isAuthenticatedContext(SessionContext context) {
-    return context.accountId() > 0;
-  }
-
-  private SessionContext normalizeGameplayAdmissionContext(SessionContext context) {
-    if (!hasGameplayBinding(context) || currentAdmissionPointerMatches(context)) {
+  public SessionContext normalizeResolvedContext(SessionContext context) {
+    Objects.requireNonNull(context, "context must not be null");
+    SessionContext normalized =
+        sessionRoutingNormalizationService.normalizeProjectedContext(context);
+    if (normalized.equals(context)) {
       return context;
     }
-    SessionContext cleared =
-        new SessionContext(
-            context.sessionId(),
-            context.tenantId(),
-            context.accountId(),
-            context.loginName(),
-            0L,
-            null,
-            0L,
-            null,
-            context.jwt(),
-            context.localeTag(),
-            context.bootstrapGameInstanceId(),
-            null,
-            null,
-            0L,
-            null);
-    sessionContextService.save(cleared);
-    return cleared;
+    gameplayPresenceLifecycleService.clearGameplayBinding(context, "STALE_ADMISSION_POINTER");
+    sessionContextService.save(normalized);
+    return normalized;
   }
 
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || StringUtils.hasText(context.roomInstanceId());
-  }
-
-  private boolean currentAdmissionPointerMatches(SessionContext context) {
-    if (!StringUtils.hasText(context.worldSlug())
-        || !StringUtils.hasText(context.realmSlug())
-        || context.pointerVersion() <= 0) {
-      return false;
-    }
-    return gameplayAdmissionPointerAuthorityService
-        .findPointer(context.worldSlug(), context.realmSlug())
-        .filter(pointer -> pointer.tenantId() == context.tenantId())
-        .filter(pointer -> pointer.gameInstanceId() == context.gameInstanceId())
-        .filter(pointer -> pointer.pointerVersion() == context.pointerVersion())
-        .isPresent();
+  private boolean isAuthenticatedContext(SessionContext context) {
+    return context.accountId() > 0;
   }
 
   private Optional<Long> parseSessionId(String text) {
@@ -134,11 +102,6 @@ public final class SessionAuthenticationService {
     if (tenantFromContext.isPresent()) {
       return tenantFromContext;
     }
-    Optional<Long> tenantFromRepository =
-        gameInstanceRepository.findById(sessionId).map(GameInstance::getTenantId);
-    if (tenantFromRepository.isPresent()) {
-      return tenantFromRepository;
-    }
-    return Optional.empty();
+    return sessionRoutingNormalizationService.findTenantId(sessionId);
   }
 }

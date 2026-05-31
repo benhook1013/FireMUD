@@ -17,8 +17,8 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
@@ -41,7 +41,7 @@ public class CommandServiceImpl implements CommandService {
   private final SessionRateLimiter sessionRateLimiter;
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
-  private final SessionContextService sessionContextService;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final ScriptEventPublisher scriptEventPublisher;
 
@@ -63,14 +63,14 @@ public class CommandServiceImpl implements CommandService {
       SessionRateLimiter sessionRateLimiter,
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
-      SessionContextService sessionContextService,
+      SessionAuthenticationService sessionAuthenticationService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       ScriptEventPublisher scriptEventPublisher) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
-    this.sessionContextService = sessionContextService;
+    this.sessionAuthenticationService = sessionAuthenticationService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.scriptEventPublisher = scriptEventPublisher;
   }
@@ -138,7 +138,9 @@ public class CommandServiceImpl implements CommandService {
             requiresSoloTick);
         markStaged(gameplayCommand);
         triggerImmediateTick(queueTarget.get());
-        sessionContext.ifPresent(context -> publishScriptEvent(context, gameplayCommand));
+        sessionContext
+            .filter(this::hasGameplayBinding)
+            .ifPresent(context -> publishScriptEvent(context, gameplayCommand));
         return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
         markFailed(gameplayCommand, "INVALID_ARGUMENT", ex.getMessage());
@@ -252,12 +254,14 @@ public class CommandServiceImpl implements CommandService {
   }
 
   private Optional<SessionContext> resolveSessionContext(String sessionIdText) {
-    try {
-      long sessionId = Long.parseLong(sessionIdText);
-      return sessionContextService.findBySessionId(sessionId);
-    } catch (NumberFormatException ex) {
-      return Optional.empty();
-    }
+    return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionIdText);
+  }
+
+  private boolean hasGameplayBinding(SessionContext context) {
+    return context.gameInstanceId() > 0
+        && context.characterId() > 0
+        && context.roomInstanceId() != null
+        && !context.roomInstanceId().isBlank();
   }
 
   private Optional<QueueTarget> resolveQueueTarget(

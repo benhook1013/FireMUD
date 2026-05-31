@@ -118,6 +118,11 @@ Entry format:
 - `2026-05-20`: H2-backed test profiles need lowercase identifier mode once a service starts using generated `jOOQ` table metadata
   - Context: the first `02.19.3` Game Session `jOOQ` repositories initially passed focused unit proof but failed broad integration startup because the existing H2 test URLs created unquoted uppercase table names while the generated `jOOQ` metadata queried quoted lowercase identifiers like `gameplay_admission_pointer`.
   - Observation: a service can look fine under JPA/Hibernate and still break the moment generated `jOOQ` code starts issuing explicit identifier SQL if the local H2 profile is not aligned with the repo's canonical lowercase schema naming.
+
+- `2026-05-28`: Reconnect-sensitive first-party selector identity should ride the durable session shell, not only a transient side registry
+  - Context: extending the `09.4` bootstrap/connect-scope work in Game Session showed that websocket handshake/login/PLAY consumers already preserved `worldSlug`, `realmSlug`, and `pointerVersion`, but `connectScopeId` and `connectRequestId` still lived only in the auxiliary first-party registry entry.
+  - Observation: when reconnect-style consumers depend on selector freshness, preserving only the routing bundle on the durable session shell is not enough; losing the side registry silently weakens behavior back toward route hints instead of true selector identity.
+  - Expected pattern: if a reconnect or replay-sensitive contract includes an explicit selector or request id, persist that selector identity on the same durable shell as the routing bundle so later consumers can stay fail-closed even when transient caches or helper registries are missing.
   - Expected pattern: when migrating a service onto generated `jOOQ` tables while it still uses H2-backed Spring test contexts, make the H2 URLs opt into lowercase identifier behavior (for example `DATABASE_TO_LOWER=TRUE`) before treating the repository conversion as complete.
 
 - `2026-05-21`: Heavy Gradle test tasks need clean result directories or strictly sequential execution once the same module is rerun
@@ -159,3 +164,88 @@ Entry format:
   - Context: hosted preview bootstrap triage exposed that several services still treated `count() == 0` as their smoke-fixture contract, which let persistent preview namespaces drift into unusable state even though the canonical demo rows were known.
   - Observation: create-once seeders are too weak for restart-heavy preview/demo environments because any surviving stale row can block the bootstrap path while still looking "seeded" to the service.
   - Expected pattern: seeders that support canonical smoke, preview, or operator demo flows should find rows by stable business identity and reassert the intended state on every run, while authored/runtime proof scripts should be able to rely on that repair behavior instead of manual database cleanup.
+
+- `2026-05-24`: Shared Postgres-backed test support must carry the full Flyway history-table contract
+  - Context: closing the remaining `02.19` SQL audit tail exposed that runtime containers, Helm values, and reset tooling were all using service-local `flyway_schema_history_<service_schema>` tables while plain service boot and `PostgresBackedServiceTestSupport` could still fall back to bare `flyway_schema_history`.
+  - Observation: proving only schema, locations, and default schema is not enough once services stop sharing one history table; tests can look green while validating a different Flyway contract than runtime.
+  - Expected pattern: shared Postgres-backed test helpers and base service config should register `spring.flyway.table` explicitly alongside schema/default-schema so fresh boot, integration tests, and local reset tooling all exercise the same service-local history table identity.
+
+- `2026-05-25`: Metrics-cardinality lint must scan shipped rules and canonical catalogs, not only a few explanatory docs
+  - Context: closing the remaining observability audit tail showed that the existing `check-metrics-cardinality.py` guardrail passed while `prometheus-rules-firemud.yaml`, the Redis metrics catalog, and the scripting quotas/operations doc still taught raw `tenantId` / `regionId` / per-script label shapes.
+  - Observation: a static policy check can give false confidence if it inspects only a narrow prose subset and ignores the repo's actual shipped rules and authoritative metric catalogs.
+  - Expected pattern: metrics-cardinality enforcement should scan the canonical rule/config/doc surfaces that operators and later contributors actually copy from, including PromQL grouping/join clauses, not just metric examples embedded in one or two design docs.
+
+- `2026-05-25`: Shared workflow contracts should propagate workflow family all the way to operator read surfaces
+  - Context: the first Temporal adopters already used stable workflow family constants internally, but the world lifecycle, script-patch readiness, and publish read models still dropped `workflowFamily` while the shared Temporal contract claimed operators would see it.
+  - Observation: keeping workflow-family truth only in workflow ids and internal constants leaves operator surfaces and docs drifting even though the runtime already knows the answer.
+  - Expected pattern: when a shared workflow contract defines `workflowFamily` as part of the canonical identity, adopter DTOs/protos/read APIs should expose it directly rather than forcing operators to parse it back out of workflow ids or infer it from service-specific context.
+
+- `2026-05-25`: Expected-binding manifests should own exact rendered binding identity, not just schema fields
+  - Context: tightening `02.15.8` showed that preflight already required `internalBindings.registry.imagePullSecretRef`, but staging/production overlays still rendered no matching image-pull binding and the contract tests only exercised a synthetic hobby manifest.
+  - Observation: a manifest can look authoritative while still being advisory if the proof checks only presence of fields and not whether the rendered workloads actually reference the named Secrets or pull credentials.
+  - Expected pattern: environment binding manifests should drive exact rendered Secret and image-pull binding names, and contract proof should run against the real staging/production renders in addition to synthetic examples.
+
+- `2026-05-25`: Traffic-open evidence should be generated from canonical preflight proof instead of hand-authored JSON
+  - Context: continuing `02.15.8` showed that the repo could validate hobby/production traffic-open evidence shape, but still left operators to assemble those records manually even though the same gates already depended on canonical preflight reports and deployment refs.
+  - Observation: once traffic-open records are hand-authored, they drift toward decorative JSON and can omit the exact report linkage or operator evidence fields the gate is supposed to enforce.
+  - Expected pattern: traffic-open records should be emitted by a repo-owned writer that validates the referenced preflight report before writing the evidence file, and the preflight consumer should reject traffic-open evidence that is missing that canonical preflight linkage.
+
+- `2026-05-25`: Once runtime authority moves out of config, live readers should stop using config-binder DTOs as their domain model
+  - Context: routing follow-through in Game Session had already moved production authority onto persisted admission-pointer rows, but live WORLDS/REALMS/CHARS/PLAY and routing gRPC reads were still passing around `GameplayCatalogProperties.World` / `Realm`, which kept the old config schema looking like runtime truth even though it was only a bootstrap/test helper.
+  - Observation: leaving live consumers on config-binder DTOs after authority has moved makes later contributors more likely to reintroduce local-config shortcuts, because the runtime still "looks" config-backed even when the data source changed.
+  - Expected pattern: when a service replaces config authority with persisted or remote authority, the live reader surface should project through a runtime-owned immutable view model and leave the config property classes behind only for bounded bootstrap, fallback, or tests.
+
+- `2026-05-25`: Selector-plus-request retry contracts need replayed results, not only stable logical ids
+  - Context: first-party connect-token issuance already derived a stable `jti` from `{accountId, tenantId, realmSlug, requestId}`, but retries still minted fresh JWTs because `issuedAt` and `expiresAt` were tied to wall clock, which broke the documented "same selector + same requestId" idempotency promise under reconnect and cutover races.
+  - Observation: stabilizing a logical identifier without replaying the validated result still leaves the observable token payload drifting across retries, so clients and operators see different attempts even when the contract claims one logical issuance.
+  - Expected pattern: when a selector plus `requestId` is the retry boundary, services should cache and replay the full post-validation success or deterministic failure for that attempt while the selector is live, instead of recalculating a fresh wall-clock token on every retry.
+
+- `2026-05-27`: Choose account-level active presence after freshness validation, not before it
+  - Context: account/friend presence originally asked the gameplay presence store for one preferred active session per account and only then checked whether that session's `{worldSlug, realmSlug, gameInstanceId, pointerVersion}` still matched current admission-pointer authority.
+  - Observation: selecting one "best" active session before validating routing freshness lets a stale-but-more-recent gameplay row hide a still-current session for the same account, and can also keep projecting an account as online in a realm after cutover.
+  - Expected pattern: when one read model must collapse multiple active sessions to one account-level presence view, validate each candidate against current routing/freshness authority first and only then apply "best session" preference ordering among the still-current candidates.
+
+- `2026-05-27`: Request-id idempotent write boundaries should expose replayed-vs-fresh outcome explicitly
+  - Context: `account-service` public-production first admission originally became idempotent only through the eventual membership row and durable audit log, while `connect-token` retries already replayed cached results for the same selector/request pair.
+  - Observation: when operators or first-party clients care about one logical attempt, "resource already exists" is not the same thing as "this request id was replayed"; without an explicit replay marker, repeated attempts and later no-op reads look the same even though they mean different things operationally.
+  - Expected pattern: when a service declares `requestId` as the retry boundary for a write-like flow, replayed responses should surface the original outcome together with an explicit `replayed` marker and the same `requestId`, instead of leaving callers to infer replay from logs or from eventual resource state alone.
+
+- `2026-05-28`: Shell resets must retire live gameplay presence, not only rewrite session state
+  - Context: Game Session already fenced stale admission-pointer and reconnect failures back to a logged-in bootstrap shell, but several of those paths only rewrote `SessionContext` in Redis and left the old gameplay-presence row intact.
+  - Observation: clearing command-time authority without clearing the corresponding live presence lets cutover and reconnect fences fail closed for commands while still leaking ghost online or in-room presence from the stale gameplay binding.
+  - Expected pattern: any path that intentionally collapses an admitted gameplay session back to a bootstrap or logged-in shell should clear the matching gameplay-presence entry and emit the same bounded region-exit lifecycle signal when the old binding had still been in a concrete room.
+
+- `2026-05-28`: Durable command staging and replay-time execution must consume the same routing fence as interactive session handlers
+  - Context: after Game Session fenced stale admission-pointer shells in `LOGIN`, `PLAY`, and gameplay-stage command reads, the durable queue and replay path still resolved raw `SessionContext` rows directly for queue targeting, replay execution, and gameplay-scoped script-event publish.
+  - Observation: once queued or replayed gameplay work bypasses the shared stale-pointer normalization, cutover-sensitive sessions can still target old runtimes or emit gameplay follow-up events even though the live session has already fallen back to a non-gameplay shell.
+  - Expected pattern: any durable gameplay-command staging or replay-time resolver that starts from session identity should normalize the resolved session through the same routing fence as interactive handlers before selecting queue targets, preserving gameplay bindings, or publishing gameplay-scoped side effects.
+
+- `2026-05-28`: Transport replay, recipient fan-out, and debug reads must not bypass stale-shell normalization
+  - Context: after Game Session fenced interactive commands and durable queue/replay work through `SessionAuthenticationService`, reconnect-facing websocket helpers, communication-recipient delivery, and operator effective-settings reads still consumed raw persisted `SessionContext` rows directly.
+  - Observation: leaving those adjacent consumers on raw Redis session state reopens stale-pointer leaks even after command admission is fixed, because reconnect redraw, recipient delivery, or settings inspection can still project gameplay-scoped state from a shell that should already have been collapsed back to login-only state.
+  - Expected pattern: any transport-side redraw/buffer helper, recipient resolver, or operator/debug read that starts from session identity should resolve or normalize through the same stale-pointer shell fence as command admission instead of trusting raw persisted gameplay bindings.
+
+- `2026-05-28`: Disconnect lifecycle and recent-presence projection must normalize stale gameplay shells too
+  - Context: after Game Session fenced command handling, replay, redraw, recipient delivery, and settings reads, disconnect/logout/takeover lifecycle emission and account-recent presence snapshots still loaded persisted session shells directly when projecting region-exit or routing evidence.
+  - Observation: if those lifecycle-side projections skip stale-shell normalization, cutover fencing can already have collapsed the admitted gameplay binding to login-only state while logout/takeover/transport-loss evidence or recent-presence reads still preserve stale world/realm/runtime routing as if the session were in-world.
+  - Expected pattern: any disconnect lifecycle publisher or recent-presence snapshotter that starts from session identity should normalize through the same stale-pointer routing fence before projecting gameplay-scoped state, and should treat live presence as advisory only when the normalized shell still has a gameplay binding.
+
+- `2026-05-28`: Login refresh paths must project through the same routing fence before preserving gameplay state
+  - Context: after Game Session fenced active commands, replay, redraw helpers, and disconnect/recent-presence projections, `LOGIN` still read raw persisted session shells to pick a bootstrap game instance, recover persisted first-party context, preserve relogin gameplay bindings, and clear failed login state.
+  - Observation: when account re-authentication keeps gameplay or routing state from a raw shell, a stale admitted gameplay binding can survive cutover fencing simply because the session refreshed through `LOGIN` instead of a later gameplay consumer.
+  - Expected pattern: any login/bootstrap refresh path that starts from persisted session identity should resolve or normalize through the same stale-pointer shell fence before it reuses gameplay bindings, persisted connect context, or bootstrap routing metadata.
+
+- `2026-05-30`: Resume/takeover continuity should normalize the stored gameplay binding, not only the incoming session
+  - Context: after Game Session fenced incoming session shells for commands, replay, disconnect projection, and login refresh, `PLAY` still looked up a prior gameplay binding by gameplay identity and reused its room/takeover continuity directly.
+  - Observation: when resume or takeover continuity trusts a stored gameplay binding without re-validating that stored shell against current pointer authority, cutover-sensitive sessions can inherit stale room/runtime continuity even though the incoming session itself already fails closed correctly.
+  - Expected pattern: any resume/takeover path that reuses an existing gameplay binding should normalize that stored binding through the same stale-pointer fence first, and should fall back to a fresh entry when the prior binding no longer survives current routing authority.
+
+- `2026-05-30`: Fair-selected work sources need one durable source-local ordering key in addition to batch-local claim position
+  - Context: continuing `02.18.8` remote-followup drain work showed the durable `REMOTE_FOLLOWUP_QUEUE` manifest still used batch-local claim slot order as `queueSourceOrdinal`, even though gameplay-command manifests already preserve one source-local ordering fact (`enqueueSeq`) across claim and replay cycles.
+  - Observation: batch-local fairness order (`claimOrdinal`) and source-local comparable ordering are different facts; collapsing them into one field makes replay and control-plane reads look deterministic while actually rewriting source order every time work is reclaimed into a new batch.
+  - Expected pattern: later durable work sources should persist one stable source-local ordering key on the source row itself and keep batch-local claim position as a separate field, so manifests and operator reads can compare or replay work without depending on whichever batch happened to claim it last.
+
+- `2026-05-30`: Durable remote rows should outrank payload blobs once schedule-time authority has been stamped
+  - Context: the `02.18.8` remote-followup target-side executor already persisted routing bundle, requested command, target entity, provenance, origin-source tuple, and trigger-script-event identity onto coordinator/followup rows at schedule time, but target-side execution still let payload JSON override several of those fields later.
+  - Observation: when replay or retry-time execution rereads a payload blob as higher authority than the durable row contract, later payload drift can silently rewrite target-leg admission truth even though the scheduler already validated and persisted the canonical fields.
+  - Expected pattern: once a scheduling path stamps first-class fields onto durable coordinator/followup rows, target-side execution should prefer those stored fields and only fall back to payload JSON for older or partially populated rows that predate the explicit durable authority.

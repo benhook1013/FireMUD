@@ -198,6 +198,39 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
             jwt));
   }
 
+  public void seedLiveSession(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String playableStateScope) {
+    seedLiveSession(
+        new SessionContext(
+            sessionId,
+            tenantId,
+            accountId,
+            loginName,
+            characterId,
+            characterName,
+            gameInstanceId,
+            roomInstanceId,
+            jwt,
+            null,
+            gameInstanceId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            playableStateScope));
+  }
+
   public long insertRunningGameInstance(
       long tenantId, long accountId, long gameTemplateId, boolean clearExisting) {
     JdbcTemplate jdbc = jdbc();
