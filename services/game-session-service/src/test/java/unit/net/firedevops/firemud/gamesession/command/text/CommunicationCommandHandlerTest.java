@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
@@ -20,6 +19,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -30,10 +30,10 @@ import org.mockito.Mockito;
 class CommunicationCommandHandlerTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
-  private final GameplayCatalogProperties gameplayCatalogProperties =
-      new GameplayCatalogProperties();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final SessionAuthenticationService sessionAuthenticationService =
+      Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final CommunicationRecipientDeliveryService recipientDeliveryService =
@@ -62,23 +62,12 @@ class CommunicationCommandHandlerTest {
 
   @BeforeEach
   void setUp() {
-    gameplayCatalogProperties.getWorlds().clear();
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug("demo");
-    world.setDisplayName("Demo World");
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("production");
-    realm.setDisplayName("Live Realm");
-    realm.setTenantId(22L);
-    realm.setGameInstanceId(1L);
-    world.setRealms(List.of(realm));
-    gameplayCatalogProperties.setWorlds(List.of(world));
     handler =
         new CommunicationCommandHandler(
             entityManagementClient,
-            new GameplayWorldCatalog(gameplayCatalogProperties),
             gameLogicClient,
             gameLogicProperties,
+            sessionAuthenticationService,
             sessionContextService,
             recipientDeliveryService,
             new CommunicationOutputMapper(),
@@ -162,6 +151,53 @@ class CommunicationCommandHandlerTest {
                     .setName("Sora")
                     .build()));
     when(sessionContextService.findByGameplayName(22L, 1L, "Sora")).thenReturn(Optional.empty());
+
+    CommunicationCommandHandlingResult result =
+        handler.handle(
+            sessionContext,
+            new TextCommand(
+                TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorMessage()).contains("Target is not available");
+  }
+
+  @Test
+  void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
+    SessionContext staleTarget =
+        new SessionContext(
+            77L,
+            22L,
+            700L,
+            "sora@example.com",
+            300L,
+            "Sora",
+            1L,
+            "room-8",
+            "jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            17L,
+            "SHARED");
+    SessionContext normalizedTarget =
+        new SessionContext(
+            77L, 22L, 700L, "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    when(entityManagementClient.findCharacterByName(
+            sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                Character.newBuilder()
+                    .setId("300")
+                    .setTenantId("22")
+                    .setAccountId("700")
+                    .setName("Sora")
+                    .build()));
+    when(sessionContextService.findByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.of(staleTarget));
+    when(sessionAuthenticationService.normalizeResolvedContext(staleTarget))
+        .thenReturn(normalizedTarget);
 
     CommunicationCommandHandlingResult result =
         handler.handle(

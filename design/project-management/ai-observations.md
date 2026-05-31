@@ -253,3 +253,7 @@ Entry format:
 ## 2026-05-31 - Routing authority drift often survives in read models after command paths are fixed
 
 After the main `09.1` routing-fence work was already in place, the next real drift showed up in projection and lifecycle code rather than in admission commands: account-presence reads and shared-runtime logout still consulted `GameplayWorldCatalog` even though admitted routing bundle plus persisted pointer authority were already the canonical runtime truth. When a routing slice claims local catalog copies are no longer authoritative, follow-up audits should explicitly inspect read models, lifecycle policies, and display-name decoration code for reverse runtime-target fallbacks or local world/realm validation, not just the interactive command paths.
+
+## 2026-05-31 - Availability checks need the same normalization fence as later delivery
+
+Routing-fence cleanup does not end once downstream delivery normalizes stale gameplay bindings. In the communication path, `TELL` could still mark a target as “online” from a raw gameplay-name Redis hit even though recipient delivery would immediately clear that same target back to a non-gameplay shell. Any availability or “is target live” check that starts from session identity should normalize the candidate through the same routing fence as the later delivery/execution path before it reports success.
