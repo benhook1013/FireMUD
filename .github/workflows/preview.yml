@@ -80,12 +80,13 @@ jobs:
               prAuthor = pull.user.login;
             }
 
-            const eligible = prAuthor !== "dependabot[bot]";
+            const ineligibleAuthors = new Set(["dependabot[bot]", "app/renovate"]);
+            const eligible = !ineligibleAuthors.has(prAuthor);
             core.setOutput("eligible", eligible ? "true" : "false");
             core.info(
               eligible
                 ? `Preview target is eligible (author=${prAuthor}).`
-                : `Skipping preview orchestration for Dependabot PR (author=${prAuthor}).`
+                : `Skipping preview orchestration for dependency bot PR (author=${prAuthor}).`
             );
 
       - name: Derive preview identifiers
@@ -130,10 +131,11 @@ jobs:
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
         run: |
           cat <<'EOF'
-          Preview orchestration is skipped for Dependabot PRs.
+          Preview orchestration is skipped for dependency bot PRs.
 
-          Dependabot updates do not get preview namespace preparation, hosted
-          preview reconciliation, or hosted preview validation work.
+          Dependabot and Renovate updates do not get preview namespace
+          preparation, hosted preview reconciliation, or hosted preview
+          validation work.
           EOF
 
       - name: Show derived target
