@@ -266,7 +266,7 @@ class SessionResumptionFlowTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                worldCatalog,
+                pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService,

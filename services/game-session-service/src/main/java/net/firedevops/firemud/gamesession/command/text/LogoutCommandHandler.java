@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -25,7 +26,7 @@ public final class LogoutCommandHandler {
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final GameInstanceService gameInstanceService;
-  private final GameplayWorldCatalog gameplayWorldCatalog;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
@@ -35,7 +36,7 @@ public final class LogoutCommandHandler {
       SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
       GameInstanceService gameInstanceService,
-      GameplayWorldCatalog gameplayWorldCatalog,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
@@ -47,8 +48,10 @@ public final class LogoutCommandHandler {
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.gameInstanceService =
         Objects.requireNonNull(gameInstanceService, "gameInstanceService must not be null");
-    this.gameplayWorldCatalog =
-        Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
+    this.gameplayAdmissionPointerAuthorityService =
+        Objects.requireNonNull(
+            gameplayAdmissionPointerAuthorityService,
+            "gameplayAdmissionPointerAuthorityService must not be null");
     this.gameplayPresenceLifecycleService =
         Objects.requireNonNull(
             gameplayPresenceLifecycleService, "gameplayPresenceLifecycleService must not be null");
@@ -62,6 +65,7 @@ public final class LogoutCommandHandler {
   }
 
   public LogoutCommandHandlingResult handle(String sessionId) {
+    Optional<SessionContext> maybePersistedContext = resolvePersistedSessionContext(sessionId);
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -70,11 +74,12 @@ public final class LogoutCommandHandler {
     }
 
     SessionContext context = maybeContext.orElseThrow();
+    SessionContext persistedContext = maybePersistedContext.orElse(context);
     try {
       if (context.gameInstanceId() > 0 && context.characterId() > 0) {
         scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
       }
-      boolean stopSession = shouldStopSession(context);
+      boolean stopSession = shouldStopSession(context, persistedContext);
       if (stopSession) {
         gameInstanceService.stopSession(context.gameInstanceId());
       }
@@ -118,8 +123,10 @@ public final class LogoutCommandHandler {
     return gameplayCommand;
   }
 
-  private boolean shouldStopSession(SessionContext context) {
-    return context.gameInstanceId() > 0 && !isSharedRuntime(context);
+  private boolean shouldStopSession(SessionContext context, SessionContext persistedContext) {
+    return context.gameInstanceId() > 0
+        && !isSharedRuntime(context)
+        && !isSharedRuntime(persistedContext);
   }
 
   private boolean isSharedRuntime(SessionContext context) {
@@ -129,21 +136,33 @@ public final class LogoutCommandHandler {
     if (sharedRealmFromSelectors(context).isPresent()) {
       return true;
     }
-    return gameplayWorldCatalog
-        .resolveRealmByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-        .map(GameplayWorldCatalog.RealmView::stateScope)
+    return gameplayAdmissionPointerAuthorityService
+        .findByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+        .map(pointer -> pointer.stateScope())
         .filter("SHARED"::equals)
         .isPresent();
   }
 
-  private Optional<GameplayWorldCatalog.RealmView> sharedRealmFromSelectors(
-      SessionContext context) {
+  private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {
+    try {
+      long parsedSessionId = Long.parseLong(sessionIdText);
+      return sessionContextService.findBySessionId(parsedSessionId).filter(this::isAuthenticated);
+    } catch (NumberFormatException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private boolean isAuthenticated(SessionContext context) {
+    return context.accountId() > 0;
+  }
+
+  private Optional<String> sharedRealmFromSelectors(SessionContext context) {
     if (!StringUtils.hasText(context.worldSlug()) || !StringUtils.hasText(context.realmSlug())) {
       return Optional.empty();
     }
-    return gameplayWorldCatalog
-        .resolveWorld(context.worldSlug())
-        .flatMap(world -> gameplayWorldCatalog.resolveRealm(world, context.realmSlug()))
-        .filter(realm -> "SHARED".equals(realm.stateScope()));
+    return gameplayAdmissionPointerAuthorityService
+        .findPointer(context.worldSlug(), context.realmSlug())
+        .map(pointer -> pointer.stateScope())
+        .filter("SHARED"::equals);
   }
 }

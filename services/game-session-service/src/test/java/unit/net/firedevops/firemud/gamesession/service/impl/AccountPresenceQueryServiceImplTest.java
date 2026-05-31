@@ -6,14 +6,15 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
@@ -29,8 +30,8 @@ class AccountPresenceQueryServiceImplTest {
         Mockito.mock(AccountRecentPresenceService.class);
     AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
         Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
-    GameplayCatalogProperties catalogProperties = gameplayCatalogProperties();
-    GameplayWorldCatalog gameplayWorldCatalog = new GameplayWorldCatalog(catalogProperties);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
@@ -39,7 +40,7 @@ class AccountPresenceQueryServiceImplTest {
             resolver,
             recentPresenceService,
             visibilityPolicyResolver,
-            gameplayWorldCatalog);
+            pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -84,6 +85,10 @@ class AccountPresenceQueryServiceImplTest {
                         120L))));
     when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
         .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(pointerAuthorityService.findPointer("sandbox", "production"))
+        .thenReturn(
+            Optional.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L, 4L));
 
@@ -123,8 +128,8 @@ class AccountPresenceQueryServiceImplTest {
         Mockito.mock(AccountRecentPresenceService.class);
     AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
         Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
-    GameplayCatalogProperties catalogProperties = gameplayCatalogProperties();
-    GameplayWorldCatalog gameplayWorldCatalog = new GameplayWorldCatalog(catalogProperties);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
@@ -133,7 +138,7 @@ class AccountPresenceQueryServiceImplTest {
             resolver,
             recentPresenceService,
             visibilityPolicyResolver,
-            gameplayWorldCatalog);
+            pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -176,6 +181,10 @@ class AccountPresenceQueryServiceImplTest {
                         null,
                         180L,
                         120L))));
+    when(pointerAuthorityService.findPointer("sandbox", "production"))
+        .thenReturn(
+            Optional.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L));
 
@@ -193,8 +202,8 @@ class AccountPresenceQueryServiceImplTest {
         Mockito.mock(AccountRecentPresenceService.class);
     AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
         Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
-    GameplayCatalogProperties catalogProperties = gameplayCatalogProperties();
-    GameplayWorldCatalog gameplayWorldCatalog = new GameplayWorldCatalog(catalogProperties);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
@@ -203,7 +212,7 @@ class AccountPresenceQueryServiceImplTest {
             resolver,
             recentPresenceService,
             visibilityPolicyResolver,
-            gameplayWorldCatalog);
+            pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -251,6 +260,10 @@ class AccountPresenceQueryServiceImplTest {
                         80L))));
     when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
         .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
+    when(pointerAuthorityService.findPointer("sandbox", "production"))
+        .thenReturn(
+            Optional.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L));
 
@@ -261,27 +274,26 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(100L, result.get(0).characterId());
   }
 
-  private static GameplayCatalogProperties gameplayCatalogProperties() {
-    GameplayCatalogProperties.Realm production = new GameplayCatalogProperties.Realm();
-    production.setSlug("production");
-    production.setDisplayName("Live Realm");
-    production.setTenantId(1L);
-    production.setGameInstanceId(2L);
-    production.setPointerVersion(17L);
-    production.setVisible(true);
-    production.setPublicProductionRealm(true);
-    production.setRequiresCharacterSelection(false);
-    production.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
-    production.setCharacterCreationPolicy(
-        GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
-
-    GameplayCatalogProperties.World sandbox = new GameplayCatalogProperties.World();
-    sandbox.setSlug("sandbox");
-    sandbox.setDisplayName("Builder Sandbox");
-    sandbox.setRealms(List.of(production));
-
-    GameplayCatalogProperties properties = new GameplayCatalogProperties();
-    properties.setWorlds(List.of(sandbox));
-    return properties;
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug,
+      String worldDisplayName,
+      String realmSlug,
+      String realmDisplayName,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion) {
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldDisplayName,
+        realmSlug,
+        realmDisplayName,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW");
   }
 }

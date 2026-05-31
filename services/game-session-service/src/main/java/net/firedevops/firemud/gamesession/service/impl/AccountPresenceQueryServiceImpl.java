@@ -9,12 +9,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
@@ -37,7 +38,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
   private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
-  private final GameplayWorldCatalog gameplayWorldCatalog;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -47,12 +48,12 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
       AccountRecentPresenceService accountRecentPresenceService,
       AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
-      GameplayWorldCatalog gameplayWorldCatalog) {
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
     this.accountRecentPresenceService = accountRecentPresenceService;
     this.visibilityPolicyResolver = visibilityPolicyResolver;
-    this.gameplayWorldCatalog = gameplayWorldCatalog;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
   }
 
   @Override
@@ -86,13 +87,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       }
       GameplayPresenceActivityState activityState =
           gameplayPresenceActivityResolver.resolve(presence);
-      GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
-          gameplayWorldCatalog
-              .resolveRealmTarget(presence.worldSlug(), presence.realmSlug())
-              .or(
-                  () ->
-                      gameplayWorldCatalog.resolveRuntimeTarget(
-                          tenantId, presence.gameInstanceId()))
+      GameplayAdmissionPointerSnapshot pointer =
+          gameplayAdmissionPointerAuthorityService
+              .findPointer(presence.worldSlug(), presence.realmSlug())
               .orElse(null);
       results.put(
           accountId,
@@ -101,14 +98,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               true,
               presence.gameInstanceId(),
               presence.playableStateScope(),
-              presence.worldSlug() != null
-                  ? presence.worldSlug()
-                  : runtimeTarget == null ? null : runtimeTarget.worldSlug(),
-              runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
-              presence.realmSlug() != null
-                  ? presence.realmSlug()
-                  : runtimeTarget == null ? null : runtimeTarget.realmSlug(),
-              runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
+              presence.worldSlug(),
+              pointer == null ? null : pointer.worldDisplayName(),
+              presence.realmSlug(),
+              pointer == null ? null : pointer.realmDisplayName(),
               presence.pointerVersion() > 0 ? presence.pointerVersion() : null,
               presence.characterId(),
               presence.characterName(),
@@ -148,25 +141,21 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         || presence.realmSlug().isBlank()) {
       return false;
     }
-    return gameplayWorldCatalog
-        .resolveWorld(presence.worldSlug())
-        .flatMap(
-            world ->
-                gameplayWorldCatalog
-                    .resolveRealm(world, presence.realmSlug())
-                    .filter(realm -> realm.tenantId() == tenantId)
-                    .filter(realm -> realm.gameInstanceId() == presence.gameInstanceId())
-                    .filter(realm -> realm.pointerVersion() == presence.pointerVersion()))
+    return gameplayAdmissionPointerAuthorityService
+        .findPointer(presence.worldSlug(), presence.realmSlug())
+        .filter(pointer -> pointer.tenantId() == tenantId)
+        .filter(pointer -> pointer.gameInstanceId() == presence.gameInstanceId())
+        .filter(pointer -> pointer.pointerVersion() == presence.pointerVersion())
         .isPresent();
   }
 
   private AccountPresenceSnapshot offline(
       long tenantId, long accountId, AccountRecentPresenceState recentState) {
-    GameplayWorldCatalog.RuntimeRealmTarget runtimeTarget =
+    GameplayAdmissionPointerSnapshot pointer =
         recentState == null
             ? null
-            : gameplayWorldCatalog
-                .resolveRealmTarget(recentState.worldSlug(), recentState.realmSlug())
+            : gameplayAdmissionPointerAuthorityService
+                .findPointer(recentState.worldSlug(), recentState.realmSlug())
                 .orElse(null);
     return new AccountPresenceSnapshot(
         accountId,
@@ -174,9 +163,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         recentState == null ? null : recentState.gameInstanceId(),
         recentState == null ? null : recentState.playableStateScope(),
         recentState == null ? null : recentState.worldSlug(),
-        runtimeTarget == null ? null : runtimeTarget.worldDisplayName(),
+        pointer == null ? null : pointer.worldDisplayName(),
         recentState == null ? null : recentState.realmSlug(),
-        runtimeTarget == null ? null : runtimeTarget.realmDisplayName(),
+        pointer == null ? null : pointer.realmDisplayName(),
         recentState == null ? null : recentState.pointerVersion(),
         null,
         null,

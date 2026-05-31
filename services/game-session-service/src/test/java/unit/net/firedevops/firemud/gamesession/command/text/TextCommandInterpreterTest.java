@@ -448,7 +448,7 @@ class TextCommandInterpreterTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                worldCatalog,
+                pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService,
