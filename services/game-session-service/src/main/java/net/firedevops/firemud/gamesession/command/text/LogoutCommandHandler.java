@@ -125,22 +125,24 @@ public final class LogoutCommandHandler {
 
   private boolean shouldStopSession(SessionContext context, SessionContext persistedContext) {
     return context.gameInstanceId() > 0
-        && !isSharedRuntime(context)
-        && !isSharedRuntime(persistedContext);
+        && isConfirmedIsolatedRuntime(context)
+        && isConfirmedIsolatedRuntime(persistedContext);
   }
 
-  private boolean isSharedRuntime(SessionContext context) {
-    if ("SHARED".equals(context.playableStateScope())) {
+  private boolean isConfirmedIsolatedRuntime(SessionContext context) {
+    if ("ISOLATED".equals(context.playableStateScope())) {
       return true;
     }
+    if ("SHARED".equals(context.playableStateScope())) {
+      return false;
+    }
     if (sharedRealmFromSelectors(context).isPresent()) {
-      return true;
+      return false;
     }
     return gameplayAdmissionPointerAuthorityService
         .findByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-        .map(pointer -> pointer.stateScope())
-        .filter("SHARED"::equals)
-        .isPresent();
+        .map(pointer -> "ISOLATED".equals(pointer.stateScope()))
+        .orElse(false);
   }
 
   private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {

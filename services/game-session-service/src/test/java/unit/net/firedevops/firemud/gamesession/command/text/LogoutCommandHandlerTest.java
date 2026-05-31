@@ -208,6 +208,36 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
+  void logoutDoesNotStopRuntimeWhenPointerAuthorityIsUnknown() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(22L, 7L))
+        .thenReturn(Optional.empty());
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 7L, 123L);
+  }
+
+  @Test
   void logoutBeforeLoginReturnsBoundedFailure() {
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.empty());
 
