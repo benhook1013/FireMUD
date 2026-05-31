@@ -91,7 +91,7 @@ def websocket_smoke():
             look_expect,
             "demo",
             look_timeout_seconds,
-        )
+        ) + [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
         run_websocket_command_plan(ws, steps, timeout_seconds)
     finally:
         ws.close()

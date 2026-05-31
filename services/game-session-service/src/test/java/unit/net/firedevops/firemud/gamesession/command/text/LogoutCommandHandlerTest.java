@@ -25,6 +25,8 @@ class LogoutCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+  private final GameplayWorldCatalog gameplayWorldCatalog =
+      Mockito.mock(GameplayWorldCatalog.class);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -38,16 +40,37 @@ class LogoutCommandHandlerTest {
           sessionAuthenticationService,
           sessionContextService,
           gameInstanceService,
+          gameplayWorldCatalog,
           gameplayPresenceLifecycleService,
           firstPartyConnectContextRegistry,
           screenBufferService,
           scriptEventPublisher);
 
   @Test
-  void logoutClearsGameplayAndReplayState() {
+  void logoutClearsGameplayAndReplayStateWithoutStoppingSharedRuntime() {
     SessionContext context =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "1021", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayWorldCatalog.resolveRealmByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            Optional.of(
+                new GameplayWorldCatalog.RealmView(
+                    "private", "Private", 22L, 7L, 1L, true, false, true, "ISOLATED", "REQUIRED")));
 
     LogoutCommandHandlingResult result = handler.handle("41");
 
@@ -57,13 +80,89 @@ class LogoutCommandHandlerTest {
         .publishCommandEvent(context, command("logout-command:41:1:123", "LOGOUT"));
     verify(scriptEventPublisher, never())
         .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
-    verify(gameInstanceService).stopSession(1L);
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
     verify(screenBufferService).clear(22L, 1L, 123L);
     verify(gameplayPresenceLifecycleService)
         .recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
     verify(firstPartyConnectContextRegistry).unregister(41L);
     verify(sessionContextService).deleteBySessionId(22L, 41L);
     verifyNoMoreInteractions(gameplayPresenceLifecycleService);
+  }
+
+  @Test
+  void logoutStopsIsolatedRuntime() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            "demo",
+            "private",
+            1L,
+            "ISOLATED");
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService).stopSession(7L);
+    verify(screenBufferService).clear(22L, 7L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopSharedRuntimeWhenSharedStateComesFromWorldRealmSelectors() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null);
+    GameplayWorldCatalog.WorldView world =
+        new GameplayWorldCatalog.WorldView(
+            "demo",
+            "Demo",
+            java.util.List.of(
+                new GameplayWorldCatalog.RealmView(
+                    "production",
+                    "Production",
+                    22L,
+                    1L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayWorldCatalog.resolveWorld("demo")).thenReturn(Optional.of(world));
+    when(gameplayWorldCatalog.resolveRealm(world, "production"))
+        .thenReturn(Optional.of(world.realms().getFirst()));
+    when(gameplayWorldCatalog.resolveRealmByRuntimeTarget(22L, 1L)).thenReturn(Optional.empty());
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 1L, 123L);
   }
 
   @Test
