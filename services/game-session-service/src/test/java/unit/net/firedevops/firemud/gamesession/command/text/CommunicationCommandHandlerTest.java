@@ -205,6 +205,17 @@ class CommunicationCommandHandlerTest {
             new TextCommand(
                 TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
 
+    Mockito.verify(sessionAuthenticationService).normalizeResolvedContext(staleTarget);
+    Mockito.verify(gameLogicClient, Mockito.never())
+        .sendCommunication(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class));
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorMessage()).contains("Target is not available");
   }

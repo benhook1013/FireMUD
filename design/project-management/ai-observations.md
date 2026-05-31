@@ -250,18 +250,22 @@ Entry format:
   - Observation: when replay or retry-time execution rereads a payload blob as higher authority than the durable row contract, later payload drift can silently rewrite target-leg admission truth even though the scheduler already validated and persisted the canonical fields.
   - Expected pattern: once a scheduling path stamps first-class fields onto durable coordinator/followup rows, target-side execution should prefer those stored fields and only fall back to payload JSON for older or partially populated rows that predate the explicit durable authority.
 
-## 2026-05-31 - Routing authority drift often survives in read models after command paths are fixed
+- `2026-05-31`: Routing authority drift often survives in read models after command paths are fixed
+  - Context: after the main `09.1` routing-fence work landed, the next real drift showed up in projection and lifecycle code rather than in admission commands.
+  - Observation: account-presence reads and shared-runtime logout still consulted `GameplayWorldCatalog` even though admitted routing bundle plus persisted pointer authority were already the canonical runtime truth.
+  - Expected pattern: when a routing slice claims local catalog copies are no longer authoritative, follow-up audits should explicitly inspect read models, lifecycle policies, and display-name decoration code for reverse runtime-target fallbacks or local world/realm validation, not just the interactive command paths.
 
-After the main `09.1` routing-fence work was already in place, the next real drift showed up in projection and lifecycle code rather than in admission commands: account-presence reads and shared-runtime logout still consulted `GameplayWorldCatalog` even though admitted routing bundle plus persisted pointer authority were already the canonical runtime truth. When a routing slice claims local catalog copies are no longer authoritative, follow-up audits should explicitly inspect read models, lifecycle policies, and display-name decoration code for reverse runtime-target fallbacks or local world/realm validation, not just the interactive command paths.
+- `2026-05-31`: Availability checks need the same normalization fence as later delivery
+  - Context: routing-fence cleanup had already normalized stale gameplay bindings in downstream communication delivery paths.
+  - Observation: `TELL` could still mark a target as “online” from a raw gameplay-name Redis hit even though recipient delivery would immediately clear that same target back to a non-gameplay shell.
+  - Expected pattern: any availability or “is target live” check that starts from session identity should normalize the candidate through the same routing fence as the later delivery or execution path before it reports success.
 
-## 2026-05-31 - Availability checks need the same normalization fence as later delivery
+- `2026-06-01`: Session-scoped reads must not guess tenant authority from runtime ids
+  - Context: `QueryState(sessionId)` still tried to derive tenant scope by treating the transport `sessionId` as if it were also a runtime `gameInstanceId`.
+  - Observation: numeric identifier reuse across session, runtime, and operator surfaces is exactly the kind of shortcut that bypasses routing-fence work later if read-model paths are left behind.
+  - Expected pattern: session-scoped operator or debug reads should fail closed when the session shell is absent or tenantless instead of projecting a guessed Redis key from a different authority domain.
 
-Routing-fence cleanup does not end once downstream delivery normalizes stale gameplay bindings. In the communication path, `TELL` could still mark a target as “online” from a raw gameplay-name Redis hit even though recipient delivery would immediately clear that same target back to a non-gameplay shell. Any availability or “is target live” check that starts from session identity should normalize the candidate through the same routing fence as the later delivery/execution path before it reports success.
-
-## 2026-06-01 - Session-scoped reads must not guess tenant authority from runtime ids
-
-`QueryState(sessionId)` was still willing to derive tenant scope by treating the transport `sessionId` as if it were also a runtime `gameInstanceId`. Numeric identifier reuse across session, runtime, and operator surfaces is exactly the kind of shortcut that bypasses routing-fence work later if read-model paths are left behind. Session-scoped operator/debug reads should fail closed when the session shell is absent or tenantless instead of projecting a guessed Redis key from a different authority domain.
-
-## 2026-06-01 - Pre-login bootstrap resolution needs explicit shell authority too
-
-Removing transport-id fallbacks from post-login and operator paths is not enough if credential `LOGIN` can still guess a bootstrap runtime from the same numeric `sessionId`. Pre-login flows should either resolve a runtime target from the canonical bootstrap shell or fail closed; otherwise a missing shell can still reopen admission whenever a transport id happens to collide with a real runtime id.
+- `2026-06-01`: Pre-login bootstrap resolution needs explicit shell authority too
+  - Context: transport-id fallbacks had already been removed from post-login and operator paths, but credential `LOGIN` still had one bootstrap-time shortcut left.
+  - Observation: if credential `LOGIN` can still guess a bootstrap runtime from the same numeric `sessionId`, a missing shell can reopen admission whenever a transport id happens to collide with a real runtime id.
+  - Expected pattern: pre-login flows should resolve a runtime target from the canonical bootstrap shell or fail closed when that authority is missing.
