@@ -1169,6 +1169,59 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void queryStateMissingSessionReturnsNotFoundErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(9L);
+    instance.setOwnerAccountId(42L);
+    instance.setRuntimeVersion("v1");
+    instance.setStatus("RUNNING");
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(instance));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
+    Mockito.when(tickService.queryState(7L))
+        .thenThrow(new IllegalArgumentException("No session context found for sessionId=7"));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryStateResponse> ref = new AtomicReference<>();
+    service.queryState(
+        QueryStateRequest.newBuilder().setSessionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+    assertEquals("No session context found for sessionId=7", ref.get().getError().getMessage());
+  }
+
+  @Test
   void queryStateRuntimeFailureReturnsInternalErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);

@@ -9,7 +9,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -153,7 +152,13 @@ final class TickQueueControlService {
   String queryState(Long sessionId) {
     Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
     Long tenantId =
-        maybeContext.map(SessionContext::tenantId).orElseGet(() -> findTenantId(sessionId));
+        maybeContext
+            .map(SessionContext::tenantId)
+            .filter(tenant -> tenant != null && tenant > 0)
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "No session context found for sessionId=" + sessionId));
     Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
     return state != null ? state.toString() : "{}";
   }
@@ -277,14 +282,6 @@ final class TickQueueControlService {
         tenantId,
         gameInstanceId);
     return commands.size();
-  }
-
-  private Long findTenantId(Long sessionId) {
-    Optional<SessionContext> context = sessionContextService.findBySessionId(sessionId);
-    if (context.isPresent()) {
-      return context.get().tenantId();
-    }
-    return gameInstanceRepository.findById(sessionId).map(GameInstance::getTenantId).orElse(0L);
   }
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {

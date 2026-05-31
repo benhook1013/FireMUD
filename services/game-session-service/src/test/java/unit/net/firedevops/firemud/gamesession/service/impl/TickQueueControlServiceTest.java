@@ -189,7 +189,7 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void queryStateUsesSessionContextTenantBeforeRepositoryFallback() {
+  void queryStateUsesSessionContextTenantFromSessionAuthority() {
     when(sessionContextService.findBySessionId(7L))
         .thenReturn(Optional.of(new SessionContext(7L, 11L, 0L, 0L, 0L, null)));
     when(valueOps.get("session:11:7")).thenReturn("{\"status\":\"ready\"}");
@@ -200,17 +200,24 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void queryStateFallsBackToGameInstanceTenantWhenSessionContextMissing() {
-    GameInstance instance = new GameInstance();
-    instance.setId(7L);
-    instance.setTenantId(12L);
+  void queryStateFailsClosedWhenSessionContextMissing() {
     when(sessionContextService.findBySessionId(7L)).thenReturn(Optional.empty());
-    when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
-    when(valueOps.get("session:12:7")).thenReturn("{\"status\":\"queued\"}");
 
-    String state = service.queryState(7L);
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> service.queryState(7L));
 
-    assertEquals("{\"status\":\"queued\"}", state);
+    assertEquals("No session context found for sessionId=7", exception.getMessage());
+  }
+
+  @Test
+  void queryStateFailsClosedWhenSessionContextHasNoTenantAuthority() {
+    when(sessionContextService.findBySessionId(7L))
+        .thenReturn(Optional.of(new SessionContext(7L, 0L, 0L, 0L, 0L, null)));
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> service.queryState(7L));
+
+    assertEquals("No session context found for sessionId=7", exception.getMessage());
   }
 
   @Test

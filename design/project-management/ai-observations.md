@@ -257,3 +257,7 @@ After the main `09.1` routing-fence work was already in place, the next real dri
 ## 2026-05-31 - Availability checks need the same normalization fence as later delivery
 
 Routing-fence cleanup does not end once downstream delivery normalizes stale gameplay bindings. In the communication path, `TELL` could still mark a target as “online” from a raw gameplay-name Redis hit even though recipient delivery would immediately clear that same target back to a non-gameplay shell. Any availability or “is target live” check that starts from session identity should normalize the candidate through the same routing fence as the later delivery/execution path before it reports success.
+
+## 2026-06-01 - Session-scoped reads must not guess tenant authority from runtime ids
+
+`QueryState(sessionId)` was still willing to derive tenant scope by treating the transport `sessionId` as if it were also a runtime `gameInstanceId`. Numeric identifier reuse across session, runtime, and operator surfaces is exactly the kind of shortcut that bypasses routing-fence work later if read-model paths are left behind. Session-scoped operator/debug reads should fail closed when the session shell is absent or tenantless instead of projecting a guessed Redis key from a different authority domain.
