@@ -45,7 +45,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   protected final void initReloadingClient() throws SSLException, IOException {
     reloadChannel();
-    if (tlsProps.isPlaintext()) {
+    if (tlsProps.isPlaintext() || !GrpcTlsReloadPolicy.isEnabled()) {
       return;
     }
     watcher =
