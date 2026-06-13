@@ -24,6 +24,8 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -53,6 +55,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
@@ -72,6 +75,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
@@ -88,6 +92,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
@@ -567,32 +572,23 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       long bootstrapGameInstance = Long.parseLong(bootstrapGameInstanceId);
       Optional<SessionContext> existing =
           sessionContextService.findByTenantAndSessionId(tenant, sessionId);
+      SessionContext incomingShell =
+          repairGenericBootstrapShell(
+              bootstrapShell(
+                  sessionId,
+                  tenant,
+                  bootstrapGameInstance,
+                  resolveWorldSlug(session),
+                  resolveRealmSlug(session),
+                  resolvePointerVersion(session),
+                  null,
+                  null,
+                  resolveLocaleTag(session)));
       if (existing.isPresent()) {
-        maybeRefreshBootstrapShell(
-            existing.orElseThrow(),
-            bootstrapShell(
-                sessionId,
-                tenant,
-                bootstrapGameInstance,
-                resolveWorldSlug(session),
-                resolveRealmSlug(session),
-                resolvePointerVersion(session),
-                null,
-                null,
-                resolveLocaleTag(session)));
+        maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
         return;
       }
-      sessionContextService.save(
-          bootstrapShell(
-              sessionId,
-              tenant,
-              bootstrapGameInstance,
-              resolveWorldSlug(session),
-              resolveRealmSlug(session),
-              resolvePointerVersion(session),
-              null,
-              null,
-              resolveLocaleTag(session)));
+      sessionContextService.save(incomingShell);
     } catch (NumberFormatException ex) {
       logger.debug(
           "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
@@ -777,6 +773,73 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         null,
         connectScopeId,
         connectRequestId);
+  }
+
+  private SessionContext repairGenericBootstrapShell(SessionContext shell) {
+    if (hasCompleteRoutingBundle(shell)) {
+      return shell;
+    }
+    Optional<GameplayAdmissionPointerSnapshot> pointer =
+        singularRuntimePointer(shell.tenantId(), shell.bootstrapGameInstanceId());
+    return pointer
+        .map(
+            snapshot ->
+                new SessionContext(
+                    shell.sessionId(),
+                    shell.tenantId(),
+                    shell.accountId(),
+                    shell.loginName(),
+                    shell.characterId(),
+                    shell.characterName(),
+                    shell.gameInstanceId(),
+                    shell.roomInstanceId(),
+                    shell.jwt(),
+                    shell.localeTag(),
+                    shell.bootstrapGameInstanceId(),
+                    snapshot.worldSlug(),
+                    snapshot.realmSlug(),
+                    snapshot.pointerVersion(),
+                    shell.playableStateScope(),
+                    shell.connectScopeId(),
+                    shell.connectRequestId()))
+        .orElse(
+            new SessionContext(
+                shell.sessionId(),
+                shell.tenantId(),
+                shell.accountId(),
+                shell.loginName(),
+                shell.characterId(),
+                shell.characterName(),
+                shell.gameInstanceId(),
+                shell.roomInstanceId(),
+                shell.jwt(),
+                shell.localeTag(),
+                shell.bootstrapGameInstanceId(),
+                null,
+                null,
+                0L,
+                shell.playableStateScope(),
+                shell.connectScopeId(),
+                shell.connectRequestId()));
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> singularRuntimePointer(
+      long tenantId, long gameInstanceId) {
+    java.util.List<GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService
+            .listByRuntimeTarget(tenantId, gameInstanceId)
+            .stream()
+            .filter(snapshot -> snapshot.worldSlug() != null && !snapshot.worldSlug().isBlank())
+            .filter(snapshot -> snapshot.realmSlug() != null && !snapshot.realmSlug().isBlank())
+            .filter(snapshot -> snapshot.pointerVersion() > 0)
+            .toList();
+    return pointers.size() == 1 ? Optional.of(pointers.getFirst()) : Optional.empty();
+  }
+
+  private boolean hasCompleteRoutingBundle(SessionContext shell) {
+    return StringUtils.hasText(shell.worldSlug())
+        && StringUtils.hasText(shell.realmSlug())
+        && shell.pointerVersion() > 0;
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {
