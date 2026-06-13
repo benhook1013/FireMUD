@@ -4,11 +4,13 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
@@ -71,66 +73,84 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     }
 
     Map<Long, AccountPresenceSnapshot> results = new LinkedHashMap<>();
+    Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers = new HashMap<>();
     Map<Long, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
     for (Long accountId : requestedIds) {
-      results.put(accountId, offline(tenantId, accountId, recentStates.get(accountId)));
+      results.put(
+          accountId,
+          offline(tenantId, accountId, recentStates.get(accountId), currentRuntimePointers));
     }
 
     Map<Long, List<GameplayPresence>> activePresences =
         gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
     for (Map.Entry<Long, List<GameplayPresence>> entry : activePresences.entrySet()) {
       Long accountId = entry.getKey();
-      GameplayPresence presence = selectCurrentPresence(tenantId, entry.getValue());
+      GameplayPresence presence =
+          selectCurrentPresence(tenantId, entry.getValue(), currentRuntimePointers);
       if (presence == null) {
         continue;
       }
       GameplayPresenceActivityState activityState =
           gameplayPresenceActivityResolver.resolve(presence);
       GameplayAdmissionPointerSnapshot pointer =
-          gameplayAdmissionPointerAuthorityService
-              .findPointer(presence.worldSlug(), presence.realmSlug())
+          currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
               .orElse(null);
+      AccountRecentPresenceState recentState = recentStates.get(accountId);
+      Long currentGameInstanceId =
+          pointer == null ? presence.gameInstanceId() : pointer.gameInstanceId();
+      String currentPlayableStateScope =
+          pointer == null ? presence.playableStateScope() : pointer.stateScope();
+      String currentWorldSlug = pointer == null ? presence.worldSlug() : pointer.worldSlug();
+      String currentWorldDisplayName = pointer == null ? null : pointer.worldDisplayName();
+      String currentRealmSlug = pointer == null ? presence.realmSlug() : pointer.realmSlug();
+      String currentRealmDisplayName = pointer == null ? null : pointer.realmDisplayName();
+      Long currentPointerVersion =
+          pointer == null
+              ? (presence.pointerVersion() > 0 ? Long.valueOf(presence.pointerVersion()) : null)
+              : Long.valueOf(pointer.pointerVersion());
       results.put(
           accountId,
           new AccountPresenceSnapshot(
               accountId,
               true,
-              presence.gameInstanceId(),
-              presence.playableStateScope(),
-              presence.worldSlug(),
-              pointer == null ? null : pointer.worldDisplayName(),
-              presence.realmSlug(),
-              pointer == null ? null : pointer.realmDisplayName(),
-              presence.pointerVersion() > 0 ? presence.pointerVersion() : null,
+              currentGameInstanceId,
+              currentPlayableStateScope,
+              currentWorldSlug,
+              currentWorldDisplayName,
+              currentRealmSlug,
+              currentRealmDisplayName,
+              currentPointerVersion,
               presence.characterId(),
               presence.characterName(),
               activityState,
-              recentStates.containsKey(accountId)
-                  ? Instant.ofEpochMilli(recentStates.get(accountId).lastSeenAtEpochMs())
-                  : null,
-              recentStates.containsKey(accountId)
-                  ? recentStates.get(accountId).disposition()
-                  : null,
-              recentStates.containsKey(accountId)
-                  ? recentStates.get(accountId).visibilityPolicy()
-                  : visibilityPolicyResolver.resolve(tenantId, accountId, presence.role())));
+              recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
+              recentState == null ? null : recentState.disposition(),
+              recentState == null
+                  ? visibilityPolicyResolver.resolve(tenantId, accountId, presence.role())
+                  : recentState.visibilityPolicy()));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
-  private GameplayPresence selectCurrentPresence(long tenantId, List<GameplayPresence> presences) {
+  private GameplayPresence selectCurrentPresence(
+      long tenantId,
+      List<GameplayPresence> presences,
+      Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
     if (presences == null || presences.isEmpty()) {
       return null;
     }
     return presences.stream()
         .filter(Objects::nonNull)
-        .filter(presence -> isCurrentPresence(tenantId, presence))
+        .filter(presence -> isCurrentPresence(tenantId, presence, currentRuntimePointers))
         .max(ACCOUNT_PRESENCE_PREFERENCE)
         .orElse(null);
   }
 
-  private boolean isCurrentPresence(long tenantId, GameplayPresence presence) {
+  private boolean isCurrentPresence(
+      long tenantId,
+      GameplayPresence presence,
+      Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
     if (presence == null
         || presence.tenantId() != tenantId
         || presence.gameInstanceId() <= 0
@@ -141,22 +161,21 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         || presence.realmSlug().isBlank()) {
       return false;
     }
-    return gameplayAdmissionPointerAuthorityService
-        .findPointer(presence.worldSlug(), presence.realmSlug())
-        .filter(pointer -> pointer.tenantId() == tenantId)
-        .filter(pointer -> pointer.gameInstanceId() == presence.gameInstanceId())
+    return currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
         .filter(pointer -> pointer.pointerVersion() == presence.pointerVersion())
+        .filter(pointer -> pointer.worldSlug().equals(presence.worldSlug()))
+        .filter(pointer -> pointer.realmSlug().equals(presence.realmSlug()))
+        .filter(pointer -> pointer.stateScope().equals(presence.playableStateScope()))
         .isPresent();
   }
 
   private AccountPresenceSnapshot offline(
-      long tenantId, long accountId, AccountRecentPresenceState recentState) {
+      long tenantId,
+      long accountId,
+      AccountRecentPresenceState recentState,
+      Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
     GameplayAdmissionPointerSnapshot pointer =
-        recentState == null
-            ? null
-            : gameplayAdmissionPointerAuthorityService
-                .findPointer(recentState.worldSlug(), recentState.realmSlug())
-                .orElse(null);
+        matchingCurrentRuntimePointer(recentState, currentRuntimePointers);
     return new AccountPresenceSnapshot(
         accountId,
         false,
@@ -175,5 +194,45 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         recentState == null
             ? visibilityPolicyResolver.resolve(tenantId, accountId)
             : recentState.visibilityPolicy());
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> currentRuntimePointer(
+      long tenantId,
+      long gameInstanceId,
+      Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
+    if (tenantId <= 0 || gameInstanceId <= 0) {
+      return Optional.empty();
+    }
+    if (currentRuntimePointers.containsKey(gameInstanceId)) {
+      return Optional.ofNullable(currentRuntimePointers.get(gameInstanceId));
+    }
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService
+            .listByRuntimeTarget(tenantId, gameInstanceId)
+            .stream()
+            .filter(pointer -> pointer.tenantId() == tenantId)
+            .filter(pointer -> pointer.worldSlug() != null && !pointer.worldSlug().isBlank())
+            .filter(pointer -> pointer.realmSlug() != null && !pointer.realmSlug().isBlank())
+            .filter(pointer -> pointer.pointerVersion() > 0)
+            .toList();
+    GameplayAdmissionPointerSnapshot singularPointer =
+        pointers.size() == 1 ? pointers.get(0) : null;
+    currentRuntimePointers.put(gameInstanceId, singularPointer);
+    return Optional.ofNullable(singularPointer);
+  }
+
+  private GameplayAdmissionPointerSnapshot matchingCurrentRuntimePointer(
+      AccountRecentPresenceState recentState,
+      Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
+    if (recentState == null || recentState.gameInstanceId() <= 0) {
+      return null;
+    }
+    return currentRuntimePointer(
+            recentState.tenantId(), recentState.gameInstanceId(), currentRuntimePointers)
+        .filter(pointer -> pointer.pointerVersion() == recentState.pointerVersion())
+        .filter(pointer -> pointer.worldSlug().equals(recentState.worldSlug()))
+        .filter(pointer -> pointer.realmSlug().equals(recentState.realmSlug()))
+        .filter(pointer -> pointer.stateScope().equals(recentState.playableStateScope()))
+        .orElse(null);
   }
 }

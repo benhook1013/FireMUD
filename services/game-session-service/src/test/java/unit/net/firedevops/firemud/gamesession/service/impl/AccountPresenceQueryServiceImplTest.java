@@ -6,7 +6,6 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
@@ -85,9 +84,9 @@ class AccountPresenceQueryServiceImplTest {
                         120L))));
     when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
         .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
-    when(pointerAuthorityService.findPointer("sandbox", "production"))
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
-            Optional.of(
+            List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L, 4L));
@@ -181,9 +180,9 @@ class AccountPresenceQueryServiceImplTest {
                         null,
                         180L,
                         120L))));
-    when(pointerAuthorityService.findPointer("sandbox", "production"))
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 9L))
         .thenReturn(
-            Optional.of(
+            List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L));
@@ -260,9 +259,9 @@ class AccountPresenceQueryServiceImplTest {
                         80L))));
     when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
         .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
-    when(pointerAuthorityService.findPointer("sandbox", "production"))
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
-            Optional.of(
+            List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
     var result = service.queryAccountPresence(1L, 2L, List.of(3L));
@@ -272,6 +271,83 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(2L, result.get(0).gameInstanceId());
     assertEquals(17L, result.get(0).pointerVersion());
     assertEquals(100L, result.get(0).characterId());
+  }
+
+  @Test
+  void queryAccountPresenceFailsClosedWhenRuntimeAuthorityIsAmbiguous() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
+        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PresenceProperties properties = new PresenceProperties();
+    GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            resolver,
+            recentPresenceService,
+            visibilityPolicyResolver,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(3L) && ids.size() == 1)))
+        .thenReturn(
+            Map.of(
+                3L,
+                new AccountRecentPresenceState(
+                    1L,
+                    3L,
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+    when(presenceService.listConnectedByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(3L) && ids.size() == 1)))
+        .thenReturn(
+            Map.of(
+                3L,
+                List.of(
+                    new GameplayPresence(
+                        97L,
+                        1L,
+                        2L,
+                        "SHARED",
+                        "sandbox",
+                        "production",
+                        17L,
+                        3L,
+                        99L,
+                        "Ben",
+                        GameplayPresenceRole.PLAYER,
+                        100L,
+                        150L,
+                        180L,
+                        120L))));
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
+        .thenReturn(
+            List.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L),
+                pointer("sandbox", "Builder Sandbox", "preview", "Preview Realm", 1L, 2L, 18L)));
+
+    var result = service.queryAccountPresence(1L, 2L, List.of(3L));
+
+    assertEquals(1, result.size());
+    assertEquals(false, result.get(0).online());
+    assertEquals("sandbox", result.get(0).worldSlug());
+    assertEquals(null, result.get(0).worldDisplayName());
+    assertEquals("production", result.get(0).realmSlug());
+    assertEquals(null, result.get(0).realmDisplayName());
+    assertEquals(17L, result.get(0).pointerVersion());
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
