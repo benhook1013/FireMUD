@@ -299,3 +299,8 @@ Entry format:
   - Context: runtime-state, gameplay-command-status, and remote current-routing reads still treated “one pointer row returned” as enough to project singular current routing, even when that lone row had blank `stateScope`, `worldSlug`, `realmSlug`, or `pointerVersion`.
   - Observation: once gameplay-facing routing work already defines current authority as one complete bundle, operator reads that accept one partial row silently mint a fake current routing identity that no interactive consumer would trust.
   - Expected pattern: control-plane/runtime read helpers should filter runtime-target pointer rows down to complete routing bundles first, then project singular current routing only when exactly one complete bundle survives, while still listing raw pointer rows separately for inspection.
+
+- `2026-06-14`: Complete routing bundles still need freshness proof when they survive on pre-gameplay shells
+  - Context: `SessionAuthenticationService` already clears stale gameplay bindings with side effects, but bootstrap or login-era shells without an active gameplay binding can intentionally survive that normalization path while still carrying a full `{worldSlug, realmSlug, pointerVersion}` bundle.
+  - Observation: a command or bootstrap consumer that treats “all routing fields are present” as equivalent to “current routing authority was already proved” quietly reintroduces stale pointer generations even after partial-bundle and ambiguous-runtime fail-closed work is done.
+  - Expected pattern: when a pre-gameplay shell carries a complete admitted routing bundle, later staging or bootstrap consumers should still revalidate that bundle against current pointer freshness before preserving it onward; completeness alone is not authority.
