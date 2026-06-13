@@ -113,10 +113,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       GameInstanceRuntimeState runtimeState,
       Instant now) {
     RoutingBundleSupport.RoutingBundle routingBundle =
-        RoutingBundleSupport.normalize(
-            runtimeState.getWorldSlug(),
-            runtimeState.getRealmSlug(),
-            runtimeState.getPointerVersion());
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());

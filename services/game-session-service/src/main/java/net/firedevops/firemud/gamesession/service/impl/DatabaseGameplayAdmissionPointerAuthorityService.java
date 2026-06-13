@@ -58,6 +58,15 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   }
 
   @Override
+  @Transactional(readOnly = true)
+  public List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(
+      long tenantId, long gameInstanceId) {
+    return pointerRepository.findAllByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream()
+        .map(this::toSnapshot)
+        .toList();
+  }
+
+  @Override
   @Transactional
   public GameplayAdmissionPointerSnapshot upsertPointer(GameplayAdmissionPointerMutation mutation) {
     validateMutation(mutation);

@@ -11,6 +11,8 @@ public interface GameplayAdmissionPointerAuthorityService {
   Optional<GameplayAdmissionPointerSnapshot> findByRuntimeTarget(
       long tenantId, long gameInstanceId);
 
+  List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(long tenantId, long gameInstanceId);
+
   GameplayAdmissionPointerSnapshot upsertPointer(GameplayAdmissionPointerMutation mutation);
 
   List<GameplayAdmissionPointerAuditEntry> listPointerAudit(String worldSlug, String realmSlug);

@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
@@ -960,17 +961,21 @@ final class GameSessionRemoteControlPlaneService {
         .map(
             ownership -> {
               GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
-              GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
+              CurrentRoutingAuthority authority = resolveCurrentRoutingAuthority(instance);
+              GameplayRoutingBundle routingBundle = authority.routingBundle();
               RoutingBundle normalizedRoutingBundle =
                   normalizeRoutingBundle(
                       routingBundle.worldSlug(),
                       routingBundle.realmSlug(),
                       routingBundle.pointerVersion());
+              boolean singularRoutingAuthority =
+                  authority.singularRoutingAuthority() && normalizedRoutingBundle != null;
               return new CurrentRuntimeBoundary(
                   ownership.getGameInstanceId(),
                   ownership.getRegionId(),
                   ownership.getRegionEpoch(),
                   routingBundle.playableStateScope(),
+                  singularRoutingAuthority,
                   normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.worldSlug(),
                   normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.realmSlug(),
                   normalizedRoutingBundle == null
@@ -988,14 +993,40 @@ final class GameSessionRemoteControlPlaneService {
       Long persistedPointerVersion) {
     return currentRuntimeBoundary(tenantId, gameInstanceId)
         .map(
-            currentBoundary ->
-                isRoutingBundleStale(
+            currentBoundary -> {
+              if (!currentBoundary.singularRoutingAuthority()) {
+                return hasPersistedRoutingBundleClaim(
                     persistedPlayableStateScope,
                     persistedWorldSlug,
                     persistedRealmSlug,
-                    persistedPointerVersion,
-                    currentBoundary))
-        .orElse(false);
+                    persistedPointerVersion);
+              }
+              return isRoutingBundleStale(
+                  persistedPlayableStateScope,
+                  persistedWorldSlug,
+                  persistedRealmSlug,
+                  persistedPointerVersion,
+                  currentBoundary);
+            })
+        .orElseGet(
+            () ->
+                hasPersistedRoutingBundleClaim(
+                    persistedPlayableStateScope,
+                    persistedWorldSlug,
+                    persistedRealmSlug,
+                    persistedPointerVersion));
+  }
+
+  private static boolean hasPersistedRoutingBundleClaim(
+      String persistedPlayableStateScope,
+      String persistedWorldSlug,
+      String persistedRealmSlug,
+      Long persistedPointerVersion) {
+    if (persistedPlayableStateScope != null && !persistedPlayableStateScope.isBlank()) {
+      return true;
+    }
+    return normalizeRoutingBundle(persistedWorldSlug, persistedRealmSlug, persistedPointerVersion)
+        != null;
   }
 
   private static boolean isRoutingBundleStale(
@@ -1698,23 +1729,28 @@ final class GameSessionRemoteControlPlaneService {
         .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
-  private GameplayRoutingBundle resolveGameplayRouting(GameInstance instance) {
-    return gameplayAdmissionPointerAuthorityService
-        .findByRuntimeTarget(instance.getTenantId(), instance.getId())
-        .map(
-            pointer ->
-                new GameplayRoutingBundle(
-                    switch (normalizeBlank(pointer.stateScope())) {
-                      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-                      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-                      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-                    },
-                    normalizeBlank(pointer.worldSlug()),
-                    normalizeBlank(pointer.realmSlug()),
-                    pointer.pointerVersion()))
-        .orElse(
-            new GameplayRoutingBundle(
-                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
+  private CurrentRoutingAuthority resolveCurrentRoutingAuthority(GameInstance instance) {
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            instance.getTenantId(), instance.getId());
+    if (pointers.size() != 1) {
+      return new CurrentRoutingAuthority(
+          new GameplayRoutingBundle(
+              PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L),
+          false);
+    }
+    GameplayAdmissionPointerSnapshot pointer = pointers.get(0);
+    return new CurrentRoutingAuthority(
+        new GameplayRoutingBundle(
+            switch (normalizeBlank(pointer.stateScope())) {
+              case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+              case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+              default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+            },
+            normalizeBlank(pointer.worldSlug()),
+            normalizeBlank(pointer.realmSlug()),
+            pointer.pointerVersion()),
+        true);
   }
 
   private Optional<RuntimeRegionStatus> currentRuntimeOwnership(
@@ -1933,11 +1969,15 @@ final class GameSessionRemoteControlPlaneService {
       String realmSlug,
       long pointerVersion) {}
 
+  private record CurrentRoutingAuthority(
+      GameplayRoutingBundle routingBundle, boolean singularRoutingAuthority) {}
+
   private record CurrentRuntimeBoundary(
       long gameInstanceId,
       String regionId,
       long regionEpoch,
       PlayableStateScope playableStateScope,
+      boolean singularRoutingAuthority,
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}

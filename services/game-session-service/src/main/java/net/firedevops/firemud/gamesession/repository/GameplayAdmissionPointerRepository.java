@@ -41,6 +41,11 @@ public class GameplayAdmissionPointerRepository {
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndGameInstanceId(
       Long tenantId, Long gameInstanceId) {
+    return findAllByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream().findFirst();
+  }
+
+  public List<GameplayAdmissionPointer> findAllByTenantIdAndGameInstanceId(
+      Long tenantId, Long gameInstanceId) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(
             GAMEPLAY_ADMISSION_POINTER
@@ -50,8 +55,7 @@ public class GameplayAdmissionPointerRepository {
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
-        .limit(1)
-        .fetchOptional(this::toEntity);
+        .fetch(this::toEntity);
   }
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {

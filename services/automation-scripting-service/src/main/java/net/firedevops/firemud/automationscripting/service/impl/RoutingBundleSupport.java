@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.util.StringUtils;
 
 final class RoutingBundleSupport {
@@ -19,6 +20,21 @@ final class RoutingBundleSupport {
       return RoutingBundle.EMPTY;
     }
     return normalize(worldSlug, realmSlug, Long.toString(pointerVersion));
+  }
+
+  static RoutingBundle fromRuntimeState(GameInstanceRuntimeState runtimeState) {
+    if (runtimeState == null) {
+      return RoutingBundle.EMPTY;
+    }
+    if (runtimeState.getCurrentAdmissionPointersCount() == 1) {
+      var pointer = runtimeState.getCurrentAdmissionPointers(0);
+      return normalize(pointer.getWorldSlug(), pointer.getRealmSlug(), pointer.getPointerVersion());
+    }
+    if (runtimeState.getCurrentAdmissionPointersCount() > 1) {
+      return RoutingBundle.EMPTY;
+    }
+    return normalize(
+        runtimeState.getWorldSlug(), runtimeState.getRealmSlug(), runtimeState.getPointerVersion());
   }
 
   record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {

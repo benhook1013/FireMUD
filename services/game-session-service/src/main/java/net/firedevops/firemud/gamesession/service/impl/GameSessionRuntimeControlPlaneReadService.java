@@ -13,6 +13,8 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
@@ -64,7 +66,7 @@ final class GameSessionRuntimeControlPlaneReadService {
     if (instance.getTenantId() != tenantId) {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
-    GameplayRoutingBundle routingBundle = resolveGameplayRouting(instance);
+    CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);
     return GameInstanceRuntimeState.newBuilder()
         .setTenantId(Long.toString(instance.getTenantId()))
         .setGameInstanceId(Long.toString(instance.getId()))
@@ -95,12 +97,13 @@ final class GameSessionRuntimeControlPlaneReadService {
             instance.getScriptPatchPinnedControlPlaneRequestId() == null
                 ? ""
                 : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setPlayableStateScope(routingBundle.playableStateScope())
-        .setWorldSlug(routingBundle.worldSlug())
-        .setRealmSlug(routingBundle.realmSlug())
-        .setPointerVersion(routingBundle.pointerVersion())
+        .setPlayableStateScope(routingProjection.routingBundle().playableStateScope())
+        .setWorldSlug(routingProjection.routingBundle().worldSlug())
+        .setRealmSlug(routingProjection.routingBundle().realmSlug())
+        .setPointerVersion(routingProjection.routingBundle().pointerVersion())
         .setRegionId(normalizeBlank(runtimeStatus.getRegionId()))
         .setRegionEpoch(runtimeStatus.getRegionEpoch())
+        .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
         .setPublication(
             scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
         .build();
@@ -195,23 +198,48 @@ final class GameSessionRuntimeControlPlaneReadService {
         .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
-  private GameplayRoutingBundle resolveGameplayRouting(GameInstance instance) {
-    return gameplayAdmissionPointerAuthorityService
-        .findByRuntimeTarget(instance.getTenantId(), instance.getId())
-        .map(
-            pointer ->
-                new GameplayRoutingBundle(
-                    switch (normalizeBlank(pointer.stateScope())) {
-                      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-                      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-                      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-                    },
-                    normalizeBlank(pointer.worldSlug()),
-                    normalizeBlank(pointer.realmSlug()),
-                    pointer.pointerVersion()))
-        .orElse(
-            new GameplayRoutingBundle(
-                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
+  private CurrentRoutingProjection resolveGameplayRouting(GameInstance instance) {
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            instance.getTenantId(), instance.getId());
+    List<AdmissionPointerControlPlaneEntry> entries =
+        pointers.stream().map(this::toControlPlaneEntry).toList();
+    GameplayRoutingBundle singularBundle =
+        pointers.size() == 1
+            ? toGameplayRoutingBundle(pointers.get(0))
+            : new GameplayRoutingBundle(
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L);
+    return new CurrentRoutingProjection(singularBundle, entries);
+  }
+
+  private GameplayRoutingBundle toGameplayRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
+    return new GameplayRoutingBundle(
+        switch (normalizeBlank(pointer.stateScope())) {
+          case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+          case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+          default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+        },
+        normalizeBlank(pointer.worldSlug()),
+        normalizeBlank(pointer.realmSlug()),
+        pointer.pointerVersion());
+  }
+
+  private AdmissionPointerControlPlaneEntry toControlPlaneEntry(
+      GameplayAdmissionPointerSnapshot pointer) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setWorldSlug(normalizeBlank(pointer.worldSlug()))
+        .setWorldDisplayName(normalizeBlank(pointer.worldDisplayName()))
+        .setRealmSlug(normalizeBlank(pointer.realmSlug()))
+        .setRealmDisplayName(normalizeBlank(pointer.realmDisplayName()))
+        .setTenantId(Long.toString(pointer.tenantId()))
+        .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
+        .setPointerVersion(pointer.pointerVersion())
+        .setVisible(pointer.visible())
+        .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
+        .setStateScope(normalizeBlank(pointer.stateScope()))
+        .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
+        .setPublicProductionRealm(pointer.publicProductionRealm())
+        .build();
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
@@ -262,4 +290,8 @@ final class GameSessionRuntimeControlPlaneReadService {
       String worldSlug,
       String realmSlug,
       long pointerVersion) {}
+
+  private record CurrentRoutingProjection(
+      GameplayRoutingBundle routingBundle,
+      List<AdmissionPointerControlPlaneEntry> currentAdmissionPointers) {}
 }

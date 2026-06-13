@@ -269,3 +269,13 @@ Entry format:
   - Context: transport-id fallbacks had already been removed from post-login and operator paths, but credential `LOGIN` still had one bootstrap-time shortcut left.
   - Observation: if credential `LOGIN` can still guess a bootstrap runtime from the same numeric `sessionId`, a missing shell can reopen admission whenever a transport id happens to collide with a real runtime id.
   - Expected pattern: pre-login flows should resolve a runtime target from the canonical bootstrap shell or fail closed when that authority is missing.
+
+- `2026-06-13`: Reverse runtime-state reads must expose pointer multiplicity instead of picking one sorted realm identity
+  - Context: after the main `09.1` routing-fence work landed, `GetGameInstanceRuntimeState` still reverse-mapped a runtime target back to one singular `{worldSlug, realmSlug, pointerVersion}` bundle by selecting the first sorted admission pointer row.
+  - Observation: once multiple visible admission pointers can legitimately share one runtime target, a reverse read that silently picks one sorted row teaches downstream consumers a fake canonical realm identity and reopens arbitrary world/realm drift in operator or Automation projections.
+  - Expected pattern: reverse runtime-state reads should expose the full current pointer set explicitly, keep legacy singular routing fields only for the one-pointer case, and force downstream consumers to fail closed when runtime-to-pointer projection is ambiguous.
+
+- `2026-06-13`: Operator stale flags must fail closed when current routing authority is ambiguous or incomplete
+  - Context: extending the `09.1.6` runtime-state reverse-projection cleanup into Game Session command-status and remote control-plane reads exposed a quieter seam: those read models could already clear singular current routing fields, but still report `is...RoutingBundleStale=false` when current authority was missing, partial, or multi-pointer.
+  - Observation: once a control-plane read publishes both persisted routing and derived current routing, clearing only the visible current bundle is not enough; callers still misread the row as current if stale signaling stays tied only to successful bundle comparison.
+  - Expected pattern: operator and control-plane stale indicators should fail closed to `true` whenever current authority cannot prove one complete singular `{playableStateScope, worldSlug, realmSlug, pointerVersion}` bundle, not only when two complete bundles can be compared directly.

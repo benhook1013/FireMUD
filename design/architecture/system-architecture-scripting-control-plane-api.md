@@ -400,6 +400,7 @@ Contract rules:
 
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
 - The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
+- When Game Session runtime state reports multiple current admission pointers for one runtime target, Automation must treat the singular runtime-state routing bundle as unavailable and fail closed for any consumer that needs one unambiguous `{worldSlug, realmSlug, pointerVersion}` identity.
 - If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
 #### `ListScriptScheduleInstances`

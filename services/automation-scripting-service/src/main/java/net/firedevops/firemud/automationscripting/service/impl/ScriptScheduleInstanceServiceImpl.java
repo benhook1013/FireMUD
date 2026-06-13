@@ -452,10 +452,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       Instant pinObservedAt,
       Instant now) {
     RoutingBundleSupport.RoutingBundle routingBundle =
-        RoutingBundleSupport.normalize(
-            runtimeState.getWorldSlug(),
-            runtimeState.getRealmSlug(),
-            runtimeState.getPointerVersion());
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
