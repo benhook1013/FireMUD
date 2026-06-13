@@ -1,29 +1,29 @@
 {
   "environment": "hobby-self-hosted",
-  "generatedAt": "2026-05-21T00:00:00Z",
+  "generatedAt": "2026-06-13T00:00:00Z",
   "credentialClasses": {
     "jwt-signing-keys-jwks": {
       "owner": "operator",
       "maxAgeDays": 30,
-      "lastRotationAt": "2026-05-21T00:00:00Z",
+      "lastRotationAt": "2026-06-13T00:00:00Z",
       "alertRuleId": "hobby.jwt.rotation.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-05-21.json",
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-06-13.json",
       "evidenceKey": "jwt-signing-keys-jwks"
     },
     "postgres-application-credentials": {
       "owner": "operator",
       "maxAgeDays": 45,
-      "lastRotationAt": "2026-04-16T00:00:00Z",
+      "lastRotationAt": "2026-06-13T00:00:00Z",
       "alertRuleId": "hobby.postgres.credentials.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-05-21.json",
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-06-13.json",
       "evidenceKey": "postgres-application-credentials"
     },
     "backup-object-store-credentials": {
       "owner": "operator",
       "maxAgeDays": 60,
-      "lastRotationAt": "2026-04-16T00:00:00Z",
+      "lastRotationAt": "2026-06-13T00:00:00Z",
       "alertRuleId": "hobby.backup.objectstore.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-05-21.json",
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-06-13.json",
       "evidenceKey": "backup-object-store-credentials"
     },
     "operator-credentials": {
@@ -31,7 +31,7 @@
       "maxAgeDays": 90,
       "lastRotationAt": "2026-04-16T00:00:00Z",
       "alertRuleId": "hobby.operator.credentials.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-05-21.json",
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-06-13.json",
       "evidenceKey": "operator-credentials"
     }
   }
