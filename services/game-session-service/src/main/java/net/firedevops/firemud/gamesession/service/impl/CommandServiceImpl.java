@@ -343,15 +343,26 @@ public class CommandServiceImpl implements CommandService {
           context.worldSlug(), context.realmSlug());
     }
     if (context.bootstrapGameInstanceId() > 0) {
-      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+      return resolveUnambiguousRuntimePointer(
           context.tenantId(), context.bootstrapGameInstanceId());
     }
     if (context.gameInstanceId() > 0) {
-      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
-          context.tenantId(), context.gameInstanceId());
+      return resolveUnambiguousRuntimePointer(context.tenantId(), context.gameInstanceId());
     }
-    return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
-        queueTarget.tenantId(), queueTarget.queueTargetId());
+    return resolveUnambiguousRuntimePointer(queueTarget.tenantId(), queueTarget.queueTargetId());
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> resolveUnambiguousRuntimePointer(
+      long tenantId, long gameInstanceId) {
+    java.util.List<GameplayAdmissionPointerSnapshot> candidates =
+        gameplayAdmissionPointerAuthorityService
+            .listByRuntimeTarget(tenantId, gameInstanceId)
+            .stream()
+            .filter(snapshot -> snapshot.worldSlug() != null && !snapshot.worldSlug().isBlank())
+            .filter(snapshot -> snapshot.realmSlug() != null && !snapshot.realmSlug().isBlank())
+            .filter(snapshot -> snapshot.pointerVersion() > 0)
+            .toList();
+    return candidates.size() == 1 ? Optional.of(candidates.get(0)) : Optional.empty();
   }
 
   private static String blankToNull(String value) {
