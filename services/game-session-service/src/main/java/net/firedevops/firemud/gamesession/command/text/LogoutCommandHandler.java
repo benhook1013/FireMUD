@@ -139,10 +139,22 @@ public final class LogoutCommandHandler {
     if (sharedRealmFromSelectors(context).isPresent()) {
       return false;
     }
-    return gameplayAdmissionPointerAuthorityService
-        .findByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+    return singularRuntimePointer(context)
         .map(pointer -> "ISOLATED".equals(pointer.stateScope()))
         .orElse(false);
+  }
+
+  private Optional<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
+      singularRuntimePointer(SessionContext context) {
+    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService
+            .listByRuntimeTarget(context.tenantId(), context.gameInstanceId())
+            .stream()
+            .filter(pointer -> pointer.worldSlug() != null && !pointer.worldSlug().isBlank())
+            .filter(pointer -> pointer.realmSlug() != null && !pointer.realmSlug().isBlank())
+            .filter(pointer -> pointer.pointerVersion() > 0)
+            .toList();
+    return pointers.size() == 1 ? Optional.of(pointers.get(0)) : Optional.empty();
   }
 
   private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {

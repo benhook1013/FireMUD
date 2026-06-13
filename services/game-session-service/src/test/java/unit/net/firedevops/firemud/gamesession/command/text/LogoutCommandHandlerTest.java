@@ -150,8 +150,8 @@ class LogoutCommandHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(22L, 1L))
-        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(java.util.List.of());
 
     LogoutCommandHandlingResult result = handler.handle("41");
 
@@ -227,8 +227,65 @@ class LogoutCommandHandlerTest {
             0L,
             null);
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
-    when(gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(22L, 7L))
-        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(java.util.List.of());
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 7L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopRuntimeWhenCurrentRuntimeAuthorityIsAmbiguous() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            java.util.List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "private",
+                    "Private",
+                    22L,
+                    7L,
+                    2L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
 
     LogoutCommandHandlingResult result = handler.handle("41");
 
