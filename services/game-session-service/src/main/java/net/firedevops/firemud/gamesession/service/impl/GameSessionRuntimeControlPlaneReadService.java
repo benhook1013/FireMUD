@@ -204,12 +204,21 @@ final class GameSessionRuntimeControlPlaneReadService {
             instance.getTenantId(), instance.getId());
     List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream().map(this::toControlPlaneEntry).toList();
+    List<GameplayAdmissionPointerSnapshot> completePointers =
+        pointers.stream().filter(this::hasCompleteRoutingBundle).toList();
     GameplayRoutingBundle singularBundle =
-        pointers.size() == 1
-            ? toGameplayRoutingBundle(pointers.get(0))
+        completePointers.size() == 1
+            ? toGameplayRoutingBundle(completePointers.get(0))
             : new GameplayRoutingBundle(
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L);
     return new CurrentRoutingProjection(singularBundle, entries);
+  }
+
+  private boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
+    return !normalizeBlank(pointer.stateScope()).isBlank()
+        && !normalizeBlank(pointer.worldSlug()).isBlank()
+        && !normalizeBlank(pointer.realmSlug()).isBlank()
+        && pointer.pointerVersion() > 0L;
   }
 
   private GameplayRoutingBundle toGameplayRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {

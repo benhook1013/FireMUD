@@ -246,13 +246,15 @@ public final class GameSessionCommandControlPlaneService {
     List<GameplayAdmissionPointerSnapshot> pointers =
         gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
             instance.getTenantId(), instance.getId());
-    if (pointers.size() != 1) {
+    List<GameplayAdmissionPointerSnapshot> completePointers =
+        pointers.stream().filter(this::hasCompleteRoutingBundle).toList();
+    if (completePointers.size() != 1) {
       return new CurrentRoutingAuthority(
           new GameplayRoutingBundle(
               PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L),
           false);
     }
-    GameplayAdmissionPointerSnapshot pointer = pointers.get(0);
+    GameplayAdmissionPointerSnapshot pointer = completePointers.get(0);
     return new CurrentRoutingAuthority(
         new GameplayRoutingBundle(
             switch (normalizeBlank(pointer.stateScope())) {
@@ -264,6 +266,13 @@ public final class GameSessionCommandControlPlaneService {
             normalizeBlank(pointer.realmSlug()),
             pointer.pointerVersion()),
         true);
+  }
+
+  private boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
+    return !normalizeBlank(pointer.stateScope()).isBlank()
+        && !normalizeBlank(pointer.worldSlug()).isBlank()
+        && !normalizeBlank(pointer.realmSlug()).isBlank()
+        && pointer.pointerVersion() > 0L;
   }
 
   private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
