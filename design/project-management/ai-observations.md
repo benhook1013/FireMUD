@@ -319,3 +319,8 @@ Entry format:
   - Context: after `09.1.11` and `09.1.14`, control-plane reads and player-facing catalogs already required one complete pointer bundle, but a few runtime-target helpers in websocket bootstrap, logout policy, presence projection, and login-era command staging still accepted one row with blank `stateScope`.
   - Observation: if some runtime-target readers still treat `{worldSlug, realmSlug, pointerVersion}` as enough while others require a full bundle, incomplete authority can slip back in through helper repair paths even though the higher-level read surfaces already fail closed.
   - Expected pattern: any helper that claims “singular runtime authority” should use one shared complete-pointer rule including `stateScope`, `worldSlug`, `realmSlug`, and `pointerVersion`, or return no authority at all.
+
+- `2026-06-14`: Shared complete-pointer helpers must include runtime-target identity, not just selector fields
+  - Context: after `09.1.15`, three Game Session control-plane/runtime readers still kept private copies of the “complete pointer” rule and only checked selector-facing fields, even though the shared helper had already tightened the contract to require positive `tenantId` and `gameInstanceId`.
+  - Observation: if control-plane readers treat one selector-complete row as singular authority while ignoring missing runtime-target identity, operator reads can still mint a current routing bundle that no interactive path would trust.
+  - Expected pattern: once a routing-completeness helper exists, every remaining singular-runtime reader should consume it directly, and the helper itself should define completeness in terms of both selector identity and runtime-target identity.

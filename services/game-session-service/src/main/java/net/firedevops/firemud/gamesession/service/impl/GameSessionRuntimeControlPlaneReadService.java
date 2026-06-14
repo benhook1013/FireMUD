@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
@@ -204,21 +205,14 @@ final class GameSessionRuntimeControlPlaneReadService {
             instance.getTenantId(), instance.getId());
     List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream().map(this::toControlPlaneEntry).toList();
-    List<GameplayAdmissionPointerSnapshot> completePointers =
-        pointers.stream().filter(this::hasCompleteRoutingBundle).toList();
     GameplayRoutingBundle singularBundle =
-        completePointers.size() == 1
-            ? toGameplayRoutingBundle(completePointers.get(0))
-            : new GameplayRoutingBundle(
-                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L);
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(pointers)
+            .map(this::toGameplayRoutingBundle)
+            .orElseGet(
+                () ->
+                    new GameplayRoutingBundle(
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
     return new CurrentRoutingProjection(singularBundle, entries);
-  }
-
-  private boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
-    return !normalizeBlank(pointer.stateScope()).isBlank()
-        && !normalizeBlank(pointer.worldSlug()).isBlank()
-        && !normalizeBlank(pointer.realmSlug()).isBlank()
-        && pointer.pointerVersion() > 0L;
   }
 
   private GameplayRoutingBundle toGameplayRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {

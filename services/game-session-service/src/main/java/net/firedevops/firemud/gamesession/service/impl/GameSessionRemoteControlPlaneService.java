@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultReposit
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
@@ -1730,36 +1731,27 @@ final class GameSessionRemoteControlPlaneService {
   }
 
   private CurrentRoutingAuthority resolveCurrentRoutingAuthority(GameInstance instance) {
-    List<GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-            instance.getTenantId(), instance.getId());
-    List<GameplayAdmissionPointerSnapshot> completePointers =
-        pointers.stream().filter(this::hasCompleteRoutingBundle).toList();
-    if (completePointers.size() != 1) {
+    Optional<GameplayAdmissionPointerSnapshot> pointer =
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                instance.getTenantId(), instance.getId()));
+    if (pointer.isEmpty()) {
       return new CurrentRoutingAuthority(
           new GameplayRoutingBundle(
               PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L),
           false);
     }
-    GameplayAdmissionPointerSnapshot pointer = completePointers.get(0);
     return new CurrentRoutingAuthority(
         new GameplayRoutingBundle(
-            switch (normalizeBlank(pointer.stateScope())) {
+            switch (normalizeBlank(pointer.get().stateScope())) {
               case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
               case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
               default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
             },
-            normalizeBlank(pointer.worldSlug()),
-            normalizeBlank(pointer.realmSlug()),
-            pointer.pointerVersion()),
+            normalizeBlank(pointer.get().worldSlug()),
+            normalizeBlank(pointer.get().realmSlug()),
+            pointer.get().pointerVersion()),
         true);
-  }
-
-  private boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
-    return !normalizeBlank(pointer.stateScope()).isBlank()
-        && !normalizeBlank(pointer.worldSlug()).isBlank()
-        && !normalizeBlank(pointer.realmSlug()).isBlank()
-        && pointer.pointerVersion() > 0L;
   }
 
   private Optional<RuntimeRegionStatus> currentRuntimeOwnership(
