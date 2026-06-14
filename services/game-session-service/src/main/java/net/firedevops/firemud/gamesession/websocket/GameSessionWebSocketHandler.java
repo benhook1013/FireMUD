@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -830,15 +831,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private Optional<GameplayAdmissionPointerSnapshot> singularRuntimePointer(
       long tenantId, long gameInstanceId) {
-    java.util.List<GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService
-            .listByRuntimeTarget(tenantId, gameInstanceId)
-            .stream()
-            .filter(snapshot -> snapshot.worldSlug() != null && !snapshot.worldSlug().isBlank())
-            .filter(snapshot -> snapshot.realmSlug() != null && !snapshot.realmSlug().isBlank())
-            .filter(snapshot -> snapshot.pointerVersion() > 0)
-            .toList();
-    return pointers.size() == 1 ? Optional.of(pointers.getFirst()) : Optional.empty();
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId));
   }
 
   private boolean hasCompleteRoutingBundle(SessionContext shell) {

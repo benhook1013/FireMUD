@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -146,15 +147,9 @@ public final class LogoutCommandHandler {
 
   private Optional<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
       singularRuntimePointer(SessionContext context) {
-    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService
-            .listByRuntimeTarget(context.tenantId(), context.gameInstanceId())
-            .stream()
-            .filter(pointer -> pointer.worldSlug() != null && !pointer.worldSlug().isBlank())
-            .filter(pointer -> pointer.realmSlug() != null && !pointer.realmSlug().isBlank())
-            .filter(pointer -> pointer.pointerVersion() > 0)
-            .toList();
-    return pointers.size() == 1 ? Optional.of(pointers.get(0)) : Optional.empty();
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            context.tenantId(), context.gameInstanceId()));
   }
 
   private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {

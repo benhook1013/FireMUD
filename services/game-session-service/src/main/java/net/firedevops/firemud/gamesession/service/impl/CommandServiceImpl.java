@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -388,15 +389,8 @@ public class CommandServiceImpl implements CommandService {
 
   private Optional<GameplayAdmissionPointerSnapshot> resolveUnambiguousRuntimePointer(
       long tenantId, long gameInstanceId) {
-    java.util.List<GameplayAdmissionPointerSnapshot> candidates =
-        gameplayAdmissionPointerAuthorityService
-            .listByRuntimeTarget(tenantId, gameInstanceId)
-            .stream()
-            .filter(snapshot -> snapshot.worldSlug() != null && !snapshot.worldSlug().isBlank())
-            .filter(snapshot -> snapshot.realmSlug() != null && !snapshot.realmSlug().isBlank())
-            .filter(snapshot -> snapshot.pointerVersion() > 0)
-            .toList();
-    return candidates.size() == 1 ? Optional.of(candidates.get(0)) : Optional.empty();
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId));
   }
 
   private static String blankToNull(String value) {

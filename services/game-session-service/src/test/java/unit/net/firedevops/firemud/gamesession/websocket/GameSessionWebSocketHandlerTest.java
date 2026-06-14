@@ -193,6 +193,46 @@ class GameSessionWebSocketHandlerTest {
 
   @Test
   void
+      afterConnectionEstablishedDropsGenericBootstrapRoutingWhenSingularRuntimeAuthorityIsIncomplete() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "7"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
+  }
+
+  @Test
+  void
       afterConnectionEstablishedClearsExistingGameplayBindingWhenGenericBootstrapRouteRepairsToNewPointer() {
     SessionContext existing =
         new SessionContext(

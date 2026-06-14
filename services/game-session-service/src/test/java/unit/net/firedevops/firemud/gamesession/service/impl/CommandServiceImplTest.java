@@ -455,6 +455,62 @@ class CommandServiceImplTest {
   }
 
   @Test
+  void loginCommandDropsBootstrapRoutingMetadataWhenSingularRuntimeAuthorityIsIncomplete() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(
+                    17L, 9L, 3L, "demo", 0L, null, 0L, null, "jwt", null, 99L, null, null, 0L,
+                    null)));
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
+        .thenReturn(
+            java.util.List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo-world",
+                    "Demo World",
+                    "live",
+                    "Live",
+                    9L,
+                    99L,
+                    12L,
+                    true,
+                    true,
+                    true,
+                    "",
+                    "OPEN")));
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    CommandServiceImpl service =
+        new CommandServiceImpl(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "LOGIN demo@example.com swordfish", false);
+
+    assertTrue(result.accepted());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getAllValues().get(0);
+    assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
+    assertNull(accepted.getWorldSlug());
+    assertNull(accepted.getRealmSlug());
+    assertNull(accepted.getPointerVersion());
+  }
+
+  @Test
   void gameplayCommandRepairsPartialSessionRoutingMetadataFromAuthority() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);

@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
@@ -206,17 +207,14 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     if (currentRuntimePointers.containsKey(gameInstanceId)) {
       return Optional.ofNullable(currentRuntimePointers.get(gameInstanceId));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService
-            .listByRuntimeTarget(tenantId, gameInstanceId)
-            .stream()
-            .filter(pointer -> pointer.tenantId() == tenantId)
-            .filter(pointer -> pointer.worldSlug() != null && !pointer.worldSlug().isBlank())
-            .filter(pointer -> pointer.realmSlug() != null && !pointer.realmSlug().isBlank())
-            .filter(pointer -> pointer.pointerVersion() > 0)
-            .toList();
     GameplayAdmissionPointerSnapshot singularPointer =
-        pointers.size() == 1 ? pointers.get(0) : null;
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(
+                gameplayAdmissionPointerAuthorityService
+                    .listByRuntimeTarget(tenantId, gameInstanceId)
+                    .stream()
+                    .filter(pointer -> pointer.tenantId() == tenantId)
+                    .toList())
+            .orElse(null);
     currentRuntimePointers.put(gameInstanceId, singularPointer);
     return Optional.ofNullable(singularPointer);
   }
