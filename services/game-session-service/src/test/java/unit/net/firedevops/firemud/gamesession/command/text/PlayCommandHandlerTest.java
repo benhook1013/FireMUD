@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -55,7 +56,7 @@ class PlayCommandHandlerTest {
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final GameplayWorldCatalog worldCatalog =
-      new GameplayWorldCatalog(gameplayCatalogProperties);
+      TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private PlayCommandHandler handler;
 

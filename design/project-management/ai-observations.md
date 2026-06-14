@@ -329,3 +329,8 @@ Entry format:
   - Context: after `09.1.15` and `09.1.16`, Game Session had already moved every real runtime-target consumer off `findByRuntimeTarget(...)`, but the authority interface still exposed that preferred-row API and `GameplayWorldCatalog` still kept a near-copy of pointer completeness locally.
   - Observation: once the runtime converges on “explicit singular proof from full current rows,” leaving the old preferred-row API or local completeness copies behind quietly teaches a second authority story even if nothing still calls it.
   - Expected pattern: when a shared routing helper becomes canonical, remove the superseded helper/API shapes in the same follow-through pass and keep only truly local extra policy checks outside the shared predicate.
+
+- `2026-06-14`: Production routing types should not keep config-backed constructors just because tests still use them
+  - Context: after `09.1` moved `GameplayWorldCatalog` onto persisted admission-pointer authority, the class still imported `GameplayCatalogProperties` only so command and gRPC tests could construct catalog views cheaply.
+  - Observation: leaving a config-backed constructor inside the production type keeps the old local-authority story alive in exactly the class that is supposed to represent the canonical runtime catalog, even if application wiring never calls that path anymore.
+  - Expected pattern: when production routing types no longer need config-backed shaping, move that projection into explicit test support or bootstrap-only helpers rather than preserving a second constructor on the runtime class.

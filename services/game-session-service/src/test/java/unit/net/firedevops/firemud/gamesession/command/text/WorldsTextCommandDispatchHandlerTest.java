@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -27,7 +28,8 @@ class WorldsTextCommandDispatchHandlerTest {
   private final WorldsTextCommandDispatchHandler handler =
       new WorldsTextCommandDispatchHandler(
           new WorldsCommandHandler(
-              new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient),
+              TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+              entityManagementClient),
           scriptEventPublisher);
 
   @Test

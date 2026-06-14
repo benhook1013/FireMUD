@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
@@ -79,7 +80,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         (tenantId, viewerAccountId, accountIds) -> List.of(),
-        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
         ipConnectionLimiter);
@@ -102,7 +103,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         accountPresenceQueryService,
-        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
         ipConnectionLimiter);
@@ -292,7 +293,7 @@ class GameSessionGrpcServiceTest {
             featureFlagService,
             textCommandInterpreter,
             gameInstanceRepository,
-            new GameplayWorldCatalog(properties),
+            TestGameplayWorldCatalogs.fromProperties(properties),
             tickService,
             meterRegistry,
             ipLimiter);

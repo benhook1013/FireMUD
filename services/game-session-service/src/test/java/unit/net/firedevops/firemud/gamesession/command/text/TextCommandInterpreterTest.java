@@ -76,6 +76,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -335,7 +336,8 @@ class TextCommandInterpreterTest {
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
+    GameplayWorldCatalog worldCatalog =
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,

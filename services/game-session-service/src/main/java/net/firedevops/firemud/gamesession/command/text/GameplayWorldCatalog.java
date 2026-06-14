@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -22,15 +21,25 @@ import org.springframework.stereotype.Component;
 public final class GameplayWorldCatalog {
   private final Supplier<List<WorldView>> worldSupplier;
 
-  @Autowired
-  public GameplayWorldCatalog(GameplayAdmissionPointerAuthorityService authorityService) {
-    Objects.requireNonNull(authorityService, "authorityService must not be null");
-    this.worldSupplier = () -> toWorlds(authorityService.listPointers());
+  private GameplayWorldCatalog(Supplier<List<WorldView>> worldSupplier) {
+    this.worldSupplier = Objects.requireNonNull(worldSupplier, "worldSupplier must not be null");
   }
 
-  public GameplayWorldCatalog(GameplayCatalogProperties properties) {
-    Objects.requireNonNull(properties, "properties must not be null");
-    this.worldSupplier = () -> normalizePropertyWorlds(properties.getWorlds());
+  @Autowired
+  public GameplayWorldCatalog(GameplayAdmissionPointerAuthorityService authorityService) {
+    this(
+        () -> {
+          Objects.requireNonNull(authorityService, "authorityService must not be null");
+          return toWorlds(authorityService.listPointers());
+        });
+  }
+
+  public static GameplayWorldCatalog forWorldViews(List<WorldView> worlds) {
+    return new GameplayWorldCatalog(() -> normalizeWorlds(worlds));
+  }
+
+  public static GameplayWorldCatalog forWorldSupplier(Supplier<List<WorldView>> worldSupplier) {
+    return new GameplayWorldCatalog(() -> normalizeWorlds(worldSupplier.get()));
   }
 
   public WorldsViewOutput browseView() {
@@ -266,30 +275,6 @@ public final class GameplayWorldCatalog {
         pointer.characterCreationPolicy());
   }
 
-  private static List<WorldView> normalizePropertyWorlds(
-      List<GameplayCatalogProperties.World> worlds) {
-    if (worlds == null) {
-      return List.of();
-    }
-    return worlds.stream()
-        .filter(Objects::nonNull)
-        .filter(world -> world.getSlug() != null && !world.getSlug().isBlank())
-        .map(GameplayWorldCatalog::copyWorld)
-        .toList();
-  }
-
-  private static WorldView copyWorld(GameplayCatalogProperties.World input) {
-    ArrayList<RealmView> realms = new ArrayList<>();
-    if (input.getRealms() != null) {
-      for (GameplayCatalogProperties.Realm realm : input.getRealms()) {
-        if (realm != null) {
-          realms.add(copyRealm(realm));
-        }
-      }
-    }
-    return new WorldView(input.getSlug(), input.getDisplayName(), realms);
-  }
-
   private static WorldView copyWorldView(WorldView input) {
     return new WorldView(
         input.slug(),
@@ -300,26 +285,6 @@ public final class GameplayWorldCatalog {
                 .filter(Objects::nonNull)
                 .map(GameplayWorldCatalog::copyRealmView)
                 .toList());
-  }
-
-  private static RealmView copyRealm(GameplayCatalogProperties.Realm input) {
-    String stateScope =
-        input.getStateScope() == null ? "UNSPECIFIED" : input.getStateScope().name();
-    String characterCreationPolicy =
-        input.getCharacterCreationPolicy() == null
-            ? "UNSPECIFIED"
-            : input.getCharacterCreationPolicy().name();
-    return new RealmView(
-        input.getSlug(),
-        input.getDisplayName(),
-        input.getTenantId(),
-        input.getGameInstanceId(),
-        input.getPointerVersion(),
-        input.isVisible(),
-        input.isPublicProductionRealm(),
-        input.isRequiresCharacterSelection(),
-        stateScope,
-        characterCreationPolicy);
   }
 
   private static RealmView copyRealmView(RealmView input) {
