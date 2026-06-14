@@ -254,6 +254,81 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void
+      afterConnectionEstablishedClearsExistingGameplayBindingWhenGenericBootstrapAuthorityBecomesAmbiguous() {
+    SessionContext existing =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "Emberline",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "7"));
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L))
+        .thenReturn(Optional.of(existing));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    2L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "preview",
+                    "Preview",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.accountId() == 0L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
+  }
+
+  @Test
   void handleMessageDoesNotAppendScreenBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
     PlayerOutput output = PlayerOutput.message("Recent room line");

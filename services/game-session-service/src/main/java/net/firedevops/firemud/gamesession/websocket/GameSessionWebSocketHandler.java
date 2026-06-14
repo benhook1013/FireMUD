@@ -733,16 +733,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (existing.bootstrapGameInstanceId() != incomingShell.bootstrapGameInstanceId()) {
       return false;
     }
-    if (StringUtils.hasText(incomingShell.worldSlug())
-        && !incomingShell.worldSlug().equalsIgnoreCase(existing.worldSlug())) {
+    boolean existingHasBundle = hasCompleteRoutingBundle(existing);
+    boolean incomingHasBundle = hasCompleteRoutingBundle(incomingShell);
+    if (existingHasBundle != incomingHasBundle) {
       return false;
     }
-    if (StringUtils.hasText(incomingShell.realmSlug())
-        && !incomingShell.realmSlug().equalsIgnoreCase(existing.realmSlug())) {
+    if (!incomingHasBundle) {
+      return true;
+    }
+    if (!incomingShell.worldSlug().equalsIgnoreCase(existing.worldSlug())) {
       return false;
     }
-    return incomingShell.pointerVersion() <= 0
-        || existing.pointerVersion() == incomingShell.pointerVersion();
+    if (!incomingShell.realmSlug().equalsIgnoreCase(existing.realmSlug())) {
+      return false;
+    }
+    return existing.pointerVersion() == incomingShell.pointerVersion();
   }
 
   private SessionContext bootstrapShell(

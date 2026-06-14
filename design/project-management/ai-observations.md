@@ -304,3 +304,8 @@ Entry format:
   - Context: `SessionAuthenticationService` already clears stale gameplay bindings with side effects, but bootstrap or login-era shells without an active gameplay binding can intentionally survive that normalization path while still carrying a full `{worldSlug, realmSlug, pointerVersion}` bundle.
   - Observation: a command or bootstrap consumer that treats “all routing fields are present” as equivalent to “current routing authority was already proved” quietly reintroduces stale pointer generations even after partial-bundle and ambiguous-runtime fail-closed work is done.
   - Expected pattern: when a pre-gameplay shell carries a complete admitted routing bundle, later staging or bootstrap consumers should still revalidate that bundle against current pointer freshness before preserving it onward; completeness alone is not authority.
+
+- `2026-06-14`: Ambiguity-driven bootstrap bundle collapse must count as a route change on reused transports
+  - Context: generic websocket bootstrap already repaired `{worldSlug, realmSlug, pointerVersion}` from singular runtime authority and collapsed to no bundle when that authority became ambiguous, but reused-session route comparison still treated “same tenant + same bootstrap runtime id” as enough to preserve the stored routed shell.
+  - Observation: if fresh bootstrap would now yield no routing bundle, a reused transport must not be allowed to keep an older routed bootstrap shell just because the runtime id itself stayed the same.
+  - Expected pattern: when a repaired bootstrap shell loses its routing bundle under ambiguous current authority, reused-session route comparison should fail closed and trigger the same bootstrap-route-changed cleanup path as any other real route change.
