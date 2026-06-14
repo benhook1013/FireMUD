@@ -63,6 +63,30 @@ class GameplayWorldCatalogTest {
     assertThat(catalog.resolveRuntimeTarget(1L, 11L)).isEmpty();
   }
 
+  @Test
+  void visibleWorldsDropPointersMissingCharacterCreationPolicy() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    11L,
+                    7L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "")));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
   private static GameplayAdmissionPointerSnapshot pointer(
       String worldSlug,
       String worldDisplayName,

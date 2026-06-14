@@ -324,3 +324,8 @@ Entry format:
   - Context: after `09.1.15`, three Game Session control-plane/runtime readers still kept private copies of the “complete pointer” rule and only checked selector-facing fields, even though the shared helper had already tightened the contract to require positive `tenantId` and `gameInstanceId`.
   - Observation: if control-plane readers treat one selector-complete row as singular authority while ignoring missing runtime-target identity, operator reads can still mint a current routing bundle that no interactive path would trust.
   - Expected pattern: once a routing-completeness helper exists, every remaining singular-runtime reader should consume it directly, and the helper itself should define completeness in terms of both selector identity and runtime-target identity.
+
+- `2026-06-14`: Shared routing-completeness helpers should replace dead preferred-row APIs, not just coexist with them
+  - Context: after `09.1.15` and `09.1.16`, Game Session had already moved every real runtime-target consumer off `findByRuntimeTarget(...)`, but the authority interface still exposed that preferred-row API and `GameplayWorldCatalog` still kept a near-copy of pointer completeness locally.
+  - Observation: once the runtime converges on “explicit singular proof from full current rows,” leaving the old preferred-row API or local completeness copies behind quietly teaches a second authority story even if nothing still calls it.
+  - Expected pattern: when a shared routing helper becomes canonical, remove the superseded helper/API shapes in the same follow-through pass and keep only truly local extra policy checks outside the shared predicate.

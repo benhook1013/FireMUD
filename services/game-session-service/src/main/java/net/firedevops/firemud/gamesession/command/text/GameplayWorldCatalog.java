@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -246,16 +247,7 @@ public final class GameplayWorldCatalog {
   }
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
-    return pointer != null
-        && pointer.tenantId() > 0L
-        && pointer.gameInstanceId() > 0L
-        && pointer.pointerVersion() > 0L
-        && pointer.worldSlug() != null
-        && !pointer.worldSlug().isBlank()
-        && pointer.realmSlug() != null
-        && !pointer.realmSlug().isBlank()
-        && pointer.stateScope() != null
-        && !pointer.stateScope().isBlank()
+    return GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointer)
         && pointer.characterCreationPolicy() != null
         && !pointer.characterCreationPolicy().isBlank();
   }
