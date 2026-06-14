@@ -24,7 +24,6 @@ import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
@@ -68,7 +67,9 @@ class TickBatchExecutionServiceTest {
         mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    SessionContextService sessionContextService = mock(SessionContextService.class);
+    net.firedevops.firemud.gamesession.service.SessionAuthenticationService
+        sessionAuthenticationService =
+            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class);
     RuntimeIdentity runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
@@ -85,7 +86,7 @@ class TickBatchExecutionServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionContextService);
+            sessionAuthenticationService);
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
     service =
         new TickBatchExecutionService(

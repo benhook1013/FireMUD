@@ -22,8 +22,8 @@ import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +40,7 @@ class TickQueueControlServiceTest {
   private GameInstanceRepository gameInstanceRepository;
   private GameplayCommandRepository gameplayCommandRepository;
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
-  private SessionContextService sessionContextService;
+  private SessionAuthenticationService sessionAuthenticationService;
   private TickQueueControlService service;
   private Logger logger;
 
@@ -67,7 +67,7 @@ class TickQueueControlServiceTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    sessionContextService = mock(SessionContextService.class);
+    sessionAuthenticationService = mock(SessionAuthenticationService.class);
     RuntimeIdentity runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
@@ -84,7 +84,7 @@ class TickQueueControlServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionContextService);
+            sessionAuthenticationService);
     logger = mock(Logger.class);
   }
 
@@ -190,7 +190,7 @@ class TickQueueControlServiceTest {
 
   @Test
   void queryStateUsesSessionContextTenantFromSessionAuthority() {
-    when(sessionContextService.findBySessionId(7L))
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
         .thenReturn(Optional.of(new SessionContext(7L, 11L, 0L, 0L, 0L, null)));
     when(valueOps.get("session:11:7")).thenReturn("{\"status\":\"ready\"}");
 
@@ -201,7 +201,8 @@ class TickQueueControlServiceTest {
 
   @Test
   void queryStateFailsClosedWhenSessionContextMissing() {
-    when(sessionContextService.findBySessionId(7L)).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
+        .thenReturn(Optional.empty());
 
     IllegalArgumentException exception =
         assertThrows(IllegalArgumentException.class, () -> service.queryState(7L));
@@ -211,7 +212,7 @@ class TickQueueControlServiceTest {
 
   @Test
   void queryStateFailsClosedWhenSessionContextHasNoTenantAuthority() {
-    when(sessionContextService.findBySessionId(7L))
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
         .thenReturn(Optional.of(new SessionContext(7L, 0L, 0L, 0L, 0L, null)));
 
     IllegalArgumentException exception =

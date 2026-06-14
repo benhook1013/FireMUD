@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressRequest;
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,7 +46,7 @@ class TickServiceImplTest {
       remoteFollowupRepository;
   private net.firedevops.firemud.gamesession.repository.TickBatchRepository tickBatchRepository;
   private net.firedevops.firemud.gamesession.repository.TickEffectRepository tickEffectRepository;
-  private SessionContextService sessionContextService;
+  private SessionAuthenticationService sessionAuthenticationService;
   private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
       durableGameplayCommandExecutionService;
   private net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService
@@ -100,7 +100,7 @@ class TickServiceImplTest {
         mock(net.firedevops.firemud.gamesession.repository.TickBatchRepository.class);
     tickEffectRepository =
         mock(net.firedevops.firemud.gamesession.repository.TickEffectRepository.class);
-    sessionContextService = mock(SessionContextService.class);
+    sessionAuthenticationService = mock(SessionAuthenticationService.class);
     durableGameplayCommandExecutionService =
         mock(
             net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
@@ -122,7 +122,7 @@ class TickServiceImplTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionContextService);
+            sessionAuthenticationService);
     TickBatchExecutionService tickBatchExecutionService =
         new TickBatchExecutionService(
             meterRegistry,

@@ -14,8 +14,8 @@ import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -30,7 +30,7 @@ final class TickQueueControlService {
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final RuntimeIdentity runtimeIdentity;
-  private final SessionContextService sessionContextService;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
@@ -41,13 +41,13 @@ final class TickQueueControlService {
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RuntimeIdentity runtimeIdentity,
-      SessionContextService sessionContextService) {
+      SessionAuthenticationService sessionAuthenticationService) {
     this.redisTemplate = redisTemplate;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.runtimeIdentity = runtimeIdentity;
-    this.sessionContextService = sessionContextService;
+    this.sessionAuthenticationService = sessionAuthenticationService;
   }
 
   record OwnershipSnapshot(
@@ -150,7 +150,8 @@ final class TickQueueControlService {
   }
 
   String queryState(Long sessionId) {
-    Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveUnverifiedSessionContext(Long.toString(sessionId));
     Long tenantId =
         maybeContext
             .map(SessionContext::tenantId)

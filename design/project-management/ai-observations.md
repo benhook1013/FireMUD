@@ -334,3 +334,8 @@ Entry format:
   - Context: after `09.1` moved `GameplayWorldCatalog` onto persisted admission-pointer authority, the class still imported `GameplayCatalogProperties` only so command and gRPC tests could construct catalog views cheaply.
   - Observation: leaving a config-backed constructor inside the production type keeps the old local-authority story alive in exactly the class that is supposed to represent the canonical runtime catalog, even if application wiring never calls that path anymore.
   - Expected pattern: when production routing types no longer need config-backed shaping, move that projection into explicit test support or bootstrap-only helpers rather than preserving a second constructor on the runtime class.
+
+- `2026-06-14`: Session-scoped operator reads need the same normalization fence as interactive session paths
+  - Context: `TickQueueControlService.queryState(sessionId)` had already stopped guessing tenant authority from runtime ids, but it still read the raw stored session row instead of the normalized live-shell path.
+  - Observation: once stale gameplay shells can be collapsed with side effects by session normalization, any operator or debug read that still bypasses that fence quietly preserves a second authority story even if it already fails closed on missing rows.
+  - Expected pattern: session-scoped read-model or operator surfaces should resolve session authority through the same normalization path as interactive command or reconnect flows, not directly from raw persisted shell state.
