@@ -93,28 +93,32 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
-    return visibleWorlds().stream()
-        .flatMap(world -> visibleRealms(world).stream())
-        .filter(realm -> realm.tenantId() == tenantId)
-        .filter(realm -> realm.gameInstanceId() == gameInstanceId)
-        .findFirst();
+    List<RealmView> matches =
+        visibleWorlds().stream()
+            .flatMap(world -> visibleRealms(world).stream())
+            .filter(realm -> realm.tenantId() == tenantId)
+            .filter(realm -> realm.gameInstanceId() == gameInstanceId)
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
-    return visibleWorlds().stream()
-        .flatMap(
-            world ->
-                visibleRealms(world).stream()
-                    .filter(realm -> realm.tenantId() == tenantId)
-                    .filter(realm -> realm.gameInstanceId() == gameInstanceId)
-                    .map(
-                        realm ->
-                            new RuntimeRealmTarget(
-                                world.slug(),
-                                world.displayName(),
-                                realm.slug(),
-                                realm.displayName())))
-        .findFirst();
+    List<RuntimeRealmTarget> matches =
+        visibleWorlds().stream()
+            .flatMap(
+                world ->
+                    visibleRealms(world).stream()
+                        .filter(realm -> realm.tenantId() == tenantId)
+                        .filter(realm -> realm.gameInstanceId() == gameInstanceId)
+                        .map(
+                            realm ->
+                                new RuntimeRealmTarget(
+                                    world.slug(),
+                                    world.displayName(),
+                                    realm.slug(),
+                                    realm.displayName())))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<RuntimeRealmTarget> resolveRealmTarget(String worldSlug, String realmSlug) {
@@ -147,7 +151,9 @@ public final class GameplayWorldCatalog {
   }
 
   public List<WorldView> visibleWorlds() {
-    return normalizeWorlds(worldSupplier.get());
+    return normalizeWorlds(worldSupplier.get()).stream()
+        .filter(this::hasVisibleRealmEntries)
+        .toList();
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
@@ -185,6 +191,10 @@ public final class GameplayWorldCatalog {
     return List.copyOf(entries);
   }
 
+  private boolean hasVisibleRealmEntries(WorldView world) {
+    return world != null && !visibleRealms(world).isEmpty();
+  }
+
   private RealmView defaultRealm(WorldView world) {
     return resolveDefaultRealm(world)
         .orElseGet(
@@ -208,29 +218,60 @@ public final class GameplayWorldCatalog {
   private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
     Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (!hasCompleteAuthorityPointer(pointer)) {
+        continue;
+      }
       MutableWorldAccumulator world =
           worlds.computeIfAbsent(
               pointer.worldSlug(),
               ignored ->
-                  new MutableWorldAccumulator(
-                      pointer.worldSlug(), pointer.worldDisplayName(), new ArrayList<>()));
-      world.realms.add(
-          new RealmView(
-              pointer.realmSlug(),
-              pointer.realmDisplayName(),
-              pointer.tenantId(),
-              pointer.gameInstanceId(),
-              pointer.pointerVersion(),
-              pointer.visible(),
-              pointer.publicProductionRealm(),
-              pointer.requiresCharacterSelection(),
-              pointer.stateScope(),
-              pointer.characterCreationPolicy()));
+                  new MutableWorldAccumulator(pointer.worldSlug(), pointer.worldDisplayName()));
+      world
+          .realmsBySlug
+          .computeIfAbsent(pointer.realmSlug(), ignored -> new ArrayList<>())
+          .add(pointer);
     }
     return normalizeWorlds(
         worlds.values().stream()
-            .map(world -> new WorldView(world.slug, world.displayName, world.realms))
+            .map(
+                world ->
+                    new WorldView(
+                        world.slug,
+                        world.displayName,
+                        world.realmsBySlug.entrySet().stream()
+                            .filter(entry -> entry.getValue().size() == 1)
+                            .map(entry -> toRealmView(entry.getValue().getFirst()))
+                            .toList()))
             .toList());
+  }
+
+  private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
+    return pointer != null
+        && pointer.tenantId() > 0L
+        && pointer.gameInstanceId() > 0L
+        && pointer.pointerVersion() > 0L
+        && pointer.worldSlug() != null
+        && !pointer.worldSlug().isBlank()
+        && pointer.realmSlug() != null
+        && !pointer.realmSlug().isBlank()
+        && pointer.stateScope() != null
+        && !pointer.stateScope().isBlank()
+        && pointer.characterCreationPolicy() != null
+        && !pointer.characterCreationPolicy().isBlank();
+  }
+
+  private static RealmView toRealmView(GameplayAdmissionPointerSnapshot pointer) {
+    return new RealmView(
+        pointer.realmSlug(),
+        pointer.realmDisplayName(),
+        pointer.tenantId(),
+        pointer.gameInstanceId(),
+        pointer.pointerVersion(),
+        pointer.visible(),
+        pointer.publicProductionRealm(),
+        pointer.requiresCharacterSelection(),
+        pointer.stateScope(),
+        pointer.characterCreationPolicy());
   }
 
   private static List<WorldView> normalizePropertyWorlds(
@@ -327,12 +368,12 @@ public final class GameplayWorldCatalog {
   private static final class MutableWorldAccumulator {
     private final String slug;
     private final String displayName;
-    private final List<RealmView> realms;
+    private final Map<String, List<GameplayAdmissionPointerSnapshot>> realmsBySlug =
+        new LinkedHashMap<>();
 
-    private MutableWorldAccumulator(String slug, String displayName, List<RealmView> realms) {
+    private MutableWorldAccumulator(String slug, String displayName) {
       this.slug = slug;
       this.displayName = displayName;
-      this.realms = realms;
     }
   }
 }

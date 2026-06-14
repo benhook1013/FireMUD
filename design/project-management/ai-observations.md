@@ -309,3 +309,8 @@ Entry format:
   - Context: generic websocket bootstrap already repaired `{worldSlug, realmSlug, pointerVersion}` from singular runtime authority and collapsed to no bundle when that authority became ambiguous, but reused-session route comparison still treated “same tenant + same bootstrap runtime id” as enough to preserve the stored routed shell.
   - Observation: if fresh bootstrap would now yield no routing bundle, a reused transport must not be allowed to keep an older routed bootstrap shell just because the runtime id itself stayed the same.
   - Expected pattern: when a repaired bootstrap shell loses its routing bundle under ambiguous current authority, reused-session route comparison should fail closed and trigger the same bootstrap-route-changed cleanup path as any other real route change.
+
+- `2026-06-14`: Player-facing catalog views need the same singular complete-pointer rule as operator runtime reads
+  - Context: after `09.1` hardened bootstrap, command staging, presence, and control-plane runtime reads around singular current pointer authority, `GameplayWorldCatalog` still projected visible worlds/realms and reverse runtime-target identity from raw pointer rows.
+  - Observation: if player-facing browse or reverse lookup helpers keep one selector row alive from duplicate or incomplete pointer rows, they silently reteach a fake canonical world/realm identity even though the rest of the routing stack already fails closed on the same ambiguity.
+  - Expected pattern: any player-facing or operator-facing catalog projection built from admission-pointer authority should discard incomplete bundles first, group by the selector key it is projecting, and only emit a visible singular identity when exactly one complete pointer row survives.
