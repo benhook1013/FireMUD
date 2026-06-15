@@ -339,3 +339,8 @@ Entry format:
   - Context: `TickQueueControlService.queryState(sessionId)` had already stopped guessing tenant authority from runtime ids, but it still read the raw stored session row instead of the normalized live-shell path.
   - Observation: once stale gameplay shells can be collapsed with side effects by session normalization, any operator or debug read that still bypasses that fence quietly preserves a second authority story even if it already fails closed on missing rows.
   - Expected pattern: session-scoped read-model or operator surfaces should resolve session authority through the same normalization path as interactive command or reconnect flows, not directly from raw persisted shell state.
+
+- `2026-06-14`: Once a reader depends on normalized session truth, it should call the session-authority service directly
+  - Context: logout lifecycle and durable gameplay replay were already conceptually reading normalized session context, but they still implemented that by hand through raw `SessionContextService` lookups plus local filtering or normalization.
+  - Observation: leaving “raw row plus maybe-normalize” in higher-level readers quietly keeps a second authority shape alive even after the codebase has already converged on one canonical session-authentication entrypoint.
+  - Expected pattern: higher-level session readers that depend on normalized routing truth should use `SessionAuthenticationService` directly, and reserve raw `SessionContextService` access for storage or normalization infrastructure layers.

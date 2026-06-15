@@ -137,9 +137,8 @@ public final class DefaultDurableGameplayCommandExecutionService
   private Optional<SessionContext> resolveExecutionContext(GameplayCommand command) {
     if (command.getSessionId() != null && command.getSessionId() > 0) {
       Optional<SessionContext> bySession =
-          sessionContextService
-              .findBySessionId(command.getSessionId())
-              .map(sessionAuthenticationService::normalizeResolvedContext);
+          sessionAuthenticationService.resolveUnverifiedSessionContext(
+              Long.toString(command.getSessionId()));
       if (bySession.isPresent()) {
         return bySession;
       }

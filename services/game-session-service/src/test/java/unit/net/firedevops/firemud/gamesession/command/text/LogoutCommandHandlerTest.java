@@ -162,23 +162,6 @@ class LogoutCommandHandlerTest {
 
   @Test
   void logoutDoesNotStopSharedRuntimeWhenNormalizationClearsProjectedBinding() {
-    SessionContext persistedContext =
-        new SessionContext(
-            41L,
-            22L,
-            123L,
-            "demo@example.com",
-            123L,
-            "demo",
-            1L,
-            "1021",
-            "jwt",
-            "en-NZ",
-            1L,
-            "demo",
-            "production",
-            1L,
-            "SHARED");
     SessionContext normalizedContext =
         new SessionContext(
             41L,
@@ -196,7 +179,6 @@ class LogoutCommandHandlerTest {
             null,
             0L,
             null);
-    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(persistedContext));
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(normalizedContext));
 

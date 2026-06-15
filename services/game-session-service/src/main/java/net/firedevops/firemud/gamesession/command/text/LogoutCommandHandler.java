@@ -153,12 +153,7 @@ public final class LogoutCommandHandler {
   }
 
   private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {
-    try {
-      long parsedSessionId = Long.parseLong(sessionIdText);
-      return sessionContextService.findBySessionId(parsedSessionId).filter(this::isAuthenticated);
-    } catch (NumberFormatException ex) {
-      return Optional.empty();
-    }
+    return sessionAuthenticationService.resolveSessionContext(sessionIdText);
   }
 
   private boolean isAuthenticated(SessionContext context) {
