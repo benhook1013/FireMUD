@@ -73,12 +73,12 @@ public class GameSessionClient
     return response.getRealmsList();
   }
 
-  public GameplayAdmissionPointer getAdmissionPointer(String worldSlug, String realmSlug) {
+  public GameplayAdmissionPointer getAdmissionPointer(long tenantId, String realmSlug) {
     var response =
         stub()
             .getAdmissionPointer(
                 GetAdmissionPointerRequest.newBuilder()
-                    .setWorldSlug(worldSlug)
+                    .setTenantId(Long.toString(tenantId))
                     .setRealmSlug(realmSlug)
                     .build());
     if (response.hasError()) {

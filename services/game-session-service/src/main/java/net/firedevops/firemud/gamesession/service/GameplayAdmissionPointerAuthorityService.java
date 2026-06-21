@@ -8,6 +8,8 @@ public interface GameplayAdmissionPointerAuthorityService {
 
   Optional<GameplayAdmissionPointerSnapshot> findPointer(String worldSlug, String realmSlug);
 
+  Optional<GameplayAdmissionPointerSnapshot> findPointer(long tenantId, String realmSlug);
+
   List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(long tenantId, long gameInstanceId);
 
   GameplayAdmissionPointerSnapshot upsertPointer(GameplayAdmissionPointerMutation mutation);

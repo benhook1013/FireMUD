@@ -25,6 +25,8 @@ import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolic
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -73,6 +75,8 @@ class GameSessionGrpcServiceTest {
       TickService tickService,
       SimpleMeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     return new GameSessionGrpcService(
         pingService,
         gameInstanceService,
@@ -80,6 +84,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         (tenantId, viewerAccountId, accountIds) -> List.of(),
+        pointerAuthorityService,
         TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
@@ -96,6 +101,8 @@ class GameSessionGrpcServiceTest {
       TickService tickService,
       SimpleMeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     return new GameSessionGrpcService(
         pingService,
         gameInstanceService,
@@ -103,6 +110,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         accountPresenceQueryService,
+        pointerAuthorityService,
         TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
@@ -115,6 +123,7 @@ class GameSessionGrpcServiceTest {
       FeatureFlagService featureFlagService,
       TextCommandInterpreter textCommandInterpreter,
       GameInstanceRepository gameInstanceRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayWorldCatalog gameplayWorldCatalog,
       TickService tickService,
       SimpleMeterRegistry meterRegistry,
@@ -126,6 +135,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         (tenantId, viewerAccountId, accountIds) -> List.of(),
+        gameplayAdmissionPointerAuthorityService,
         gameplayWorldCatalog,
         tickService,
         meterRegistry,
@@ -271,6 +281,8 @@ class GameSessionGrpcServiceTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
@@ -286,6 +298,22 @@ class GameSessionGrpcServiceTest {
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
     world.setRealms(List.of(realm));
     properties.setWorlds(List.of(world));
+    Mockito.when(pointerAuthorityService.findPointer(7L, "production"))
+        .thenReturn(
+            java.util.Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    7L,
+                    44L,
+                    17L,
+                    true,
+                    false,
+                    false,
+                    "ISOLATED",
+                    "COPIED_ONLY")));
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -293,6 +321,7 @@ class GameSessionGrpcServiceTest {
             featureFlagService,
             textCommandInterpreter,
             gameInstanceRepository,
+            pointerAuthorityService,
             TestGameplayWorldCatalogs.fromProperties(properties),
             tickService,
             meterRegistry,
@@ -322,10 +351,7 @@ class GameSessionGrpcServiceTest {
 
     AtomicReference<GetAdmissionPointerResponse> pointerRef = new AtomicReference<>();
     service.getAdmissionPointer(
-        GetAdmissionPointerRequest.newBuilder()
-            .setWorldSlug("demo")
-            .setRealmSlug("production")
-            .build(),
+        GetAdmissionPointerRequest.newBuilder().setTenantId("7").setRealmSlug("production").build(),
         new StreamObserver<>() {
           @Override
           public void onNext(GetAdmissionPointerResponse value) {

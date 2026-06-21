@@ -119,7 +119,7 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -454,7 +454,7 @@ class AccountServiceImplTest {
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -485,6 +485,54 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void issueConnectTokenRejectsWorldMismatchAfterBootstrapDiscovery() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("sandbox")
+                .setWorldDisplayName("Builder Sandbox")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-world-mismatch")));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
+  }
+
+  @Test
   void issueConnectTokenReplaysSameTokenForSameRequestIdAfterLaterPointerCutover() {
     Account account = new Account();
     account.setId(11L);
@@ -511,7 +559,7 @@ class AccountServiceImplTest {
 
     when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-replay-1"))
         .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, firstResult, "", "")));
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -679,7 +727,7 @@ class AccountServiceImplTest {
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -710,7 +758,7 @@ class AccountServiceImplTest {
             Optional.of(
                 new SessionService.ConnectTokenReplay(
                     false, null, "CONNECT_SCOPE_MISMATCH", firstFailure.getMessage())));
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -828,7 +876,7 @@ class AccountServiceImplTest {
                     .setStateScope("ISOLATED")
                     .setCharacterCreationPolicy("COPIED_ONLY")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer("demo", "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -936,7 +984,7 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer("demo", "preview"))
+    when(gameSessionClient.getAdmissionPointer(7L, "preview"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")

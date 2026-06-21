@@ -764,8 +764,8 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
     try {
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
-          gameSessionClient.getAdmissionPointer(worldSlug, realmSlug);
-      if (!isRealmAdmissible(bootstrapContext, realm)) {
+          gameSessionClient.getAdmissionPointer(bootstrapContext.tenantId(), realmSlug);
+      if (!worldSlug.equals(realm.getWorldSlug()) || !isRealmAdmissible(bootstrapContext, realm)) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -1381,28 +1381,13 @@ public class AccountServiceImpl implements AccountService {
 
   private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer
       requirePublicProductionRealm(Long tenantId, String realmSlug) {
-    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
-        gameSessionClient.listGameplayWorlds().stream()
-            .flatMap(
-                world -> {
-                  try {
-                    return gameSessionClient.listGameplayRealms(world.getWorldSlug()).stream()
-                        .filter(candidate -> realmSlug.equals(candidate.getRealmSlug()))
-                        .filter(candidate -> Long.parseLong(candidate.getTenantId()) == tenantId)
-                        .map(
-                            candidate ->
-                                gameSessionClient.getAdmissionPointer(
-                                    candidate.getWorldSlug(), candidate.getRealmSlug()));
-                  } catch (IllegalStateException ex) {
-                    return java.util.stream.Stream.empty();
-                  }
-                })
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new AuthenticationException(
-                        "ADMISSION_POINTER_UNAVAILABLE",
-                        "Selected gameplay realm is not admissible"));
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm;
+    try {
+      realm = gameSessionClient.getAdmissionPointer(tenantId, realmSlug);
+    } catch (IllegalStateException ex) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
+    }
     if (!isPublicProductionRealm(realm)) {
       throw new AuthenticationException(
           "PUBLIC_PRODUCTION_MEMBERSHIP_NOT_ALLOWED",

@@ -50,6 +50,12 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<GameplayAdmissionPointerSnapshot> findPointer(long tenantId, String realmSlug) {
+    return pointerRepository.findByTenantIdAndRealmSlug(tenantId, realmSlug).map(this::toSnapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(
       long tenantId, long gameInstanceId) {
     return pointerRepository.findAllByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream()

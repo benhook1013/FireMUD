@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -33,6 +34,8 @@ class GameSessionGrpcServicePingIntegrationTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
 
@@ -44,6 +47,7 @@ class GameSessionGrpcServicePingIntegrationTest {
             textCommandInterpreter,
             gameInstanceRepository,
             (tenantId, viewerAccountId, accountIds) -> java.util.List.of(),
+            pointerAuthorityService,
             TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
             tickService,
             meterRegistry,

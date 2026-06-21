@@ -39,6 +39,17 @@ public class GameplayAdmissionPointerRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<GameplayAdmissionPointer> findByTenantIdAndRealmSlug(
+      Long tenantId, String realmSlug) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
+        .fetchOptional(this::toEntity);
+  }
+
   public Optional<GameplayAdmissionPointer> findByTenantIdAndGameInstanceId(
       Long tenantId, Long gameInstanceId) {
     return findAllByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream().findFirst();
