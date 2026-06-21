@@ -68,7 +68,7 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
             --jq '.[] | [.number, .head.ref, .head.sha, .user.login] | @tsv' |
           while IFS=$'\t' read -r pr_number head_ref head_sha pr_author; do
-            if [[ "${pr_author}" == "dependabot[bot]" || "${pr_author}" == "app/renovate" ]]; then
+            if [[ "${pr_author}" == "app/dependabot" || "${pr_author}" == "dependabot[bot]" || "${pr_author}" == "app/renovate" || "${pr_author}" == "renovate[bot]" ]]; then
               echo "Skipping preview reconcile for dependency bot PR #${pr_number} (${pr_author})"
               continue
             fi

@@ -80,7 +80,12 @@ jobs:
               prAuthor = pull.user.login;
             }
 
-            const ineligibleAuthors = new Set(["dependabot[bot]", "app/renovate"]);
+            const ineligibleAuthors = new Set([
+              "app/dependabot",
+              "dependabot[bot]",
+              "app/renovate",
+              "renovate[bot]",
+            ]);
             const eligible = !ineligibleAuthors.has(prAuthor);
             core.setOutput("eligible", eligible ? "true" : "false");
             core.info(
