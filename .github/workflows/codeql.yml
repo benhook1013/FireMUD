@@ -135,10 +135,11 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          dependency-caching: true
 
       - name: ⚙️ Build project for CodeQL
         if: matrix.language == 'java'
-        run: ./gradlew codeqlClasses --rerun-tasks
+        run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
