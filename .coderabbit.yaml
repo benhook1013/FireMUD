@@ -19,6 +19,13 @@ reviews:
     base_branches:
       - "develop"
       - "main"
+    ignore_usernames:
+      - "app/dependabot"
+      - "app/renovate"
+      - "dependabot"
+      - "dependabot[bot]"
+      - "renovate"
+      - "renovate[bot]"
   path_instructions:
     - path: "services/**"
       instructions: |
