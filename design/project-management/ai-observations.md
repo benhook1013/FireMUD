@@ -349,3 +349,8 @@ Entry format:
   - Context: smoke and bootstrap verification often bring up images and containers that are only needed while the proof is actively being observed or debugged, though a very short reuse window can avoid pointless teardown and restart churn.
   - Observation: leaving Docker resources running beyond an immediate follow-up window burns local capacity and muddies later validation state without preserving meaningful progress.
   - Expected pattern: when an AI-driven smoke or runtime check is done, tear down the related Docker containers and other spawned runtime resources unless they are being reused again within the next minute or two, and otherwise respawn them later when fresh proof is needed.
+
+- `2026-06-21`: Metrics-cardinality lint must scan Grafana assets as well as prose and shipped rules
+  - Context: after the earlier repo-wide observability follow-through widened scanning beyond a few docs, raw `tenantId` / `regionId` teaching still survived in Grafana JSON legend formats and nearby runbooks even though the main cardinality check passed.
+  - Observation: when the canonical observability story includes dashboard JSON and alert snippet assets, scanning only prose catalogs and Prometheus rules still leaves copy-paste drift paths open for forbidden raw metric labels.
+  - Expected pattern: metrics-cardinality enforcement should scan the canonical architecture docs plus shipped Grafana PromQL/legend assets, and it should treat dashboard legend exposure of raw identifier labels as the same class of policy drift as PromQL grouping or metric examples.

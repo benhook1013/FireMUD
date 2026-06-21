@@ -221,7 +221,7 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
 - **Per-script vs per-tenant safety**
   - Per-script sandbox failures (`sandbox_error`) count toward:
     - Per-script failure-rate circuit breakers
-    - Per-tenant error metrics, for example `automation_script_errors_total{tenantId, reason=...}`
+    - Per-scope error metrics, for example `automation_script_errors_total{scope, script_category, reason=...}`
   - This prevents one script from repeatedly failing without impacting other tenants’ automation workloads.
 
 - **Tick alignment**

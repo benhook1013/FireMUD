@@ -10,7 +10,7 @@
       "targets": [
         {
           "expr": "redis_coordination_tail_loss_ms",
-          "legendFormat": "{{tenantId}}/{{regionId}}",
+          "legendFormat": "{{scope}}",
           "refId": "A"
         }
       ],

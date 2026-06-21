@@ -107,14 +107,14 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 
 To keep replay-controller alerting and runbooks deterministic, the replay path uses an explicit convergence budget:
 
-- `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}` is the canonical emitted budget for each active region.
+- `tick_effects_replay_convergence_budget_seconds{scope}` is the canonical emitted budget for each active region-sized gameplay scope.
 - Default formula:
   - `replay_convergence_budget_seconds = max(60, ceil(20 * tick_interval_ms / 1000))`
   - For common tick cadences, this yields a practical minimum budget of `60s`.
 - Prometheus recording rules should also expose:
-  - `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
-  - `tick_effects_replay_slo_breached{tenantId,regionId}` when oldest pending age exceeds the emitted convergence budget
-  - `tick_effects_replay_starved{tenantId,regionId}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
+  - `tick_effects_pending_oldest_age_seconds{scope}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
+  - `tick_effects_replay_slo_breached{scope}` when oldest pending age exceeds the emitted convergence budget
+  - `tick_effects_replay_starved{scope}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
 - Alerting guidance:
   - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for an otherwise running region.
   - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
@@ -219,18 +219,18 @@ In schema terms:
 
 The ledger makes replay visible operationally via metrics such as:
 
-- `tick_effects_pending_total{tenantId,regionId}`
-- `tick_effects_applied_total{tenantId,regionId}`
-- `tick_effects_abandoned_total{tenantId,regionId,reason}`
-- `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
-- `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each region.
-- `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` – recording rule for the current age of the oldest `SCHEDULED` row.
-- `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}` – emitted budget for how long replay may take before the region is considered unhealthy.
-- `tick_effects_replay_slo_breached{tenantId,regionId}` – recording rule indicating oldest pending age has exceeded the emitted budget.
-- `tick_effects_replay_starved{tenantId,regionId}` – recording rule indicating replay batches are not advancing despite pending work.
-- `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary.
-- `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
-- `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick.
+- `tick_effects_pending_total{scope}`
+- `tick_effects_applied_total{scope}`
+- `tick_effects_abandoned_total{scope,reason}`
+- `tick_effects_replayed_total{scope}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
+- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each approved bounded gameplay scope.
+- `tick_effects_pending_oldest_age_seconds{scope}` – recording rule for the current age of the oldest `SCHEDULED` row.
+- `tick_effects_replay_convergence_budget_seconds{scope}` – emitted budget for how long replay may take before the scope is considered unhealthy.
+- `tick_effects_replay_slo_breached{scope}` – recording rule indicating oldest pending age has exceeded the emitted budget.
+- `tick_effects_replay_starved{scope}` – recording rule indicating replay batches are not advancing despite pending work.
+- `tick_durable_commit_total{scope}` – count of ticks that reached the durable commit boundary.
+- `tick_coordination_cleared_total{scope}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
+- `tick_cleanup_lag_ms{scope}` – lag from durable commit to coordination-cleared for each tick.
 
 Alerts fire when:
 
@@ -258,7 +258,7 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
   - Enforces bounded fairness across active scopes so replay does not starve smaller tenants/regions behind one hot backlog:
     - Scans and replays in bounded batches per `<tenantId, regionId>`.
     - Uses round-robin (or weighted-fair) scheduling across regions rather than draining one region completely before touching others.
-    - Emits `tick_effects_replay_scan_lag_ms{tenantId,regionId}` and `tick_effects_replay_batches_total{tenantId,regionId}` so starvation is visible.
+    - Emits `tick_effects_replay_scan_lag_ms{scope}` and `tick_effects_replay_batches_total{scope}` so starvation is visible without reintroducing raw tenant/region labels to Prometheus.
 - The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes.
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, regionId)` or `region_epoch` when guided by runbooks in the Redis operations docs.
 - Convergence SLO contract (required):

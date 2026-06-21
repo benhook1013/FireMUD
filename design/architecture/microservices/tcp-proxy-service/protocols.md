@@ -99,7 +99,7 @@ Metrics give observability into each Telnet connection while keeping Prometheus 
 
 Detailed identifiers such as `gameInstanceId` and client IP are captured in structured logs and tracing context, not Prometheus label values.
 
-To avoid label blow-up in multi-tenant clusters, `tenantId` is intentionally omitted from all proxy metrics by default. For very small, single-tenant or single-admin deployments, operators may temporarily enable per-tenant metrics in custom dashboards by adding `tenantId` as an opt-in label on a subset of meters and keeping those series in short-retention or dedicated Prometheus storage. Even in that mode, `tenantId` labels should be treated as a diagnostic tool rather than a permanent core monitoring surface.
+`tenantId` is intentionally omitted from canonical proxy metrics. Even in very small deployments, tenant-specific diagnosis should come from logs, traces, and control-plane reads or from an explicitly separate non-canonical diagnostic export; operators should not mutate the shared Prometheus metric contract by adding raw `tenantId` labels to the standard proxy meters.
 
 ## Telnet Command Handling
 

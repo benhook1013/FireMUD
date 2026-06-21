@@ -11,8 +11,8 @@ Use the following patterns to answer common operational questions:
   - Pair with `script_quota_denied_total` and audit rows with `finalStage=ADMISSION` and `finalOutcome=quota_denied` (or other quota and concurrency outcomes).
 
 - **"Is a tenant being throttled by its own automation budget?"**
-  - Check `automation_script_skips_total{reason="tenant_budget_exceeded", tenantId=...}` and audit rows with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`.
-  - Use `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` to see which tiers are consuming or exhausting budget.
+  - Check `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` and audit rows with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`.
+  - Use `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` to see which tiers are consuming or exhausting budget.
 
 - **"Are cluster-wide ceilings causing drops?"**
   - Monitor `automation_script_triggers_dropped_total{reason="cluster_limit_reached"}` alongside `automation_tick_events_enqueued_total` and infrastructure-level CPU/time metrics. This combination indicates pressure at the cluster layer rather than within a single script or tenant.
@@ -55,7 +55,7 @@ Under light load:
 Under heavy load from Tenant A:
 
 1. **Per-script quota layer**: `npc-logger` may hit its per-script quota first; additional triggers for that script in the current window are skipped with `automation_script_triggers_dropped_total{reason="quota"}` and audit entries with `finalStage=ADMISSION` and `finalOutcome=quota_denied`. `boss-ai` remains within its own per-script quota and continues to run when triggered.
-2. **Per-tenant budget layer**: If Tenant A continues to generate background triggers, it may exhaust its tenant-level budget for the `background` tier. Once Tenant A’s background budget is exceeded, further background triggers for Tenant A (including `npc-logger`) are throttled or skipped and `automation_script_skips_total{reason="tenant_budget_exceeded", tenantId="A"}` increases. Tenant B’s budgets are independent; its `high`-priority `boss-ai` script is unaffected as long as Tenant B stays within its own budgets.
+2. **Per-tenant budget layer**: If Tenant A continues to generate background triggers, it may exhaust its tenant-level budget for the `background` tier. Once Tenant A’s background budget is exceeded, further background triggers for Tenant A (including `npc-logger`) are throttled or skipped and the corresponding `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` bucket increases. Tenant B’s budgets are independent; its `high`-priority `boss-ai` script is unaffected as long as Tenant B stays within its own budgets.
 3. **Cluster-level ceilings**: If total automation work across all tenants (including other games) approaches the cluster ceiling, the scheduler continues to admit `high`-priority scripts like `boss-ai` as long as possible and preferentially defers or drops `background` work such as `npc-logger`, reflected in `automation_script_triggers_dropped_total` with reasons like `cluster_limit_reached`.
 
 This example illustrates how the layers interact:
