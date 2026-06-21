@@ -2,6 +2,10 @@
 
 This document defines the machine-checkable evidence, metrics, and compliance records required to prove that FireMUD backups and restore workflows are healthy enough for player-facing operation.
 
+## Implementation Notes
+
+Canonical backup pause metrics are still converging on end-to-end `region`/`tenant` scope enforcement. Until every emitting path and dashboard uses canonical scopes, backup pause metrics and dashboards should treat alias-scope usage as an explicit migration signal rather than hiding it inside generic pause failures. `scope_type` should distinguish canonical scopes such as `region` and `tenant` from alias scopes such as `game_instance_alias`, while the paired `scope` label remains the approved bounded bucket for the affected gameplay scope. Exact tenant and region identities belong in retained evidence, maintenance records, and control-plane reads.
+
 ## Backup Observability and Alerts
 
 Backup and verification jobs must emit simple, environment-agnostic metrics:
@@ -40,7 +44,7 @@ The canonical backup/recovery severity matrix lives in `system-architecture-back
 
 Prometheus and Alertmanager should also carry clear `service`, `severity`, `owner`, and `runbook` annotations on these alerts, and Grafana should include a dedicated Backups section or dashboard that visualizes freshness, restore-proof age, recent backup/verify success vs failure, restore-drill results by recovery mode, and pause-safety signals.
 
-Until canonical `region_id` scope is enforced end to end, backup pause metrics and dashboards must treat alias-scope usage as a first-class migration signal rather than hiding it inside generic pause failures. `scope_type` should distinguish canonical scopes such as `region` and `tenant` from alias scopes such as `game_instance_alias`, while the paired `scope` label remains the approved bounded bucket for the affected gameplay scope. Exact tenant/region identities belong in retained evidence, maintenance records, and control-plane reads. Player-facing pause-budget breaches should route as `P0` while quarantined or drill-only scopes may downgrade severity according to environment policy.
+Backup pause metrics and dashboards should use canonical `scope_type` and `scope` labels for player-facing pause-budget signals. Player-facing pause-budget breaches should route as `P0` while quarantined or drill-only scopes may downgrade severity according to environment policy.
 
 ## Production Backup Readiness Evidence
 
