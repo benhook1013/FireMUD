@@ -202,7 +202,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: 🧪 Validate tracked Python scripts
         run: |
@@ -223,7 +223,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: 📦 Install Python script dependencies
         run: python3 -m pip install --disable-pip-version-check PyYAML
@@ -245,7 +245,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: 📦 Install yamllint
         run: python3 -m pip install --disable-pip-version-check yamllint
@@ -263,7 +263,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: 📏 Validate metric label policy
         run: python3 dev-tools/observability/check-metrics-cardinality.py
@@ -326,7 +326,7 @@ jobs:
       - name: ⚙️ Set Up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: '1.24'
+          go-version: '1.26'
           cache: false
 
       - name: 🧪 Validate GitHub Actions Workflows
@@ -395,7 +395,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
