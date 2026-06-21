@@ -109,10 +109,10 @@ jobs:
     if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
     environment: dev-demo-cluster
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v5
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
         with:
           version: v1.33.4
 
@@ -216,7 +216,7 @@ jobs:
 
       - name: Upload rendered dev-demo artifacts
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dev-demo-render-${{ needs.dev-demo-plan.outputs.release_name }}
           path: |
@@ -502,10 +502,10 @@ jobs:
     if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
     environment: dev-demo-cluster
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v5
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
         with:
           version: v1.33.4
 

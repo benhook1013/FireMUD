@@ -18,18 +18,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.11'
       - name: Cache link check results
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: .lychee_cache
           key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md') }}
       - name: Check links
-        uses: lycheeverse/lychee-action@v2.8.0
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
         env:
           LYCHEE_CACHE: true
         with:
@@ -38,14 +38,14 @@ jobs:
           args: --no-progress --verbose --scheme file --exclude-path './**/node_modules/**' --exclude-path './**/build/**' --exclude-path './**/.gradle/**' './**/*.md'
           fail: true
           jobSummary: true
-      - uses: actions/configure-pages@v6
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Install MkDocs
         run: python3 -m pip install --disable-pip-version-check mkdocs mkdocs-material
       - name: Build documentation
         run: |
           python3 dev-tools/docs/build_pages_site.py
           python3 -m mkdocs build --clean
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: ./build/public-site
 
@@ -58,4 +58,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
