@@ -15,6 +15,9 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
+- Keep fast-moving AI-driven PRs in draft while push-looping so CodeRabbit does not auto-review every incremental commit.
+- If a PR must stay non-draft during active iteration, pause CodeRabbit with `@coderabbitai pause` and request a fresh pass only at meaningful checkpoints with `@coderabbitai review` or `@coderabbitai full review`.
+- Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
