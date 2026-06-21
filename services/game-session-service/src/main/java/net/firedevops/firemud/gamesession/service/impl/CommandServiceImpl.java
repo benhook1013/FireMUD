@@ -8,7 +8,6 @@ import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -271,13 +270,13 @@ public class CommandServiceImpl implements CommandService {
       long sessionId = Long.parseLong(sessionIdText);
       if (sessionContext.isPresent()) {
         SessionContext context = sessionContext.get();
+        if (context.tenantId() <= 0) {
+          return Optional.empty();
+        }
         long queueTargetId = context.gameInstanceId() > 0 ? context.gameInstanceId() : sessionId;
         return Optional.of(new QueueTarget(context.tenantId(), queueTargetId));
       }
-      return gameInstanceRepository
-          .findById(sessionId)
-          .map(GameInstance::getTenantId)
-          .map(tenantId -> new QueueTarget(tenantId, sessionId));
+      return Optional.empty();
     } catch (NumberFormatException ex) {
       return Optional.empty();
     }
