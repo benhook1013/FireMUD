@@ -45,7 +45,6 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
-import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -62,7 +61,6 @@ public class GameLogicClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
-  private final GameplayWorldCatalog gameplayWorldCatalog;
 
   private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
     private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
@@ -77,11 +75,9 @@ public class GameLogicClient
       CommonGrpcClientProperties grpcClientProperties,
       GrpcChannelFactory channelFactory,
       BlockingGrpcStubCustomizer stubCustomizer,
-      GameplaySessionAttestationService gameplaySessionAttestationService,
-      GameplayWorldCatalog gameplayWorldCatalog) {
+      GameplaySessionAttestationService gameplaySessionAttestationService) {
     super(endpoints, grpcClientProperties, channelFactory, stubCustomizer);
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
-    this.gameplayWorldCatalog = gameplayWorldCatalog;
   }
 
   @PostConstruct

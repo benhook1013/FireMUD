@@ -1,8 +1,13 @@
 package net.firedevops.firemud.common.security;
 
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ForwardingClientCall;
 import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.stub.AbstractStub;
-import io.grpc.stub.MetadataUtils;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,16 +23,33 @@ public final class GrpcClientAuth {
 
   public static <T extends AbstractStub<T>> T attach(
       T stub, JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
-    Metadata metadata = new Metadata();
-    metadata.put(AUTH_HEADER, "Bearer " + createBearerToken(jwtUtil, runtimeIdentity));
-    return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    return stub.withInterceptors(
+        authInterceptor(() -> createBearerToken(jwtUtil, runtimeIdentity)));
   }
 
   public static <T extends AbstractStub<T>> T attachInternal(
       T stub, JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
-    Metadata metadata = new Metadata();
-    metadata.put(AUTH_HEADER, "Bearer " + createInternalBearerToken(jwtUtil, runtimeIdentity));
-    return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    return stub.withInterceptors(
+        authInterceptor(() -> createInternalBearerToken(jwtUtil, runtimeIdentity)));
+  }
+
+  private static ClientInterceptor authInterceptor(TokenSupplier tokenSupplier) {
+    return new ClientInterceptor() {
+      @Override
+      public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+          MethodDescriptor<ReqT, RespT> method, CallOptions callOptions, Channel next) {
+        ClientCall<ReqT, RespT> delegate = next.newCall(method, callOptions);
+        return new ForwardingClientCall.SimpleForwardingClientCall<>(delegate) {
+          @Override
+          public void start(Listener<RespT> responseListener, Metadata headers) {
+            Metadata outboundHeaders = new Metadata();
+            outboundHeaders.merge(headers);
+            outboundHeaders.put(AUTH_HEADER, "Bearer " + tokenSupplier.get());
+            super.start(responseListener, outboundHeaders);
+          }
+        };
+      }
+    };
   }
 
   static String createBearerToken(JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
@@ -61,5 +83,10 @@ public final class GrpcClientAuth {
       claims.put("serviceInstanceId", serviceInstanceId);
     }
     return jwtUtil.generateToken(INTERNAL_SUBJECT_PREFIX + serviceName, claims);
+  }
+
+  @FunctionalInterface
+  private interface TokenSupplier {
+    String get();
   }
 }

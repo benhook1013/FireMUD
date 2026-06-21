@@ -39,6 +39,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -209,7 +210,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       RoutingBundleSupport.RoutingBundle routingBundle =
           RoutingBundleSupport.normalize(
               projection.getWorldSlug(), projection.getRealmSlug(), projection.getPointerVersion());
-      GameInstanceRuntimeState runtimeState =
+      GameInstanceRuntimeState.Builder runtimeState =
           GameInstanceRuntimeState.newBuilder()
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
@@ -222,9 +223,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setPointerVersion(routingBundle.parsedPointerVersion())
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
-              .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli())
-              .build();
-      reconcileObservedRuntimeState(tenantId, projection.getGameInstanceId(), runtimeState);
+              .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli());
+      if (routingBundle.isPresent()) {
+        runtimeState.addCurrentAdmissionPointers(
+            AdmissionPointerControlPlaneEntry.newBuilder()
+                .setWorldSlug(routingBundle.worldSlug())
+                .setRealmSlug(routingBundle.realmSlug())
+                .setPointerVersion(routingBundle.parsedPointerVersion())
+                .build());
+      }
+      reconcileObservedRuntimeState(tenantId, projection.getGameInstanceId(), runtimeState.build());
     }
   }
 
@@ -452,10 +460,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       Instant pinObservedAt,
       Instant now) {
     RoutingBundleSupport.RoutingBundle routingBundle =
-        RoutingBundleSupport.normalize(
-            runtimeState.getWorldSlug(),
-            runtimeState.getRealmSlug(),
-            runtimeState.getPointerVersion());
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());

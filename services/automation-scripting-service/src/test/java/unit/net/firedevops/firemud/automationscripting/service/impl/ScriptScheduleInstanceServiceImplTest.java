@@ -34,6 +34,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -133,6 +134,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
             .setWorldSlug("demo")
             .setRealmSlug("production")
             .setPointerVersion(17L)
@@ -1072,5 +1074,14 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setScheduleMetadataJson("{}");
     instance.setScheduleSemanticsHash("hash-" + scheduleDefinitionId);
     return instance;
+  }
+
+  private static AdmissionPointerControlPlaneEntry currentPointer(
+      String worldSlug, String realmSlug, long pointerVersion) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setPointerVersion(pointerVersion)
+        .build();
   }
 }

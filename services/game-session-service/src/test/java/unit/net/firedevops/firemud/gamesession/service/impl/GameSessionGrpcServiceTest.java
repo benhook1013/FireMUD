@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
@@ -79,7 +80,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         (tenantId, viewerAccountId, accountIds) -> List.of(),
-        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
         ipConnectionLimiter);
@@ -102,7 +103,7 @@ class GameSessionGrpcServiceTest {
         textCommandInterpreter,
         gameInstanceRepository,
         accountPresenceQueryService,
-        new GameplayWorldCatalog(new GameplayCatalogProperties()),
+        TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
         tickService,
         meterRegistry,
         ipConnectionLimiter);
@@ -292,7 +293,7 @@ class GameSessionGrpcServiceTest {
             featureFlagService,
             textCommandInterpreter,
             gameInstanceRepository,
-            new GameplayWorldCatalog(properties),
+            TestGameplayWorldCatalogs.fromProperties(properties),
             tickService,
             meterRegistry,
             ipLimiter);
@@ -1166,6 +1167,59 @@ class GameSessionGrpcServiceTest {
 
     assertFalse(ref.get().getAccepted());
     assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void queryStateMissingSessionReturnsNotFoundErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(9L);
+    instance.setOwnerAccountId(42L);
+    instance.setRuntimeVersion("v1");
+    instance.setStatus("RUNNING");
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(instance));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
+    Mockito.when(tickService.queryState(7L))
+        .thenThrow(new IllegalArgumentException("No session context found for sessionId=7"));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryStateResponse> ref = new AtomicReference<>();
+    service.queryState(
+        QueryStateRequest.newBuilder().setSessionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+    assertEquals("No session context found for sessionId=7", ref.get().getError().getMessage());
   }
 
   @Test

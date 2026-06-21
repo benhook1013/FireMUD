@@ -19,8 +19,8 @@ import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -40,10 +40,9 @@ public class CommunicationCommandHandler {
       "gamesession.command.communication.failures";
 
   private final EntityManagementClient entityManagementClient;
-  private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicClient gameLogicClient;
   private final GameLogicProperties gameLogicProperties;
-  private final SessionContextService sessionContextService;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationRecipientDeliveryService recipientDeliveryService;
   private final CommunicationOutputMapper communicationOutputMapper;
   private final MeterRegistry meterRegistry;
@@ -180,8 +179,10 @@ public class CommunicationCommandHandler {
     net.firedevops.firemud.entitymanagement.v1.Character targetCharacter =
         maybeTargetCharacter.orElseThrow();
     boolean onlineInGame =
-        sessionContextService
-            .findByGameplayName(context.tenantId(), context.gameInstanceId(), targetName)
+        sessionAuthenticationService
+            .resolveByGameplayName(context.tenantId(), context.gameInstanceId(), targetName)
+            .filter(targetContext -> targetContext.gameInstanceId() > 0)
+            .filter(targetContext -> targetContext.characterId() > 0)
             .isPresent();
     if (!onlineInGame) {
       return new ParsedCommunication(

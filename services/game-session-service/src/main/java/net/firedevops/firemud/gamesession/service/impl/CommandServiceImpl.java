@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -291,7 +292,8 @@ public class CommandServiceImpl implements CommandService {
     RoutingBundle contextRoutingBundle =
         normalizeRoutingBundle(context.worldSlug(), context.realmSlug(), context.pointerVersion());
     if (context.playableStateScope() != null && !context.playableStateScope().isBlank()) {
-      if (contextRoutingBundle.isPresent()) {
+      if (contextRoutingBundle.isPresent()
+          && currentAdmissionPointerMatches(context, queueTarget, contextRoutingBundle)) {
         return new RoutingMetadata(
             context.playableStateScope(),
             contextRoutingBundle.worldSlug(),
@@ -343,15 +345,52 @@ public class CommandServiceImpl implements CommandService {
           context.worldSlug(), context.realmSlug());
     }
     if (context.bootstrapGameInstanceId() > 0) {
-      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
+      return resolveUnambiguousRuntimePointer(
           context.tenantId(), context.bootstrapGameInstanceId());
     }
     if (context.gameInstanceId() > 0) {
-      return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
-          context.tenantId(), context.gameInstanceId());
+      return resolveUnambiguousRuntimePointer(context.tenantId(), context.gameInstanceId());
     }
-    return gameplayAdmissionPointerAuthorityService.findByRuntimeTarget(
-        queueTarget.tenantId(), queueTarget.queueTargetId());
+    return resolveUnambiguousRuntimePointer(queueTarget.tenantId(), queueTarget.queueTargetId());
+  }
+
+  private boolean currentAdmissionPointerMatches(
+      SessionContext context, QueueTarget queueTarget, RoutingBundle expectedBundle) {
+    return resolveSelectorPointer(context)
+        .filter(pointer -> pointer.tenantId() == context.tenantId())
+        .filter(pointer -> pointer.gameInstanceId() == expectedRuntimeTarget(context, queueTarget))
+        .filter(pointer -> pointer.pointerVersion() == expectedBundle.pointerVersion())
+        .filter(pointer -> expectedBundle.worldSlug().equals(pointer.worldSlug()))
+        .filter(pointer -> expectedBundle.realmSlug().equals(pointer.realmSlug()))
+        .isPresent();
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> resolveSelectorPointer(
+      SessionContext context) {
+    if (context.worldSlug() == null
+        || context.worldSlug().isBlank()
+        || context.realmSlug() == null
+        || context.realmSlug().isBlank()) {
+      return Optional.empty();
+    }
+    return gameplayAdmissionPointerAuthorityService.findPointer(
+        context.worldSlug(), context.realmSlug());
+  }
+
+  private long expectedRuntimeTarget(SessionContext context, QueueTarget queueTarget) {
+    if (context.bootstrapGameInstanceId() > 0) {
+      return context.bootstrapGameInstanceId();
+    }
+    if (context.gameInstanceId() > 0) {
+      return context.gameInstanceId();
+    }
+    return queueTarget.queueTargetId();
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> resolveUnambiguousRuntimePointer(
+      long tenantId, long gameInstanceId) {
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId));
   }
 
   private static String blankToNull(String value) {

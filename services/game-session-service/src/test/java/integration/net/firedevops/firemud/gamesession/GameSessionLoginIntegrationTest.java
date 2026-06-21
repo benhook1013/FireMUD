@@ -19,6 +19,8 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
@@ -50,6 +52,9 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameInstanceRepository gameInstanceRepository;
   @MockitoBean private CommandService commandService;
+
+  @MockitoBean
+  private GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
   @MockitoBean
   private org.springframework.data.redis.connection.RedisConnectionFactory redisConnectionFactory;
@@ -97,6 +102,22 @@ class GameSessionLoginIntegrationTest {
     instance.setTenantId(42L);
     instance.setOwnerAccountId(7L);
     when(gameInstanceRepository.findById(anyLong())).thenReturn(Optional.of(instance));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(42L, 1L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    42L,
+                    1L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
   }
 
   @Test
@@ -106,7 +127,7 @@ class GameSessionLoginIntegrationTest {
         GameplayWebSocketDriver.connect(
             URI.create("ws://localhost:" + port + "/ws/game"),
             java.time.Duration.ofSeconds(5),
-            java.util.Map.of("X-Game-Instance-Id", "1"))) {
+            java.util.Map.of("X-Game-Instance-Id", "1", "X-Tenant-Id", "42"))) {
       client.login("demo@example.com", "swordfish");
       payloads = client.responses();
     }

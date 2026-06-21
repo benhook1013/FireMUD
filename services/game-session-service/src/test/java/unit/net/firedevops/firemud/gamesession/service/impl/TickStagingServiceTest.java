@@ -27,7 +27,6 @@ import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -82,7 +81,7 @@ class TickStagingServiceTest {
                 null,
                 null,
                 null),
-            mock(SessionContextService.class));
+            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class));
     TickBatchExecutionService tickBatchExecutionService =
         new TickBatchExecutionService(
             new SimpleMeterRegistry(),

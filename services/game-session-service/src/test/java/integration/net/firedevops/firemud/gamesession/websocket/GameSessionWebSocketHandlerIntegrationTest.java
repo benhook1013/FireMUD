@@ -1174,6 +1174,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         openGameplayDriver(
             "42",
             java.util.Map.of(
+                "X-Game-Instance-Id", "2",
                 "X-Tenant-Id", "22",
                 "X-Firemud-Transport-Session-Id", "41",
                 "X-World-Slug", "sandbox",
@@ -1200,7 +1201,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.accountId()).isEqualTo(123L);
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
-              assertThat(context.bootstrapGameInstanceId()).isEqualTo(42L);
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
               assertThat(context.worldSlug()).isEqualTo("sandbox");
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
@@ -1508,7 +1509,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
   private GameplayWebSocketDriver openGameplayDriver(
       String sessionId, java.util.Map<String, String> extraHeaders) {
     java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
-    headers.put("X-Game-Instance-Id", sessionId);
+    headers.put("X-Game-Instance-Id", "1");
+    headers.put("X-Tenant-Id", "22");
+    headers.put("X-Firemud-Transport-Session-Id", sessionId);
     extraHeaders.forEach(headers::put);
     return GameplayWebSocketDriver.connect(
         websocketUri(), java.time.Duration.ofSeconds(10), headers);
@@ -1553,7 +1556,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private WebSocketHttpHeaders gameplayHeaders(String sessionId) {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", sessionId);
+    headers.add("X-Game-Instance-Id", "1");
+    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Firemud-Transport-Session-Id", sessionId);
     return headers;
   }
 

@@ -137,9 +137,8 @@ public final class DefaultDurableGameplayCommandExecutionService
   private Optional<SessionContext> resolveExecutionContext(GameplayCommand command) {
     if (command.getSessionId() != null && command.getSessionId() > 0) {
       Optional<SessionContext> bySession =
-          sessionContextService
-              .findBySessionId(command.getSessionId())
-              .map(sessionAuthenticationService::normalizeResolvedContext);
+          sessionAuthenticationService.resolveUnverifiedSessionContext(
+              Long.toString(command.getSessionId()));
       if (bySession.isPresent()) {
         return bySession;
       }
@@ -153,9 +152,8 @@ public final class DefaultDurableGameplayCommandExecutionService
         || command.getGameInstanceId() <= 0) {
       return Optional.empty();
     }
-    return sessionContextService
-        .findByGameplayIdentity(command.getTenantId(), command.getGameInstanceId(), characterId)
-        .map(sessionAuthenticationService::normalizeResolvedContext);
+    return sessionAuthenticationService.resolveByGameplayIdentity(
+        command.getTenantId(), command.getGameInstanceId(), characterId);
   }
 
   private static Long gameplayCharacterId(GameplayCommand command) {

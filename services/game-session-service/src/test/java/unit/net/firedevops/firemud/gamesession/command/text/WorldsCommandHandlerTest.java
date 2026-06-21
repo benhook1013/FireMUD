@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -21,7 +22,8 @@ class WorldsCommandHandlerTest {
       new GameplayCatalogProperties();
   private final WorldsCommandHandler handler =
       new WorldsCommandHandler(
-          new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
+          TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+          entityManagementClient);
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -56,7 +58,8 @@ class WorldsCommandHandlerTest {
         .setCharacterCreationPolicy(null);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
+            TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+            entityManagementClient);
 
     RealmBrowseViewOutput response = localHandler.browseRealms("demo").orElseThrow();
 
@@ -153,7 +156,8 @@ class WorldsCommandHandlerTest {
         .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            new GameplayWorldCatalog(gameplayCatalogProperties), entityManagementClient);
+            TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+            entityManagementClient);
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(

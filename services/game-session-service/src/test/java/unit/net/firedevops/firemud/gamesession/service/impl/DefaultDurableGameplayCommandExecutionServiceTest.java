@@ -78,8 +78,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
             scriptEventPublisher);
-    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -106,7 +104,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     PlayerOutput output = PlayerOutput.message("You move north.");
     when(parser.parse("north"))
         .thenReturn(new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(moveCommandHandler.prepare(Mockito.eq(context), Mockito.any()))
         .thenReturn(new PreparedMoveCommandResult(CommandEnqueueResult.success(), output, moved));
     when(movementEffectIdempotencyService.apply("tfx-1", context, "R-2"))
@@ -140,7 +139,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     TickEffect effect = tickEffect("tfx-9", "cmd-9");
     when(parser.parse("north"))
         .thenReturn(new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(moveCommandHandler.prepare(Mockito.eq(context), Mockito.any()))
         .thenReturn(
             new PreparedMoveCommandResult(
@@ -164,7 +164,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new TextCommand(TextCommandType.GET, java.util.List.of("torch"), "GET torch");
     PlayerOutput output = PlayerOutput.message("You pick up Torch.");
     when(parser.parse("GET torch")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(itemCommandHandler.handle(context, parsed, "tfx-2"))
         .thenReturn(
             new TextCommandInterpretationResult(
@@ -205,7 +206,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             "error.container.invalid-argument",
             java.util.Map.of());
     when(parser.parse("PUT ration INTO torch")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(itemCommandHandler.handle(context, parsed, "tfx-3"))
         .thenReturn(
             new TextCommandInterpretationResult(
@@ -242,7 +244,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
     PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-4")).thenReturn(Optional.empty());
     when(communicationCommandHandler.handle(context, parsed, "tfx-4"))
         .thenReturn(
@@ -262,8 +265,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeNormalizesStaleSessionContextBeforeDurableGameplayHandling() {
-    SessionContext stale =
-        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     SessionContext cleared =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 0L, null, 0L, null, "jwt-token");
     GameplayCommand command = gameplayCommand("GET", "GET torch");
@@ -277,8 +278,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             "error.play-required",
             java.util.Map.of());
     when(parser.parse("GET torch")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(stale));
-    when(sessionAuthenticationService.normalizeResolvedContext(stale)).thenReturn(cleared);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(cleared));
     when(itemCommandHandler.handle(cleared, parsed, "tfx-stale"))
         .thenReturn(
             new TextCommandInterpretationResult(
@@ -308,7 +309,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
     PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
-    when(sessionContextService.findByGameplayIdentity(22L, 7L, 91L))
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 7L, 91L))
         .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-4b")).thenReturn(Optional.empty());
     when(communicationCommandHandler.handle(context, parsed, "tfx-4b"))
@@ -319,8 +320,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
     assertThat(result.effectStatus()).isEqualTo("APPLIED");
-    verify(sessionContextService, never()).findBySessionId(0L);
-    verify(sessionContextService).findByGameplayIdentity(22L, 7L, 91L);
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext("0");
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 7L, 91L);
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
     verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
@@ -341,7 +342,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 true));
     PlayerOutput output = PlayerOutput.notice("AFK enabled.");
     when(parser.parse("AFK")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-5")).thenReturn(Optional.empty());
     when(afkCommandHandler.handle(context, parsed))
         .thenReturn(
@@ -367,7 +369,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
     PlayerOutput output = PlayerOutput.notice("You brace for the next blow.");
     when(parser.parse("BLOCK")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-6")).thenReturn(Optional.empty());
     when(actionStateCommandHandler.handle(context, parsed, "tfx-6"))
         .thenReturn(
@@ -394,7 +397,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
     PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-6"))
         .thenReturn(
             Optional.of(
@@ -426,7 +430,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 true));
     PlayerOutput output = PlayerOutput.error("INVALID_ARGUMENT", "AFK command rejected");
     when(parser.parse("AFK")).thenReturn(parsed);
-    when(sessionContextService.findBySessionId(42L)).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-7"))
         .thenReturn(
             Optional.of(

@@ -72,6 +72,20 @@ public final class SessionAuthenticationService {
         .isPresent();
   }
 
+  public Optional<SessionContext> resolveByGameplayIdentity(
+      long tenantId, long gameInstanceId, long characterId) {
+    return sessionContextService
+        .findByGameplayIdentity(tenantId, gameInstanceId, characterId)
+        .map(this::normalizeResolvedContext);
+  }
+
+  public Optional<SessionContext> resolveByGameplayName(
+      long tenantId, long gameInstanceId, String characterName) {
+    return sessionContextService
+        .findByGameplayName(tenantId, gameInstanceId, characterName)
+        .map(this::normalizeResolvedContext);
+  }
+
   public SessionContext normalizeResolvedContext(SessionContext context) {
     Objects.requireNonNull(context, "context must not be null");
     SessionContext normalized =

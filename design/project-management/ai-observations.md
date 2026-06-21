@@ -249,3 +249,103 @@ Entry format:
   - Context: the `02.18.8` remote-followup target-side executor already persisted routing bundle, requested command, target entity, provenance, origin-source tuple, and trigger-script-event identity onto coordinator/followup rows at schedule time, but target-side execution still let payload JSON override several of those fields later.
   - Observation: when replay or retry-time execution rereads a payload blob as higher authority than the durable row contract, later payload drift can silently rewrite target-leg admission truth even though the scheduler already validated and persisted the canonical fields.
   - Expected pattern: once a scheduling path stamps first-class fields onto durable coordinator/followup rows, target-side execution should prefer those stored fields and only fall back to payload JSON for older or partially populated rows that predate the explicit durable authority.
+
+- `2026-05-31`: Routing authority drift often survives in read models after command paths are fixed
+  - Context: after the main `09.1` routing-fence work landed, the next real drift showed up in projection and lifecycle code rather than in admission commands.
+  - Observation: account-presence reads and shared-runtime logout still consulted `GameplayWorldCatalog` even though admitted routing bundle plus persisted pointer authority were already the canonical runtime truth.
+  - Expected pattern: when a routing slice claims local catalog copies are no longer authoritative, follow-up audits should explicitly inspect read models, lifecycle policies, and display-name decoration code for reverse runtime-target fallbacks or local world/realm validation, not just the interactive command paths.
+
+- `2026-05-31`: Availability checks need the same normalization fence as later delivery
+  - Context: routing-fence cleanup had already normalized stale gameplay bindings in downstream communication delivery paths.
+  - Observation: `TELL` could still mark a target as “online” from a raw gameplay-name Redis hit even though recipient delivery would immediately clear that same target back to a non-gameplay shell.
+  - Expected pattern: any availability or “is target live” check that starts from session identity should normalize the candidate through the same routing fence as the later delivery or execution path before it reports success.
+
+- `2026-06-01`: Session-scoped reads must not guess tenant authority from runtime ids
+  - Context: `QueryState(sessionId)` still tried to derive tenant scope by treating the transport `sessionId` as if it were also a runtime `gameInstanceId`.
+  - Observation: numeric identifier reuse across session, runtime, and operator surfaces is exactly the kind of shortcut that bypasses routing-fence work later if read-model paths are left behind.
+  - Expected pattern: session-scoped operator or debug reads should fail closed when the session shell is absent or tenantless instead of projecting a guessed Redis key from a different authority domain.
+
+- `2026-06-01`: Pre-login bootstrap resolution needs explicit shell authority too
+  - Context: transport-id fallbacks had already been removed from post-login and operator paths, but credential `LOGIN` still had one bootstrap-time shortcut left.
+  - Observation: if credential `LOGIN` can still guess a bootstrap runtime from the same numeric `sessionId`, a missing shell can reopen admission whenever a transport id happens to collide with a real runtime id.
+  - Expected pattern: pre-login flows should resolve a runtime target from the canonical bootstrap shell or fail closed when that authority is missing.
+
+- `2026-06-13`: Reverse runtime-state reads must expose pointer multiplicity instead of picking one sorted realm identity
+  - Context: after the main `09.1` routing-fence work landed, `GetGameInstanceRuntimeState` still reverse-mapped a runtime target back to one singular `{worldSlug, realmSlug, pointerVersion}` bundle by selecting the first sorted admission pointer row.
+  - Observation: once multiple visible admission pointers can legitimately share one runtime target, a reverse read that silently picks one sorted row teaches downstream consumers a fake canonical realm identity and reopens arbitrary world/realm drift in operator or Automation projections.
+  - Expected pattern: reverse runtime-state reads should expose the full current pointer set explicitly, keep legacy singular routing fields only for the one-pointer case, and force downstream consumers to fail closed when runtime-to-pointer projection is ambiguous.
+
+- `2026-06-13`: Operator stale flags must fail closed when current routing authority is ambiguous or incomplete
+  - Context: extending the `09.1.6` runtime-state reverse-projection cleanup into Game Session command-status and remote control-plane reads exposed a quieter seam: those read models could already clear singular current routing fields, but still report `is...RoutingBundleStale=false` when current authority was missing, partial, or multi-pointer.
+  - Observation: once a control-plane read publishes both persisted routing and derived current routing, clearing only the visible current bundle is not enough; callers still misread the row as current if stale signaling stays tied only to successful bundle comparison.
+  - Expected pattern: operator and control-plane stale indicators should fail closed to `true` whenever current authority cannot prove one complete singular `{playableStateScope, worldSlug, realmSlug, pointerVersion}` bundle, not only when two complete bundles can be compared directly.
+
+- `2026-06-13`: Runtime-target routing repair should require singular pointer authority, not one preferred row
+  - Context: extending the `09.1` routing follow-through from runtime-state reverse projection into pre-`PLAY` gameplay-command staging showed that `CommandServiceImpl` was still willing to recover routing metadata from `findByRuntimeTarget(...)` even after current runtime state had learned to expose multi-pointer authority honestly.
+  - Observation: once one runtime can legitimately map to multiple current admission pointers, any helper that still asks for one “best” pointer row reintroduces arbitrary world/realm identity at write time even if the operator/read side already fails closed.
+  - Expected pattern: whenever a consumer needs to reconstruct caller-visible routing identity from a runtime target, it should read the full current pointer set, discard incomplete bundles, and only recover routing metadata when exactly one complete current pointer survives.
+
+- `2026-06-14`: Transport bootstrap shells should repair routing from singular authority before reuse decisions
+  - Context: generic websocket bootstrap still persisted `tenantId + bootstrapGameInstanceId` without repairing `worldSlug`, `realmSlug`, and `pointerVersion`, which let reused transport sessions treat “same runtime id” as enough to preserve an older bootstrap route until later login or `PLAY` normalization.
+  - Observation: if a transport-edge bootstrap shell keeps runtime-target-only authority when one current pointer bundle is already singular and knowable, later reused-session route comparisons silently under-detect cutover or freshness changes under the same runtime id.
+  - Expected pattern: transport bootstrap paths that only know a runtime target should repair their routing bundle immediately from singular current pointer authority and fail closed to no bundle when that authority is ambiguous, so reused-session route comparisons stay honest at the edge.
+
+- `2026-06-14`: Account-level presence reads should validate current routing from runtime-target authority, not selector lookup
+  - Context: `AccountPresenceQueryServiceImpl` still asked `findPointer(worldSlug, realmSlug)` whether a live or recent presence row looked current, even after the rest of `09.1` had already learned to treat one runtime target as potentially multi-pointer and to fail closed unless one complete current bundle was singular.
+  - Observation: selector lookup can still make one account-level presence row look current or decorate it with one realm identity even when the runtime target itself is now ambiguous, which reopens exactly the kind of reverse-routing shortcut the command and bootstrap paths already removed.
+  - Expected pattern: account and friend presence projections should cache singular current pointer proof per runtime target, validate admitted routing bundles against that proof, and fail closed on ambiguous runtime authority instead of re-deriving truth from one selector lookup.
+
+- `2026-06-14`: Control-plane singular routing projection should discard incomplete pointer bundles before deciding authority
+  - Context: runtime-state, gameplay-command-status, and remote current-routing reads still treated “one pointer row returned” as enough to project singular current routing, even when that lone row had blank `stateScope`, `worldSlug`, `realmSlug`, or `pointerVersion`.
+  - Observation: once gameplay-facing routing work already defines current authority as one complete bundle, operator reads that accept one partial row silently mint a fake current routing identity that no interactive consumer would trust.
+  - Expected pattern: control-plane/runtime read helpers should filter runtime-target pointer rows down to complete routing bundles first, then project singular current routing only when exactly one complete bundle survives, while still listing raw pointer rows separately for inspection.
+
+- `2026-06-14`: Complete routing bundles still need freshness proof when they survive on pre-gameplay shells
+  - Context: `SessionAuthenticationService` already clears stale gameplay bindings with side effects, but bootstrap or login-era shells without an active gameplay binding can intentionally survive that normalization path while still carrying a full `{worldSlug, realmSlug, pointerVersion}` bundle.
+  - Observation: a command or bootstrap consumer that treats “all routing fields are present” as equivalent to “current routing authority was already proved” quietly reintroduces stale pointer generations even after partial-bundle and ambiguous-runtime fail-closed work is done.
+  - Expected pattern: when a pre-gameplay shell carries a complete admitted routing bundle, later staging or bootstrap consumers should still revalidate that bundle against current pointer freshness before preserving it onward; completeness alone is not authority.
+
+- `2026-06-14`: Ambiguity-driven bootstrap bundle collapse must count as a route change on reused transports
+  - Context: generic websocket bootstrap already repaired `{worldSlug, realmSlug, pointerVersion}` from singular runtime authority and collapsed to no bundle when that authority became ambiguous, but reused-session route comparison still treated “same tenant + same bootstrap runtime id” as enough to preserve the stored routed shell.
+  - Observation: if fresh bootstrap would now yield no routing bundle, a reused transport must not be allowed to keep an older routed bootstrap shell just because the runtime id itself stayed the same.
+  - Expected pattern: when a repaired bootstrap shell loses its routing bundle under ambiguous current authority, reused-session route comparison should fail closed and trigger the same bootstrap-route-changed cleanup path as any other real route change.
+
+- `2026-06-14`: Player-facing catalog views need the same singular complete-pointer rule as operator runtime reads
+  - Context: after `09.1` hardened bootstrap, command staging, presence, and control-plane runtime reads around singular current pointer authority, `GameplayWorldCatalog` still projected visible worlds/realms and reverse runtime-target identity from raw pointer rows.
+  - Observation: if player-facing browse or reverse lookup helpers keep one selector row alive from duplicate or incomplete pointer rows, they silently reteach a fake canonical world/realm identity even though the rest of the routing stack already fails closed on the same ambiguity.
+  - Expected pattern: any player-facing or operator-facing catalog projection built from admission-pointer authority should discard incomplete bundles first, group by the selector key it is projecting, and only emit a visible singular identity when exactly one complete pointer row survives.
+
+- `2026-06-14`: Singular runtime-target helpers must share the same complete-pointer rule, not just player or operator read models
+  - Context: after `09.1.11` and `09.1.14`, control-plane reads and player-facing catalogs already required one complete pointer bundle, but a few runtime-target helpers in websocket bootstrap, logout policy, presence projection, and login-era command staging still accepted one row with blank `stateScope`.
+  - Observation: if some runtime-target readers still treat `{worldSlug, realmSlug, pointerVersion}` as enough while others require a full bundle, incomplete authority can slip back in through helper repair paths even though the higher-level read surfaces already fail closed.
+  - Expected pattern: any helper that claims “singular runtime authority” should use one shared complete-pointer rule including `stateScope`, `worldSlug`, `realmSlug`, and `pointerVersion`, or return no authority at all.
+
+- `2026-06-14`: Shared complete-pointer helpers must include runtime-target identity, not just selector fields
+  - Context: after `09.1.15`, three Game Session control-plane/runtime readers still kept private copies of the “complete pointer” rule and only checked selector-facing fields, even though the shared helper had already tightened the contract to require positive `tenantId` and `gameInstanceId`.
+  - Observation: if control-plane readers treat one selector-complete row as singular authority while ignoring missing runtime-target identity, operator reads can still mint a current routing bundle that no interactive path would trust.
+  - Expected pattern: once a routing-completeness helper exists, every remaining singular-runtime reader should consume it directly, and the helper itself should define completeness in terms of both selector identity and runtime-target identity.
+
+- `2026-06-14`: Shared routing-completeness helpers should replace dead preferred-row APIs, not just coexist with them
+  - Context: after `09.1.15` and `09.1.16`, Game Session had already moved every real runtime-target consumer off `findByRuntimeTarget(...)`, but the authority interface still exposed that preferred-row API and `GameplayWorldCatalog` still kept a near-copy of pointer completeness locally.
+  - Observation: once the runtime converges on “explicit singular proof from full current rows,” leaving the old preferred-row API or local completeness copies behind quietly teaches a second authority story even if nothing still calls it.
+  - Expected pattern: when a shared routing helper becomes canonical, remove the superseded helper/API shapes in the same follow-through pass and keep only truly local extra policy checks outside the shared predicate.
+
+- `2026-06-14`: Production routing types should not keep config-backed constructors just because tests still use them
+  - Context: after `09.1` moved `GameplayWorldCatalog` onto persisted admission-pointer authority, the class still imported `GameplayCatalogProperties` only so command and gRPC tests could construct catalog views cheaply.
+  - Observation: leaving a config-backed constructor inside the production type keeps the old local-authority story alive in exactly the class that is supposed to represent the canonical runtime catalog, even if application wiring never calls that path anymore.
+  - Expected pattern: when production routing types no longer need config-backed shaping, move that projection into explicit test support or bootstrap-only helpers rather than preserving a second constructor on the runtime class.
+
+- `2026-06-14`: Session-scoped operator reads need the same normalization fence as interactive session paths
+  - Context: `TickQueueControlService.queryState(sessionId)` had already stopped guessing tenant authority from runtime ids, but it still read the raw stored session row instead of the normalized live-shell path.
+  - Observation: once stale gameplay shells can be collapsed with side effects by session normalization, any operator or debug read that still bypasses that fence quietly preserves a second authority story even if it already fails closed on missing rows.
+  - Expected pattern: session-scoped read-model or operator surfaces should resolve session authority through the same normalization path as interactive command or reconnect flows, not directly from raw persisted shell state.
+
+- `2026-06-14`: Once a reader depends on normalized session truth, it should call the session-authority service directly
+  - Context: logout lifecycle and durable gameplay replay were already conceptually reading normalized session context, but they still implemented that by hand through raw `SessionContextService` lookups plus local filtering or normalization.
+  - Observation: leaving “raw row plus maybe-normalize” in higher-level readers quietly keeps a second authority shape alive even after the codebase has already converged on one canonical session-authentication entrypoint.
+  - Expected pattern: higher-level session readers that depend on normalized routing truth should use `SessionAuthenticationService` directly, and reserve raw `SessionContextService` access for storage or normalization infrastructure layers.
+
+- `2026-06-21`: AI runtime proof loops should not leave Docker resources dangling after active use ends
+  - Context: smoke and bootstrap verification often bring up images and containers that are only needed while the proof is actively being observed or debugged, though a very short reuse window can avoid pointless teardown and restart churn.
+  - Observation: leaving Docker resources running beyond an immediate follow-up window burns local capacity and muddies later validation state without preserving meaningful progress.
+  - Expected pattern: when an AI-driven smoke or runtime check is done, tear down the related Docker containers and other spawned runtime resources unless they are being reused again within the next minute or two, and otherwise respawn them later when fresh proof is needed.

@@ -60,6 +60,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -84,7 +85,7 @@ class SessionResumptionFlowTest {
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final GameplayWorldCatalog worldCatalog =
-      new GameplayWorldCatalog(gameplayCatalogProperties);
+      TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
@@ -130,6 +131,8 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
+    sessionContextService.save(bootstrapShell(1L, 1L));
+    sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     when(pointerAuthorityService.findPointer("demo", "production"))
@@ -200,6 +203,7 @@ class SessionResumptionFlowTest {
         new LoginCommandHandler(
             instanceRepository,
             sessionContextService,
+            sessionAuthenticationService,
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
@@ -266,7 +270,7 @@ class SessionResumptionFlowTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                worldCatalog,
+                pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService,
@@ -566,6 +570,25 @@ class SessionResumptionFlowTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
+    return new SessionContext(
+        sessionId,
+        22L,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        null,
+        bootstrapGameInstanceId,
+        "demo",
+        "production",
+        1L,
+        null);
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

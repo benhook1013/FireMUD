@@ -6,6 +6,7 @@ They describe the gRPC API exposed by the service.
 Generate Java stubs with `./gradlew generateProto` from the repository root.
 
 - `GetPinnedScriptPatchVersion`, `GetGameSessionPinConvergence`, and `GetGameInstanceRuntimeState` now all expose linked Game Design script-patch publication metadata alongside the persisted Game Session pin/runtime truth, so operator tooling can inspect current pin state without a second join.
+- `GetGameInstanceRuntimeState` now also exposes `currentAdmissionPointers[]` as the explicit current pointer-authority view for a runtime target. The legacy singular runtime routing bundle (`playableStateScope`, `worldSlug`, `realmSlug`, `pointerVersion`) is preserved only when exactly one current admission pointer targets that runtime; when multiple pointers do, those singular fields intentionally fail closed to unspecified/blank values instead of selecting one sorted pointer row as if it were canonical.
 For details see the [design docs](../../../design/architecture/microservices/game-session-service/README.md).
 
 ## Control Plane APIs

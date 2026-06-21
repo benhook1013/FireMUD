@@ -50,11 +50,11 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
 
   @Override
   @Transactional(readOnly = true)
-  public Optional<GameplayAdmissionPointerSnapshot> findByRuntimeTarget(
+  public List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(
       long tenantId, long gameInstanceId) {
-    return pointerRepository
-        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .map(this::toSnapshot);
+    return pointerRepository.findAllByTenantIdAndGameInstanceId(tenantId, gameInstanceId).stream()
+        .map(this::toSnapshot)
+        .toList();
   }
 
   @Override

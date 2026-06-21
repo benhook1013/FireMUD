@@ -32,7 +32,6 @@ public final class CommunicationRecipientDeliveryService {
       LoggerFactory.getLogger(CommunicationRecipientDeliveryService.class);
 
   private final SessionAuthenticationService sessionAuthenticationService;
-  private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
@@ -43,7 +42,6 @@ public final class CommunicationRecipientDeliveryService {
 
   public CommunicationRecipientDeliveryService(
       SessionAuthenticationService sessionAuthenticationService,
-      SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
@@ -52,7 +50,6 @@ public final class CommunicationRecipientDeliveryService {
       WebSocketOutputProjector outputProjector,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService = sessionAuthenticationService;
-    this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
@@ -125,21 +122,19 @@ public final class CommunicationRecipientDeliveryService {
     Optional<Long> maybeRecipientId = parseRecipientId(view.getRecipientId());
     if (maybeRecipientId.isPresent()) {
       Optional<SessionContext> byIdentity =
-          sessionContextService.findByGameplayIdentity(
+          sessionAuthenticationService.resolveByGameplayIdentity(
               actorContext.tenantId(),
               actorContext.gameInstanceId(),
               maybeRecipientId.orElseThrow());
       if (byIdentity.isPresent()) {
-        return byIdentity.map(sessionAuthenticationService::normalizeResolvedContext);
+        return byIdentity;
       }
     }
     if (!StringUtils.hasText(view.getRecipientName())) {
       return Optional.empty();
     }
-    return sessionContextService
-        .findByGameplayName(
-            actorContext.tenantId(), actorContext.gameInstanceId(), view.getRecipientName())
-        .map(sessionAuthenticationService::normalizeResolvedContext);
+    return sessionAuthenticationService.resolveByGameplayName(
+        actorContext.tenantId(), actorContext.gameInstanceId(), view.getRecipientName());
   }
 
   private void push(

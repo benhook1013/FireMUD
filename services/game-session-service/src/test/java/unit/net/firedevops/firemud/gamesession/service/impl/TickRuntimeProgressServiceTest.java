@@ -20,7 +20,6 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -57,7 +56,7 @@ class TickRuntimeProgressServiceTest {
                 null,
                 null,
                 null),
-            mock(SessionContextService.class));
+            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class));
     service =
         new TickRuntimeProgressService(
             meterRegistry,

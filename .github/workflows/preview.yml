@@ -80,12 +80,18 @@ jobs:
               prAuthor = pull.user.login;
             }
 
-            const eligible = prAuthor !== "dependabot[bot]";
+            const ineligibleAuthors = new Set([
+              "app/dependabot",
+              "dependabot[bot]",
+              "app/renovate",
+              "renovate[bot]",
+            ]);
+            const eligible = !ineligibleAuthors.has(prAuthor);
             core.setOutput("eligible", eligible ? "true" : "false");
             core.info(
               eligible
                 ? `Preview target is eligible (author=${prAuthor}).`
-                : `Skipping preview orchestration for Dependabot PR (author=${prAuthor}).`
+                : `Skipping preview orchestration for dependency bot PR (author=${prAuthor}).`
             );
 
       - name: Derive preview identifiers
@@ -130,10 +136,11 @@ jobs:
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
         run: |
           cat <<'EOF'
-          Preview orchestration is skipped for Dependabot PRs.
+          Preview orchestration is skipped for dependency bot PRs.
 
-          Dependabot updates do not get preview namespace preparation, hosted
-          preview reconciliation, or hosted preview validation work.
+          Dependabot and Renovate updates do not get preview namespace
+          preparation, hosted preview reconciliation, or hosted preview
+          validation work.
           EOF
 
       - name: Show derived target
@@ -268,29 +275,32 @@ jobs:
 
       - name: Enforce preview capacity
         if: ${{ steps.preview-access.outputs.available == 'true' }}
+        id: preview-capacity
+        continue-on-error: true
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
+          echo "PREVIEW_STAGE=capacity" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/check-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${PREVIEW_MAX_ACTIVE:-1}"
 
       - name: Reset preview namespace for clean deploy
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
 
       - name: Ensure preview namespace exists
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/preview/ensure-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}"
 
       - name: Allocate preview telnet port
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         id: telnet-port
         run: |
           TELNET_PORT="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
@@ -299,7 +309,7 @@ jobs:
           echo "telnet_port=${TELNET_PORT}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure GHCR pull secret exists
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         env:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
@@ -307,7 +317,7 @@ jobs:
           bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Resolve exact preview image tag
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         id: effective-image-tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -319,7 +329,7 @@ jobs:
           echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Cancel if preview target was superseded before image wait
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -337,7 +347,7 @@ jobs:
           fi
 
       - name: Wait for preview runtime images
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -345,19 +355,19 @@ jobs:
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
       - name: Ensure preview gRPC TLS secret exists
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
 
       - name: Render preview values
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           python3 ./dev-tools/hosted/preview/render-preview-values.py \
             k8s/helm/firemud/values-preview.example.yaml \
@@ -370,7 +380,7 @@ jobs:
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Validate preview chart render
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           helm template "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/preview-values.yaml \
@@ -380,7 +390,7 @@ jobs:
           wc -l /tmp/preview-rendered.yaml
 
       - name: Upload rendered preview artifacts
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: preview-render-${{ needs.preview-plan.outputs.release_name }}
@@ -389,7 +399,7 @@ jobs:
             /tmp/preview-rendered.yaml
 
       - name: Record reconciled preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
@@ -399,7 +409,7 @@ jobs:
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Summarize preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             target \
@@ -410,7 +420,7 @@ jobs:
             "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cancel if preview target was superseded before deploy
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -428,7 +438,7 @@ jobs:
           fi
 
       - name: Deploy preview release
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         id: deploy-release
         continue-on-error: true
         run: |
@@ -440,12 +450,12 @@ jobs:
             --timeout 15m
 
       - name: Show deployed preview services
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' }}
+        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods,svc,ingress
 
       - name: Show preview rollout diagnostics
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
+        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'failure' }}
         run: |
           echo "=== pods ==="
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods -o wide || true
@@ -467,13 +477,13 @@ jobs:
           done
 
       - name: Fail if preview rollout did not complete
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
+        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'failure' }}
         run: |
           echo "Preview rollout failed during helm upgrade/install."
           exit 1
 
       - name: Wait for seeded preview login prerequisites
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
         run: |
@@ -492,7 +502,7 @@ jobs:
           done
 
       - name: Smoke hosted preview over TCP
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.preview-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.preview-plan.outputs.hostname }}
@@ -510,7 +520,7 @@ jobs:
           fi
 
       - name: Summarize preview access
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             success \
@@ -525,16 +535,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize preview unavailability
-        if: ${{ steps.preview-access.outputs.available != 'true' }}
+        if: ${{ steps.preview-access.outputs.available != 'true' || steps.preview-capacity.outcome == 'failure' }}
         run: |
           bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             unavailable \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag || needs.preview-plan.outputs.image_tag }}" \
             "${{ needs.preview-plan.outputs.hostname }}" \
             "unavailable" \
-            "cluster-access" >> "$GITHUB_STEP_SUMMARY"
+            "${{ steps.preview-access.outputs.available != 'true' && 'cluster-access' || 'capacity' }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish preview summary comment
         if: ${{ always() }}
@@ -549,6 +559,7 @@ jobs:
           PREVIEW_JOB_STATUS: ${{ job.status }}
           PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
           PREVIEW_CLUSTER_AVAILABLE: ${{ steps.preview-access.outputs.available }}
+          PREVIEW_CAPACITY_OUTCOME: ${{ steps.preview-capacity.outcome || 'skipped' }}
         with:
           script: |
             const { execFileSync } = require("child_process");
@@ -560,7 +571,8 @@ jobs:
             }
 
             const clusterAvailable = process.env.PREVIEW_CLUSTER_AVAILABLE === "true";
-            const mode = !clusterAvailable
+            const capacityAvailable = process.env.PREVIEW_CAPACITY_OUTCOME !== "failure";
+            const mode = !clusterAvailable || !capacityAvailable
               ? "unavailable"
               : process.env.PREVIEW_JOB_STATUS === "success"
                 ? "success"
@@ -624,7 +636,7 @@ jobs:
             }
 
       - name: Summarize preview failure
-        if: ${{ always() && failure() && steps.preview-access.outputs.available == 'true' }}
+        if: ${{ always() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/preview/write-preview-summary.sh \
             failure \

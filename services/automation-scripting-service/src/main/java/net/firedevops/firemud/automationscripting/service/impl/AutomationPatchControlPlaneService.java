@@ -859,10 +859,7 @@ final class AutomationPatchControlPlaneService {
         continue;
       }
       RoutingBundleSupport.RoutingBundle routingBundle =
-          RoutingBundleSupport.normalize(
-              runtime.getRuntimeState().getWorldSlug(),
-              runtime.getRuntimeState().getRealmSlug(),
-              runtime.getRuntimeState().getPointerVersion());
+          RoutingBundleSupport.fromRuntimeState(runtime.getRuntimeState());
       scopes.put(
           targetGameInstanceId,
           new CurrentTargetRuntimeScope(
@@ -904,10 +901,7 @@ final class AutomationPatchControlPlaneService {
         continue;
       }
       RoutingBundleSupport.RoutingBundle routingBundle =
-          RoutingBundleSupport.normalize(
-              runtime.getRuntimeState().getWorldSlug(),
-              runtime.getRuntimeState().getRealmSlug(),
-              runtime.getRuntimeState().getPointerVersion());
+          RoutingBundleSupport.fromRuntimeState(runtime.getRuntimeState());
       scopes.put(
           gameInstanceId,
           new CurrentRuntimeScope(

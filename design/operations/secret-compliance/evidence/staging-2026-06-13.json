@@ -1,0 +1,26 @@
+{
+  "environment": "staging",
+  "generatedAt": "2026-06-13T00:00:00Z",
+  "records": {
+    "jwt-signing-keys-jwks": {
+      "immutableArtifactId": "k8s-job:jwt-rotation-staging:2026-06-13T00:00:00Z:sha256:4bf31a9d",
+      "source": "cluster-job-log",
+      "recordedBy": "platform-security"
+    },
+    "postgres-application-credentials": {
+      "immutableArtifactId": "k8s-job:db-credential-rotation-staging:2026-06-13T00:00:00Z:sha256:245d7c13",
+      "source": "cluster-job-log",
+      "recordedBy": "platform-database"
+    },
+    "backup-object-store-credentials": {
+      "immutableArtifactId": "change-ticket:STAGE-351-rotation-2026-06-13:sha256:693bf8e4",
+      "source": "change-management",
+      "recordedBy": "platform-infra"
+    },
+    "operator-credentials": {
+      "immutableArtifactId": "change-ticket:STAGE-344-rotation-2026-04-16:sha256:e1930d5b",
+      "source": "change-management",
+      "recordedBy": "platform-security"
+    }
+  }
+}

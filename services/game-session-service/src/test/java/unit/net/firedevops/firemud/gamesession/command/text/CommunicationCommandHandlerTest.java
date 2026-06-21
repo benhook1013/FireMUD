@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
@@ -20,8 +19,8 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,12 +29,10 @@ import org.mockito.Mockito;
 class CommunicationCommandHandlerTest {
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
-  private final GameplayCatalogProperties gameplayCatalogProperties =
-      new GameplayCatalogProperties();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
+  private final SessionAuthenticationService sessionAuthenticationService =
+      Mockito.mock(SessionAuthenticationService.class);
   private final CommunicationRecipientDeliveryService recipientDeliveryService =
       Mockito.mock(CommunicationRecipientDeliveryService.class);
   private final ScriptEventPublisher scriptEventPublisher =
@@ -62,24 +59,12 @@ class CommunicationCommandHandlerTest {
 
   @BeforeEach
   void setUp() {
-    gameplayCatalogProperties.getWorlds().clear();
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug("demo");
-    world.setDisplayName("Demo World");
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("production");
-    realm.setDisplayName("Live Realm");
-    realm.setTenantId(22L);
-    realm.setGameInstanceId(1L);
-    world.setRealms(List.of(realm));
-    gameplayCatalogProperties.setWorlds(List.of(world));
     handler =
         new CommunicationCommandHandler(
             entityManagementClient,
-            new GameplayWorldCatalog(gameplayCatalogProperties),
             gameLogicClient,
             gameLogicProperties,
-            sessionContextService,
+            sessionAuthenticationService,
             recipientDeliveryService,
             new CommunicationOutputMapper(),
             meterRegistry,
@@ -161,7 +146,8 @@ class CommunicationCommandHandlerTest {
                     .setAccountId("700")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayName(22L, 1L, "Sora")).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.empty());
 
     CommunicationCommandHandlingResult result =
         handler.handle(
@@ -169,6 +155,45 @@ class CommunicationCommandHandlerTest {
             new TextCommand(
                 TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
 
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorMessage()).contains("Target is not available");
+  }
+
+  @Test
+  void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
+    SessionContext normalizedTarget =
+        new SessionContext(
+            77L, 22L, 700L, "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    when(entityManagementClient.findCharacterByName(
+            sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                Character.newBuilder()
+                    .setId("300")
+                    .setTenantId("22")
+                    .setAccountId("700")
+                    .setName("Sora")
+                    .build()));
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.of(normalizedTarget));
+
+    CommunicationCommandHandlingResult result =
+        handler.handle(
+            sessionContext,
+            new TextCommand(
+                TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
+
+    Mockito.verify(sessionAuthenticationService).resolveByGameplayName(22L, 1L, "Sora");
+    Mockito.verify(gameLogicClient, Mockito.never())
+        .sendCommunication(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class));
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorMessage()).contains("Target is not available");
   }

@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptPatchPinProje
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -40,6 +41,7 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setRegionEpoch(22L)
                         .setScriptPatchPinnedControlPlaneRequestId("req-7")
                         .setScriptPatchPinnedAtMs(700L)
+                        .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
                         .setWorldSlug("demo")
                         .setRealmSlug("production")
                         .setPointerVersion(17L)
@@ -168,5 +170,14 @@ class ScriptPatchPinProjectionServiceImplTest {
 
   private static ScriptRuntimeProperties runtimeProperties() {
     return new ScriptRuntimeProperties();
+  }
+
+  private static AdmissionPointerControlPlaneEntry currentPointer(
+      String worldSlug, String realmSlug, long pointerVersion) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setPointerVersion(pointerVersion)
+        .build();
   }
 }

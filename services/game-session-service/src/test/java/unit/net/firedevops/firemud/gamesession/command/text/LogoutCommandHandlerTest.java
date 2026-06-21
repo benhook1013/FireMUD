@@ -11,6 +11,8 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -25,8 +27,8 @@ class LogoutCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
-  private final GameplayWorldCatalog gameplayWorldCatalog =
-      Mockito.mock(GameplayWorldCatalog.class);
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
+      Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -40,7 +42,7 @@ class LogoutCommandHandlerTest {
           sessionAuthenticationService,
           sessionContextService,
           gameInstanceService,
-          gameplayWorldCatalog,
+          gameplayAdmissionPointerAuthorityService,
           gameplayPresenceLifecycleService,
           firstPartyConnectContextRegistry,
           screenBufferService,
@@ -66,11 +68,6 @@ class LogoutCommandHandlerTest {
             1L,
             "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
-    when(gameplayWorldCatalog.resolveRealmByRuntimeTarget(22L, 7L))
-        .thenReturn(
-            Optional.of(
-                new GameplayWorldCatalog.RealmView(
-                    "private", "Private", 22L, 7L, 1L, true, false, true, "ISOLATED", "REQUIRED")));
 
     LogoutCommandHandlingResult result = handler.handle("41");
 
@@ -136,12 +133,13 @@ class LogoutCommandHandlerTest {
             "production",
             1L,
             null);
-    GameplayWorldCatalog.WorldView world =
-        new GameplayWorldCatalog.WorldView(
-            "demo",
-            "Demo",
-            java.util.List.of(
-                new GameplayWorldCatalog.RealmView(
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(
+            Optional.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
                     "production",
                     "Production",
                     22L,
@@ -152,17 +150,174 @@ class LogoutCommandHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
-    when(gameplayWorldCatalog.resolveWorld("demo")).thenReturn(Optional.of(world));
-    when(gameplayWorldCatalog.resolveRealm(world, "production"))
-        .thenReturn(Optional.of(world.realms().getFirst()));
-    when(gameplayWorldCatalog.resolveRealmByRuntimeTarget(22L, 1L)).thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(java.util.List.of());
 
     LogoutCommandHandlingResult result = handler.handle("41");
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
     verify(screenBufferService).clear(22L, 1L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopSharedRuntimeWhenNormalizationClearsProjectedBinding() {
+    SessionContext normalizedContext =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            1L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41"))
+        .thenReturn(Optional.of(normalizedContext));
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 1L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopRuntimeWhenPointerAuthorityIsUnknown() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(java.util.List.of());
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 7L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopRuntimeWhenCurrentRuntimeAuthorityIsAmbiguous() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            java.util.List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "private",
+                    "Private",
+                    22L,
+                    7L,
+                    2L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 7L, 123L);
+  }
+
+  @Test
+  void logoutDoesNotStopRuntimeWhenSingularRuntimeAuthorityIsIncomplete() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            7L,
+            "1021",
+            "jwt",
+            "en-NZ",
+            7L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            java.util.List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "",
+                    "ALLOW_NEW")));
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+    verify(screenBufferService).clear(22L, 7L, 123L);
   }
 
   @Test

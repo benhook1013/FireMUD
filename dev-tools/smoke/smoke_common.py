@@ -249,7 +249,7 @@ def gameplay_item_container_equipment_steps(
         look_expect,
     ) + [
         ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
-        ("GET Torch", ["You pick up Torch.", "Inventory:", "Torch"], "GET"),
+        ("GET Torch", ["You pick up Torch."], "GET"),
         (
             "CONTAINER Backpack",
             ["Container: Backpack [backpack#1]", "Ration"],

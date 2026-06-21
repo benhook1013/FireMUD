@@ -69,6 +69,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
@@ -538,6 +539,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_SHARED)
+                        .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
                         .setWorldSlug("demo")
                         .setRealmSlug("production")
                         .setPointerVersion(17L)
@@ -742,6 +744,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1151,6 +1154,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1408,6 +1412,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1899,5 +1904,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
       @Override
       public void onCompleted() {}
     };
+  }
+
+  private static AdmissionPointerControlPlaneEntry currentPointer(
+      String worldSlug, String realmSlug, long pointerVersion) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setPointerVersion(pointerVersion)
+        .build();
   }
 }

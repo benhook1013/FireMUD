@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -30,7 +29,6 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
-import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
@@ -399,26 +397,12 @@ class GameLogicClientTest {
         .thenReturn("attestation");
     when(attestationService.issueInternalProbeAttestation("22", "1", "1021"))
         .thenReturn("probe-attestation");
-    GameplayCatalogProperties properties = new GameplayCatalogProperties();
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug("world");
-    world.setDisplayName("World");
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("realm");
-    realm.setDisplayName("Realm");
-    realm.setTenantId(22L);
-    realm.setGameInstanceId(1L);
-    realm.setVisible(true);
-    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
-    world.setRealms(java.util.List.of(realm));
-    properties.setWorlds(java.util.List.of(world));
     return new GameLogicClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
         mock(GrpcChannelFactory.class),
         BlockingGrpcStubCustomizer.noop(),
-        attestationService,
-        new GameplayWorldCatalog(properties));
+        attestationService);
   }
 
   private static void setStub(GameLogicClient client, Object stub) throws Exception {

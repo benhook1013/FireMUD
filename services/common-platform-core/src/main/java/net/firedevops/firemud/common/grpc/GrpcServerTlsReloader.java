@@ -34,6 +34,10 @@ public class GrpcServerTlsReloader {
 
   @PostConstruct
   void init() throws IOException {
+    if (!GrpcTlsReloadPolicy.isEnabled()) {
+      logger.info("gRPC TLS reload watcher disabled by configuration");
+      return;
+    }
     List<Path> files = new ArrayList<>();
     Optional.ofNullable(System.getenv(CERT_CHAIN_ENV)).ifPresent(p -> files.add(Path.of(p)));
     Optional.ofNullable(System.getenv(PRIVATE_KEY_ENV)).ifPresent(p -> files.add(Path.of(p)));

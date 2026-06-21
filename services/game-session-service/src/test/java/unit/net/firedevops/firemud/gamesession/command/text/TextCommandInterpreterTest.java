@@ -76,6 +76,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -146,6 +147,7 @@ class TextCommandInterpreterTest {
 
   @BeforeEach
   void setUp() {
+    sessionContextService.save(bootstrapShell(1L, 1L));
     meterRegistry.clear();
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -334,11 +336,13 @@ class TextCommandInterpreterTest {
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameplayCatalogProperties);
+    GameplayWorldCatalog worldCatalog =
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
+            sessionAuthenticationService,
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
@@ -448,7 +452,7 @@ class TextCommandInterpreterTest {
                 sessionAuthenticationService,
                 sessionContextService,
                 gameInstanceService,
-                worldCatalog,
+                pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
                 screenBufferService,
@@ -1013,6 +1017,25 @@ class TextCommandInterpreterTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
+    return new SessionContext(
+        sessionId,
+        22L,
+        0L,
+        null,
+        0L,
+        null,
+        0L,
+        null,
+        null,
+        null,
+        bootstrapGameInstanceId,
+        "demo",
+        "production",
+        1L,
+        null);
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {
