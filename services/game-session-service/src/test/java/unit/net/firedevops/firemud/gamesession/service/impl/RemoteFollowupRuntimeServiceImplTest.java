@@ -248,14 +248,16 @@ class RemoteFollowupRuntimeServiceImplTest {
         .save(
             argThat(
                 coordinator ->
-                    coordinator.getWorldSlug() == null
+                    coordinator.getPlayableStateScope() == null
+                        && coordinator.getWorldSlug() == null
                         && coordinator.getRealmSlug() == null
                         && coordinator.getPointerVersion() == null));
     verify(followupRepository)
         .save(
             argThat(
                 followup ->
-                    followup.getWorldSlug() == null
+                    followup.getPlayableStateScope() == null
+                        && followup.getWorldSlug() == null
                         && followup.getRealmSlug() == null
                         && followup.getPointerVersion() == null));
   }
@@ -332,9 +334,11 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertFalse(outcome.followupCreated());
     assertEquals("coord-1", outcome.coordinatorId());
     assertEquals("followup-1", outcome.followupId());
+    assertEquals(null, storedCoordinator.get().getPlayableStateScope());
     assertEquals(null, storedCoordinator.get().getWorldSlug());
     assertEquals(null, storedCoordinator.get().getRealmSlug());
     assertEquals(null, storedCoordinator.get().getPointerVersion());
+    assertEquals(null, storedFollowup.get().getPlayableStateScope());
     assertEquals(null, storedFollowup.get().getWorldSlug());
     assertEquals(null, storedFollowup.get().getRealmSlug());
     assertEquals(null, storedFollowup.get().getPointerVersion());
@@ -979,10 +983,12 @@ class RemoteFollowupRuntimeServiceImplTest {
   void recordResultDropsPartialStoredRoutingBundleFromResultProjection() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setPlayableStateScope("SHARED");
     coordinator.setWorldSlug("demo");
     coordinator.setRealmSlug("production");
     coordinator.setPointerVersion(null);
     RemoteFollowup followup = followup();
+    followup.setPlayableStateScope("SHARED");
     followup.setWorldSlug("demo");
     followup.setRealmSlug("production");
     followup.setPointerVersion(null);
@@ -998,7 +1004,8 @@ class RemoteFollowupRuntimeServiceImplTest {
         .save(
             argThat(
                 result ->
-                    result.getWorldSlug() == null
+                    result.getPlayableStateScope() == null
+                        && result.getWorldSlug() == null
                         && result.getRealmSlug() == null
                         && result.getPointerVersion() == null));
   }

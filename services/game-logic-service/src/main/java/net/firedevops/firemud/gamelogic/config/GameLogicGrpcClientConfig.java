@@ -13,7 +13,6 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.En
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.WorldManagementServiceBlockingStub;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -24,7 +23,7 @@ public class GameLogicGrpcClientConfig {
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties grpcClientProperties;
   private final GrpcChannelFactory channelFactory;
-  private final ObjectProvider<BlockingGrpcStubCustomizer> stubCustomizerProvider;
+  private final BlockingGrpcStubCustomizer stubCustomizer;
 
   private ManagedChannel worldChannel;
   private ManagedChannel entityChannel;
@@ -78,8 +77,6 @@ public class GameLogicGrpcClientConfig {
   }
 
   private <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
-    BlockingGrpcStubCustomizer customizer =
-        stubCustomizerProvider.getIfAvailable(BlockingGrpcStubCustomizer::noop);
-    return customizer.customize(stub);
+    return stubCustomizer.customize(stub);
   }
 }
