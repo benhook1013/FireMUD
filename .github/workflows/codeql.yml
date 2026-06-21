@@ -131,14 +131,31 @@ jobs:
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
           build-scan-terms-of-use-agree: 'yes'
 
+      - name: 🔍 Initialize CodeQL (Java PR Fast Path)
+        if: matrix.language == 'java' && github.event_name == 'pull_request'
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          dependency-caching: true
+          build-mode: none
+
+      - name: 🔍 Initialize CodeQL (Java Full Scan)
+        if: matrix.language == 'java' && github.event_name != 'pull_request'
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          dependency-caching: true
+          build-mode: manual
+
       - name: 🔍 Initialize CodeQL
+        if: matrix.language != 'java'
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
 
-      - name: ⚙️ Build project for CodeQL
-        if: matrix.language == 'java'
+      - name: ⚙️ Build project for full Java CodeQL
+        if: matrix.language == 'java' && github.event_name != 'pull_request'
         run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
