@@ -26,17 +26,17 @@ jobs:
           - world-management-service
     steps:
       - name: ⬇️ Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: 💾 Cache Trivy DB
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
           restore-keys: trivy-db-${{ runner.os }}-
 
       - name: 🛡️ Trivy container and dependency scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/benhook1013/${{ matrix.service }}:latest
           format: 'table'
