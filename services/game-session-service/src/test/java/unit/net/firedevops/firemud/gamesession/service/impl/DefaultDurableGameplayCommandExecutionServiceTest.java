@@ -78,8 +78,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
             scriptEventPublisher);
-    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -311,7 +309,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
     PlayerOutput output = PlayerOutput.message("You say, \"Hello there.\"");
     when(parser.parse("SAY Hello there")).thenReturn(parsed);
-    when(sessionContextService.findByGameplayIdentity(22L, 7L, 91L))
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 7L, 91L))
         .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-4b")).thenReturn(Optional.empty());
     when(communicationCommandHandler.handle(context, parsed, "tfx-4b"))
@@ -323,7 +321,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
     assertThat(result.effectStatus()).isEqualTo("APPLIED");
     verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext("0");
-    verify(sessionContextService).findByGameplayIdentity(22L, 7L, 91L);
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 7L, 91L);
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
     verify(scriptEventPublisher).publishCommandEvent(context, command);
   }

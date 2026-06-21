@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.service.CommunicationRecipientDelivery
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,8 +33,6 @@ class CommunicationCommandHandlerTest {
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
   private final CommunicationRecipientDeliveryService recipientDeliveryService =
       Mockito.mock(CommunicationRecipientDeliveryService.class);
   private final ScriptEventPublisher scriptEventPublisher =
@@ -68,7 +65,6 @@ class CommunicationCommandHandlerTest {
             gameLogicClient,
             gameLogicProperties,
             sessionAuthenticationService,
-            sessionContextService,
             recipientDeliveryService,
             new CommunicationOutputMapper(),
             meterRegistry,
@@ -150,7 +146,8 @@ class CommunicationCommandHandlerTest {
                     .setAccountId("700")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayName(22L, 1L, "Sora")).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.empty());
 
     CommunicationCommandHandlingResult result =
         handler.handle(
@@ -164,23 +161,6 @@ class CommunicationCommandHandlerTest {
 
   @Test
   void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
-    SessionContext staleTarget =
-        new SessionContext(
-            77L,
-            22L,
-            700L,
-            "sora@example.com",
-            300L,
-            "Sora",
-            1L,
-            "room-8",
-            "jwt",
-            "en-NZ",
-            1L,
-            "demo",
-            "production",
-            17L,
-            "SHARED");
     SessionContext normalizedTarget =
         new SessionContext(
             77L, 22L, 700L, "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -194,10 +174,8 @@ class CommunicationCommandHandlerTest {
                     .setAccountId("700")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayName(22L, 1L, "Sora"))
-        .thenReturn(Optional.of(staleTarget));
-    when(sessionAuthenticationService.normalizeResolvedContext(staleTarget))
-        .thenReturn(normalizedTarget);
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.of(normalizedTarget));
 
     CommunicationCommandHandlingResult result =
         handler.handle(
@@ -205,7 +183,7 @@ class CommunicationCommandHandlerTest {
             new TextCommand(
                 TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
 
-    Mockito.verify(sessionAuthenticationService).normalizeResolvedContext(staleTarget);
+    Mockito.verify(sessionAuthenticationService).resolveByGameplayName(22L, 1L, "Sora");
     Mockito.verify(gameLogicClient, Mockito.never())
         .sendCommunication(
             Mockito.any(),

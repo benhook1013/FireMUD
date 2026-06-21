@@ -23,8 +23,6 @@ import org.mockito.Mockito;
 class CommunicationRecipientDeliveryServiceTest {
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry =
       Mockito.mock(ActiveTransportSessionRegistry.class);
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
@@ -45,7 +43,6 @@ class CommunicationRecipientDeliveryServiceTest {
     service =
         new CommunicationRecipientDeliveryService(
             sessionAuthenticationService,
-            sessionContextService,
             activeTransportSessionRegistry,
             screenBufferService,
             outputRenderer,
@@ -60,23 +57,6 @@ class CommunicationRecipientDeliveryServiceTest {
     SessionContext actor =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
-    SessionContext staleRecipient =
-        new SessionContext(
-            42L,
-            22L,
-            456L,
-            "friend@example.com",
-            456L,
-            "Sora",
-            1L,
-            "room-2",
-            "jwt",
-            "en-NZ",
-            1L,
-            "demo",
-            "production",
-            1L,
-            "SHARED");
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -92,10 +72,8 @@ class CommunicationRecipientDeliveryServiceTest {
             .addRecipientViews(view)
             .build();
 
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 456L))
-        .thenReturn(Optional.of(staleRecipient));
-    when(sessionAuthenticationService.normalizeResolvedContext(staleRecipient))
-        .thenReturn(clearedRecipient);
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 456L))
+        .thenReturn(Optional.of(clearedRecipient));
 
     service.deliver(actor, response);
 
@@ -109,23 +87,6 @@ class CommunicationRecipientDeliveryServiceTest {
     SessionContext actor =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
-    SessionContext staleRecipient =
-        new SessionContext(
-            42L,
-            22L,
-            456L,
-            "friend@example.com",
-            456L,
-            "Sora",
-            1L,
-            "room-2",
-            "jwt",
-            "en-NZ",
-            1L,
-            "demo",
-            "production",
-            1L,
-            "SHARED");
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -141,10 +102,8 @@ class CommunicationRecipientDeliveryServiceTest {
             .addRecipientViews(view)
             .build();
 
-    when(sessionContextService.findByGameplayName(22L, 1L, "Sora"))
-        .thenReturn(Optional.of(staleRecipient));
-    when(sessionAuthenticationService.normalizeResolvedContext(staleRecipient))
-        .thenReturn(clearedRecipient);
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenReturn(Optional.of(clearedRecipient));
 
     service.deliver(actor, response);
 

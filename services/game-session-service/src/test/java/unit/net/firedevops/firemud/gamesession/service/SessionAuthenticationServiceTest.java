@@ -133,6 +133,71 @@ class SessionAuthenticationServiceTest {
     assertFalse(service.isAuthenticated("not-a-session"));
   }
 
+  @Test
+  void resolveByGameplayIdentityNormalizesResolvedContext() {
+    SessionContext stale =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.of(stale));
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+
+    Optional<SessionContext> resolved = service.resolveByGameplayIdentity(22L, 1L, 7001L);
+
+    assertTrue(resolved.isPresent());
+    assertEquals(0L, resolved.orElseThrow().gameInstanceId());
+    verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
+  }
+
+  @Test
+  void resolveByGameplayNameKeepsCurrentContextWhenPointerMatches() {
+    SessionContext current =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            "SHARED");
+    when(sessionContextService.findByGameplayName(22L, 1L, "Emberline"))
+        .thenReturn(Optional.of(current));
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+
+    Optional<SessionContext> resolved = service.resolveByGameplayName(22L, 1L, "Emberline");
+
+    assertTrue(resolved.isPresent());
+    assertSame(current, resolved.orElseThrow());
+    verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+  }
+
   private static GameplayAdmissionPointerSnapshot pointer(
       String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
     return new GameplayAdmissionPointerSnapshot(

@@ -127,8 +127,6 @@ class PlayCommandHandlerTest {
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(sessionAuthenticationService.normalizeResolvedContext(Mockito.any(SessionContext.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -144,7 +142,8 @@ class PlayCommandHandlerTest {
                     .setId("7001")
                     .setName("demo")
                     .build()));
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L)).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -271,7 +270,8 @@ class PlayCommandHandlerTest {
                     .setId("9007")
                     .setName("Emberline")
                     .build()));
-    when(sessionContextService.findByGameplayIdentity(22L, 2L, 9007L)).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 2L, 9007L))
+        .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -379,23 +379,6 @@ class PlayCommandHandlerTest {
   void playIgnoresStaleExistingBindingAfterNormalization() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
-    SessionContext staleExisting =
-        new SessionContext(
-            9L,
-            22L,
-            123L,
-            "demo@example.com",
-            7001L,
-            "demo",
-            1L,
-            "room-stale",
-            "old-jwt",
-            null,
-            1L,
-            "demo",
-            "production",
-            0L,
-            "SHARED");
     SessionContext clearedExisting =
         new SessionContext(9L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "old-jwt", 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -407,10 +390,8 @@ class PlayCommandHandlerTest {
                     .setId("7001")
                     .setName("demo")
                     .build()));
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L))
-        .thenReturn(Optional.of(staleExisting));
-    when(sessionAuthenticationService.normalizeResolvedContext(staleExisting))
-        .thenReturn(clearedExisting);
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.of(clearedExisting));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -438,7 +419,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .recordDisconnected(Mockito.eq(9L), Mockito.any());
     Mockito.verify(sessionContextService, never()).deleteBySessionId(22L, 9L);
-    Mockito.verify(sessionAuthenticationService).normalizeResolvedContext(staleExisting);
+    Mockito.verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 7001L);
   }
 
   @Test
@@ -647,7 +628,7 @@ class PlayCommandHandlerTest {
                     .setId("7002")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayIdentity(22L, 41L, 7002L))
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
@@ -697,7 +678,7 @@ class PlayCommandHandlerTest {
                     .setId("7002")
                     .setName("Sora")
                     .build()));
-    when(sessionContextService.findByGameplayIdentity(22L, 41L, 7002L))
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
@@ -753,7 +734,8 @@ class PlayCommandHandlerTest {
                 .setMembershipVersion(0L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 123L))
+        .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -829,7 +811,8 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 123L))
+        .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));

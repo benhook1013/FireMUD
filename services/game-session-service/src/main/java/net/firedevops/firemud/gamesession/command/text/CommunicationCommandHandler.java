@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.service.CommunicationRecipientDelivery
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -44,7 +43,6 @@ public class CommunicationCommandHandler {
   private final GameLogicClient gameLogicClient;
   private final GameLogicProperties gameLogicProperties;
   private final SessionAuthenticationService sessionAuthenticationService;
-  private final SessionContextService sessionContextService;
   private final CommunicationRecipientDeliveryService recipientDeliveryService;
   private final CommunicationOutputMapper communicationOutputMapper;
   private final MeterRegistry meterRegistry;
@@ -181,9 +179,8 @@ public class CommunicationCommandHandler {
     net.firedevops.firemud.entitymanagement.v1.Character targetCharacter =
         maybeTargetCharacter.orElseThrow();
     boolean onlineInGame =
-        sessionContextService
-            .findByGameplayName(context.tenantId(), context.gameInstanceId(), targetName)
-            .map(sessionAuthenticationService::normalizeResolvedContext)
+        sessionAuthenticationService
+            .resolveByGameplayName(context.tenantId(), context.gameInstanceId(), targetName)
             .filter(targetContext -> targetContext.gameInstanceId() > 0)
             .filter(targetContext -> targetContext.characterId() > 0)
             .isPresent();

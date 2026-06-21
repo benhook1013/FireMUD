@@ -152,9 +152,8 @@ public final class DefaultDurableGameplayCommandExecutionService
         || command.getGameInstanceId() <= 0) {
       return Optional.empty();
     }
-    return sessionContextService
-        .findByGameplayIdentity(command.getTenantId(), command.getGameInstanceId(), characterId)
-        .map(sessionAuthenticationService::normalizeResolvedContext);
+    return sessionAuthenticationService.resolveByGameplayIdentity(
+        command.getTenantId(), command.getGameInstanceId(), characterId);
   }
 
   private static Long gameplayCharacterId(GameplayCommand command) {
