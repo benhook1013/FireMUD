@@ -24,12 +24,12 @@ public final class GameplayAdmissionPointerSnapshots {
     if (pointers == null) {
       return Optional.empty();
     }
-    List<GameplayAdmissionPointerSnapshot> completePointers =
-        pointers.stream()
-            .filter(GameplayAdmissionPointerSnapshots::hasCompleteRoutingBundle)
-            .toList();
-    return completePointers.size() == 1
-        ? Optional.of(completePointers.getFirst())
-        : Optional.empty();
+    List<GameplayAdmissionPointerSnapshot> runtimePointers =
+        pointers.stream().filter(pointer -> pointer != null).toList();
+    if (runtimePointers.size() != 1) {
+      return Optional.empty();
+    }
+    GameplayAdmissionPointerSnapshot pointer = runtimePointers.getFirst();
+    return hasCompleteRoutingBundle(pointer) ? Optional.of(pointer) : Optional.empty();
   }
 }

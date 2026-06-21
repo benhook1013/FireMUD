@@ -40,6 +40,19 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void reverseRuntimeLookupCountsHiddenRealmPointersBeforeCollapsingRuntimeTarget() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L, true),
+                pointer("demo", "Demo World", "private", "Private Realm", 1L, 11L, 8L, false)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.resolveRealmByRuntimeTarget(1L, 11L)).isEmpty();
+    assertThat(catalog.resolveRuntimeTarget(1L, 11L)).isEmpty();
+  }
+
+  @Test
   void visibleWorldsDropIncompleteAuthorityPointers() {
     when(authorityService.listPointers())
         .thenReturn(
@@ -95,6 +108,26 @@ class GameplayWorldCatalogTest {
       long tenantId,
       long gameInstanceId,
       long pointerVersion) {
+    return pointer(
+        worldSlug,
+        worldDisplayName,
+        realmSlug,
+        realmDisplayName,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        true);
+  }
+
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug,
+      String worldDisplayName,
+      String realmSlug,
+      String realmDisplayName,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean visible) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldDisplayName,
@@ -103,7 +136,7 @@ class GameplayWorldCatalogTest {
         tenantId,
         gameInstanceId,
         pointerVersion,
-        true,
+        visible,
         "production".equals(realmSlug),
         false,
         "SHARED",

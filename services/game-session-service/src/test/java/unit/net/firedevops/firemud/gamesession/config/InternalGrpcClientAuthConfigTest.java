@@ -2,19 +2,36 @@ package unit.net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.google.protobuf.Empty;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.AbstractStub;
 import java.time.Instant;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.config.InternalGrpcClientAuthConfig;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class InternalGrpcClientAuthConfigTest {
+  private static final Metadata.Key<String> AUTH_HEADER =
+      Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
+  private static final MethodDescriptor<Empty, Empty> METHOD =
+      MethodDescriptor.<Empty, Empty>newBuilder()
+          .setFullMethodName("demo.Service/Ping")
+          .setType(MethodDescriptor.MethodType.UNARY)
+          .setRequestMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance()))
+          .setResponseMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance()))
+          .build();
+
   private final ApplicationContextRunner contextRunner =
       new ApplicationContextRunner()
           .withConfiguration(
@@ -40,17 +57,61 @@ class InternalGrpcClientAuthConfigTest {
     contextRunner.run(
         ctx -> {
           BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
-          CapturingStub stub = new CapturingStub();
+          JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+          CapturingChannel channel = new CapturingChannel();
+          CapturingStub stub = new CapturingStub(channel, CallOptions.DEFAULT);
 
-          assertThat(customizer.customize(stub)).isNotSameAs(stub);
+          CapturingStub customized = customizer.customize(stub);
+
+          assertThat(customized).isNotSameAs(stub);
+          customized.invoke();
+          String authorization = channel.lastAuthorization();
+          assertThat(authorization).startsWith("Bearer ");
+          String token = authorization.substring(7);
+          assertThat(jwtUtil.parseToken(token).getPayload().getSubject())
+              .isEqualTo("service:game-session-service");
+          assertThat(jwtUtil.parseToken(token).getPayload().get("internalService", Boolean.class))
+              .isTrue();
         });
   }
 
-  private static final class CapturingStub extends AbstractStub<CapturingStub> {
-    private CapturingStub() {
-      super(Mockito.mock(io.grpc.Channel.class), io.grpc.CallOptions.DEFAULT);
+  private static final class CapturingChannel extends Channel {
+    private String lastAuthorization;
+
+    @Override
+    public String authority() {
+      return "test-authority";
     }
 
+    @Override
+    public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+        MethodDescriptor<ReqT, RespT> methodDescriptor, CallOptions callOptions) {
+      return new ClientCall<>() {
+        @Override
+        public void start(Listener<RespT> responseListener, Metadata headers) {
+          lastAuthorization = headers.get(AUTH_HEADER);
+        }
+
+        @Override
+        public void request(int numMessages) {}
+
+        @Override
+        public void cancel(String message, Throwable cause) {}
+
+        @Override
+        public void halfClose() {}
+
+        @Override
+        public void sendMessage(ReqT message) {}
+      };
+    }
+
+    private String lastAuthorization() {
+      return lastAuthorization;
+    }
+  }
+
+  private static final class CapturingStub extends AbstractStub<CapturingStub> {
     private CapturingStub(io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
       super(channel, callOptions);
     }
@@ -58,6 +119,14 @@ class InternalGrpcClientAuthConfigTest {
     @Override
     protected CapturingStub build(io.grpc.Channel channel, io.grpc.CallOptions callOptions) {
       return new CapturingStub(channel, callOptions);
+    }
+
+    private void invoke() {
+      ClientCall<Empty, Empty> call = getChannel().newCall(METHOD, getCallOptions());
+      call.start(new ClientCall.Listener<>() {}, new Metadata());
+      call.sendMessage(Empty.getDefaultInstance());
+      call.halfClose();
+      call.request(1);
     }
   }
 }

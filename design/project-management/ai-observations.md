@@ -344,3 +344,8 @@ Entry format:
   - Context: logout lifecycle and durable gameplay replay were already conceptually reading normalized session context, but they still implemented that by hand through raw `SessionContextService` lookups plus local filtering or normalization.
   - Observation: leaving “raw row plus maybe-normalize” in higher-level readers quietly keeps a second authority shape alive even after the codebase has already converged on one canonical session-authentication entrypoint.
   - Expected pattern: higher-level session readers that depend on normalized routing truth should use `SessionAuthenticationService` directly, and reserve raw `SessionContextService` access for storage or normalization infrastructure layers.
+
+- `2026-06-21`: AI runtime proof loops should not leave Docker resources dangling after active use ends
+  - Context: smoke and bootstrap verification often bring up images and containers that are only needed while the proof is actively being observed or debugged, though a very short reuse window can avoid pointless teardown and restart churn.
+  - Observation: leaving Docker resources running beyond an immediate follow-up window burns local capacity and muddies later validation state without preserving meaningful progress.
+  - Expected pattern: when an AI-driven smoke or runtime check is done, tear down the related Docker containers and other spawned runtime resources unless they are being reused again within the next minute or two, and otherwise respawn them later when fresh proof is needed.

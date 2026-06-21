@@ -26,15 +26,11 @@ final class RoutingBundleSupport {
     if (runtimeState == null) {
       return RoutingBundle.EMPTY;
     }
-    if (runtimeState.getCurrentAdmissionPointersCount() == 1) {
-      var pointer = runtimeState.getCurrentAdmissionPointers(0);
-      return normalize(pointer.getWorldSlug(), pointer.getRealmSlug(), pointer.getPointerVersion());
-    }
-    if (runtimeState.getCurrentAdmissionPointersCount() > 1) {
+    if (runtimeState.getCurrentAdmissionPointersCount() != 1) {
       return RoutingBundle.EMPTY;
     }
-    return normalize(
-        runtimeState.getWorldSlug(), runtimeState.getRealmSlug(), runtimeState.getPointerVersion());
+    var pointer = runtimeState.getCurrentAdmissionPointers(0);
+    return normalize(pointer.getWorldSlug(), pointer.getRealmSlug(), pointer.getPointerVersion());
   }
 
   record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {

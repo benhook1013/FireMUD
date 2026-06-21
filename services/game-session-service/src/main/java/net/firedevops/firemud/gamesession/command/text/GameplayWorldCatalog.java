@@ -104,8 +104,8 @@ public final class GameplayWorldCatalog {
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
     List<RealmView> matches =
-        visibleWorlds().stream()
-            .flatMap(world -> visibleRealms(world).stream())
+        normalizeWorlds(worldSupplier.get()).stream()
+            .flatMap(world -> world.realms().stream())
             .filter(realm -> realm.tenantId() == tenantId)
             .filter(realm -> realm.gameInstanceId() == gameInstanceId)
             .toList();
@@ -114,10 +114,10 @@ public final class GameplayWorldCatalog {
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
     List<RuntimeRealmTarget> matches =
-        visibleWorlds().stream()
+        normalizeWorlds(worldSupplier.get()).stream()
             .flatMap(
                 world ->
-                    visibleRealms(world).stream()
+                    world.realms().stream()
                         .filter(realm -> realm.tenantId() == tenantId)
                         .filter(realm -> realm.gameInstanceId() == gameInstanceId)
                         .map(
