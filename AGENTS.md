@@ -40,8 +40,10 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 ## Execution Style
 
 - Prefer a single main-thread workflow for normal repository work.
-- Treat subagent use as off by default; do not use subagents unless a human explicitly asks for them for a specific task.
-- Optimize for continuity of reasoning and direct convergence over splitting work across delegated workers.
+- Treat the active main thread as the orchestrator for outstanding repository and slice work; keep end-to-end reasoning, integration, and final verification on that thread.
+- Use subagents selectively for bounded parallelizable work when delegation is clearly specified or materially improves cost or turnaround.
+- When subagents are useful, prefer cheaper mini-model workers if the available tooling exposes that choice, and give them narrowly scoped tasks with explicit success conditions.
+- Optimize for continuity of reasoning and direct convergence over unnecessary splitting across delegated workers.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.
 - When rolling out or repairing a shared pattern, update the remaining in-scope adopters in the same pass when practical.
 
