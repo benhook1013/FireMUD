@@ -129,6 +129,38 @@ class SessionAuthenticationServiceTest {
   }
 
   @Test
+  void resolveUnverifiedSessionContextWithTenantIdNormalizesResolvedContext() {
+    SessionContext stale =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.of(stale));
+    when(pointerAuthorityService.findPointer("demo", "production"))
+        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+
+    Optional<SessionContext> resolved = service.resolveUnverifiedSessionContext(22L, 41L);
+
+    assertTrue(resolved.isPresent());
+    assertEquals(123L, resolved.orElseThrow().accountId());
+    assertEquals(0L, resolved.orElseThrow().gameInstanceId());
+    verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
+  }
+
+  @Test
   void isAuthenticatedReturnsFalseForNonNumericSessionId() {
     assertFalse(service.isAuthenticated("not-a-session"));
   }
