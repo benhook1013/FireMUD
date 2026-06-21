@@ -239,7 +239,7 @@ Canonical maintenance-lock behavior:
 
 Canonical maintenance-active signal:
 
-- metric: `coordination_maintenance_active{scope_type,tenantId,regionId,operation}`
+- metric: `coordination_maintenance_active{scope_type,scope,operation}`
 - health/readiness projection: environments may expose an equivalent health field, but the metric name above is the canonical observability contract used by dashboards and Logging & Admin.
 
 ## Dual-Leader Detection and Coordination Reset

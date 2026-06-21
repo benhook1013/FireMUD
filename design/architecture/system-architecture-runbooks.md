@@ -66,7 +66,7 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
   - Per-region tick status (RUNNING/PAUSED/STALLED) and last-committed `tickId`.
   - Queue depths and retry counts (for example `tick_retry_queue_depth`).
 - Redis tail-loss and memory:
-  - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `redis_coordination_tail_loss_ms{tenantId,regionId}`).
+  - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `redis_coordination_tail_loss_ms{scope}`).
   - Coordination Redis memory and key counts (coordination prefixes vs total).
 - Tick effect ledger:
   - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.

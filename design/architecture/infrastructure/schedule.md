@@ -16,7 +16,7 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 
 Repository-app automation that is not driven by a GitHub Actions schedule:
 
-- CodeRabbit reviews non-draft pull requests targeting `develop` and `main` after PR creation and on subsequent commits.
+- CodeRabbit reviews non-draft pull requests targeting `develop` and `main` after PR creation, then auto-pauses incremental reviews after one reviewed commit until a manual `@coderabbitai review`/`@coderabbitai full review` request or resume.
 - Renovate evaluates dependency updates against `develop` as the hosted Mend app processes repository events and background jobs; it is intentionally not restricted by an in-repo schedule.
 
 GitHub Actions schedule nuance:

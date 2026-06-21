@@ -90,7 +90,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Tail-loss envelopes:
-  - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{tenantId,regionId}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
+  - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{scope}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
   - If coordination tail-loss regularly exceeds `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
   - Use `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` from `system-architecture-tick-execution-flows.md` to decide whether target regions are draining remote work fast enough.

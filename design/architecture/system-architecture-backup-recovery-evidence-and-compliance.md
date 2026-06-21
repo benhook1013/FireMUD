@@ -2,6 +2,10 @@
 
 This document defines the machine-checkable evidence, metrics, and compliance records required to prove that FireMUD backups and restore workflows are healthy enough for player-facing operation.
 
+## Implementation Notes
+
+Canonical backup pause metrics are still converging on end-to-end `region`/`tenant` scope enforcement. Until every emitting path and dashboard uses canonical scopes, backup pause metrics and dashboards should treat alias-scope usage as an explicit migration signal rather than hiding it inside generic pause failures. `scope_type` should distinguish canonical scopes such as `region` and `tenant` from alias scopes such as `game_instance_alias`, while the paired `scope` label remains the approved bounded bucket for the affected gameplay scope. Exact tenant and region identities belong in retained evidence, maintenance records, and control-plane reads.
+
 ## Backup Observability and Alerts
 
 Backup and verification jobs must emit simple, environment-agnostic metrics:
@@ -10,12 +14,12 @@ Backup and verification jobs must emit simple, environment-agnostic metrics:
 - `backup_verify_last_success_timestamp_seconds`
 - `backup_restore_drill_last_success_timestamp_seconds`
 - `backup_restore_drill_total{result,mode}`
-- `backup_tick_pause_wait_seconds{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_duration_seconds{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_wait_budget_seconds{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_duration_budget_seconds{scope_type,tenantId?,regionId?}`
-- `backup_ticks_paused{scope_type,tenantId?,regionId?}`
-- `backup_commands_queued_during_pause_total{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_wait_seconds{scope_type,scope}`
+- `backup_tick_pause_duration_seconds{scope_type,scope}`
+- `backup_tick_pause_wait_budget_seconds{scope_type,scope}`
+- `backup_tick_pause_duration_budget_seconds{scope_type,scope}`
+- `backup_ticks_paused{scope_type,scope}`
+- `backup_commands_queued_during_pause_total{scope_type,scope}`
 - `backup_pause_attempts_total{scope_type,result}`
 - `backup_pause_scope_alias_requests_total{alias="game_instance_id"}`
 - optional `backup_run_total{result}` and `backup_verify_run_total{result}`
@@ -25,9 +29,9 @@ Prometheus should also publish derived breach indicators:
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
-- `backup_tick_pause_wait_budget_breached{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_duration_budget_breached{scope_type,tenantId?,regionId?}`
-- `backup_ticks_paused_budget_breached{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_wait_budget_breached{scope_type,scope}`
+- `backup_tick_pause_duration_budget_breached{scope_type,scope}`
+- `backup_ticks_paused_budget_breached{scope_type,scope}`
 
 Alerting policy:
 
@@ -40,7 +44,7 @@ The canonical backup/recovery severity matrix lives in `system-architecture-back
 
 Prometheus and Alertmanager should also carry clear `service`, `severity`, `owner`, and `runbook` annotations on these alerts, and Grafana should include a dedicated Backups section or dashboard that visualizes freshness, restore-proof age, recent backup/verify success vs failure, restore-drill results by recovery mode, and pause-safety signals.
 
-Until canonical `region_id` scope is enforced end to end, backup pause metrics and dashboards must treat alias-scope usage as a first-class migration signal rather than hiding it inside generic pause failures. `scope_type` should distinguish canonical scopes such as `region` and `tenant` from alias scopes such as `game_instance_alias`, and player-facing pause-budget breaches should route as `P0` while quarantined or drill-only scopes may downgrade severity according to environment policy.
+Backup pause metrics and dashboards should use canonical `scope_type` and `scope` labels for player-facing pause-budget signals. Player-facing pause-budget breaches should route as `P0` while quarantined or drill-only scopes may downgrade severity according to environment policy.
 
 ## Production Backup Readiness Evidence
 

@@ -7,15 +7,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "services"
+DOC_POLICY_ROOTS = [
+    REPO_ROOT / "design/architecture",
+    REPO_ROOT / "design/observability/grafana",
+]
 DOC_POLICY_FILES = [
-    REPO_ROOT / "design/architecture/system-architecture-logging-monitoring.md",
-    REPO_ROOT / "design/architecture/system-architecture-redis-metrics-catalog.md",
-    REPO_ROOT / "design/architecture/system-architecture-scripting-observability-contract.md",
-    REPO_ROOT / "design/architecture/system-architecture-scripting-normative-contract-tables.md",
-    REPO_ROOT / "design/architecture/system-architecture-scripting-quotas-and-operations.md",
-    REPO_ROOT / "design/architecture/microservices/game-session-service/runtime-and-data.md",
     REPO_ROOT / "k8s/monitoring/prometheus-rules-firemud.yaml",
 ]
+DOC_POLICY_SUFFIXES = {".md", ".json", ".yaml", ".yml"}
 
 FORBIDDEN_EXACT_LABELS = {
     "class",
@@ -64,6 +63,11 @@ PROMQL_GROUPING_PATTERN = re.compile(
     r"\b(?:sum|avg|min|max|count|stddev|stdvar|group|count_values|quantile|topk|bottomk)\s+by\s*\((?P<group_labels>[^)\n]+)\)"
     r"|\bon\s*\((?P<join_labels>[^)\n]+)\)"
 )
+GRAFANA_LEGEND_PATTERN = re.compile(
+    r"legendFormat[^\\n]*(?P<label>"
+    + "|".join(re.escape(label) for label in sorted(FORBIDDEN_EXACT_LABELS))
+    + r")"
+)
 
 
 def is_forbidden_label(label: str) -> bool:
@@ -85,7 +89,14 @@ def iter_source_files() -> list[Path]:
 
 
 def iter_doc_policy_files() -> list[Path]:
-    return [path for path in DOC_POLICY_FILES if path.exists()]
+    files = {path for path in DOC_POLICY_FILES if path.exists()}
+    for root in DOC_POLICY_ROOTS:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.suffix in DOC_POLICY_SUFFIXES and "build" not in path.parts:
+                files.add(path)
+    return sorted(files)
 
 
 def forbidden_grouping_labels(labels: str) -> list[str]:
@@ -146,6 +157,12 @@ def main() -> int:
                 findings.append(
                     f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability rules still group or join on forbidden raw metric labels "
                     + ", ".join(repr(label) for label in forbidden)
+                )
+            legend_match = GRAFANA_LEGEND_PATTERN.search(line)
+            if legend_match is not None:
+                findings.append(
+                    f"{path.relative_to(REPO_ROOT)}:{index + 1}: canonical observability dashboards still expose forbidden raw metric labels "
+                    f"{legend_match.group('label')!r} in legends"
                 )
     if findings:
         print("Metrics cardinality policy violations found:", file=sys.stderr)

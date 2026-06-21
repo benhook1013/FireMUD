@@ -420,11 +420,11 @@ Plugin executions participate in the same observability pipeline as core scripts
 
 - Each plugin trigger is recorded in `script_event_audit` with the required Trigger Identity fields (including `tenantId`, `gameInstanceId`, and for gameplay/runtime triggers `regionEpoch`), plus `pluginId` / `pluginVersionId` and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`).
 - Automation metrics such as:
-  - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome}`
-  - `automation_script_skips_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}`
+  - `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome}`
+  - `automation_script_skips_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}`
+  - `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}`
   expose plugin behavior alongside core automation.
 
 Dashboards and Logging & Admin tooling should surface these identifiers so operators can:

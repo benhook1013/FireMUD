@@ -94,16 +94,16 @@ Example alerts for missed backups and verification runs:
 
 This assumes backup tooling emits scoped budget gauges directly:
 
-- `backup_tick_pause_wait_budget_seconds{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_duration_budget_seconds{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_wait_budget_seconds{scope_type,scope}`
+- `backup_tick_pause_duration_budget_seconds{scope_type,scope}`
 
 and that Prometheus exposes derived fallback recordings:
 
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
-- `backup_tick_pause_wait_budget_breached{scope_type,tenantId?,regionId?}`
-- `backup_tick_pause_duration_budget_breached{scope_type,tenantId?,regionId?}`
-- `backup_ticks_paused_budget_breached{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_wait_budget_breached{scope_type,scope}`
+- `backup_tick_pause_duration_budget_breached{scope_type,scope}`
+- `backup_ticks_paused_budget_breached{scope_type,scope}`
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation.

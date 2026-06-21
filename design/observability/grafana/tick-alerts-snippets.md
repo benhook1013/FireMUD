@@ -27,8 +27,8 @@ This rule assumes the **canonical metric contract** from:
 
 Concretely:
 
-- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{tenantId,regionId,le}`.
-- `tick_lock_ttl_ms` is emitted (or recorded) per `<tenantId, regionId>` and represents the lock/lease TTL budget used by tick executors.
+- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{scope,le}`.
+- `tick_lock_ttl_ms` is emitted (or recorded) per approved bounded gameplay `scope` and represents the lock/lease TTL budget used by tick executors.
 
 Do not use “Timer-in-seconds” histograms under `_ms` names; producers must either emit millisecond-valued histograms/summaries or publish explicit `_seconds` metrics and define separate `_ms` recording rules with unambiguous unit conversions.
 

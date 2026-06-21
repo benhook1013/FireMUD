@@ -17,7 +17,7 @@ This document collects the service readiness model, quota and fairness behavior,
 
 ## Fairness Quotas and Budgets
 
-`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is ignored and `script_quota_denied_total{tenantId, scriptId, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
+`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is ignored and `script_quota_denied_total{scope, script_category, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
 
 Dry-run and test executions use separate budgets and isolated capacity so privileged tooling cannot starve live automation.
 
@@ -31,7 +31,7 @@ Rollback orchestration rules:
 
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 - Rollback convergence waiting is bounded. If `GetAutomationPinConvergence` plus Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission and ticks remain paused until explicit operator action.
-- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
+- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
 - Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
 - `DRAINING` remains active until `GetAutomationDrainStatus` confirms that the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work.
 
@@ -42,9 +42,9 @@ The authoritative observability contract lives in [Scripting Observability Contr
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
 - `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
-- `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` for per-tenant automation budgets.
+- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` for per-scope automation budgets.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
-- `automation_script_sandbox_failures_total{tenantId, scriptId, reason}`, `automation_script_errors_total{tenantId, scriptId, reason}`, and `automation_script_runtime_seconds{tenantId, scriptId, eventType}` for sandbox and runtime health.
+- `automation_script_sandbox_failures_total{scope, script_category, reason}`, `automation_script_errors_total{scope, script_category, reason}`, and `automation_script_runtime_seconds{scope, script_category, eventType}` for sandbox and runtime health.
 
 Queue and quota behavior must be observable either through the canonical `cache.automation_queue_*` patterns in `system-architecture-redis-cache.md` or through the mapped automation metrics documented above.
 

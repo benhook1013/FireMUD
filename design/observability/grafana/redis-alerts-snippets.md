@@ -22,8 +22,8 @@ Example alert for Coordination Redis tail-loss SLO breaches:
 
 This assumes that the canonical recording rules expose:
 
-- `redis_coordination_tail_loss_budget_ms{tenantId,regionId}` – dynamic budget computed as `max(2000, 2 * tick_interval_ms)`.
-- `redis_coordination_tail_loss_slo_breached{tenantId,regionId}` – derived breach indicator based on the dynamic budget.
+- `redis_coordination_tail_loss_budget_ms{scope}` – dynamic budget computed as `max(2000, 2 * tick_interval_ms)` for an approved bounded gameplay scope.
+- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator based on the dynamic budget.
 
 Example alerts for additional Coordination Redis core red lines from the Redis metrics contract:
 
