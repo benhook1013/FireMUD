@@ -285,7 +285,7 @@ public class CommandServiceImpl implements CommandService {
   private RoutingMetadata resolveRoutingMetadata(
       Optional<SessionContext> sessionContext, QueueTarget queueTarget) {
     if (sessionContext.isEmpty()) {
-      return new RoutingMetadata("UNSPECIFIED", null, null, null);
+      return unspecifiedRoutingMetadata();
     }
     SessionContext context = sessionContext.orElseThrow();
     RoutingBundle contextRoutingBundle =
@@ -299,20 +299,8 @@ public class CommandServiceImpl implements CommandService {
             contextRoutingBundle.realmSlug(),
             contextRoutingBundle.pointerVersion());
       }
-      Optional<GameplayAdmissionPointerSnapshot> pointer =
-          resolveRoutingPointer(context, queueTarget);
-      if (pointer.isPresent()) {
-        GameplayAdmissionPointerSnapshot snapshot = pointer.orElseThrow();
-        RoutingBundle pointerRoutingBundle =
-            normalizeRoutingBundle(
-                snapshot.worldSlug(), snapshot.realmSlug(), snapshot.pointerVersion());
-        return new RoutingMetadata(
-            firstNonBlank(blankToNull(snapshot.stateScope()), context.playableStateScope()),
-            pointerRoutingBundle.worldSlug(),
-            pointerRoutingBundle.realmSlug(),
-            pointerRoutingBundle.pointerVersion());
-      }
-      return new RoutingMetadata(context.playableStateScope(), null, null, null);
+      return resolveAuthoritativeRoutingMetadata(context, queueTarget)
+          .orElseGet(CommandServiceImpl::unspecifiedRoutingMetadata);
     }
     Optional<GameplayAdmissionPointerSnapshot> pointer =
         resolveRoutingPointer(context, queueTarget);
@@ -358,6 +346,7 @@ public class CommandServiceImpl implements CommandService {
     return resolveSelectorPointer(context)
         .filter(pointer -> pointer.tenantId() == context.tenantId())
         .filter(pointer -> pointer.gameInstanceId() == expectedRuntimeTarget(context, queueTarget))
+        .filter(pointer -> context.playableStateScope().equals(blankToNull(pointer.stateScope())))
         .filter(pointer -> pointer.pointerVersion() == expectedBundle.pointerVersion())
         .filter(pointer -> expectedBundle.worldSlug().equals(pointer.worldSlug()))
         .filter(pointer -> expectedBundle.realmSlug().equals(pointer.realmSlug()))
@@ -392,13 +381,35 @@ public class CommandServiceImpl implements CommandService {
         gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId));
   }
 
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
+  private Optional<RoutingMetadata> resolveAuthoritativeRoutingMetadata(
+      SessionContext context, QueueTarget queueTarget) {
+    return resolveRoutingPointer(context, queueTarget)
+        .flatMap(CommandServiceImpl::authoritativeRoutingMetadata);
   }
 
-  private static String firstNonBlank(String primary, String fallback) {
-    String normalizedPrimary = blankToNull(primary);
-    return normalizedPrimary != null ? normalizedPrimary : blankToNull(fallback);
+  private static Optional<RoutingMetadata> authoritativeRoutingMetadata(
+      GameplayAdmissionPointerSnapshot snapshot) {
+    String playableStateScope = blankToNull(snapshot.stateScope());
+    RoutingBundle routingBundle =
+        normalizeRoutingBundle(
+            snapshot.worldSlug(), snapshot.realmSlug(), snapshot.pointerVersion());
+    if (playableStateScope == null || !routingBundle.isPresent()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new RoutingMetadata(
+            playableStateScope,
+            routingBundle.worldSlug(),
+            routingBundle.realmSlug(),
+            routingBundle.pointerVersion()));
+  }
+
+  private static RoutingMetadata unspecifiedRoutingMetadata() {
+    return new RoutingMetadata("UNSPECIFIED", null, null, null);
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private static RoutingBundle normalizeRoutingBundle(
