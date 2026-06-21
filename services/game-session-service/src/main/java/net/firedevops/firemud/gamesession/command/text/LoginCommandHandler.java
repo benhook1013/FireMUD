@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
@@ -33,6 +34,7 @@ public final class LoginCommandHandler {
 
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
+  private final SessionAuthenticationService sessionAuthenticationService;
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
@@ -44,6 +46,7 @@ public final class LoginCommandHandler {
   public LoginCommandHandler(
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
+      SessionAuthenticationService sessionAuthenticationService,
       AccountClient accountClient,
       CommandService commandService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
@@ -55,6 +58,9 @@ public final class LoginCommandHandler {
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+    this.sessionAuthenticationService =
+        Objects.requireNonNull(
+            sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.firstPartyConnectContextRegistry =
@@ -330,17 +336,14 @@ public final class LoginCommandHandler {
       String worldSlug,
       String realmSlug,
       long pointerVersion) {
-    SessionContext existing = sessionContextService.findBySessionId(sessionId).orElse(null);
     SessionContext projectedExisting =
-        existing == null
-            ? null
-            : sessionRoutingNormalizationService.normalizeProjectedContext(existing);
+        sessionAuthenticationService
+            .resolveUnverifiedSessionContext(Long.toString(sessionId))
+            .orElse(null);
     long tenantId =
         projectedExisting != null
             ? projectedExisting.tenantId()
-            : existing != null
-                ? existing.tenantId()
-                : (fallbackTenantId > 0 ? fallbackTenantId : 0L);
+            : (fallbackTenantId > 0 ? fallbackTenantId : 0L);
     if (tenantId <= 0) {
       return;
     }
@@ -367,8 +370,8 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.bootstrapGameInstanceId() > 0
             ? projectedExisting.bootstrapGameInstanceId()
             : fallbackBootstrapGameInstanceId;
-    if (existing != null) {
-      gameplayPresenceLifecycleService.clearGameplayBinding(existing, "LOGIN_FAILED");
+    if (projectedExisting != null && hasGameplayBinding(projectedExisting)) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(projectedExisting, "LOGIN_FAILED");
     }
     sessionContextService.save(
         new SessionContext(
@@ -389,6 +392,12 @@ public final class LoginCommandHandler {
             null,
             projectedExisting != null ? projectedExisting.connectScopeId() : null,
             projectedExisting != null ? projectedExisting.connectRequestId() : null));
+  }
+
+  private boolean hasGameplayBinding(SessionContext context) {
+    return context.gameInstanceId() > 0
+        || context.characterId() > 0
+        || StringUtils.hasText(context.roomInstanceId());
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

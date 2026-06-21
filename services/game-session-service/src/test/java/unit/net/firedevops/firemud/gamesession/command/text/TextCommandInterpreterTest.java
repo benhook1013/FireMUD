@@ -342,6 +342,7 @@ class TextCommandInterpreterTest {
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
+            sessionAuthenticationService,
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,

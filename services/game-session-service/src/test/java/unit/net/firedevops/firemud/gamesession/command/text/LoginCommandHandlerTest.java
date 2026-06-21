@@ -31,6 +31,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
@@ -58,12 +59,13 @@ class LoginCommandHandlerTest {
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private SessionRoutingNormalizationService sessionRoutingNormalizationService;
+  private SessionAuthenticationService sessionAuthenticationService;
   private LoginCommandHandler handler;
 
   @BeforeEach
   void setUp() {
     meterRegistry.clear();
-    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(bootstrapShell(1L, 1L)));
+    stubSessionContext(bootstrapShell(1L, 1L));
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -75,10 +77,17 @@ class LoginCommandHandlerTest {
     sessionRoutingNormalizationService =
         new SessionRoutingNormalizationService(
             sessionContextService, gameplayAdmissionPointerAuthorityService);
+    sessionAuthenticationService =
+        new SessionAuthenticationService(
+            sessionContextService,
+            Mockito.mock(net.firedevops.firemud.gamesession.config.GameSessionProperties.class),
+            sessionRoutingNormalizationService,
+            gameplayPresenceLifecycleService);
     handler =
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
+            sessionAuthenticationService,
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
@@ -147,8 +156,7 @@ class LoginCommandHandlerTest {
   @Test
   void missingCredentialsReturnsPromptError() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContextWithoutSelector(7L)));
+    stubSessionContext(staleGameplayContextWithoutSelector(7L));
 
     LoginCommandHandlingResult result = handler.handle("1", command, true);
 
@@ -165,10 +173,10 @@ class LoginCommandHandlerTest {
             + LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
+    verify(sessionContextService, times(2)).save(captor.capture());
     verify(gameplayPresenceLifecycleService)
-        .clearGameplayBinding(staleGameplayContextWithoutSelector(7L), "LOGIN_FAILED");
-    assertClearedSessionContext(captor.getValue(), 0L, null, null);
+        .clearGameplayBinding(staleGameplayContextWithoutSelector(7L), "STALE_ADMISSION_POINTER");
+    assertClearedSessionContext(lastCaptured(captor), 0L, null, null);
   }
 
   @Test
@@ -238,8 +246,7 @@ class LoginCommandHandlerTest {
   void bareLoginRejectsStalePointerVersion() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
-    when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContext(1L)));
+    stubSessionContext(staleGameplayContext(1L));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
@@ -455,8 +462,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContext(3L)));
+    stubSessionContext(staleGameplayContext(3L));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(authError);
 
@@ -464,8 +470,10 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 0L);
+    verify(sessionContextService, times(2)).save(captor.capture());
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(staleGameplayContext(3L), "STALE_ADMISSION_POINTER");
+    assertClearedSessionContext(lastCaptured(captor), 0L);
   }
 
   @Test
@@ -477,8 +485,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(sessionContextService.findBySessionId(1L))
-        .thenReturn(Optional.of(staleGameplayContext(4L)));
+    stubSessionContext(staleGameplayContext(4L));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
@@ -491,8 +498,10 @@ class LoginCommandHandlerTest {
         "ERROR ACCOUNT_MISMATCH " + LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE,
         joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 0L);
+    verify(sessionContextService, times(2)).save(captor.capture());
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(staleGameplayContext(4L), "STALE_ADMISSION_POINTER");
+    assertClearedSessionContext(lastCaptured(captor), 0L);
   }
 
   @Test
@@ -786,5 +795,16 @@ class LoginCommandHandlerTest {
     assertNull(context.playableStateScope());
     assertEquals(expectedConnectScopeId, context.connectScopeId());
     assertEquals(expectedConnectRequestId, context.connectRequestId());
+  }
+
+  private static SessionContext lastCaptured(ArgumentCaptor<SessionContext> captor) {
+    return captor.getAllValues().get(captor.getAllValues().size() - 1);
+  }
+
+  private void stubSessionContext(SessionContext context) {
+    when(sessionContextService.findBySessionId(context.sessionId()))
+        .thenReturn(Optional.of(context));
+    when(sessionContextService.findByTenantAndSessionId(context.tenantId(), context.sessionId()))
+        .thenReturn(Optional.of(context));
   }
 }

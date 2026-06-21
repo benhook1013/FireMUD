@@ -203,6 +203,7 @@ class SessionResumptionFlowTest {
         new LoginCommandHandler(
             instanceRepository,
             sessionContextService,
+            sessionAuthenticationService,
             accountClient,
             commandService,
             firstPartyConnectContextRegistry,
