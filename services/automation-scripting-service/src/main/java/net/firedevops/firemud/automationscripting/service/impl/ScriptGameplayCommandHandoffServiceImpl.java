@@ -35,6 +35,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED =
       "runtime_region_scope_advanced";
   private static final String REMOTE_LATE_RESULT_POLICY = "late_result_safe_to_ignore";
+  private static final String ERROR_REMOTE_RESPONSE_INVALID = "REMOTE_RESPONSE_INVALID";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
@@ -99,17 +100,36 @@ public class ScriptGameplayCommandHandoffServiceImpl
       ScheduleRemoteFollowupResponse remoteResponse =
           gameSessionClient.scheduleRemoteFollowup(
               toRemoteScheduleRequest(workItem, command, dispatchId));
-      result =
-          new HandoffResult(
-              !remoteResponse.hasError(),
-              remoteResponse.hasError() ? "REMOTE_REJECTED" : "REMOTE_SCHEDULED",
-              "",
-              remoteResponse.getCoordinatorId(),
-              remoteResponse.getFollowupId(),
-              remoteResponse.hasError() ? remoteResponse.getError().getCode() : "");
+      result = remoteHandoffResult(remoteResponse);
     }
     applyOutcome(workItem, command, dispatchId, result, now);
     return result;
+  }
+
+  private static HandoffResult remoteHandoffResult(ScheduleRemoteFollowupResponse remoteResponse) {
+    String remoteCoordinatorId = remoteResponse.getCoordinatorId();
+    String remoteFollowupId = remoteResponse.getFollowupId();
+    if (remoteResponse.hasError()) {
+      return new HandoffResult(
+          false,
+          "REMOTE_REJECTED",
+          "",
+          remoteCoordinatorId,
+          remoteFollowupId,
+          remoteResponse.getError().getCode());
+    }
+    boolean hasDurableIds =
+        remoteCoordinatorId != null
+            && !remoteCoordinatorId.isBlank()
+            && remoteFollowupId != null
+            && !remoteFollowupId.isBlank();
+    return new HandoffResult(
+        hasDurableIds,
+        hasDurableIds ? "REMOTE_SCHEDULED" : "REMOTE_REJECTED",
+        "",
+        remoteCoordinatorId,
+        remoteFollowupId,
+        hasDurableIds ? "" : ERROR_REMOTE_RESPONSE_INVALID);
   }
 
   private boolean isEpochAdvanced(ScriptWorkItem workItem) {
