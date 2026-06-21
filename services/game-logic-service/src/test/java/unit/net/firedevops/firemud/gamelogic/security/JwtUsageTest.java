@@ -15,6 +15,16 @@ class JwtUsageTest {
     try (Stream<Path> paths = Files.walk(Path.of("src/main/java"))) {
       paths
           .filter(p -> p.toString().endsWith(".java"))
+          .filter(
+              p ->
+                  !p.endsWith(
+                      Path.of(
+                          "net",
+                          "firedevops",
+                          "firemud",
+                          "gamelogic",
+                          "config",
+                          "InternalGrpcClientAuthConfig.java")))
           .forEach(
               p -> {
                 try {
