@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.worldmanagement.config.SmokeDemoRuntimeSeedProperties;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.Room;
@@ -52,13 +52,13 @@ class TestDataSeederTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setTenantId(1L);
-    realm.setGameInstanceId(1L);
-    world.setRealms(List.of(realm));
-    gameplayCatalogProperties.setWorlds(List.of(world));
+    SmokeDemoRuntimeSeedProperties smokeDemoRuntimeSeedProperties =
+        new SmokeDemoRuntimeSeedProperties();
+    SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed target =
+        new SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed();
+    target.setTenantId(1L);
+    target.setGameInstanceId(1L);
+    smokeDemoRuntimeSeedProperties.setTargets(List.of(target));
     seeder =
         new TestDataSeeder(
             regionRepository,
@@ -70,7 +70,7 @@ class TestDataSeederTest {
             zoneInstanceRepository,
             roomInstanceRepository,
             roomInstanceExitRepository,
-            gameplayCatalogProperties);
+            smokeDemoRuntimeSeedProperties);
   }
 
   @Test

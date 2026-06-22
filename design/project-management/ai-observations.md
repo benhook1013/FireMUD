@@ -379,3 +379,8 @@ Entry format:
   - Context: after `09.1` moved Account bootstrap discovery, connect-token issuance, and public-production admission onto Game Session routing reads, `account-service` still shipped the old `firemud.gameplay.catalog` block in `application.yml` even though no code still consumed it.
   - Observation: unused config copies keep teaching a second authority story long after code has converged, especially when the removed path used to describe routing or admission targets.
   - Expected pattern: once a service no longer reads a local config authority model, remove the stale config block and update docs in the same pass so startup defaults do not advertise a dead fallback authority.
+
+- `2026-06-22`: Smoke seeders should use the narrowest model that matches their bootstrap contract
+  - Context: after the canonical demo/runtime hardening work, `world-management-service` still reused `GameplayCatalogProperties` in `TestDataSeeder` just to discover which `{tenantId, gameInstanceId}` runtime targets needed authored topology materialization.
+  - Observation: even in smoke-only code, borrowing a broader shared config model keeps old authority shapes alive and can hide concrete misbehavior such as silently ignoring bootstrap env overrides that the narrower seeder actually needs to honor.
+  - Expected pattern: smoke/demo seeders should bind explicit seed target models that match the rows they create or repair, and they should wire env overrides through that explicit model rather than depending on unrelated shared defaults.
