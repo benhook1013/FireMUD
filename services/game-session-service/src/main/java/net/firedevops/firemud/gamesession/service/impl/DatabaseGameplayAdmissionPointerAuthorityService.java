@@ -41,15 +41,6 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
 
   @Override
   @Transactional(readOnly = true)
-  public Optional<GameplayAdmissionPointerSnapshot> findPointer(
-      String worldSlug, String realmSlug) {
-    return pointerRepository
-        .findByWorldSlugAndRealmSlug(worldSlug, realmSlug)
-        .map(this::toSnapshot);
-  }
-
-  @Override
-  @Transactional(readOnly = true)
   public Optional<GameplayAdmissionPointerSnapshot> findPointer(long tenantId, String realmSlug) {
     return pointerRepository.findByTenantIdAndRealmSlug(tenantId, realmSlug).map(this::toSnapshot);
   }
