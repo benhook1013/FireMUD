@@ -374,3 +374,8 @@ Entry format:
   - Context: after `09.1` moved Game Session routing behavior onto persisted admission-pointer rows, the last production `GameplayCatalogProperties` dependency still survived in `GameplayAdmissionPointerBootstrapInitializer`, where startup-only seeding reused the same world/realm config model as live catalog behavior.
   - Observation: even when a config schema is only used during empty-store bootstrap, reusing the live authority model keeps teaching the old shape as if it were still production routing truth and hides the fact that bootstrap needs a narrower contract than runtime reads.
   - Expected pattern: when a startup seed path must remain, give it an explicit seed model that matches the actual bootstrap write contract, and keep the live authority config or runtime projection types out of production bootstrap wiring.
+
+- `2026-06-22`: Dead local config copies should be deleted once remote authority converges
+  - Context: after `09.1` moved Account bootstrap discovery, connect-token issuance, and public-production admission onto Game Session routing reads, `account-service` still shipped the old `firemud.gameplay.catalog` block in `application.yml` even though no code still consumed it.
+  - Observation: unused config copies keep teaching a second authority story long after code has converged, especially when the removed path used to describe routing or admission targets.
+  - Expected pattern: once a service no longer reads a local config authority model, remove the stale config block and update docs in the same pass so startup defaults do not advertise a dead fallback authority.

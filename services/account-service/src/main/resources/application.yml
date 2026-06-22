@@ -46,29 +46,6 @@ firemud:
       player-bootstrap-expiration-ms: 300000
       connect-scope-expiration-ms: 120000
       connect-token-expiration-ms: 30000
-  gameplay:
-    catalog:
-      worlds:
-        - slug: demo
-          display-name: Demo World
-          realms:
-            - slug: production
-              display-name: Live Realm
-              tenant-id: ${FIREMUD_BOOTSTRAP_DEMO_TENANT_ID:1}
-              game-instance-id: ${FIREMUD_BOOTSTRAP_DEMO_GAME_INSTANCE_ID:1}
-              pointer-version: ${FIREMUD_BOOTSTRAP_DEMO_POINTER_VERSION:1}
-              visible: true
-              requires-character-selection: false
-        - slug: sandbox
-          display-name: Builder Sandbox
-          realms:
-            - slug: production
-              display-name: Live Realm
-              tenant-id: ${FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID:1}
-              game-instance-id: ${FIREMUD_BOOTSTRAP_SANDBOX_GAME_INSTANCE_ID:2}
-              pointer-version: ${FIREMUD_BOOTSTRAP_SANDBOX_POINTER_VERSION:1}
-              visible: true
-              requires-character-selection: true
   mail:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
