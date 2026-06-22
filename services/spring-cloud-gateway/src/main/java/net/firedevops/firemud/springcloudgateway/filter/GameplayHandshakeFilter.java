@@ -35,7 +35,7 @@ import reactor.core.publisher.Mono;
 
 /** Enforces gameplay handshakes for /ws/game/** and classifies first-party gateway admissions. */
 @Component
-public class GameplayHandshakeFilter implements WebFilter, Ordered {
+public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   private static final Logger logger = LoggerFactory.getLogger(GameplayHandshakeFilter.class);
 
   static final String HANDSHAKE_ERROR_CLASS_HEADER = "X-Firemud-Handshake-Error-Class";

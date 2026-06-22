@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +17,11 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation fails fast for Spring-managed repositories without exposing a"
+            + " partially initialized authority service.")
 @Service
 public class DatabaseGameplayAdmissionPointerAuthorityService
     implements GameplayAdmissionPointerAuthorityService {

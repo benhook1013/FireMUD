@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -12,6 +13,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /** Resolves first-pass effective gameplay settings for Game Session-owned domains. */
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation fails fast for injected settings collaborators without exposing a"
+            + " partially initialized resolver.")
 @Component
 public class EffectiveSettingsResolver {
   private final PresentationProperties presentationDefaults;

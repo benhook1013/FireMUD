@@ -121,9 +121,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   public void clearRedis() {
-    gameSession
-        .bean(StringRedisTemplate.class)
-        .getConnectionFactory()
+    Objects.requireNonNull(gameSession.bean(StringRedisTemplate.class).getConnectionFactory())
         .getConnection()
         .serverCommands()
         .flushAll();

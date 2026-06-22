@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -135,7 +136,8 @@ public final class CrossServiceAppHarness {
                     GameSessionServiceApplication.class,
                     combineConfigs(GameSessionTestOverrides.class, extraConfigClasses)))
             .run(toCommandLineArgs(props));
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
+    int port =
+        Objects.requireNonNull(((WebServerApplicationContext) context).getWebServer()).getPort();
     return new GameSessionHolder(context, port);
   }
 

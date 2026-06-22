@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
@@ -35,6 +36,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /** Handles the gameplay-binding PLAY command after login. */
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation only guards injected collaborators before the handler is used.")
 @Component
 public class PlayCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(PlayCommandHandler.class);
