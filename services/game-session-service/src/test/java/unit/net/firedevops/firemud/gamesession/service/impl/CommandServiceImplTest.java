@@ -327,9 +327,9 @@ class CommandServiceImplTest {
                     "live",
                     12L,
                     null)));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
-            Optional.of(
+            java.util.List.of(
                 new GameplayAdmissionPointerSnapshot(
                     "demo-world",
                     "Demo World",
@@ -577,9 +577,9 @@ class CommandServiceImplTest {
                     "live",
                     0L,
                     "SHARED")));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
-            Optional.of(
+            java.util.List.of(
                 new GameplayAdmissionPointerSnapshot(
                     "demo-world",
                     "Demo World",
@@ -618,6 +618,78 @@ class CommandServiceImplTest {
   }
 
   @Test
+  void gameplayCommandUsesActiveGameplayRuntimeAuthorityBeforeBootstrapRuntime() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(
+                    17L,
+                    9L,
+                    3L,
+                    "demo",
+                    44L,
+                    "char",
+                    1L,
+                    "room",
+                    "jwt",
+                    null,
+                    99L,
+                    "demo-world",
+                    "live",
+                    12L,
+                    "SHARED")));
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 1L))
+        .thenReturn(
+            java.util.List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo-world",
+                    "Demo World",
+                    "live",
+                    "Live",
+                    9L,
+                    1L,
+                    12L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "OPEN")));
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
+        .thenReturn(java.util.List.of());
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    CommandServiceImpl service =
+        new CommandServiceImpl(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.accepted());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getAllValues().get(0);
+    assertEquals(1L, accepted.getGameInstanceId());
+    assertEquals("SHARED", accepted.getPlayableStateScope());
+    assertEquals("demo-world", accepted.getWorldSlug());
+    assertEquals("live", accepted.getRealmSlug());
+    assertEquals(12L, accepted.getPointerVersion());
+  }
+
+  @Test
   void gameplayCommandRepairsStaleCompleteSessionRoutingMetadataFromCurrentAuthority() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
@@ -646,9 +718,9 @@ class CommandServiceImplTest {
                     "live",
                     11L,
                     "SHARED")));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
-            Optional.of(
+            java.util.List.of(
                 new GameplayAdmissionPointerSnapshot(
                     "demo-world",
                     "Demo World",
@@ -715,8 +787,8 @@ class CommandServiceImplTest {
                     "live",
                     11L,
                     "SHARED")));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
-        .thenReturn(Optional.empty());
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
+        .thenReturn(java.util.List.of());
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
         new CommandServiceImpl(
@@ -770,8 +842,8 @@ class CommandServiceImplTest {
                     "live",
                     0L,
                     "SHARED")));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
-        .thenReturn(Optional.empty());
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
+        .thenReturn(java.util.List.of());
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
         new CommandServiceImpl(
@@ -825,9 +897,9 @@ class CommandServiceImplTest {
                     "live",
                     12L,
                     "SHARED")));
-    Mockito.when(pointerAuthorityService.findPointer("demo-world", "live"))
+    Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
-            Optional.of(
+            java.util.List.of(
                 new GameplayAdmissionPointerSnapshot(
                     "demo-world",
                     "Demo World",

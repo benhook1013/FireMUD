@@ -324,28 +324,17 @@ public class CommandServiceImpl implements CommandService {
 
   private Optional<GameplayAdmissionPointerSnapshot> resolveRoutingPointer(
       SessionContext context, QueueTarget queueTarget) {
-    if (context.worldSlug() != null
-        && !context.worldSlug().isBlank()
-        && context.realmSlug() != null
-        && !context.realmSlug().isBlank()) {
-      return gameplayAdmissionPointerAuthorityService.findPointer(
-          context.worldSlug(), context.realmSlug());
-    }
-    if (context.bootstrapGameInstanceId() > 0) {
-      return resolveUnambiguousRuntimePointer(
-          context.tenantId(), context.bootstrapGameInstanceId());
-    }
-    if (context.gameInstanceId() > 0) {
-      return resolveUnambiguousRuntimePointer(context.tenantId(), context.gameInstanceId());
+    long runtimeTarget = expectedRuntimeTarget(context, queueTarget);
+    if (context.tenantId() > 0 && runtimeTarget > 0) {
+      return resolveUnambiguousRuntimePointer(context.tenantId(), runtimeTarget);
     }
     return resolveUnambiguousRuntimePointer(queueTarget.tenantId(), queueTarget.queueTargetId());
   }
 
   private boolean currentAdmissionPointerMatches(
       SessionContext context, QueueTarget queueTarget, RoutingBundle expectedBundle) {
-    return resolveSelectorPointer(context)
-        .filter(pointer -> pointer.tenantId() == context.tenantId())
-        .filter(pointer -> pointer.gameInstanceId() == expectedRuntimeTarget(context, queueTarget))
+    return resolveUnambiguousRuntimePointer(
+            context.tenantId(), expectedRuntimeTarget(context, queueTarget))
         .filter(pointer -> context.playableStateScope().equals(blankToNull(pointer.stateScope())))
         .filter(pointer -> pointer.pointerVersion() == expectedBundle.pointerVersion())
         .filter(pointer -> expectedBundle.worldSlug().equals(pointer.worldSlug()))
@@ -353,24 +342,12 @@ public class CommandServiceImpl implements CommandService {
         .isPresent();
   }
 
-  private Optional<GameplayAdmissionPointerSnapshot> resolveSelectorPointer(
-      SessionContext context) {
-    if (context.worldSlug() == null
-        || context.worldSlug().isBlank()
-        || context.realmSlug() == null
-        || context.realmSlug().isBlank()) {
-      return Optional.empty();
-    }
-    return gameplayAdmissionPointerAuthorityService.findPointer(
-        context.worldSlug(), context.realmSlug());
-  }
-
   private long expectedRuntimeTarget(SessionContext context, QueueTarget queueTarget) {
-    if (context.bootstrapGameInstanceId() > 0) {
-      return context.bootstrapGameInstanceId();
-    }
     if (context.gameInstanceId() > 0) {
       return context.gameInstanceId();
+    }
+    if (context.bootstrapGameInstanceId() > 0) {
+      return context.bootstrapGameInstanceId();
     }
     return queueTarget.queueTargetId();
   }
