@@ -388,7 +388,7 @@ previewStack:
         repository: ghcr.io/benhook1013/tcp-proxy-service
       serviceType: NodePort
       springProfile: false
-      envFromShared: false
+      envFromShared: true
       mountGrpcTls: true
       healthPort: 8080
       extraEnv:
