@@ -69,15 +69,18 @@ public final class SessionRoutingNormalizationService {
   }
 
   private boolean currentAdmissionPointerMatches(SessionContext context) {
-    if (!StringUtils.hasText(context.worldSlug())
+    if (context.tenantId() <= 0
+        || context.gameInstanceId() <= 0
+        || !StringUtils.hasText(context.worldSlug())
         || !StringUtils.hasText(context.realmSlug())
         || context.pointerVersion() <= 0) {
       return false;
     }
-    return gameplayAdmissionPointerAuthorityService
-        .findPointer(context.worldSlug(), context.realmSlug())
-        .filter(pointer -> pointer.tenantId() == context.tenantId())
-        .filter(pointer -> pointer.gameInstanceId() == context.gameInstanceId())
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                context.tenantId(), context.gameInstanceId()))
+        .filter(pointer -> pointer.worldSlug().equals(context.worldSlug()))
+        .filter(pointer -> pointer.realmSlug().equals(context.realmSlug()))
         .filter(pointer -> pointer.pointerVersion() == context.pointerVersion())
         .isPresent();
   }

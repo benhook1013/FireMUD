@@ -312,10 +312,10 @@ class TextCommandInterpreterTest {
                 .build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.findPointer("sandbox", "production"))
-        .thenReturn(Optional.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {

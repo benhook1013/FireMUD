@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -317,14 +318,18 @@ public final class LoginCommandHandler {
 
   private boolean currentAdmissionPointerMatches(
       net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedContext) {
-    if (!StringUtils.hasText(verifiedContext.worldSlug())
-        || !StringUtils.hasText(verifiedContext.realmSlug())) {
+    if (verifiedContext.tenantId() <= 0
+        || verifiedContext.gameInstanceId() <= 0
+        || !StringUtils.hasText(verifiedContext.worldSlug())
+        || !StringUtils.hasText(verifiedContext.realmSlug())
+        || verifiedContext.pointerVersion() <= 0) {
       return false;
     }
-    return gameplayAdmissionPointerAuthorityService
-        .findPointer(verifiedContext.worldSlug(), verifiedContext.realmSlug())
-        .filter(pointer -> pointer.tenantId() == verifiedContext.tenantId())
-        .filter(pointer -> pointer.gameInstanceId() == verifiedContext.gameInstanceId())
+    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                verifiedContext.tenantId(), verifiedContext.gameInstanceId()))
+        .filter(pointer -> pointer.worldSlug().equals(verifiedContext.worldSlug()))
+        .filter(pointer -> pointer.realmSlug().equals(verifiedContext.realmSlug()))
         .filter(pointer -> pointer.pointerVersion() == verifiedContext.pointerVersion())
         .isPresent();
   }

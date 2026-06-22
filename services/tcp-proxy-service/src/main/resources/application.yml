@@ -58,6 +58,9 @@ server:
     min-response-size: 1024
 
 firemud:
+  auth:
+    grpc:
+      force-internal-service-outbound: true
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

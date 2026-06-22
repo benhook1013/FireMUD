@@ -135,10 +135,10 @@ class SessionResumptionFlowTest {
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.findPointer("sandbox", "production"))
-        .thenReturn(Optional.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -494,8 +494,8 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
 
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
 
     TextCommandInterpretationResult lookAfterCutover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);

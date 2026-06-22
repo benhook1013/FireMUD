@@ -72,8 +72,8 @@ class LoginCommandHandlerTest {
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
-    when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
     sessionRoutingNormalizationService =
         new SessionRoutingNormalizationService(
             sessionContextService, gameplayAdmissionPointerAuthorityService);

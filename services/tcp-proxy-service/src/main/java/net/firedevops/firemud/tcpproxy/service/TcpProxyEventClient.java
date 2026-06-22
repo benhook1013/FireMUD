@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
@@ -22,13 +23,7 @@ import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-/**
- * gRPC client used to notify the Game Session Service about Telnet events.
- *
- * <p>This remains an intentional raw-stub outlier from the normal internal auth-propagation seam:
- * it acts as an ingress-side event bridge rather than a secured internal business client carrying a
- * trusted service identity into protected downstream RPCs.
- */
+/** gRPC client used to notify the Game Session Service about Telnet events. */
 @Component
 public class TcpProxyEventClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyEventClient.class);
@@ -39,6 +34,7 @@ public class TcpProxyEventClient implements AutoCloseable {
   private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
   private final GrpcTlsMaterialResolver tlsMaterialResolver;
+  private final BlockingGrpcStubCustomizer stubCustomizer;
 
   private ManagedChannel channel;
   private TcpProxyServiceGrpc.TcpProxyServiceBlockingStub stub;
@@ -49,11 +45,13 @@ public class TcpProxyEventClient implements AutoCloseable {
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
-      GrpcTlsMaterialResolver tlsMaterialResolver) {
+      GrpcTlsMaterialResolver tlsMaterialResolver,
+      BlockingGrpcStubCustomizer stubCustomizer) {
     this.endpoints = endpoints.copy();
     this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
     this.tlsMaterialResolver = tlsMaterialResolver;
+    this.stubCustomizer = stubCustomizer;
   }
 
   @PostConstruct
@@ -117,7 +115,9 @@ public class TcpProxyEventClient implements AutoCloseable {
     ManagedChannel newChannel = channelFactory.buildChannel(target, 6565, tlsProps, true, resolved);
     ManagedChannel previousChannel = channel;
     channel = newChannel;
-    stub = TcpProxyServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    stub =
+        stubCustomizer.customize(
+            TcpProxyServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
     tlsMaterial = resolved;
     shutdownChannel(previousChannel);
   }
