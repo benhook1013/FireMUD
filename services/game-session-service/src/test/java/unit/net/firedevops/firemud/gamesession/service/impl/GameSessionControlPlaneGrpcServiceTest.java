@@ -823,7 +823,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer("demo", "production"))
+    Mockito.when(authorityService.findPointer(1L, "production"))
         .thenReturn(
             Optional.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -942,7 +942,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer("demo", "production"))
+    Mockito.when(authorityService.findPointer(1L, "production"))
         .thenReturn(
             Optional.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -1011,7 +1011,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer("demo", "production"))
+    Mockito.when(authorityService.findPointer(1L, "production"))
         .thenReturn(
             Optional.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -1106,7 +1106,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(targetInstance));
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer("demo", "production"))
+    Mockito.when(authorityService.findPointer(1L, "production"))
         .thenReturn(
             Optional.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -1214,7 +1214,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void executePreparedVersionCutoverIsIdempotentAfterSameRequestAlreadyMovedPointer() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer("demo", "production"))
+    Mockito.when(authorityService.findPointer(1L, "production"))
         .thenReturn(
             Optional.of(
                 new GameplayAdmissionPointerSnapshot(
