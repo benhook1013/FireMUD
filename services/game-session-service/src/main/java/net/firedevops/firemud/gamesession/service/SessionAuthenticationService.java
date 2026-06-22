@@ -115,11 +115,6 @@ public final class SessionAuthenticationService {
   }
 
   private Optional<Long> findTenantId(long sessionId) {
-    Optional<Long> tenantFromContext =
-        sessionContextService.findBySessionId(sessionId).map(SessionContext::tenantId);
-    if (tenantFromContext.isPresent()) {
-      return tenantFromContext;
-    }
     return sessionRoutingNormalizationService.findTenantId(sessionId);
   }
 }

@@ -199,6 +199,37 @@ class SessionAuthenticationServiceTest {
   }
 
   @Test
+  void resolveUnverifiedSessionContextFailsClosedWhenTenantScopedSessionIsMissing() {
+    SessionContext rawOnly =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            "SHARED");
+    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(rawOnly));
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.empty());
+
+    Optional<SessionContext> resolved = service.resolveUnverifiedSessionContext("41");
+
+    assertTrue(resolved.isEmpty());
+    assertFalse(service.isAuthenticated("41"));
+    verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+  }
+
+  @Test
   void isAuthenticatedReturnsFalseForNonNumericSessionId() {
     assertFalse(service.isAuthenticated("not-a-session"));
   }

@@ -243,6 +243,41 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void bareLoginDoesNotFallBackToRawPersistedFirstPartyContextWhenTenantScopedSessionIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    SessionContext rawOnly =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(rawOnly));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L)).thenReturn(Optional.empty());
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(
+        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.commandResult().errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
   void bareLoginRejectsStalePointerVersion() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -308,9 +343,11 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
 
     GameInstance instance = buildInstance(99L, 22L, 77L);
-    when(sessionContextService.findBySessionId(12345L))
-        .thenReturn(
-            Optional.of(new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null)));
+    SessionContext bootstrapContext =
+        new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null);
+    when(sessionContextService.findBySessionId(12345L)).thenReturn(Optional.of(bootstrapContext));
+    when(sessionContextService.findByTenantAndSessionId(22L, 12345L))
+        .thenReturn(Optional.of(bootstrapContext));
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("12345", command, false);
