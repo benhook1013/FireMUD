@@ -113,11 +113,18 @@ public class TcpProxyEventClient implements AutoCloseable {
     }
     ResolvedGrpcTlsMaterial resolved = tlsMaterialResolver.resolve(tlsProps);
     ManagedChannel newChannel = channelFactory.buildChannel(target, 6565, tlsProps, true, resolved);
+    TcpProxyServiceGrpc.TcpProxyServiceBlockingStub newStub;
+    try {
+      newStub =
+          stubCustomizer.customize(
+              TcpProxyServiceGrpc.newBlockingStub(newChannel).withCompression("gzip"));
+    } catch (RuntimeException ex) {
+      shutdownChannel(newChannel);
+      throw ex;
+    }
     ManagedChannel previousChannel = channel;
     channel = newChannel;
-    stub =
-        stubCustomizer.customize(
-            TcpProxyServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
+    stub = newStub;
     tlsMaterial = resolved;
     shutdownChannel(previousChannel);
   }

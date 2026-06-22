@@ -559,11 +559,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             null,
             null,
             null);
+    RoutingMetadata storedRoutingMetadata =
+        routingMetadataFromStoredValues(
+            playableStateScope, worldSlug, realmSlug, pointerVersion, null, null, null, null);
     return normalized(requestRoutingMetadata.playableStateScope())
-            .equals(normalized(playableStateScope))
-        && normalized(requestRoutingMetadata.worldSlug()).equals(normalized(worldSlug))
-        && normalized(requestRoutingMetadata.realmSlug()).equals(normalized(realmSlug))
-        && sameLong(pointerVersion, requestRoutingMetadata.pointerVersion())
+            .equals(normalized(storedRoutingMetadata.playableStateScope()))
+        && normalized(requestRoutingMetadata.worldSlug())
+            .equals(normalized(storedRoutingMetadata.worldSlug()))
+        && normalized(requestRoutingMetadata.realmSlug())
+            .equals(normalized(storedRoutingMetadata.realmSlug()))
+        && sameLong(storedRoutingMetadata.pointerVersion(), requestRoutingMetadata.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))

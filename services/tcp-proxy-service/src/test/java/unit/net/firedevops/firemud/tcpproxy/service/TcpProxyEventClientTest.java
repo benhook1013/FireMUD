@@ -88,6 +88,42 @@ class TcpProxyEventClientTest {
     org.junit.jupiter.api.Assertions.assertSame(customizedStub, getField(client, "stub"));
   }
 
+  @Test
+  void reloadChannelKeepsExistingStateWhenStubCustomizationFails() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel previousChannel = mock(io.grpc.ManagedChannel.class);
+    io.grpc.ManagedChannel newChannel = mock(io.grpc.ManagedChannel.class);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenReturn(newChannel);
+    BlockingGrpcStubCustomizer stubCustomizer = mock(BlockingGrpcStubCustomizer.class);
+    when(stubCustomizer.customize(any(TcpProxyServiceGrpc.TcpProxyServiceBlockingStub.class)))
+        .thenThrow(new IllegalStateException("customizer failed"));
+    TcpProxyServiceGrpc.TcpProxyServiceBlockingStub previousStub =
+        mock(TcpProxyServiceGrpc.TcpProxyServiceBlockingStub.class);
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            channelFactory,
+            mock(GrpcTlsMaterialResolver.class),
+            stubCustomizer);
+    setField(client, "channel", previousChannel);
+    setField(client, "stub", previousStub);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> invokeReloadChannel(client));
+
+    org.junit.jupiter.api.Assertions.assertSame(previousChannel, getField(client, "channel"));
+    org.junit.jupiter.api.Assertions.assertSame(previousStub, getField(client, "stub"));
+    verify(newChannel).shutdown();
+    verify(previousChannel, org.mockito.Mockito.never()).shutdown();
+  }
+
   private static void setField(Object target, String fieldName, Object value) {
     try {
       Field field = target.getClass().getDeclaredField(fieldName);

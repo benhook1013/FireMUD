@@ -296,6 +296,7 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("2", ref.get().getAccountId());
     assertEquals("production", ref.get().getRealmSlug());
+    assertEquals("demo", ref.get().getWorldSlug());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(55L, ref.get().getMembershipVersion());
     assertTrue(ref.get().getCreated());

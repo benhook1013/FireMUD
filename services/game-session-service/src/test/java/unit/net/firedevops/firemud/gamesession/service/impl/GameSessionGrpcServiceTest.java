@@ -292,8 +292,8 @@ class GameSessionGrpcServiceTest {
     realm.setSlug("production");
     realm.setDisplayName("Live Realm");
     realm.setTenantId(7L);
-    realm.setGameInstanceId(44L);
-    realm.setPointerVersion(17L);
+    realm.setGameInstanceId(999L);
+    realm.setPointerVersion(999L);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
     world.setRealms(List.of(realm));
@@ -373,6 +373,60 @@ class GameSessionGrpcServiceTest {
 
     assertEquals("44", pointerRef.get().getAdmissionPointer().getGameInstanceId());
     assertEquals(17L, pointerRef.get().getAdmissionPointer().getPointerVersion());
+    Mockito.verify(pointerAuthorityService).findPointer(7L, "demo", "production");
+  }
+
+  @Test
+  void getAdmissionPointerRuntimeFailureReturnsInternalErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
+        .thenThrow(new IllegalStateException("pointer store unavailable"));
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            pointerAuthorityService,
+            TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties()),
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<GetAdmissionPointerResponse> ref = new AtomicReference<>();
+    service.getAdmissionPointer(
+        GetAdmissionPointerRequest.newBuilder()
+            .setTenantId("7")
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAdmissionPointerResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertEquals("pointer store unavailable", ref.get().getError().getMessage());
   }
 
   @Test

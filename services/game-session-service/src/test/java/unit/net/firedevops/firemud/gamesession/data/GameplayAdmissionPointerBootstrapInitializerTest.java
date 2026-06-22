@@ -60,7 +60,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals("ALLOW_NEW", mutations.get(0).characterCreationPolicy());
     assertEquals("system/bootstrap", mutations.get(0).actorPrincipal());
     assertEquals("Initial gameplay pointer bootstrap", mutations.get(0).reason());
-    assertEquals("bootstrap:demo:production", mutations.get(0).controlPlaneRequestId());
+    assertEquals("bootstrap:1:1:demo:production", mutations.get(0).controlPlaneRequestId());
     assertEquals("sandbox", mutations.get(1).worldSlug());
     assertTrue(mutations.get(1).requiresCharacterSelection());
   }
@@ -91,6 +91,24 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
         ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
     verify(authorityService).upsertPointer(mutationCaptor.capture());
     assertEquals("demo", mutationCaptor.getValue().worldSlug());
+  }
+
+  @Test
+  void runDefaultsNullEnumFieldsDuringBootstrapMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer =
+        pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false);
+    pointer.setStateScope(null);
+    pointer.setCharacterCreationPolicy(null);
+    properties.setPointers(List.of(pointer));
+
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+
+    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
+        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
+    verify(authorityService).upsertPointer(mutationCaptor.capture());
+    assertEquals("SHARED", mutationCaptor.getValue().stateScope());
+    assertEquals("ALLOW_NEW", mutationCaptor.getValue().characterCreationPolicy());
   }
 
   private static GameplayAdmissionPointerBootstrapProperties.PointerSeed pointerSeed(

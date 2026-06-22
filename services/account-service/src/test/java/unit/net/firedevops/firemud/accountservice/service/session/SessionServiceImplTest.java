@@ -203,6 +203,80 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void getPublicProductionMembershipReplayReturnsEmptyWhenStoredWorldSlugMismatchesLookup() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "worldSlug",
+                "sandbox",
+                "realmSlug",
+                "production",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
+  void getPublicProductionMembershipReplayReturnsEmptyWhenStoredRealmSlugMismatchesLookup() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "worldSlug",
+                "demo",
+                "realmSlug",
+                "staging",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
   void storeConnectTokenReplayRejectsSuccessfulReplayWithoutResult() {
     SessionService.ConnectTokenReplay replay =
         new SessionService.ConnectTokenReplay(true, null, "", "");

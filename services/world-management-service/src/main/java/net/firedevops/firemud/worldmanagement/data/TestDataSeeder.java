@@ -166,13 +166,15 @@ public class TestDataSeeder implements ApplicationRunner {
         ensureRegionInstance(tenantId, gameInstanceId, savedWorldInstance);
 
     Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone : zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+    for (Zone templateZone :
+        zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(DEMO_TENANT_ID, DEMO_VERSION_ID)) {
       ZoneInstance savedZoneInstance =
           ensureZoneInstance(tenantId, gameInstanceId, savedRegionInstance, templateZone);
       zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
 
-    List<Room> templateRooms = roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L);
+    List<Room> templateRooms =
+        roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(DEMO_TENANT_ID, DEMO_VERSION_ID);
     Map<Long, RoomInstance> roomInstancesByRoomInstanceId = new HashMap<>();
     for (RoomInstance existingRoomInstance :
         roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
@@ -201,7 +203,8 @@ public class TestDataSeeder implements ApplicationRunner {
 
     Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId = new HashMap<>();
     for (RoomExit templateExit :
-        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(
+            DEMO_TENANT_ID, DEMO_VERSION_ID)) {
       RoomInstance fromRoomInstance =
           roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
       RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());

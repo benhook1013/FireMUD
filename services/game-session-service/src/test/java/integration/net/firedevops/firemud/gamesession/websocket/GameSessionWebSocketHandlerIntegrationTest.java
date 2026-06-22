@@ -1580,7 +1580,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
-                    "demo".equals(pointer.worldSlug()) && "production".equals(pointer.realmSlug()))
+                    pointer.tenantId() == 22L
+                        && "demo".equals(pointer.worldSlug())
+                        && "production".equals(pointer.realmSlug()))
             .findFirst()
             .orElseThrow()
             .pointerVersion();

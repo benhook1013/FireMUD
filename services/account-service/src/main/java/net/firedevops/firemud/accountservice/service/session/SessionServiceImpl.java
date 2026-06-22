@@ -147,12 +147,17 @@ public class SessionServiceImpl implements SessionService {
       if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || membershipVersion.isEmpty()) {
         return Optional.empty();
       }
+      String replayWorldSlug = stringValue(stored.get("worldSlug"));
+      String replayRealmSlug = stringValue(stored.get("realmSlug"));
+      if (!worldSlug.equals(replayWorldSlug) || !realmSlug.equals(replayRealmSlug)) {
+        return Optional.empty();
+      }
       PublicProductionMembershipResult result =
           new PublicProductionMembershipResult(
               replayAccountId.orElseThrow(),
               replayTenantId.orElseThrow(),
-              stringValue(stored.get("worldSlug")),
-              stringValue(stored.get("realmSlug")),
+              replayWorldSlug,
+              replayRealmSlug,
               membershipVersion.orElseThrow(),
               Boolean.parseBoolean(stringValue(stored.get("created"))),
               stringValue(stored.get("requestId")),

@@ -56,13 +56,39 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
               pointer.isVisible(),
               pointer.isPublicProductionRealm(),
               pointer.isRequiresCharacterSelection(),
-              pointer.getStateScope().name(),
-              pointer.getCharacterCreationPolicy().name(),
+              stateScopeName(pointer),
+              characterCreationPolicyName(pointer),
               "system/bootstrap",
               "Initial gameplay pointer bootstrap",
-              "bootstrap:" + pointer.getWorldSlug() + ":" + pointer.getRealmSlug(),
+              "bootstrap:"
+                  + pointer.getTenantId()
+                  + ":"
+                  + pointer.getGameInstanceId()
+                  + ":"
+                  + pointer.getWorldSlug()
+                  + ":"
+                  + pointer.getRealmSlug(),
               null,
               null));
     }
+  }
+
+  private static String stateScopeName(
+      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
+    GameplayAdmissionPointerBootstrapProperties.StateScope stateScope = pointer.getStateScope();
+    return (stateScope != null
+            ? stateScope
+            : GameplayAdmissionPointerBootstrapProperties.StateScope.SHARED)
+        .name();
+  }
+
+  private static String characterCreationPolicyName(
+      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
+    GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy policy =
+        pointer.getCharacterCreationPolicy();
+    return (policy != null
+            ? policy
+            : GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy.ALLOW_NEW)
+        .name();
   }
 }

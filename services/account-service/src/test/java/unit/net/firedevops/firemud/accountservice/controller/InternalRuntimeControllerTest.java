@@ -63,6 +63,7 @@ class InternalRuntimeControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.membershipVersion").value(711))
+        .andExpect(jsonPath("$.data.worldSlug").value("demo"))
         .andExpect(jsonPath("$.data.created").value(true))
         .andExpect(jsonPath("$.data.requestId").value("req-1"))
         .andExpect(jsonPath("$.data.replayed").value(false));

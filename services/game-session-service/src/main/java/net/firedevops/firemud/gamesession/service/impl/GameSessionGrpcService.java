@@ -579,6 +579,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
