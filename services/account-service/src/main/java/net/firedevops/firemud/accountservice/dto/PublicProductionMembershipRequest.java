@@ -8,5 +8,6 @@ import jakarta.validation.constraints.Size;
 public record PublicProductionMembershipRequest(
     @NotNull Long accountId,
     @NotNull Long tenantId,
+    @NotBlank @Size(max = 64) String worldSlug,
     @NotBlank @Size(max = 64) String realmSlug,
     @NotBlank @Size(max = 128) String requestId) {}

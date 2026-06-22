@@ -716,6 +716,7 @@ public class PlayCommandHandler {
             accountClient.ensurePublicProductionPlayerMembership(
                 Long.toString(context.accountId()),
                 Long.toString(selectedRealm.tenantId()),
+                selectedWorld.slug(),
                 selectedRealm.slug(),
                 requestId);
         Optional<ErrorDetail> ensureError = extractError(ensured.getError());

@@ -259,7 +259,7 @@ public final class AccountClient
   }
 
   public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
-      String accountId, String tenantId, String realmSlug, String requestId) {
+      String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
     if (stub() == null) {
       return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
           .setError(
@@ -272,6 +272,7 @@ public final class AccountClient
         EnsurePublicProductionPlayerMembershipRequest.newBuilder()
             .setAccountId(accountId)
             .setTenantId(tenantId)
+            .setWorldSlug(worldSlug)
             .setRealmSlug(realmSlug)
             .setRequestId(requestId == null ? "" : requestId)
             .build();

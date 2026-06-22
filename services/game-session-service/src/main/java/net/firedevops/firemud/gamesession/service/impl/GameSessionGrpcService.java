@@ -550,7 +550,7 @@ public final class GameSessionGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       GameplayAdmissionPointerSnapshot realm =
           gameplayAdmissionPointerAuthorityService
-              .findPointer(tenantId, request.getRealmSlug())
+              .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()

@@ -119,7 +119,7 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -144,6 +144,7 @@ class AccountServiceImplTest {
     when(sessionService.getPublicProductionMembershipReplay(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(Optional.empty());
@@ -454,7 +455,7 @@ class AccountServiceImplTest {
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -504,7 +505,7 @@ class AccountServiceImplTest {
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("sandbox")
@@ -559,7 +560,7 @@ class AccountServiceImplTest {
 
     when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-replay-1"))
         .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, firstResult, "", "")));
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -616,17 +617,18 @@ class AccountServiceImplTest {
             });
 
     PublicProductionMembershipResult result =
-        service.ensurePublicProductionPlayerMembership(11L, 7L, "production", "req-join-1");
+        service.ensurePublicProductionPlayerMembership(11L, 7L, "demo", "production", "req-join-1");
 
     assertEquals(11L, result.accountId());
     assertEquals(7L, result.tenantId());
+    assertEquals("demo", result.worldSlug());
     assertEquals("production", result.realmSlug());
     assertEquals(711L, result.membershipVersion());
     assertTrue(result.created());
     assertEquals("req-join-1", result.requestId());
     assertTrue(!result.replayed());
     org.mockito.Mockito.verify(loggingAdminClient)
-        .logPublicProductionMembershipCreated(7L, 11L, "production", 711L, "req-join-1");
+        .logPublicProductionMembershipCreated(7L, 11L, "demo", "production", 711L, "req-join-1");
   }
 
   @Test
@@ -642,14 +644,15 @@ class AccountServiceImplTest {
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
     PublicProductionMembershipResult firstResult =
         new PublicProductionMembershipResult(
-            11L, 7L, "production", 711L, true, "req-join-1", "2026-03-30T00:00:00Z", false);
-    when(sessionService.getPublicProductionMembershipReplay(7L, 11L, "production", "req-join-1"))
+            11L, 7L, "demo", "production", 711L, true, "req-join-1", "2026-03-30T00:00:00Z", false);
+    when(sessionService.getPublicProductionMembershipReplay(
+            7L, 11L, "demo", "production", "req-join-1"))
         .thenReturn(
             Optional.of(
                 new SessionService.PublicProductionMembershipReplay(true, firstResult, "", "")));
 
     PublicProductionMembershipResult replayed =
-        service.ensurePublicProductionPlayerMembership(11L, 7L, "production", "req-join-1");
+        service.ensurePublicProductionPlayerMembership(11L, 7L, "demo", "production", "req-join-1");
 
     assertEquals(firstResult.membershipVersion(), replayed.membershipVersion());
     assertEquals(firstResult.requestId(), replayed.requestId());
@@ -727,7 +730,7 @@ class AccountServiceImplTest {
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -758,7 +761,7 @@ class AccountServiceImplTest {
             Optional.of(
                 new SessionService.ConnectTokenReplay(
                     false, null, "CONNECT_SCOPE_MISMATCH", firstFailure.getMessage())));
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -876,7 +879,7 @@ class AccountServiceImplTest {
                     .setStateScope("ISOLATED")
                     .setCharacterCreationPolicy("COPIED_ONLY")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer(7L, "production"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")
@@ -913,6 +916,72 @@ class AccountServiceImplTest {
     assertEquals("ForkMara", characters.getFirst().characterName());
     assertEquals("ISOLATED", characters.getFirst().stateScope());
     assertEquals("COPIED_ONLY", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapCharactersUsesWorldQualifiedPointerLookupWhenRealmSlugDuplicatesAcrossWorlds() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(gameSessionClient.getAdmissionPointer(7L, "sandbox", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("sandbox")
+                .setWorldDisplayName("Builder Sandbox")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("91")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("ISOLATED")
+                .setCharacterCreationPolicy("COPIED_ONLY")
+                .build());
+    net.firedevops.firemud.entitymanagement.v1.Character character =
+        net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId("char-sandbox-1")
+            .setName("BuilderMara")
+            .setLevel(9)
+            .build();
+    when(entityManagementClient.listCharactersByAccount(
+            7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+        .thenReturn(java.util.List.of(character));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    var characters =
+        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "sandbox", "production");
+
+    assertEquals(1, characters.size());
+    assertEquals("char-sandbox-1", characters.getFirst().characterId());
+    assertEquals("BuilderMara", characters.getFirst().characterName());
+    assertEquals("ISOLATED", characters.getFirst().stateScope());
+    org.mockito.Mockito.verify(gameSessionClient).getAdmissionPointer(7L, "sandbox", "production");
   }
 
   @Test
@@ -984,7 +1053,7 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    when(gameSessionClient.getAdmissionPointer(7L, "preview"))
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
                 .setWorldSlug("demo")

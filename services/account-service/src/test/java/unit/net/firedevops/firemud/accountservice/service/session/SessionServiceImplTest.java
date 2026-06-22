@@ -157,16 +157,26 @@ class SessionServiceImplTest {
         new SessionService.PublicProductionMembershipReplay(
             true,
             new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
-                11L, 7L, "production", 711L, true, "req-join-1", "2026-05-25T00:00:00Z", false),
+                11L,
+                7L,
+                "demo",
+                "production",
+                711L,
+                true,
+                "req-join-1",
+                "2026-05-25T00:00:00Z",
+                false),
             "",
             "");
 
     service.storePublicProductionMembershipReplay(
-        7L, 11L, "production", "req-join-1", replay, 30000L);
+        7L, 11L, "demo", "production", "req-join-1", replay, 30000L);
 
     verify(valueOperations)
         .set(
-            "session:public-production-membership:tenant:7:account:11:realm:"
+            "session:public-production-membership:tenant:7:account:11:world:"
+                + sha256("demo")
+                + ":realm:"
                 + sha256("production")
                 + ":request:"
                 + sha256("req-join-1"),
@@ -177,6 +187,8 @@ class SessionServiceImplTest {
                 "11",
                 "tenantId",
                 "7",
+                "worldSlug",
+                "demo",
                 "realmSlug",
                 "production",
                 "membershipVersion",

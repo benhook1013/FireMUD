@@ -39,6 +39,7 @@ public class InternalRuntimeController {
             accountService.ensurePublicProductionPlayerMembership(
                 request.accountId(),
                 request.tenantId(),
+                request.worldSlug(),
                 request.realmSlug(),
                 request.requestId())));
   }

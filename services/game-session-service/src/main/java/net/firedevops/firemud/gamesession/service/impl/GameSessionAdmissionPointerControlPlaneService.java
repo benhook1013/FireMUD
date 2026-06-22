@@ -95,7 +95,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getRealmSlug())
+            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
             .orElseThrow(() -> new IllegalArgumentException("Admission pointer not found"));
     if (currentPointer.tenantId() != tenantId) {
       throw new IllegalArgumentException("tenant_id does not own admission pointer");
@@ -184,7 +184,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
       SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getRealmSlug())
+            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
             .orElse(null);
     validatePreparedUpgradeForPointerChange(
         request.getWorldSlug(),

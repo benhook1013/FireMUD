@@ -6,7 +6,8 @@ import java.util.Optional;
 public interface GameplayAdmissionPointerAuthorityService {
   List<GameplayAdmissionPointerSnapshot> listPointers();
 
-  Optional<GameplayAdmissionPointerSnapshot> findPointer(long tenantId, String realmSlug);
+  Optional<GameplayAdmissionPointerSnapshot> findPointer(
+      long tenantId, String worldSlug, String realmSlug);
 
   List<GameplayAdmissionPointerSnapshot> listByRuntimeTarget(long tenantId, long gameInstanceId);
 

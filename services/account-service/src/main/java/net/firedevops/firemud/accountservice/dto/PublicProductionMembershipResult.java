@@ -4,6 +4,7 @@ package net.firedevops.firemud.accountservice.dto;
 public record PublicProductionMembershipResult(
     long accountId,
     long tenantId,
+    String worldSlug,
     String realmSlug,
     long membershipVersion,
     boolean created,

@@ -47,11 +47,12 @@ class InternalRuntimeControllerTest {
         jwtUtil.generateToken(
             "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
     PublicProductionMembershipRequest request =
-        new PublicProductionMembershipRequest(11L, 7L, "production", "req-1");
-    when(accountService.ensurePublicProductionPlayerMembership(11L, 7L, "production", "req-1"))
+        new PublicProductionMembershipRequest(11L, 7L, "demo", "production", "req-1");
+    when(accountService.ensurePublicProductionPlayerMembership(
+            11L, 7L, "demo", "production", "req-1"))
         .thenReturn(
             new PublicProductionMembershipResult(
-                11L, 7L, "production", 711L, true, "req-1", "2026-04-13T10:00:00Z", false));
+                11L, 7L, "demo", "production", 711L, true, "req-1", "2026-04-13T10:00:00Z", false));
 
     mockMvc
         .perform(

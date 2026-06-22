@@ -39,13 +39,14 @@ public class GameplayAdmissionPointerRepository {
         .fetchOptional(this::toEntity);
   }
 
-  public Optional<GameplayAdmissionPointer> findByTenantIdAndRealmSlug(
-      Long tenantId, String realmSlug) {
+  public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
+      Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(
             GAMEPLAY_ADMISSION_POINTER
                 .TENANT_ID
                 .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
         .fetchOptional(this::toEntity);
   }

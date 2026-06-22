@@ -39,7 +39,7 @@ public interface AccountService {
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
 
   PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
-      Long accountId, Long tenantId, String realmSlug, String requestId);
+      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId);
 
   RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId);

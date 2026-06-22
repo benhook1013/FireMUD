@@ -116,13 +116,14 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     existing.setTenantId(7L);
     existing.setGameInstanceId(44L);
     existing.setPointerVersion(17L);
-    when(pointerRepository.findByTenantIdAndRealmSlug(7L, "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
-    GameplayAdmissionPointerSnapshot snapshot = service.findPointer(7L, "production").orElseThrow();
+    GameplayAdmissionPointerSnapshot snapshot =
+        service.findPointer(7L, "demo", "production").orElseThrow();
 
     assertEquals("demo", snapshot.worldSlug());
     assertEquals(44L, snapshot.gameInstanceId());
-    verify(pointerRepository).findByTenantIdAndRealmSlug(7L, "production");
+    verify(pointerRepository).findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production");
   }
 }

@@ -222,6 +222,7 @@ message ListGameplayRealmsResponse {
 message GetAdmissionPointerRequest {
   string tenant_id = 1;
   string realm_slug = 2;
+  string world_slug = 3;
 }
 
 message GameplayAdmissionPointer {

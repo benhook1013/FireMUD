@@ -298,7 +298,7 @@ class GameSessionGrpcServiceTest {
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
     world.setRealms(List.of(realm));
     properties.setWorlds(List.of(world));
-    Mockito.when(pointerAuthorityService.findPointer(7L, "production"))
+    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
         .thenReturn(
             java.util.Optional.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -351,7 +351,11 @@ class GameSessionGrpcServiceTest {
 
     AtomicReference<GetAdmissionPointerResponse> pointerRef = new AtomicReference<>();
     service.getAdmissionPointer(
-        GetAdmissionPointerRequest.newBuilder().setTenantId("7").setRealmSlug("production").build(),
+        GetAdmissionPointerRequest.newBuilder()
+            .setTenantId("7")
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .build(),
         new StreamObserver<>() {
           @Override
           public void onNext(GetAdmissionPointerResponse value) {

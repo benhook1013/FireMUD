@@ -32,11 +32,12 @@ public interface SessionService {
       long expirationMs);
 
   Optional<PublicProductionMembershipReplay> getPublicProductionMembershipReplay(
-      Long tenantId, Long accountId, String realmSlug, String requestId);
+      Long tenantId, Long accountId, String worldSlug, String realmSlug, String requestId);
 
   void storePublicProductionMembershipReplay(
       Long tenantId,
       Long accountId,
+      String worldSlug,
       String realmSlug,
       String requestId,
       PublicProductionMembershipReplay replay,
