@@ -369,3 +369,8 @@ Entry format:
   - Context: after `09.1` had already moved logout runtime-stop policy onto singular complete current runtime-target proof, `LogoutCommandHandler` still short-circuited on `findPointer(worldSlug, realmSlug)` when `playableStateScope` was absent on the session shell.
   - Observation: even when a selector lookup only proves the “shared” case, leaving it inside a lifecycle policy that already knows `{tenantId, gameInstanceId}` preserves a second authority story and weakens the slice's runtime-target convergence claim.
   - Expected pattern: once a lifecycle or command path already knows the runtime target, shared-versus-isolated fallback should come only from explicit shell scope or canonical current runtime-target authority, and selector-shaped pointer reads should disappear from that path entirely.
+
+- `2026-06-22`: Startup seed models should not reuse live authority config shapes
+  - Context: after `09.1` moved Game Session routing behavior onto persisted admission-pointer rows, the last production `GameplayCatalogProperties` dependency still survived in `GameplayAdmissionPointerBootstrapInitializer`, where startup-only seeding reused the same world/realm config model as live catalog behavior.
+  - Observation: even when a config schema is only used during empty-store bootstrap, reusing the live authority model keeps teaching the old shape as if it were still production routing truth and hides the fact that bootstrap needs a narrower contract than runtime reads.
+  - Expected pattern: when a startup seed path must remain, give it an explicit seed model that matches the actual bootstrap write contract, and keep the live authority config or runtime projection types out of production bootstrap wiring.
