@@ -51,15 +51,22 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointerAuditResponse listAdmissionPointerAudit(
       ListAdmissionPointerAuditRequest request) {
-    long tenantId =
+    java.util.List<Long> matchingTenantIds =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
                     pointer.worldSlug().equals(request.getWorldSlug())
                         && pointer.realmSlug().equals(request.getRealmSlug()))
-            .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("Admission pointer not found"))
-            .tenantId();
+            .map(GameplayAdmissionPointerSnapshot::tenantId)
+            .distinct()
+            .toList();
+    if (matchingTenantIds.isEmpty()) {
+      throw new IllegalArgumentException("Admission pointer not found");
+    }
+    if (matchingTenantIds.size() > 1) {
+      throw new IllegalArgumentException("Admission pointer selection is ambiguous");
+    }
+    long tenantId = matchingTenantIds.get(0);
     return ListAdmissionPointerAuditResponse.newBuilder()
         .addAllAudit(
             gameplayAdmissionPointerAuthorityService

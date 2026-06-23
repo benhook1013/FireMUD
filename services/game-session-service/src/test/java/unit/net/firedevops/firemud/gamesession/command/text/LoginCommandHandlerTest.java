@@ -310,7 +310,7 @@ class LoginCommandHandlerTest {
             Optional.of(
                 new FirstPartyConnectContext(
                     77L,
-                    0L,
+                    22L,
                     "demo",
                     "production",
                     0L,
@@ -319,7 +319,9 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "req-1",
                     "gateway-1")));
-    when(gameInstanceRepository.findById(0L)).thenReturn(Optional.of(buildInstance(0L, 0L, 77L)));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 0L, 1L)));
+    when(gameInstanceRepository.findById(0L)).thenReturn(Optional.of(buildInstance(0L, 22L, 77L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -344,6 +346,22 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "req-1",
                     "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+  }
+
+  @Test
+  void bareLoginDoesNotProceedWhenCurrentAdmissionPointerRealmIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L, 22L, "demo", " ", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);

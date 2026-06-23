@@ -780,7 +780,10 @@ public class AccountServiceImpl implements AccountService {
     try {
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
           gameSessionClient.getAdmissionPointer(bootstrapContext.tenantId(), worldSlug, realmSlug);
-      if (!java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+      Long responseTenantId = parseLong(realm.getTenantId());
+      if (responseTenantId == null
+          || responseTenantId != bootstrapContext.tenantId()
+          || !java.util.Objects.equals(worldSlug, realm.getWorldSlug())
           || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())
           || !isRealmAdmissible(bootstrapContext, realm)) {
         throw new AuthenticationException(
@@ -1013,17 +1016,6 @@ public class AccountServiceImpl implements AccountService {
     return builder.signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8))).compact();
   }
 
-  private Long parseLong(Object value) {
-    if (value == null) {
-      return null;
-    }
-    try {
-      return Long.valueOf(value.toString());
-    } catch (NumberFormatException ex) {
-      return null;
-    }
-  }
-
   private Instant parseInstant(Object value) {
     if (value == null) {
       return null;
@@ -1033,21 +1025,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (RuntimeException ex) {
       return null;
     }
-  }
-
-  private String claimText(Object value) {
-    if (value == null) {
-      return "";
-    }
-    if (value instanceof Iterable<?> iterable) {
-      for (Object candidate : iterable) {
-        if (candidate != null) {
-          return candidate.toString();
-        }
-      }
-      return "";
-    }
-    return value.toString();
   }
 
   private String stableId(Object... components) {
@@ -1412,7 +1389,10 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
     }
-    if (!java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+    Long responseTenantId = parseLong(realm.getTenantId());
+    if (responseTenantId == null
+        || !responseTenantId.equals(tenantId)
+        || !java.util.Objects.equals(worldSlug, realm.getWorldSlug())
         || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
@@ -1441,6 +1421,32 @@ public class AccountServiceImpl implements AccountService {
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
     };
+  }
+
+  private Long parseLong(Object value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      return Long.valueOf(value.toString());
+    } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+
+  private String claimText(Object value) {
+    if (value == null) {
+      return "";
+    }
+    if (value instanceof Iterable<?> iterable) {
+      for (Object candidate : iterable) {
+        if (candidate != null) {
+          return candidate.toString();
+        }
+      }
+      return "";
+    }
+    return value.toString();
   }
 
   private record ConnectScopeContext(
