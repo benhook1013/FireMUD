@@ -46,19 +46,21 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK and canonical lifecycle substrate into the fuller activity model when that work becomes active.
 10. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, gameplay `FRIENDS`, first-party-web structured friend roster/detail/summary/policy plus structured mutation-result payloads with fail-closed gameplay grammar, the now-canonical gameplay plus REST/gRPC Social Groups visibility-policy read/write seam, and one shared Account-profile JSON helper for that visibility-policy substrate across live clients plus shared runtime proof, into later social consumers and later privacy refinement without reopening `WHO`.
-11. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
+11. [02.1.7 Auth, Session, and Routing Guardrail Follow-Through](./02.1.7-task-list-auth-session-and-routing-guardrail-follow-through-vertical-slice.md)
+   Remaining: use this as the single growing queue for bounded auth/session/routing hardening seams where the architecture is already decided and only fail-closed follow-through remains, especially malformed token/claim rejection, non-positive or blank routing identity rejection, replay payload mismatch guards, and application-level gRPC error normalization with focused proof.
+12. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, Game Session -> Game Logic -> Entity Management item command routing, game-configured equipment slot/body-layout validation, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live; the main remaining work is the `06.3` follow-through and later authored stackability depth.
-12. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+13. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: build on the now-live stable visible-ref substrate across inventory/equipment/container/room-ground and `HERE`-style targeting views for non-player items and entities; players remain the special case and are still identified by character name rather than a generated visible ref.
-13. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+14. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: build on the now-live authored `stackVariantKey` plus runtime `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
-14. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
+15. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next honest gap is later domain-specific effect guards as new owning mutation families land, not another forced proving-ground batch in the current built-in command set.
 
-15. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+16. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: continue any later hardening only if real-load evidence justifies it; the original audit-family scheduler-pressure/operator-proof tail in `02.18.6` is now closed at the current boundary.
 
-16. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+17. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level
