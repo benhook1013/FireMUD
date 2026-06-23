@@ -582,7 +582,7 @@ public final class GameSessionGrpcService
     } catch (Exception ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "GetAdmissionPointer", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

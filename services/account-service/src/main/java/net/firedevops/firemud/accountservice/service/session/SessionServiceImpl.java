@@ -189,6 +189,9 @@ public class SessionServiceImpl implements SessionService {
     if (replay.success()) {
       PublicProductionMembershipResult result =
           requireResult(replay.result(), "public production membership replay");
+      if (!worldSlug.equals(result.worldSlug()) || !realmSlug.equals(result.realmSlug())) {
+        throw new IllegalArgumentException("public production membership replay payload mismatch");
+      }
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
       stored.put("worldSlug", result.worldSlug());

@@ -780,7 +780,9 @@ public class AccountServiceImpl implements AccountService {
     try {
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
           gameSessionClient.getAdmissionPointer(bootstrapContext.tenantId(), worldSlug, realmSlug);
-      if (!worldSlug.equals(realm.getWorldSlug()) || !isRealmAdmissible(bootstrapContext, realm)) {
+      if (!java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+          || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())
+          || !isRealmAdmissible(bootstrapContext, realm)) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -1409,6 +1411,11 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalStateException ex) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
+    }
+    if (!java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+        || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
     }
     if (!isPublicProductionRealm(realm)) {
       throw new AuthenticationException(

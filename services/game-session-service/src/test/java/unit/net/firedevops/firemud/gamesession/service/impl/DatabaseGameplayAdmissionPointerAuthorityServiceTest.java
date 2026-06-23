@@ -38,7 +38,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     GameplayAdmissionPointer existing = new GameplayAdmissionPointer();
     existing.setId(11L);
     existing.setPointerVersion(3L);
-    when(pointerRepository.findByWorldSlugAndRealmSlug("demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     assertThrows(
@@ -66,7 +66,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
 
   @Test
   void upsertPointerAllowsCreateWhenExpectedVersionIsZero() {
-    when(pointerRepository.findByWorldSlugAndRealmSlug("demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.empty());
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
         .thenAnswer(

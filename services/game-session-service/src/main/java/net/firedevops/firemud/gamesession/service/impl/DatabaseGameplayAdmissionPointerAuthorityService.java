@@ -70,8 +70,18 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     Instant now = Instant.now();
     GameplayAdmissionPointer pointer =
         pointerRepository
-            .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
-            .orElseGet(GameplayAdmissionPointer::new);
+            .findByTenantIdAndWorldSlugAndRealmSlug(
+                mutation.tenantId(), mutation.worldSlug(), mutation.realmSlug())
+            .orElseGet(
+                () ->
+                    pointerRepository
+                        .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
+                        .orElseGet(GameplayAdmissionPointer::new));
+    if (pointer.getId() != null
+        && pointer.getTenantId() != null
+        && pointer.getTenantId() != mutation.tenantId()) {
+      throw new IllegalArgumentException("tenant_id does not own admission pointer");
+    }
     enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
     long nextPointerVersion =
         pointer.getId() == null ? 1L : Math.max(pointer.getPointerVersion() + 1L, 1L);
@@ -121,9 +131,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Override
   @Transactional(readOnly = true)
   public List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
-      String worldSlug, String realmSlug) {
+      long tenantId, String worldSlug, String realmSlug) {
     return eventRepository
-        .findByWorldSlugAndRealmSlugOrderByOccurredAtDesc(worldSlug, realmSlug)
+        .findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(tenantId, worldSlug, realmSlug)
         .stream()
         .map(
             event ->

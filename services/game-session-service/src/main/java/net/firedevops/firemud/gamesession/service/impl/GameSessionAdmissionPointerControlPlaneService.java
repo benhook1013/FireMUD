@@ -40,7 +40,8 @@ final class GameSessionAdmissionPointerControlPlaneService {
                 .flatMap(
                     pointer ->
                         gameplayAdmissionPointerAuthorityService
-                            .listPointerAudit(pointer.worldSlug(), pointer.realmSlug())
+                            .listPointerAudit(
+                                pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
                             .stream()
                             .limit(1)
                             .map(this::toEntry))
@@ -50,10 +51,19 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointerAuditResponse listAdmissionPointerAudit(
       ListAdmissionPointerAuditRequest request) {
+    long tenantId =
+        gameplayAdmissionPointerAuthorityService.listPointers().stream()
+            .filter(
+                pointer ->
+                    pointer.worldSlug().equals(request.getWorldSlug())
+                        && pointer.realmSlug().equals(request.getRealmSlug()))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Admission pointer not found"))
+            .tenantId();
     return ListAdmissionPointerAuditResponse.newBuilder()
         .addAllAudit(
             gameplayAdmissionPointerAuthorityService
-                .listPointerAudit(request.getWorldSlug(), request.getRealmSlug())
+                .listPointerAudit(tenantId, request.getWorldSlug(), request.getRealmSlug())
                 .stream()
                 .map(this::toEntry)
                 .toList())
@@ -82,7 +92,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
             request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
             normalizeBlank(request.getPreparedVersionUpgradeId())));
     return SetAdmissionPointerResponse.newBuilder()
-        .setPointer(latestAuditEntry(request.getWorldSlug(), request.getRealmSlug()))
+        .setPointer(latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug()))
         .build();
   }
 
@@ -138,7 +148,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
             request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
             request.getPreparedVersionUpgradeId()));
     AdmissionPointerControlPlaneEntry entry =
-        latestAuditEntry(request.getWorldSlug(), request.getRealmSlug());
+        latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug());
     versionUpgradePreparationService.markPreparedVersionUpgradeExecuted(
         tenantId,
         request.getPreparedVersionUpgradeId(),
@@ -148,8 +158,11 @@ final class GameSessionAdmissionPointerControlPlaneService {
     return ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(entry).build();
   }
 
-  private AdmissionPointerControlPlaneEntry latestAuditEntry(String worldSlug, String realmSlug) {
-    return gameplayAdmissionPointerAuthorityService.listPointerAudit(worldSlug, realmSlug).stream()
+  private AdmissionPointerControlPlaneEntry latestAuditEntry(
+      long tenantId, String worldSlug, String realmSlug) {
+    return gameplayAdmissionPointerAuthorityService
+        .listPointerAudit(tenantId, worldSlug, realmSlug)
+        .stream()
         .findFirst()
         .map(this::toEntry)
         .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
@@ -261,7 +274,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
       throw new IllegalArgumentException(
           "target_game_instance_id must differ from the current admission pointer target");
     }
-    AdmissionPointerControlPlaneEntry entry = latestAuditEntry(worldSlug, realmSlug);
+    AdmissionPointerControlPlaneEntry entry = latestAuditEntry(tenantId, worldSlug, realmSlug);
     if (preparation.executedPointerVersion() != null
         && entry.getPointerVersion() != preparation.executedPointerVersion()) {
       throw new CutoverPreparationValidationException(

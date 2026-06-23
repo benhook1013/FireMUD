@@ -839,7 +839,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerAuditEntry(
@@ -1122,7 +1122,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerAuditEntry(
@@ -1230,7 +1230,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerAuditEntry(
@@ -1348,7 +1348,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void listAdmissionPointerAuditReturnsEntriesForAdminCaller() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.listPointerAudit("demo", "production"))
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerAuditEntry(
@@ -1387,6 +1387,22 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "req-0",
                     null,
                     Instant.parse("2026-04-14T00:00:00Z"))));
+    Mockito.when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(

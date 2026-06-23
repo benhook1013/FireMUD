@@ -287,6 +287,32 @@ class SessionServiceImplTest {
         .hasMessageContaining("connect token replay");
   }
 
+  @Test
+  void storePublicProductionMembershipReplayRejectsMismatchedWorldRealmPayload() {
+    SessionService.PublicProductionMembershipReplay replay =
+        new SessionService.PublicProductionMembershipReplay(
+            true,
+            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
+                11L,
+                7L,
+                "demo",
+                "production",
+                711L,
+                true,
+                "req-join-1",
+                "2026-05-25T00:00:00Z",
+                false),
+            "",
+            "");
+
+    assertThatThrownBy(
+            () ->
+                service.storePublicProductionMembershipReplay(
+                    7L, 11L, "sandbox", "production", "req-join-1", replay, 30000L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("public production membership replay payload mismatch");
+  }
+
   private static String sha256(String token) {
     try {
       return HexFormat.of()

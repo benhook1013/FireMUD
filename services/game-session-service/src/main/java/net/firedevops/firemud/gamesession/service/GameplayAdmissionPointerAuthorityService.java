@@ -13,5 +13,6 @@ public interface GameplayAdmissionPointerAuthorityService {
 
   GameplayAdmissionPointerSnapshot upsertPointer(GameplayAdmissionPointerMutation mutation);
 
-  List<GameplayAdmissionPointerAuditEntry> listPointerAudit(String worldSlug, String realmSlug);
+  List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
+      long tenantId, String worldSlug, String realmSlug);
 }

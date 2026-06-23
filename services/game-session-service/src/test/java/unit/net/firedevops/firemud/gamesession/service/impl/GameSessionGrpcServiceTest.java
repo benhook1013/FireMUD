@@ -426,7 +426,7 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("INTERNAL", ref.get().getError().getCode());
-    assertEquals("pointer store unavailable", ref.get().getError().getMessage());
+    assertEquals("Internal error", ref.get().getError().getMessage());
   }
 
   @Test
