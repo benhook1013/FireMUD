@@ -18,6 +18,8 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Keep fast-moving AI-driven PRs in draft while push-looping so CodeRabbit does not auto-review every incremental commit.
 - If a PR must stay non-draft during active iteration, pause CodeRabbit with `@coderabbitai pause` and request a fresh pass only at meaningful checkpoints with `@coderabbitai review` or `@coderabbitai full review`.
 - Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
+- For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
+- When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
