@@ -74,6 +74,8 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                 mutation.tenantId(), mutation.worldSlug(), mutation.realmSlug())
             .orElseGet(
                 () ->
+                    // Fall back to the legacy world/realm key so existing rows can be
+                    // adopted into the canonical tenant-qualified pointer contract in place.
                     pointerRepository
                         .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
                         .orElseGet(GameplayAdmissionPointer::new));

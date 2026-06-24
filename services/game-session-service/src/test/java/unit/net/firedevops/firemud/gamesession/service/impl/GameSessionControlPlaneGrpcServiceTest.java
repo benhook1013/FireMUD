@@ -1468,6 +1468,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "SHARED",
                     "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
             Mockito.mock(GameInstanceRepository.class),
@@ -1477,7 +1478,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            meterRegistry);
 
     AtomicReference<ListAdmissionPointerAuditResponse> responseRef = new AtomicReference<>();
     service.listAdmissionPointerAudit(
@@ -1496,6 +1497,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals(
         "Admission pointer selection is ambiguous", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verify(authorityService, Mockito.never())
         .listPointerAudit(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
   }

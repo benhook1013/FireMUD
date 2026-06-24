@@ -183,7 +183,13 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       ListAdmissionPointerAuditResponse response =
           ListAdmissionPointerAuditResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListAdmissionPointerAudit",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
