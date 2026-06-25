@@ -40,17 +40,20 @@ public class FirstPartyConnectContextService {
       long tenantId = parseLong(claims.get("tenantId"));
       long gameInstanceId = parseLong(claims.get("gameInstanceId"));
       long pointerVersion = parseLong(claims.get("pointerVersion"));
+      if (pointerVersion <= 0) {
+        throw new IllegalArgumentException("Missing pointerVersion");
+      }
       return Optional.of(
           new FirstPartyConnectContext(
               accountId,
               tenantId,
-              stringClaim(claims, "worldSlug"),
-              stringClaim(claims, "realmSlug"),
+              requiredTextClaim(claims, "worldSlug"),
+              requiredTextClaim(claims, "realmSlug"),
               gameInstanceId,
               pointerVersion,
-              stringClaim(claims, "connectScopeId"),
+              requiredTextClaim(claims, "connectScopeId"),
               stringClaim(claims, "connectTokenJti"),
-              stringClaim(claims, "connectRequestId"),
+              requiredTextClaim(claims, "connectRequestId"),
               stringClaim(claims, "gatewayRequestId")));
     } catch (IllegalArgumentException | JwtException ex) {
       logger.warn("Rejecting invalid first-party connect context", ex);
@@ -71,5 +74,13 @@ public class FirstPartyConnectContextService {
   private static String stringClaim(Claims claims, String key) {
     Object value = claims.get(key);
     return value == null ? null : value.toString();
+  }
+
+  private static String requiredTextClaim(Claims claims, String key) {
+    String value = stringClaim(claims, key);
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalArgumentException("Missing required claim: " + key);
+    }
+    return value.trim();
   }
 }
