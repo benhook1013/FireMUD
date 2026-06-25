@@ -136,6 +136,11 @@ public final class GameSessionControlPlaneGrpcService
         meterRegistry, logger, operation, "PERMISSION_DENIED", ex.getMessage());
   }
 
+  private ErrorDetail invalidArgumentError(String operation, IllegalArgumentException ex) {
+    return GrpcAppErrors.error(
+        meterRegistry, logger, operation, "INVALID_ARGUMENT", ex.getMessage());
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointers")
   public void listAdmissionPointers(
@@ -225,7 +230,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetGameplayCommandStatusResponse response =
           GetGameplayCommandStatusResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetGameplayCommandStatus", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -265,7 +270,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetRuntimeOwnershipStatusResponse response =
           GetRuntimeOwnershipStatusResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetRuntimeOwnershipStatus", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -300,7 +305,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetRemoteCommandCoordinator", ex))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -333,7 +338,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           ListRemoteCommandCoordinatorsResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ListRemoteCommandCoordinators", ex))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -359,7 +364,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           ScheduleRemoteFollowupResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ScheduleRemoteFollowup", ex))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -392,7 +397,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           ListRemoteFollowupsResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ListRemoteFollowups", ex))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -425,7 +430,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           ListRemoteFollowupResultsResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ListRemoteFollowupResults", ex))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -461,7 +466,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       SetAdmissionPointerResponse response =
           SetAdmissionPointerResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("SetAdmissionPointer", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -516,7 +521,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       ExecutePreparedVersionCutoverResponse response =
           ExecutePreparedVersionCutoverResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ExecutePreparedVersionCutover", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -570,7 +575,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetPinnedScriptPatchVersion", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -607,7 +612,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetGameSessionPinConvergenceResponse response =
           GetGameSessionPinConvergenceResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetGameSessionPinConvergence", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -647,7 +652,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetGameInstanceRuntimeState", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -683,7 +688,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       ValidateBuiltInCommandAliasResponse response =
           ValidateBuiltInCommandAliasResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ValidateBuiltInCommandAlias", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -721,7 +726,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       SetPinnedScriptPatchVersionResponse response =
           SetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("SetPinnedScriptPatchVersion", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -759,7 +764,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       RollbackScriptPatchVersionResponse response =
           RollbackScriptPatchVersionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("RollbackScriptPatchVersion", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -797,7 +802,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       ValidateInstanceCutoverCompatibilityResponse response =
           ValidateInstanceCutoverCompatibilityResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ValidateInstanceCutoverCompatibility", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -836,7 +841,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       PrepareVersionUpgradeResponse response =
           PrepareVersionUpgradeResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("PrepareVersionUpgrade", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -872,7 +877,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetPreparedVersionUpgradeResponse response =
           GetPreparedVersionUpgradeResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("GetPreparedVersionUpgrade", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -902,7 +907,7 @@ public final class GameSessionControlPlaneGrpcService
           EnqueueAutomationCommandIfAbsentResponse.newBuilder()
               .setAccepted(false)
               .setAdmissionOutcome("REJECTED")
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("EnqueueAutomationCommandIfAbsent", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -944,7 +949,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       PurgeQueuedTickCommandsForScriptPatchResponse response =
           PurgeQueuedTickCommandsForScriptPatchResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("PurgeQueuedTickCommandsForScriptPatch", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -982,7 +987,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       PurgeQueuedTickCommandsForPluginVersionResponse response =
           PurgeQueuedTickCommandsForPluginVersionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("PurgeQueuedTickCommandsForPluginVersion", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1019,7 +1024,7 @@ public final class GameSessionControlPlaneGrpcService
       PauseTicksForScopeResponse response =
           PauseTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("PauseTicksForScope", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1058,7 +1063,7 @@ public final class GameSessionControlPlaneGrpcService
       ResumeTicksForScopeResponse response =
           ResumeTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .setError(invalidArgumentError("ResumeTicksForScope", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

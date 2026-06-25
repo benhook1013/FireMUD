@@ -28,8 +28,8 @@ class JwtClaimsTest {
   void requireClaimRejectsMissingOrBlankClaimsAndReadsFirstIterableValue() {
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
     Claims claims =
-        jwtUtil.parseToken(
-                jwtUtil.generateToken("11", Map.of("aud", List.of("", "gameplay-connect"))))
+        jwtUtil
+            .parseToken(jwtUtil.generateToken("11", Map.of("aud", List.of("", "gameplay-connect"))))
             .getPayload();
 
     assertEquals("gameplay-connect", JwtClaims.requireClaim(claims, "aud"));
@@ -37,6 +37,7 @@ class JwtClaimsTest {
 
     Claims claimsBlank =
         jwtUtil.parseToken(jwtUtil.generateToken("11", Map.of("blank", " "))).getPayload();
-    assertThrows(IllegalArgumentException.class, () -> JwtClaims.requireClaim(claimsBlank, "blank"));
+    assertThrows(
+        IllegalArgumentException.class, () -> JwtClaims.requireClaim(claimsBlank, "blank"));
   }
 }
