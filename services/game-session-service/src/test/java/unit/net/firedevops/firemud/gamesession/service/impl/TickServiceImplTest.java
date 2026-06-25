@@ -846,8 +846,6 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":77"));
-    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
             .contains("\"automationDispatchId\":\"dispatch-1\""));
@@ -892,15 +890,19 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\":17"));
     org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"SCHEDULE_TIMER\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch
             .getSelectedWorkManifestJson()
-            .contains("\"sourceState\":\"REDIS_PENDING_CLAIMED\""));
-    org.junit.jupiter.api.Assertions.assertEquals("GAMEPLAY_COMMAND", command.getQueueSourceKind());
+            .contains("\"sourceState\":\"SCHEDULE_DUE_CLAIMED\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stagedBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":5000"));
+    org.junit.jupiter.api.Assertions.assertEquals("SCHEDULE_TIMER", command.getQueueSourceKind());
     org.junit.jupiter.api.Assertions.assertEquals(
-        "REDIS_PENDING_CLAIMED", command.getQueueSourceState());
-    org.junit.jupiter.api.Assertions.assertEquals(77L, command.getQueueSourceOrdinal());
+        "SCHEDULE_DUE_CLAIMED", command.getQueueSourceState());
+    org.junit.jupiter.api.Assertions.assertEquals(5000L, command.getQueueSourceOrdinal());
     org.junit.jupiter.api.Assertions.assertEquals(14L, command.getQueueSourceDueTickId());
-    org.junit.jupiter.api.Assertions.assertNull(command.getQueueSourceDueAtMs());
+    org.junit.jupiter.api.Assertions.assertEquals(5000L, command.getQueueSourceDueAtMs());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<net.firedevops.firemud.gamesession.entity.TickEffect>> effectCaptor =
         ArgumentCaptor.forClass(List.class);

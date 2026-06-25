@@ -130,6 +130,36 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void markBatchDrainedPreservesTimerSourceTupleOnGameplayCommand() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-1");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+    batch.setExecutorFence("fence-a");
+    batch.setCommandCount(1);
+    TickQueuedCommandEnvelope entry = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    GameplayCommand command = gameplayCommand("cmd-1");
+    command.setDueTickId(14L);
+    command.setOriginSourceKind("SCHEDULE_TIMER");
+    command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    command.setOriginSourceOrdinal(5000L);
+    command.setOriginSourceDueAtMs(9000L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.markBatchDrained(batch, List.of(entry));
+
+    assertEquals("DRAINED", command.getExecutionOutcome());
+    assertEquals("SCHEDULE_TIMER", command.getQueueSourceKind());
+    assertEquals("SCHEDULE_DUE_CLAIMED", command.getQueueSourceState());
+    assertEquals(5000L, command.getQueueSourceOrdinal());
+    assertEquals(14L, command.getQueueSourceDueTickId());
+    assertEquals(9000L, command.getQueueSourceDueAtMs());
+  }
+
+  @Test
   void markBatchManifestMismatchMarksRetryAndIncrementsMetric() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-1");
