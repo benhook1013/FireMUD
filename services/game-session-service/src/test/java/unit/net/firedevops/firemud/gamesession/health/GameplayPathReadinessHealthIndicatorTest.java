@@ -11,6 +11,7 @@ import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
@@ -46,15 +47,19 @@ class GameplayPathReadinessHealthIndicatorTest {
             accountClient, gameLogicClient, localPathProbe, tracker());
 
     Health health = indicator.health();
+    Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>) rawDependencies;
 
     assertEquals(Status.UP, health.getStatus());
     assertIterableEquals(
         List.of("contract", "admissionMeaning", "dependencies"), health.getDetails().keySet());
-    assertEquals("AUTH_INVALID_CREDENTIALS", dependencies.get("accountService").get("outcome"));
-    assertEquals("NOT_FOUND", dependencies.get("gameLogicService").get("outcome"));
+    assertEquals(
+        "AUTH_INVALID_CREDENTIALS",
+        Objects.requireNonNull(dependencies.get("accountService")).get("outcome"));
+    assertEquals(
+        "NOT_FOUND", Objects.requireNonNull(dependencies.get("gameLogicService")).get("outcome"));
   }
 
   @Test
@@ -71,15 +76,16 @@ class GameplayPathReadinessHealthIndicatorTest {
             tracker());
 
     Health health = indicator.health();
+    Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>) rawDependencies;
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(
         List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
         health.getDetails().keySet());
-    assertEquals("DOWN", dependencies.get("accountService").get("status"));
+    assertEquals("DOWN", Objects.requireNonNull(dependencies.get("accountService")).get("status"));
   }
 
   @Test
@@ -105,16 +111,18 @@ class GameplayPathReadinessHealthIndicatorTest {
             accountClient, gameLogicClient, localPathProbe, tracker());
 
     Health health = indicator.health();
+    Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>) rawDependencies;
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(
         List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
         health.getDetails().keySet());
-    assertEquals("UP", dependencies.get("accountService").get("status"));
-    assertEquals("DOWN", dependencies.get("gameLogicService").get("status"));
+    assertEquals("UP", Objects.requireNonNull(dependencies.get("accountService")).get("status"));
+    assertEquals(
+        "DOWN", Objects.requireNonNull(dependencies.get("gameLogicService")).get("status"));
   }
 
   @Test
@@ -136,15 +144,17 @@ class GameplayPathReadinessHealthIndicatorTest {
             accountClient, mock(GameLogicClient.class), localPathProbe, tracker());
 
     Health health = indicator.health();
+    Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>) rawDependencies;
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(
         List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
         health.getDetails().keySet());
-    assertEquals("DOWN", dependencies.get("sessionContextStore").get("status"));
+    assertEquals(
+        "DOWN", Objects.requireNonNull(dependencies.get("sessionContextStore")).get("status"));
   }
 
   private static ReadinessTransitionTracker tracker() {

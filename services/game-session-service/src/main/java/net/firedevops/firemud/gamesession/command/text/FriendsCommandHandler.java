@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Locale;
@@ -37,6 +38,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation only guards injected collaborators before the handler is used.")
 @Component
 public class FriendsCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(FriendsCommandHandler.class);

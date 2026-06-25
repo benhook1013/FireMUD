@@ -26,9 +26,9 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
 - `ListBootstrapCharacters` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
-- Bootstrap discovery response contract: for each admissible realm target, return `connectScopeId`, `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
+- Bootstrap discovery response contract: for each admissible realm target, return `connectScopeId`, `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
   - Required behavior: treat this as a short-lived snapshot proof of the evaluated realm target, not a durable reservation; callers must rerun discovery after `connectScopeExpiresAt` or after stale-scope failures.
-- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, realmSlug, gameInstanceId}`.
+- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, worldSlug, realmSlug, gameInstanceId}`.
   - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against current visibility/grant state and current admission-pointer state at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible.
   - Required behavior: `requestId` is the idempotency key for issuance. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure.
 - `EnsurePublicProductionPlayerMembership` – idempotently create or return the caller's `player` membership for first admission through the default public production realm and return the resulting `membershipVersion`.
@@ -146,12 +146,13 @@ Required semantics:
 - `evaluatedAt` timestamps the live membership decision used for admission or resume.
 - `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
 
-Illustrative `GetRealmAccessGrant(accountId, tenantId, realmSlug)` response:
+Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` response:
 
 ```json
 {
   "accountId": "acct_123",
   "tenantId": "tenant-demo",
+  "worldSlug": "demo",
   "realmSlug": "playtest-docks",
   "accessAllowed": true,
   "grantedByAccountId": "acct_admin_9",

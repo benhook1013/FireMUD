@@ -31,7 +31,7 @@ import reactor.core.publisher.Mono;
  * gateway enforcement point for those invariants.
  */
 @Component
-public class HeaderTrustFilter implements WebFilter, Ordered {
+public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";

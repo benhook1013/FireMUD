@@ -10,7 +10,7 @@ The creator-facing playtest loop is:
 1. **Create a forked playtest realm** from the current production realm or another source realm snapshot.
 2. **Target the build under evaluation** by launching the fork on the desired `versionId` and optional `scriptPatchVersion`.
 3. **Invite testers** from the community via Discord, email, or direct tenant access grants managed by `tenantAdmin` (or `platformAdmin` for break-glass support). Only authorized testers see the fork in realm discovery.
-   The minimum grant payload is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. Revoking a grant removes future realm visibility/admission for that account without deleting the fork itself.
+   The minimum grant payload is `{tenantId, worldSlug, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. Revoking a grant removes future realm visibility/admission for that account without deleting the fork itself.
 4. **Collect feedback** through a shared form linked in the web client and store the results in the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md), tagged to the playtest realm.
 5. **Review logs and metrics** in Grafana and Kibana to detect crashes or errors. See [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md) and [Analytics Dashboards](../../architecture/microservices/logging-admin-service/analytics-dashboards.md).
 6. **Reset or expire the fork** when a test cycle is complete. Fork data can be discarded or recreated from a new snapshot; runtime state does not merge back into production.

@@ -14,6 +14,7 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 dependencies {
     implementation("io.netty:netty-all:4.2.14.Final")
     implementation(libs.spring.boot.starter.websocket)
+    implementation(project(":common-security"))
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)
@@ -29,7 +30,7 @@ dependencies {
     testImplementation(project(":social-groups-service"))
     testImplementation(project(":spring-cloud-gateway"))
     testImplementation(project(":world-management-service"))
-    testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
+    testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.2")
     testRuntimeOnly(libs.postgresql)
 }
 

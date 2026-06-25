@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +17,11 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation fails fast for Spring-managed repositories without exposing a"
+            + " partially initialized authority service.")
 @Service
 public class DatabaseGameplayAdmissionPointerAuthorityService
     implements GameplayAdmissionPointerAuthorityService {
@@ -42,9 +48,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Override
   @Transactional(readOnly = true)
   public Optional<GameplayAdmissionPointerSnapshot> findPointer(
-      String worldSlug, String realmSlug) {
+      long tenantId, String worldSlug, String realmSlug) {
     return pointerRepository
-        .findByWorldSlugAndRealmSlug(worldSlug, realmSlug)
+        .findByTenantIdAndWorldSlugAndRealmSlug(tenantId, worldSlug, realmSlug)
         .map(this::toSnapshot);
   }
 
@@ -64,8 +70,20 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     Instant now = Instant.now();
     GameplayAdmissionPointer pointer =
         pointerRepository
-            .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
-            .orElseGet(GameplayAdmissionPointer::new);
+            .findByTenantIdAndWorldSlugAndRealmSlug(
+                mutation.tenantId(), mutation.worldSlug(), mutation.realmSlug())
+            .orElseGet(
+                () ->
+                    // Fall back to the legacy world/realm key so existing rows can be
+                    // adopted into the canonical tenant-qualified pointer contract in place.
+                    pointerRepository
+                        .findByWorldSlugAndRealmSlug(mutation.worldSlug(), mutation.realmSlug())
+                        .orElseGet(GameplayAdmissionPointer::new));
+    if (pointer.getId() != null
+        && pointer.getTenantId() != null
+        && pointer.getTenantId() != mutation.tenantId()) {
+      throw new IllegalArgumentException("tenant_id does not own admission pointer");
+    }
     enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
     long nextPointerVersion =
         pointer.getId() == null ? 1L : Math.max(pointer.getPointerVersion() + 1L, 1L);
@@ -115,9 +133,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Override
   @Transactional(readOnly = true)
   public List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
-      String worldSlug, String realmSlug) {
+      long tenantId, String worldSlug, String realmSlug) {
     return eventRepository
-        .findByWorldSlugAndRealmSlugOrderByOccurredAtDesc(worldSlug, realmSlug)
+        .findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(tenantId, worldSlug, realmSlug)
         .stream()
         .map(
             event ->

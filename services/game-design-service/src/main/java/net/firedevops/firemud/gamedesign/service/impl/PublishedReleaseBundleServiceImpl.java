@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -14,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Fail-fast startup is intentional if bundle persistence wiring is invalid.")
 public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundleService {
 
   private final PublishedReleaseBundleRepository repository;

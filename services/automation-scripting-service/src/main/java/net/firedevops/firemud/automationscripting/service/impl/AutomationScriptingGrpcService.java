@@ -66,27 +66,9 @@ public class AutomationScriptingGrpcService
   private final MeterRegistry meterRegistry;
 
   @org.springframework.beans.factory.annotation.Autowired
-  public AutomationScriptingGrpcService(
-      PingService pingService,
-      ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
-      ScriptVersionService scriptVersionService,
-      ScriptEventIngressService scriptEventIngressService,
-      ScriptWorkItemRepository workItemRepository,
-      NpcFormationService formationService,
-      MeterRegistry meterRegistry) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        null,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
-  }
-
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,

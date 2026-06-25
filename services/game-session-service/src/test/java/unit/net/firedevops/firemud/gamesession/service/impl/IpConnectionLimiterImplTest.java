@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,7 +47,7 @@ class IpConnectionLimiterImplTest {
               return null;
             })
         .when(ops)
-        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any());
+        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any(Duration.class));
     doAnswer(
             inv -> {
               store.remove(inv.getArgument(0));
@@ -101,7 +102,7 @@ class IpConnectionLimiterImplTest {
               return null;
             })
         .when(ops)
-        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any());
+        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any(Duration.class));
     doAnswer(
             inv -> {
               store.remove(inv.getArgument(0));

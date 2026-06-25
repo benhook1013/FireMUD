@@ -348,6 +348,59 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void remoteTargetDeadLettersWhenRemoteScheduleResponseOmitsDurableIds() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L))
+                .build());
+    when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
+        .thenReturn(ScheduleRemoteFollowupResponse.newBuilder().build());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues().get(1).getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItemCaptor.getAllValues().get(1).getCancelReason())
+        .isEqualTo("REMOTE_RESPONSE_INVALID");
+    assertThat(audit.getFinalStage()).isEqualTo("HANDOFF");
+    assertThat(audit.getFinalOutcome()).isEqualTo("handoff_failed");
+    assertThat(audit.getFinalReason()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getRemoteCoordinatorId()).isBlank();
+    assertThat(handoffCaptor.getValue().getRemoteFollowupId()).isBlank();
+    assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("remote_rejected");
+    assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("REMOTE_RESPONSE_INVALID");
+  }
+
+  @Test
   void collapsesPartialRoutingBundleBeforeForwardingOrPersistingHandoff() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

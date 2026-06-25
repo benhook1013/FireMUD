@@ -408,6 +408,7 @@ public class AccountServiceImpl implements AccountService {
               ensurePublicProductionPlayerMembership(
                   bootstrapContext.accountId(),
                   scopeContext.tenantId(),
+                  scopeContext.worldSlug(),
                   scopeContext.realmSlug(),
                   request.requestId()));
     }
@@ -501,28 +502,30 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.public_production_membership")
   public PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
-      Long accountId, Long tenantId, String realmSlug, String requestId) {
+      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId) {
     Optional<
             net.firedevops.firemud.accountservice.service.session.SessionService
                 .PublicProductionMembershipReplay>
         cachedReplay =
             sessionService.getPublicProductionMembershipReplay(
-                tenantId, accountId, realmSlug, requestId);
+                tenantId, accountId, worldSlug, realmSlug, requestId);
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
         logger.info(
-            "Replayed public-production membership attempt for account {} tenant {} realm {} requestId {}",
+            "Replayed public-production membership attempt for account {} tenant {} world {} realm {} requestId {}",
             accountId,
             tenantId,
+            worldSlug,
             realmSlug,
             requestId);
         return replayedPublicProductionMembershipResult(replay.result());
       }
       logger.info(
-          "Replayed failed public-production membership attempt for account {} tenant {} realm {} requestId {} code {}",
+          "Replayed failed public-production membership attempt for account {} tenant {} world {} realm {} requestId {} code {}",
           accountId,
           tenantId,
+          worldSlug,
           realmSlug,
           requestId,
           replay.errorCode());
@@ -530,10 +533,12 @@ public class AccountServiceImpl implements AccountService {
     }
     try {
       PublicProductionMembershipResult result =
-          ensurePublicProductionPlayerMembershipFresh(accountId, tenantId, realmSlug, requestId);
+          ensurePublicProductionPlayerMembershipFresh(
+              accountId, tenantId, worldSlug, realmSlug, requestId);
       sessionService.storePublicProductionMembershipReplay(
           tenantId,
           accountId,
+          worldSlug,
           realmSlug,
           requestId,
           new net.firedevops.firemud.accountservice.service.session.SessionService
@@ -544,6 +549,7 @@ public class AccountServiceImpl implements AccountService {
       sessionService.storePublicProductionMembershipReplay(
           tenantId,
           accountId,
+          worldSlug,
           realmSlug,
           requestId,
           new net.firedevops.firemud.accountservice.service.session.SessionService
@@ -554,9 +560,9 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PublicProductionMembershipResult ensurePublicProductionPlayerMembershipFresh(
-      Long accountId, Long tenantId, String realmSlug, String requestId) {
+      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId) {
     requireAccount(accountId);
-    var realm = requirePublicProductionRealm(tenantId, realmSlug);
+    var realm = requirePublicProductionRealm(tenantId, worldSlug, realmSlug);
     RuntimeEntitlementsDto entitlements = getTenantEntitlementsForRuntime(tenantId, requestId);
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
@@ -574,6 +580,7 @@ public class AccountServiceImpl implements AccountService {
       return new PublicProductionMembershipResult(
           accountId,
           tenantId,
+          realm.getWorldSlug(),
           realm.getRealmSlug(),
           membership.getId(),
           false,
@@ -600,6 +607,7 @@ public class AccountServiceImpl implements AccountService {
       return new PublicProductionMembershipResult(
           accountId,
           tenantId,
+          realm.getWorldSlug(),
           realm.getRealmSlug(),
           concurrent.getId(),
           false,
@@ -612,17 +620,24 @@ public class AccountServiceImpl implements AccountService {
     runAfterCommit(
         () ->
             safeLogPublicProductionMembershipCreated(
-                tenantId, accountId, realm.getRealmSlug(), membershipVersion, requestId));
+                tenantId,
+                accountId,
+                realm.getWorldSlug(),
+                realm.getRealmSlug(),
+                membershipVersion,
+                requestId));
     logger.info(
-        "Created public-production gameplay membership for account {} tenant {} realm {} membershipVersion {} requestId {}",
+        "Created public-production gameplay membership for account {} tenant {} world {} realm {} membershipVersion {} requestId {}",
         accountId,
         tenantId,
+        realm.getWorldSlug(),
         realm.getRealmSlug(),
         membershipVersion,
         requestId);
     return new PublicProductionMembershipResult(
         accountId,
         tenantId,
+        realm.getWorldSlug(),
         realm.getRealmSlug(),
         membershipVersion,
         true,
@@ -764,8 +779,13 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
     try {
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
-          gameSessionClient.getAdmissionPointer(worldSlug, realmSlug);
-      if (!isRealmAdmissible(bootstrapContext, realm)) {
+          gameSessionClient.getAdmissionPointer(bootstrapContext.tenantId(), worldSlug, realmSlug);
+      Long responseTenantId = parseLong(realm.getTenantId());
+      if (responseTenantId == null
+          || responseTenantId != bootstrapContext.tenantId()
+          || !java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+          || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())
+          || !isRealmAdmissible(bootstrapContext, realm)) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -996,17 +1016,6 @@ public class AccountServiceImpl implements AccountService {
     return builder.signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8))).compact();
   }
 
-  private Long parseLong(Object value) {
-    if (value == null) {
-      return null;
-    }
-    try {
-      return Long.valueOf(value.toString());
-    } catch (NumberFormatException ex) {
-      return null;
-    }
-  }
-
   private Instant parseInstant(Object value) {
     if (value == null) {
       return null;
@@ -1016,21 +1025,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (RuntimeException ex) {
       return null;
     }
-  }
-
-  private String claimText(Object value) {
-    if (value == null) {
-      return "";
-    }
-    if (value instanceof Iterable<?> iterable) {
-      for (Object candidate : iterable) {
-        if (candidate != null) {
-          return candidate.toString();
-        }
-      }
-      return "";
-    }
-    return value.toString();
   }
 
   private String stableId(Object... components) {
@@ -1071,15 +1065,21 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private void safeLogPublicProductionMembershipCreated(
-      Long tenantId, Long accountId, String realmSlug, long membershipVersion, String requestId) {
+      Long tenantId,
+      Long accountId,
+      String worldSlug,
+      String realmSlug,
+      long membershipVersion,
+      String requestId) {
     try {
       loggingAdminClient.logPublicProductionMembershipCreated(
-          tenantId, accountId, realmSlug, membershipVersion, requestId);
+          tenantId, accountId, worldSlug, realmSlug, membershipVersion, requestId);
     } catch (RuntimeException ex) {
       logger.warn(
-          "Failed to record public-production membership creation for tenant {} account {} realm {} requestId {}",
+          "Failed to record public-production membership creation for tenant {} account {} world {} realm {} requestId {}",
           tenantId,
           accountId,
+          worldSlug,
           realmSlug,
           requestId,
           ex);
@@ -1371,6 +1371,7 @@ public class AccountServiceImpl implements AccountService {
     return new PublicProductionMembershipResult(
         result.accountId(),
         result.tenantId(),
+        result.worldSlug(),
         result.realmSlug(),
         result.membershipVersion(),
         result.created(),
@@ -1380,29 +1381,22 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer
-      requirePublicProductionRealm(Long tenantId, String realmSlug) {
-    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm =
-        gameSessionClient.listGameplayWorlds().stream()
-            .flatMap(
-                world -> {
-                  try {
-                    return gameSessionClient.listGameplayRealms(world.getWorldSlug()).stream()
-                        .filter(candidate -> realmSlug.equals(candidate.getRealmSlug()))
-                        .filter(candidate -> Long.parseLong(candidate.getTenantId()) == tenantId)
-                        .map(
-                            candidate ->
-                                gameSessionClient.getAdmissionPointer(
-                                    candidate.getWorldSlug(), candidate.getRealmSlug()));
-                  } catch (IllegalStateException ex) {
-                    return java.util.stream.Stream.empty();
-                  }
-                })
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new AuthenticationException(
-                        "ADMISSION_POINTER_UNAVAILABLE",
-                        "Selected gameplay realm is not admissible"));
+      requirePublicProductionRealm(Long tenantId, String worldSlug, String realmSlug) {
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm;
+    try {
+      realm = gameSessionClient.getAdmissionPointer(tenantId, worldSlug, realmSlug);
+    } catch (IllegalStateException ex) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
+    }
+    Long responseTenantId = parseLong(realm.getTenantId());
+    if (responseTenantId == null
+        || !responseTenantId.equals(tenantId)
+        || !java.util.Objects.equals(worldSlug, realm.getWorldSlug())
+        || !java.util.Objects.equals(realmSlug, realm.getRealmSlug())) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
+    }
     if (!isPublicProductionRealm(realm)) {
       throw new AuthenticationException(
           "PUBLIC_PRODUCTION_MEMBERSHIP_NOT_ALLOWED",
@@ -1427,6 +1421,32 @@ public class AccountServiceImpl implements AccountService {
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
     };
+  }
+
+  private Long parseLong(Object value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      return Long.valueOf(value.toString());
+    } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+
+  private String claimText(Object value) {
+    if (value == null) {
+      return "";
+    }
+    if (value instanceof Iterable<?> iterable) {
+      for (Object candidate : iterable) {
+        if (candidate != null) {
+          return candidate.toString();
+        }
+      }
+      return "";
+    }
+    return value.toString();
   }
 
   private record ConnectScopeContext(

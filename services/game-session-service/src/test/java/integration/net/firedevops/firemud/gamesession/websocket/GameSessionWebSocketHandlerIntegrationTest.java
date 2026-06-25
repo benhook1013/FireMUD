@@ -1577,8 +1577,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
   private void bumpProductionAdmissionPointer(
       long newGameInstanceId, boolean requiresCharacterSelection) {
     long expectedPointerVersion =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer("demo", "production")
+        gameplayAdmissionPointerAuthorityService.listPointers().stream()
+            .filter(
+                pointer ->
+                    pointer.tenantId() == 22L
+                        && "demo".equals(pointer.worldSlug())
+                        && "production".equals(pointer.realmSlug()))
+            .findFirst()
             .orElseThrow()
             .pointerVersion();
     gameplayAdmissionPointerAuthorityService.upsertPointer(

@@ -11,7 +11,6 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 
 class GameLogicGrpcClientConfigTest {
 
@@ -43,10 +42,8 @@ class GameLogicGrpcClientConfigTest {
             return stub;
           }
         };
-    ObjectProvider<BlockingGrpcStubCustomizer> provider =
-        new SingleStubCustomizerProvider(customizer);
     GameLogicGrpcClientConfig config =
-        new GameLogicGrpcClientConfig(endpoints, grpc, channelFactory, provider);
+        new GameLogicGrpcClientConfig(endpoints, grpc, channelFactory, customizer);
 
     config.init();
     config.worldManagementStub();
@@ -54,28 +51,5 @@ class GameLogicGrpcClientConfigTest {
     config.socialGroupsStub();
 
     assertThat(customizeCalls.get()).isEqualTo(3);
-  }
-
-  private record SingleStubCustomizerProvider(BlockingGrpcStubCustomizer customizer)
-      implements ObjectProvider<BlockingGrpcStubCustomizer> {
-    @Override
-    public BlockingGrpcStubCustomizer getObject(Object... args) {
-      return customizer;
-    }
-
-    @Override
-    public BlockingGrpcStubCustomizer getIfAvailable() {
-      return customizer;
-    }
-
-    @Override
-    public BlockingGrpcStubCustomizer getIfUnique() {
-      return customizer;
-    }
-
-    @Override
-    public BlockingGrpcStubCustomizer getObject() {
-      return customizer;
-    }
   }
 }

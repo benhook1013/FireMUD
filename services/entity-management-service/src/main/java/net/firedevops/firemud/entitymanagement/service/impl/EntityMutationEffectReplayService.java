@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import com.google.protobuf.MessageLite;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.Objects;
@@ -15,6 +16,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation fails fast for Spring-managed collaborators without exposing a"
+            + " partially initialized bean to callers.")
 @Service
 public class EntityMutationEffectReplayService {
   private static final String METRIC_NAME = "entitymanagement.mutation.effect.execution";

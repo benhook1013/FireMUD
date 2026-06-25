@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +28,9 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Fail-fast startup is intentional if bundle intake signing config is invalid.")
 public class PluginBundleIntakeServiceImpl implements PluginBundleIntakeService {
   private static final long MAX_BUNDLE_BYTES = 10L * 1024L * 1024L;
   private static final long MAX_EXPANDED_BYTES = 20L * 1024L * 1024L;

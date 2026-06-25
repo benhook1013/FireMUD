@@ -73,13 +73,15 @@ public class GameSessionClient
     return response.getRealmsList();
   }
 
-  public GameplayAdmissionPointer getAdmissionPointer(String worldSlug, String realmSlug) {
+  public GameplayAdmissionPointer getAdmissionPointer(
+      long tenantId, String worldSlug, String realmSlug) {
     var response =
         stub()
             .getAdmissionPointer(
                 GetAdmissionPointerRequest.newBuilder()
-                    .setWorldSlug(worldSlug)
+                    .setTenantId(Long.toString(tenantId))
                     .setRealmSlug(realmSlug)
+                    .setWorldSlug(worldSlug)
                     .build());
     if (response.hasError()) {
       throw new IllegalStateException(

@@ -213,12 +213,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           accountService.ensurePublicProductionPlayerMembership(
               Long.valueOf(request.getAccountId()),
               Long.valueOf(request.getTenantId()),
+              request.getWorldSlug(),
               request.getRealmSlug(),
               request.getRequestId());
       EnsurePublicProductionPlayerMembershipResponse response =
           EnsurePublicProductionPlayerMembershipResponse.newBuilder()
               .setAccountId(String.valueOf(dto.accountId()))
               .setTenantId(String.valueOf(dto.tenantId()))
+              .setWorldSlug(dto.worldSlug())
               .setRealmSlug(dto.realmSlug())
               .setGameplayAdmissionAllowed(true)
               .setMembershipVersion(dto.membershipVersion())

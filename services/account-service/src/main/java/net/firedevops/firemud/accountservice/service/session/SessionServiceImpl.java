@@ -129,11 +129,13 @@ public class SessionServiceImpl implements SessionService {
   @Override
   @Timed(value = "session.public_production_membership_replay.get")
   public Optional<PublicProductionMembershipReplay> getPublicProductionMembershipReplay(
-      Long tenantId, Long accountId, String realmSlug, String requestId) {
+      Long tenantId, Long accountId, String worldSlug, String realmSlug, String requestId) {
     Object value =
         redisTemplate
             .opsForValue()
-            .get(publicProductionMembershipReplayKey(tenantId, accountId, realmSlug, requestId));
+            .get(
+                publicProductionMembershipReplayKey(
+                    tenantId, accountId, worldSlug, realmSlug, requestId));
     if (!(value instanceof Map<?, ?> stored)) {
       return Optional.empty();
     }
@@ -145,11 +147,17 @@ public class SessionServiceImpl implements SessionService {
       if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || membershipVersion.isEmpty()) {
         return Optional.empty();
       }
+      String replayWorldSlug = stringValue(stored.get("worldSlug"));
+      String replayRealmSlug = stringValue(stored.get("realmSlug"));
+      if (!worldSlug.equals(replayWorldSlug) || !realmSlug.equals(replayRealmSlug)) {
+        return Optional.empty();
+      }
       PublicProductionMembershipResult result =
           new PublicProductionMembershipResult(
               replayAccountId.orElseThrow(),
               replayTenantId.orElseThrow(),
-              stringValue(stored.get("realmSlug")),
+              replayWorldSlug,
+              replayRealmSlug,
               membershipVersion.orElseThrow(),
               Boolean.parseBoolean(stringValue(stored.get("created"))),
               stringValue(stored.get("requestId")),
@@ -170,6 +178,7 @@ public class SessionServiceImpl implements SessionService {
   public void storePublicProductionMembershipReplay(
       Long tenantId,
       Long accountId,
+      String worldSlug,
       String realmSlug,
       String requestId,
       PublicProductionMembershipReplay replay,
@@ -180,8 +189,12 @@ public class SessionServiceImpl implements SessionService {
     if (replay.success()) {
       PublicProductionMembershipResult result =
           requireResult(replay.result(), "public production membership replay");
+      if (!worldSlug.equals(result.worldSlug()) || !realmSlug.equals(result.realmSlug())) {
+        throw new IllegalArgumentException("public production membership replay payload mismatch");
+      }
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
+      stored.put("worldSlug", result.worldSlug());
       stored.put("realmSlug", result.realmSlug());
       stored.put("membershipVersion", Long.toString(result.membershipVersion()));
       stored.put("created", Boolean.toString(result.created()));
@@ -194,7 +207,8 @@ public class SessionServiceImpl implements SessionService {
     redisTemplate
         .opsForValue()
         .set(
-            publicProductionMembershipReplayKey(tenantId, accountId, realmSlug, requestId),
+            publicProductionMembershipReplayKey(
+                tenantId, accountId, worldSlug, realmSlug, requestId),
             stored,
             ttl);
   }
@@ -220,11 +234,13 @@ public class SessionServiceImpl implements SessionService {
   }
 
   private String publicProductionMembershipReplayKey(
-      Long tenantId, Long accountId, String realmSlug, String requestId) {
+      Long tenantId, Long accountId, String worldSlug, String realmSlug, String requestId) {
     return "session:public-production-membership:tenant:"
         + tenantId
         + ":account:"
         + accountId
+        + ":world:"
+        + tokenHash(worldSlug)
         + ":realm:"
         + tokenHash(realmSlug)
         + ":request:"

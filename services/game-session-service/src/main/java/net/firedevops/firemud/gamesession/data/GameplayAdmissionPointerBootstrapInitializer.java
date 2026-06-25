@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.data;
 
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.gamesession.config.GameplayAdmissionPointerBootstrapProperties;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class GameplayAdmissionPointerBootstrapInitializer implements ApplicationRunner {
   private final GameplayAdmissionPointerRepository pointerRepository;
   private final GameplayAdmissionPointerAuthorityService authorityService;
-  private final GameplayCatalogProperties gameplayCatalogProperties;
+  private final GameplayAdmissionPointerBootstrapProperties bootstrapProperties;
 
   @Override
   @Transactional
@@ -33,39 +33,62 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
     if (pointerRepository.count() > 0) {
       return;
     }
-    if (gameplayCatalogProperties.getWorlds() == null) {
+    if (bootstrapProperties.getPointers() == null) {
       return;
     }
-    for (GameplayCatalogProperties.World world : gameplayCatalogProperties.getWorlds()) {
-      if (world == null || world.getSlug() == null || world.getSlug().isBlank()) {
+    for (GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer :
+        bootstrapProperties.getPointers()) {
+      if (pointer == null
+          || pointer.getWorldSlug() == null
+          || pointer.getWorldSlug().isBlank()
+          || pointer.getRealmSlug() == null
+          || pointer.getRealmSlug().isBlank()) {
         continue;
       }
-      if (world.getRealms() == null) {
-        continue;
-      }
-      for (GameplayCatalogProperties.Realm realm : world.getRealms()) {
-        if (realm == null || realm.getSlug() == null || realm.getSlug().isBlank()) {
-          continue;
-        }
-        authorityService.upsertPointer(
-            new GameplayAdmissionPointerMutation(
-                world.getSlug(),
-                world.getDisplayName(),
-                realm.getSlug(),
-                realm.getDisplayName(),
-                realm.getTenantId(),
-                realm.getGameInstanceId(),
-                realm.isVisible(),
-                realm.isPublicProductionRealm(),
-                realm.isRequiresCharacterSelection(),
-                realm.getStateScope().name(),
-                realm.getCharacterCreationPolicy().name(),
-                "system/bootstrap",
-                "Initial gameplay catalog bootstrap",
-                "bootstrap:" + world.getSlug() + ":" + realm.getSlug(),
-                null,
-                null));
-      }
+      authorityService.upsertPointer(
+          new GameplayAdmissionPointerMutation(
+              pointer.getWorldSlug(),
+              pointer.getWorldDisplayName(),
+              pointer.getRealmSlug(),
+              pointer.getRealmDisplayName(),
+              pointer.getTenantId(),
+              pointer.getGameInstanceId(),
+              pointer.isVisible(),
+              pointer.isPublicProductionRealm(),
+              pointer.isRequiresCharacterSelection(),
+              stateScopeName(pointer),
+              characterCreationPolicyName(pointer),
+              "system/bootstrap",
+              "Initial gameplay pointer bootstrap",
+              "bootstrap:"
+                  + pointer.getTenantId()
+                  + ":"
+                  + pointer.getGameInstanceId()
+                  + ":"
+                  + pointer.getWorldSlug()
+                  + ":"
+                  + pointer.getRealmSlug(),
+              null,
+              null));
     }
+  }
+
+  private static String stateScopeName(
+      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
+    GameplayAdmissionPointerBootstrapProperties.StateScope stateScope = pointer.getStateScope();
+    return (stateScope != null
+            ? stateScope
+            : GameplayAdmissionPointerBootstrapProperties.StateScope.SHARED)
+        .name();
+  }
+
+  private static String characterCreationPolicyName(
+      GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer) {
+    GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy policy =
+        pointer.getCharacterCreationPolicy();
+    return (policy != null
+            ? policy
+            : GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy.ALLOW_NEW)
+        .name();
   }
 }

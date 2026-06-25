@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.worldmanagement.config.SmokeDemoRuntimeSeedProperties;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.Room;
@@ -52,13 +52,13 @@ class TestDataSeederTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setTenantId(1L);
-    realm.setGameInstanceId(1L);
-    world.setRealms(List.of(realm));
-    gameplayCatalogProperties.setWorlds(List.of(world));
+    SmokeDemoRuntimeSeedProperties smokeDemoRuntimeSeedProperties =
+        new SmokeDemoRuntimeSeedProperties();
+    SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed target =
+        new SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed();
+    target.setTenantId(1L);
+    target.setGameInstanceId(1L);
+    smokeDemoRuntimeSeedProperties.setTargets(List.of(target));
     seeder =
         new TestDataSeeder(
             regionRepository,
@@ -70,7 +70,7 @@ class TestDataSeederTest {
             zoneInstanceRepository,
             roomInstanceRepository,
             roomInstanceExitRepository,
-            gameplayCatalogProperties);
+            smokeDemoRuntimeSeedProperties);
   }
 
   @Test
@@ -268,6 +268,103 @@ class TestDataSeederTest {
     assertEquals("NORTH", exitCaptor.getValue().getDirection());
     assertNotNull(exitCaptor.getValue().getFromRoomInstance());
     assertNotNull(exitCaptor.getValue().getToRoomInstance());
+  }
+
+  @Test
+  void runMaterializesRuntimeTopologyForNonDefaultTenantFromCanonicalDemoTemplate()
+      throws Exception {
+    SmokeDemoRuntimeSeedProperties properties = new SmokeDemoRuntimeSeedProperties();
+    SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed target =
+        new SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed();
+    target.setTenantId(2L);
+    target.setGameInstanceId(55L);
+    properties.setTargets(List.of(target));
+    seeder =
+        new TestDataSeeder(
+            regionRepository,
+            zoneRepository,
+            roomRepository,
+            roomExitRepository,
+            worldInstanceRepository,
+            regionInstanceRepository,
+            zoneInstanceRepository,
+            roomInstanceRepository,
+            roomInstanceExitRepository,
+            properties);
+
+    Region existingRegion = new Region();
+    existingRegion.setId(10L);
+    Zone existingZone = new Zone();
+    existingZone.setId(20L);
+    existingZone.setRegion(existingRegion);
+    Room templateRoom1 = new Room();
+    templateRoom1.setId(30L);
+    templateRoom1.setZone(existingZone);
+    templateRoom1.setName("Candle-lit Antechamber");
+    templateRoom1.setDescription("starter");
+    Room templateRoom2 = new Room();
+    templateRoom2.setId(31L);
+    templateRoom2.setZone(existingZone);
+    templateRoom2.setName("Smith's Annex");
+    templateRoom2.setDescription("annex");
+    RoomExit templateExit = new RoomExit();
+    templateExit.setFromRoom(templateRoom1);
+    templateExit.setToRoom(templateRoom2);
+    templateExit.setDirection("NORTH");
+    templateExit.setCost(1);
+
+    when(regionRepository.findFirstByTenantIdAndVersionIdAndShardIdAndName(
+            1L, 1L, 0, "Demo Region"))
+        .thenReturn(Optional.of(existingRegion));
+    when(regionRepository.save(any())).thenReturn(existingRegion);
+    when(zoneRepository.findFirstByTenantIdAndVersionIdAndRegionIdAndName(1L, 1L, 10L, "Demo Zone"))
+        .thenReturn(Optional.of(existingZone));
+    when(zoneRepository.save(any())).thenReturn(existingZone);
+    when(roomRepository.findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+            1L, 1L, 20L, "Candle-lit Antechamber"))
+        .thenReturn(Optional.of(templateRoom1));
+    when(roomRepository.findFirstByTenantIdAndVersionIdAndZoneIdAndName(
+            1L, 1L, 20L, "Smith's Annex"))
+        .thenReturn(Optional.of(templateRoom2));
+    when(roomRepository.save(any())).thenReturn(templateRoom1, templateRoom2);
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 30L, 31L, "NORTH"))
+        .thenReturn(Optional.of(templateExit));
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(existingZone));
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(templateRoom1, templateRoom2));
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
+        .thenReturn(List.of(templateExit));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(2L, 55L))
+        .thenReturn(Optional.empty());
+    when(worldInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withWorldInstanceId(invocation.getArgument(0)));
+    when(regionInstanceRepository.findByTenantIdAndGameInstanceId(2L, 55L)).thenReturn(List.of());
+    when(regionInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRegionInstanceId(invocation.getArgument(0)));
+    when(zoneInstanceRepository.findByTenantIdAndGameInstanceIdAndZoneInstanceId(2L, 55L, 20L))
+        .thenReturn(Optional.empty());
+    when(zoneInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withZoneInstanceId(invocation.getArgument(0)));
+    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(2L, 55L))
+        .thenReturn(List.of());
+    when(roomInstanceRepository.save(any()))
+        .thenAnswer(invocation -> withRoomInstanceId(invocation.getArgument(0)));
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+            2L, 55L, 1021L))
+        .thenReturn(List.of());
+    when(roomInstanceExitRepository.save(any()))
+        .thenAnswer(invocation -> withRoomInstanceExitId(invocation.getArgument(0)));
+
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(zoneRepository).findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L);
+    verify(roomRepository).findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L);
+    verify(roomExitRepository).findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L);
+    verify(worldInstanceRepository).findByTenantIdAndGameInstanceId(2L, 55L);
+    verify(zoneInstanceRepository).findByTenantIdAndGameInstanceIdAndZoneInstanceId(2L, 55L, 20L);
+    verify(roomInstanceRepository, times(2)).save(any());
   }
 
   private WorldInstance withWorldInstanceId(WorldInstance worldInstance) {

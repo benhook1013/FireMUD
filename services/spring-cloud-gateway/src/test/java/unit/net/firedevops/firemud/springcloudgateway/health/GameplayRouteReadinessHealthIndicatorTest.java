@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.Test;
@@ -22,15 +23,17 @@ class GameplayRouteReadinessHealthIndicatorTest {
             1, tracker(), provider(new JwtUtil(SECRET, 30_000L)));
 
     Health health = indicator.health();
+    Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>) rawDependencies;
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(
         List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
         health.getDetails().keySet());
-    assertEquals("DOWN", dependencies.get("gameplayRoute").get("status"));
+    Map<String, Object> gameplayRoute = Objects.requireNonNull(dependencies.get("gameplayRoute"));
+    assertEquals("DOWN", gameplayRoute.get("status"));
   }
 
   private static ReadinessTransitionTracker tracker() {

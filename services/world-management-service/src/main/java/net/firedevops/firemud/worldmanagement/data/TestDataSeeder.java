@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.worldmanagement.config.SmokeDemoRuntimeSeedProperties;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.Room;
@@ -66,13 +66,13 @@ public class TestDataSeeder implements ApplicationRunner {
   private final ZoneInstanceRepository zoneInstanceRepository;
   private final RoomInstanceRepository roomInstanceRepository;
   private final RoomInstanceExitRepository roomInstanceExitRepository;
-  private final GameplayCatalogProperties gameplayCatalogProperties;
+  private final SmokeDemoRuntimeSeedProperties smokeDemoRuntimeSeedProperties;
 
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
     ensureDemoTopology();
-    ensureRuntimeTopologyForCatalogTargets();
+    ensureRuntimeTopologyForSeedTargets();
   }
 
   private void ensureDemoTopology() {
@@ -146,21 +146,17 @@ public class TestDataSeeder implements ApplicationRunner {
     roomExitRepository.save(exit);
   }
 
-  private void ensureRuntimeTopologyForCatalogTargets() {
-    List<GameplayCatalogProperties.World> worlds = gameplayCatalogProperties.getWorlds();
-    if (worlds == null) {
+  private void ensureRuntimeTopologyForSeedTargets() {
+    List<SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed> targets =
+        smokeDemoRuntimeSeedProperties.getTargets();
+    if (targets == null) {
       return;
     }
-    for (GameplayCatalogProperties.World world : worlds) {
-      if (world == null || world.getRealms() == null) {
+    for (SmokeDemoRuntimeSeedProperties.RuntimeTargetSeed target : targets) {
+      if (target == null || target.getTenantId() <= 0L || target.getGameInstanceId() <= 0L) {
         continue;
       }
-      for (GameplayCatalogProperties.Realm realm : world.getRealms()) {
-        if (realm == null || realm.getTenantId() <= 0L || realm.getGameInstanceId() <= 0L) {
-          continue;
-        }
-        ensureRuntimeTopology(realm.getTenantId(), realm.getGameInstanceId());
-      }
+      ensureRuntimeTopology(target.getTenantId(), target.getGameInstanceId());
     }
   }
 
@@ -170,13 +166,15 @@ public class TestDataSeeder implements ApplicationRunner {
         ensureRegionInstance(tenantId, gameInstanceId, savedWorldInstance);
 
     Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone : zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+    for (Zone templateZone :
+        zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(DEMO_TENANT_ID, DEMO_VERSION_ID)) {
       ZoneInstance savedZoneInstance =
           ensureZoneInstance(tenantId, gameInstanceId, savedRegionInstance, templateZone);
       zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
 
-    List<Room> templateRooms = roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L);
+    List<Room> templateRooms =
+        roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(DEMO_TENANT_ID, DEMO_VERSION_ID);
     Map<Long, RoomInstance> roomInstancesByRoomInstanceId = new HashMap<>();
     for (RoomInstance existingRoomInstance :
         roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
@@ -205,7 +203,8 @@ public class TestDataSeeder implements ApplicationRunner {
 
     Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId = new HashMap<>();
     for (RoomExit templateExit :
-        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, 1L)) {
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(
+            DEMO_TENANT_ID, DEMO_VERSION_ID)) {
       RoomInstance fromRoomInstance =
           roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
       RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());

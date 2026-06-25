@@ -157,16 +157,26 @@ class SessionServiceImplTest {
         new SessionService.PublicProductionMembershipReplay(
             true,
             new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
-                11L, 7L, "production", 711L, true, "req-join-1", "2026-05-25T00:00:00Z", false),
+                11L,
+                7L,
+                "demo",
+                "production",
+                711L,
+                true,
+                "req-join-1",
+                "2026-05-25T00:00:00Z",
+                false),
             "",
             "");
 
     service.storePublicProductionMembershipReplay(
-        7L, 11L, "production", "req-join-1", replay, 30000L);
+        7L, 11L, "demo", "production", "req-join-1", replay, 30000L);
 
     verify(valueOperations)
         .set(
-            "session:public-production-membership:tenant:7:account:11:realm:"
+            "session:public-production-membership:tenant:7:account:11:world:"
+                + sha256("demo")
+                + ":realm:"
                 + sha256("production")
                 + ":request:"
                 + sha256("req-join-1"),
@@ -177,6 +187,8 @@ class SessionServiceImplTest {
                 "11",
                 "tenantId",
                 "7",
+                "worldSlug",
+                "demo",
                 "realmSlug",
                 "production",
                 "membershipVersion",
@@ -191,6 +203,80 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void getPublicProductionMembershipReplayReturnsEmptyWhenStoredWorldSlugMismatchesLookup() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "worldSlug",
+                "sandbox",
+                "realmSlug",
+                "production",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
+  void getPublicProductionMembershipReplayReturnsEmptyWhenStoredRealmSlugMismatchesLookup() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "worldSlug",
+                "demo",
+                "realmSlug",
+                "staging",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
   void storeConnectTokenReplayRejectsSuccessfulReplayWithoutResult() {
     SessionService.ConnectTokenReplay replay =
         new SessionService.ConnectTokenReplay(true, null, "", "");
@@ -199,6 +285,32 @@ class SessionServiceImplTest {
             () -> service.storeConnectTokenReplay(7L, 11L, "scope-1", "req-7", replay, 30000L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("connect token replay");
+  }
+
+  @Test
+  void storePublicProductionMembershipReplayRejectsMismatchedWorldRealmPayload() {
+    SessionService.PublicProductionMembershipReplay replay =
+        new SessionService.PublicProductionMembershipReplay(
+            true,
+            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
+                11L,
+                7L,
+                "demo",
+                "production",
+                711L,
+                true,
+                "req-join-1",
+                "2026-05-25T00:00:00Z",
+                false),
+            "",
+            "");
+
+    assertThatThrownBy(
+            () ->
+                service.storePublicProductionMembershipReplay(
+                    7L, 11L, "sandbox", "production", "req-join-1", replay, 30000L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("public production membership replay payload mismatch");
   }
 
   private static String sha256(String token) {

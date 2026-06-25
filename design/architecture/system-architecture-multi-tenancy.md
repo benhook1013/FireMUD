@@ -85,7 +85,7 @@ Realm routing is a control-plane/runtime contract, not merely a lobby rendering 
 The platform distinguishes between:
 
 - a **realm catalog** describing which realms are player-addressable for one tenant; and
-- an **admission pointer** describing which concrete `gameInstanceId` is currently admissible for one `{tenantId, realmSlug}` target.
+- an **admission pointer** describing which concrete `gameInstanceId` is currently admissible for one `{tenantId, worldSlug, realmSlug}` target.
 
 Minimum realm-catalog facts for one visible realm are:
 
@@ -100,6 +100,7 @@ Minimum realm-catalog facts for one visible realm are:
 Minimum admission-pointer facts for one resolved realm are:
 
 - `tenantId`
+- `worldSlug`
 - `realmSlug`
 - `admissibleGameInstanceId`
 - `pointerVersion`
@@ -117,13 +118,13 @@ Contract rules:
 
 Required read contract:
 
-- `GetAdmissionPointer(tenantId, realmSlug, requestId)` is the authoritative gameplay-admission lookup.
+- `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admission lookup.
 - The authoritative owner of this pointer contract is the Game Session control plane.
 - Callers must treat missing pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults.
 
 Pointer freshness and cutover rules:
 
-- `pointerVersion` is monotonic per `{tenantId, realmSlug}`.
+- `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}`.
 - Any change that can affect which instance is admissible for gameplay admission must advance `pointerVersion`.
 - The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
 - Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.

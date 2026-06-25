@@ -115,7 +115,7 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
-  void logoutDoesNotStopSharedRuntimeWhenSharedStateComesFromWorldRealmSelectors() {
+  void logoutDoesNotStopSharedRuntimeWhenCurrentRuntimeAuthorityIsShared() {
     SessionContext context =
         new SessionContext(
             41L,
@@ -134,9 +134,9 @@ class LogoutCommandHandlerTest {
             1L,
             null);
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
-    when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(
-            Optional.of(
+            java.util.List.of(
                 new GameplayAdmissionPointerSnapshot(
                     "demo",
                     "Demo",
@@ -150,8 +150,6 @@ class LogoutCommandHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW")));
-    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(java.util.List.of());
 
     LogoutCommandHandlingResult result = handler.handle("41");
 

@@ -19,7 +19,6 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /** Handles deliberate player logout distinct from reconnect-loss recovery. */
 @Component
@@ -137,9 +136,6 @@ public final class LogoutCommandHandler {
     if ("SHARED".equals(context.playableStateScope())) {
       return false;
     }
-    if (sharedRealmFromSelectors(context).isPresent()) {
-      return false;
-    }
     return singularRuntimePointer(context)
         .map(pointer -> "ISOLATED".equals(pointer.stateScope()))
         .orElse(false);
@@ -154,19 +150,5 @@ public final class LogoutCommandHandler {
 
   private Optional<SessionContext> resolvePersistedSessionContext(String sessionIdText) {
     return sessionAuthenticationService.resolveSessionContext(sessionIdText);
-  }
-
-  private boolean isAuthenticated(SessionContext context) {
-    return context.accountId() > 0;
-  }
-
-  private Optional<String> sharedRealmFromSelectors(SessionContext context) {
-    if (!StringUtils.hasText(context.worldSlug()) || !StringUtils.hasText(context.realmSlug())) {
-      return Optional.empty();
-    }
-    return gameplayAdmissionPointerAuthorityService
-        .findPointer(context.worldSlug(), context.realmSlug())
-        .map(pointer -> pointer.stateScope())
-        .filter("SHARED"::equals);
   }
 }

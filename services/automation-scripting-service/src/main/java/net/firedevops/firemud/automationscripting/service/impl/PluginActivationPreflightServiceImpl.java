@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -23,6 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Fail-fast startup is intentional if preflight dependencies are miswired.")
 public class PluginActivationPreflightServiceImpl implements PluginActivationPreflightService {
   private static final String SCOPE_COMMAND_ALIAS = "COMMAND_ALIAS";
 

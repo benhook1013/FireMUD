@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -12,6 +13,11 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation fails fast for injected settings collaborators without exposing a"
+            + " partially initialized resolver.")
 @Component
 public class EffectiveReconnectionSettingsResolver implements ReconnectionSettingsResolver {
   private final FiremudReconnectionProperties defaults;

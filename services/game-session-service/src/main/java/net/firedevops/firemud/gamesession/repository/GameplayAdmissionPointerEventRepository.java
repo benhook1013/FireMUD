@@ -35,6 +35,20 @@ public class GameplayAdmissionPointerEventRepository {
         .fetch(this::toEntity);
   }
 
+  public List<GameplayAdmissionPointerEvent>
+      findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+          Long tenantId, String worldSlug, String realmSlug) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER_EVENT
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc())
+        .fetch(this::toEntity);
+  }
+
   public GameplayAdmissionPointerEvent save(GameplayAdmissionPointerEvent entity) {
     if (entity.getId() == null) {
       GameplayAdmissionPointerEventRecord record = dsl.newRecord(GAMEPLAY_ADMISSION_POINTER_EVENT);

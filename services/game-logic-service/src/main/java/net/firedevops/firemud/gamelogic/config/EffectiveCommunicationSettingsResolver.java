@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamelogic.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
@@ -10,6 +11,9 @@ import org.springframework.stereotype.Component;
 
 /** Bounded effective-settings read path for the surfaced communication domain. */
 @Component
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Fail-fast startup is intentional if communication settings wiring is invalid.")
 public class EffectiveCommunicationSettingsResolver {
   private final CommunicationProperties communicationDefaults;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;

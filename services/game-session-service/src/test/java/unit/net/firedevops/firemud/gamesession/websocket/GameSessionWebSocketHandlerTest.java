@@ -257,7 +257,7 @@ class GameSessionWebSocketHandlerTest {
                 GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
                 GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "22",
                 GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "7"));
-    when(sessionContextService.findByTenantAndSessionId(22L, 41L))
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
         .thenReturn(Optional.of(existing));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
@@ -278,6 +278,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
+    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
@@ -319,7 +320,7 @@ class GameSessionWebSocketHandlerTest {
                 GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
                 GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "22",
                 GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "7"));
-    when(sessionContextService.findByTenantAndSessionId(22L, 41L))
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
         .thenReturn(Optional.of(existing));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
@@ -353,6 +354,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
+    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)

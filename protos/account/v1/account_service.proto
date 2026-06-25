@@ -110,6 +110,7 @@ message EnsurePublicProductionPlayerMembershipRequest {
   string tenant_id = 2;
   string realm_slug = 3;
   string request_id = 4;
+  string world_slug = 5;
 }
 
 message EnsurePublicProductionPlayerMembershipResponse {
@@ -123,6 +124,7 @@ message EnsurePublicProductionPlayerMembershipResponse {
   string evaluated_at = 8;
   bool replayed = 9;
   shared.v1.ErrorDetail error = 10;
+  string world_slug = 11;
 }
 
 message GetTenantEntitlementsForRuntimeRequest {

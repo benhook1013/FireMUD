@@ -46,8 +46,12 @@ public final class SessionAuthenticationService {
     if (maybeTenantId.isEmpty()) {
       return Optional.empty();
     }
+    return resolveUnverifiedSessionContext(maybeTenantId.get(), sessionId);
+  }
+
+  public Optional<SessionContext> resolveUnverifiedSessionContext(long tenantId, long sessionId) {
     return sessionContextService
-        .findByTenantAndSessionId(maybeTenantId.get(), sessionId)
+        .findByTenantAndSessionId(tenantId, sessionId)
         .map(this::normalizeResolvedContext);
   }
 
@@ -111,11 +115,6 @@ public final class SessionAuthenticationService {
   }
 
   private Optional<Long> findTenantId(long sessionId) {
-    Optional<Long> tenantFromContext =
-        sessionContextService.findBySessionId(sessionId).map(SessionContext::tenantId);
-    if (tenantFromContext.isPresent()) {
-      return tenantFromContext;
-    }
     return sessionRoutingNormalizationService.findTenantId(sessionId);
   }
 }

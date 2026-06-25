@@ -74,9 +74,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
     String gameInstanceIdText =
-        StringUtils.hasText(request.getGameInstanceId())
-            ? request.getGameInstanceId()
-            : request.getSessionId();
+        StringUtils.hasText(request.getGameInstanceId()) ? request.getGameInstanceId() : null;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(request.getTenantId(), gameInstanceIdText, null, null)) {
       logger.debug(
@@ -103,10 +101,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       }
     }
 
-    if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
-      meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
-      return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
-    }
     if (StringUtils.hasText(request.getSessionId())) {
       try {
         gameplayPresenceLifecycleService.recordDisconnected(
@@ -116,7 +110,12 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
         // best-effort advisory cleanup only
       }
     }
-    SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
+    if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
+      meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
+      return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
+    }
+    SessionValidationResult validation =
+        validateGameInstance(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
       return validation.errorDetail();
     }
@@ -150,19 +149,20 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
   }
 
-  private SessionValidationResult validateSession(String sessionIdText, String tenantIdText) {
-    if (!StringUtils.hasText(sessionIdText) || !StringUtils.hasText(tenantIdText)) {
+  private SessionValidationResult validateGameInstance(
+      String gameInstanceIdText, String tenantIdText) {
+    if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(tenantIdText)) {
       return SessionValidationResult.failed(
           GrpcAppErrors.error(
-              meterRegistry, "INVALID_ARGUMENT", "sessionId and tenantId are required"));
+              meterRegistry, "INVALID_ARGUMENT", "gameInstanceId and tenantId are required"));
     }
-    long sessionId;
+    long gameInstanceId;
     long tenantId;
     try {
-      sessionId = Long.parseLong(sessionIdText);
+      gameInstanceId = Long.parseLong(gameInstanceIdText);
     } catch (NumberFormatException ex) {
       return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "sessionId must be numeric"));
+          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "gameInstanceId must be numeric"));
     }
     try {
       tenantId = Long.parseLong(tenantIdText);
@@ -170,17 +170,17 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       return SessionValidationResult.failed(
           GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "tenantId must be numeric"));
     }
-    Optional<GameInstance> maybeInstance = repository.findById(sessionId);
+    Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
     if (maybeInstance.isEmpty()) {
       return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Session not found"));
+          GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Game instance not found"));
     }
     GameInstance instance = maybeInstance.get();
     if (!instance.getTenantId().equals(tenantId)) {
       return SessionValidationResult.failed(
           GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
     }
-    return new SessionValidationResult(sessionId, tenantId, instance, null);
+    return new SessionValidationResult(gameInstanceId, tenantId, instance, null);
   }
 
   private record SessionValidationResult(

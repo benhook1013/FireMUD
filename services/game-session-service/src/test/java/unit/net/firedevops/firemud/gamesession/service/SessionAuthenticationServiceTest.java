@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,8 +60,8 @@ class SessionAuthenticationServiceTest {
             "SHARED");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(stale));
     when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.of(stale));
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
 
     Optional<SessionContext> resolved = service.resolveSessionContext("41");
 
@@ -96,6 +97,43 @@ class SessionAuthenticationServiceTest {
   }
 
   @Test
+  void resolveSessionContextClearsGameplayBindingWhenRuntimeTargetAuthorityIsAmbiguous() {
+    SessionContext ambiguous =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            "SHARED");
+    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(ambiguous));
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L))
+        .thenReturn(Optional.of(ambiguous));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(
+            List.of(
+                pointer("demo", "production", 22L, 1L, 2L),
+                pointer("demo", "staging", 22L, 1L, 3L)));
+
+    Optional<SessionContext> resolved = service.resolveSessionContext("41");
+
+    assertTrue(resolved.isPresent());
+    assertEquals(0L, resolved.orElseThrow().gameInstanceId());
+    verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(ambiguous, "STALE_ADMISSION_POINTER");
+  }
+
+  @Test
   void resolveSessionContextKeepsCurrentGameplayBindingWhenPointerMatches() {
     SessionContext current =
         new SessionContext(
@@ -116,13 +154,76 @@ class SessionAuthenticationServiceTest {
             "SHARED");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(current));
     when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.of(current));
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
 
     Optional<SessionContext> resolved = service.resolveSessionContext("41");
 
     assertTrue(resolved.isPresent());
     assertSame(current, resolved.orElseThrow());
+    verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+  }
+
+  @Test
+  void resolveUnverifiedSessionContextWithTenantIdNormalizesResolvedContext() {
+    SessionContext stale =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.of(stale));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+
+    Optional<SessionContext> resolved = service.resolveUnverifiedSessionContext(22L, 41L);
+
+    assertTrue(resolved.isPresent());
+    assertEquals(123L, resolved.orElseThrow().accountId());
+    assertEquals(0L, resolved.orElseThrow().gameInstanceId());
+    verify(sessionContextService).save(Mockito.any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
+  }
+
+  @Test
+  void resolveUnverifiedSessionContextFailsClosedWhenTenantScopedSessionIsMissing() {
+    SessionContext rawOnly =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            "SHARED");
+    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(rawOnly));
+    when(sessionContextService.findByTenantAndSessionId(22L, 41L)).thenReturn(Optional.empty());
+
+    Optional<SessionContext> resolved = service.resolveUnverifiedSessionContext("41");
+
+    assertTrue(resolved.isEmpty());
+    assertFalse(service.isAuthenticated("41"));
     verify(sessionContextService, never()).save(Mockito.any(SessionContext.class));
     verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
@@ -154,8 +255,8 @@ class SessionAuthenticationServiceTest {
             "SHARED");
     when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.of(stale));
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
 
     Optional<SessionContext> resolved = service.resolveByGameplayIdentity(22L, 1L, 7001L);
 
@@ -186,8 +287,8 @@ class SessionAuthenticationServiceTest {
             "SHARED");
     when(sessionContextService.findByGameplayName(22L, 1L, "Emberline"))
         .thenReturn(Optional.of(current));
-    when(pointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 2L)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
 
     Optional<SessionContext> resolved = service.resolveByGameplayName(22L, 1L, "Emberline");
 

@@ -264,10 +264,11 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(
-            accountService.ensurePublicProductionPlayerMembership(2L, 1L, "production", "req-1"))
+            accountService.ensurePublicProductionPlayerMembership(
+                2L, 1L, "demo", "production", "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
-                2L, 1L, "production", 55L, true, "req-1", "2026-03-30T00:00:00Z", false));
+                2L, 1L, "demo", "production", 55L, true, "req-1", "2026-03-30T00:00:00Z", false));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
@@ -275,6 +276,7 @@ class AccountGrpcServiceTest {
         EnsurePublicProductionPlayerMembershipRequest.newBuilder()
             .setAccountId("2")
             .setTenantId("1")
+            .setWorldSlug("demo")
             .setRealmSlug("production")
             .setRequestId("req-1")
             .build(),
@@ -294,6 +296,7 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("2", ref.get().getAccountId());
     assertEquals("production", ref.get().getRealmSlug());
+    assertEquals("demo", ref.get().getWorldSlug());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(55L, ref.get().getMembershipVersion());
     assertTrue(ref.get().getCreated());

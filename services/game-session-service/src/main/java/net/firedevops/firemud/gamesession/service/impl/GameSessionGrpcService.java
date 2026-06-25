@@ -19,6 +19,8 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -74,6 +76,7 @@ public final class GameSessionGrpcService
   private final TextCommandInterpreter textCommandInterpreter;
   private final GameInstanceRepository gameInstanceRepository;
   private final AccountPresenceQueryService accountPresenceQueryService;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayWorldCatalog gameplayWorldCatalog;
 
   @SuppressFBWarnings(
@@ -96,6 +99,7 @@ public final class GameSessionGrpcService
       TextCommandInterpreter textCommandInterpreter,
       GameInstanceRepository gameInstanceRepository,
       AccountPresenceQueryService accountPresenceQueryService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayWorldCatalog gameplayWorldCatalog,
       TickService tickService,
       MeterRegistry meterRegistry,
@@ -106,6 +110,7 @@ public final class GameSessionGrpcService
     this.textCommandInterpreter = textCommandInterpreter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.accountPresenceQueryService = accountPresenceQueryService;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.gameplayWorldCatalog = gameplayWorldCatalog;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
@@ -542,22 +547,19 @@ public final class GameSessionGrpcService
       GetAdmissionPointerRequest request,
       StreamObserver<GetAdmissionPointerResponse> responseObserver) {
     try {
-      WorldView world =
-          gameplayWorldCatalog
-              .resolveWorld(request.getWorldSlug())
-              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
-      RealmView realm =
-          gameplayWorldCatalog
-              .resolveRealm(world, request.getRealmSlug())
+      long tenantId = Long.parseLong(request.getTenantId());
+      GameplayAdmissionPointerSnapshot realm =
+          gameplayAdmissionPointerAuthorityService
+              .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(
                   net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
-                      .setWorldSlug(world.slug())
-                      .setWorldDisplayName(world.displayName())
-                      .setRealmSlug(realm.slug())
-                      .setRealmDisplayName(realm.displayName())
+                      .setWorldSlug(realm.worldSlug())
+                      .setWorldDisplayName(realm.worldDisplayName())
+                      .setRealmSlug(realm.realmSlug())
+                      .setRealmDisplayName(realm.realmDisplayName())
                       .setTenantId(Long.toString(realm.tenantId()))
                       .setGameInstanceId(Long.toString(realm.gameInstanceId()))
                       .setPointerVersion(realm.pointerVersion())
@@ -574,6 +576,13 @@ public final class GameSessionGrpcService
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "GetAdmissionPointer", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

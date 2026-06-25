@@ -12,7 +12,7 @@ buildscript {
     dependencies {
         // The Flyway Gradle plugin resolves database support from the buildscript classpath,
         // not from each service's runtime dependencies.
-        classpath("org.flywaydb:flyway-database-postgresql:12.6.2")
+        classpath("org.flywaydb:flyway-database-postgresql:12.9.0")
         classpath("org.postgresql:postgresql:42.7.11")
     }
 }
@@ -23,9 +23,9 @@ plugins {
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.flyway) apply false
-    id("com.diffplug.spotless") version "8.5.1"
+    id("com.diffplug.spotless") version "8.7.0"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.5"
+    id("com.github.spotbugs") version "6.5.8"
     jacoco
 }
 
@@ -42,8 +42,8 @@ java {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "13.3.0"
-val spotbugsToolVersion = "4.9.8"
+val checkstyleToolVersion = "13.6.0"
+val spotbugsToolVersion = "4.10.2"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
     file("services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json")

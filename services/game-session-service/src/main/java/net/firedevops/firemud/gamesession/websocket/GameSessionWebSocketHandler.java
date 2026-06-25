@@ -572,7 +572,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       long tenant = Long.parseLong(tenantId);
       long bootstrapGameInstance = Long.parseLong(bootstrapGameInstanceId);
       Optional<SessionContext> existing =
-          sessionContextService.findByTenantAndSessionId(tenant, sessionId);
+          sessionAuthenticationService.resolveUnverifiedSessionContext(tenant, sessionId);
       SessionContext incomingShell =
           repairGenericBootstrapShell(
               bootstrapShell(
@@ -610,7 +610,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     var connectContext = maybeContext.orElseThrow();
     firstPartyConnectContextRegistry.register(sessionId, connectContext);
     Optional<SessionContext> existing =
-        sessionContextService.findByTenantAndSessionId(connectContext.tenantId(), sessionId);
+        sessionAuthenticationService.resolveUnverifiedSessionContext(
+            connectContext.tenantId(), sessionId);
     if (existing.isPresent()) {
       maybeRefreshBootstrapShell(
           existing.orElseThrow(),

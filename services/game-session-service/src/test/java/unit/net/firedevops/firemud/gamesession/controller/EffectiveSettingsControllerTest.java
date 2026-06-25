@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Objects;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
@@ -72,7 +73,8 @@ class EffectiveSettingsControllerTest {
                 ScopedSettingsOverrides.empty()));
 
     EffectiveSettingsController.EffectiveSettingsResponse response =
-        controller.effectiveSettings(41L, null, null, null).getBody().data();
+        Objects.requireNonNull(controller.effectiveSettings(41L, null, null, null).getBody())
+            .data();
 
     assertThat(response.scope().persistedSession()).isTrue();
     assertThat(response.scope().tenantId()).isEqualTo(22L);

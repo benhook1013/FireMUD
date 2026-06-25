@@ -113,7 +113,11 @@ class PlayCommandHandlerTest {
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(accountClient.ensurePublicProductionPlayerMembership(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
         .thenReturn(
             EnsurePublicProductionPlayerMembershipResponse.newBuilder()
                 .setAccountId("123")
@@ -743,7 +747,11 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     Mockito.verify(accountClient)
         .ensurePublicProductionPlayerMembership(
-            Mockito.eq("123"), Mockito.eq("22"), Mockito.eq("production"), Mockito.anyString());
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("demo"),
+            Mockito.eq("production"),
+            Mockito.anyString());
   }
 
   @Test

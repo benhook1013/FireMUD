@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamelogic.health.ResolveLookPathProbe.ProbeResult;
@@ -44,7 +45,8 @@ class LookDependencyReadinessHealthIndicatorTest {
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>)
+            Objects.requireNonNull(health.getDetails().get("dependencies"));
 
     assertEquals(Status.UP, health.getStatus());
     assertIterableEquals(
@@ -69,7 +71,8 @@ class LookDependencyReadinessHealthIndicatorTest {
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>)
+            Objects.requireNonNull(health.getDetails().get("dependencies"));
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(
@@ -98,7 +101,8 @@ class LookDependencyReadinessHealthIndicatorTest {
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
     Map<String, Map<String, Object>> dependencies =
-        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+        (Map<String, Map<String, Object>>)
+            Objects.requireNonNull(health.getDetails().get("dependencies"));
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertIterableEquals(

@@ -72,8 +72,8 @@ class LoginCommandHandlerTest {
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
-    when(gameplayAdmissionPointerAuthorityService.findPointer("demo", "production"))
-        .thenReturn(Optional.of(pointer("demo", "production", 22L, 1L, 1L)));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
     sessionRoutingNormalizationService =
         new SessionRoutingNormalizationService(
             sessionContextService, gameplayAdmissionPointerAuthorityService);
@@ -243,6 +243,134 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void bareLoginDoesNotFallBackToRawPersistedFirstPartyContextWhenTenantScopedSessionIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    SessionContext rawOnly =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-persisted",
+            "req-persisted");
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(rawOnly));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L)).thenReturn(Optional.empty());
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(
+        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.commandResult().errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void bareLoginDoesNotProceedWhenCurrentAdmissionPointerTenantIsInvalid() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L,
+                    0L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 0L, 77L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+  }
+
+  @Test
+  void bareLoginDoesNotProceedWhenCurrentAdmissionPointerGameInstanceIdIsInvalid() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L,
+                    22L,
+                    "demo",
+                    "production",
+                    0L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 0L, 1L)));
+    when(gameInstanceRepository.findById(0L)).thenReturn(Optional.of(buildInstance(0L, 22L, 77L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+  }
+
+  @Test
+  void bareLoginDoesNotProceedWhenCurrentAdmissionPointerWorldOrRealmIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L,
+                    22L,
+                    " ",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+  }
+
+  @Test
+  void bareLoginDoesNotProceedWhenCurrentAdmissionPointerRealmIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    77L, 22L, "demo", " ", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+  }
+
+  @Test
   void bareLoginRejectsStalePointerVersion() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -308,9 +436,11 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
 
     GameInstance instance = buildInstance(99L, 22L, 77L);
-    when(sessionContextService.findBySessionId(12345L))
-        .thenReturn(
-            Optional.of(new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null)));
+    SessionContext bootstrapContext =
+        new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null);
+    when(sessionContextService.findBySessionId(12345L)).thenReturn(Optional.of(bootstrapContext));
+    when(sessionContextService.findByTenantAndSessionId(22L, 12345L))
+        .thenReturn(Optional.of(bootstrapContext));
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("12345", command, false);

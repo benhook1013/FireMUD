@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
@@ -594,7 +595,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 "spring.main.web-application-type=reactive",
                 "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
             .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
+    int port =
+        Objects.requireNonNull(
+                ((WebServerApplicationContext) context).getWebServer(),
+                "gateway stub web server must be available")
+            .getPort();
     return new GatewayHolder(context, port);
   }
 
