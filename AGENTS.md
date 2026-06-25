@@ -20,6 +20,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
+- When reporting PR or review status, always report both unresolved non-outdated threads and unresolved outdated threads. Treat non-outdated threads as the actionable truth, but call out outdated unresolved threads separately because they can still appear in GitHub or CodeRabbit UI and confuse merge status.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
