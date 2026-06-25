@@ -70,6 +70,14 @@ public class SessionServiceImpl implements SessionService {
       if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || gameInstanceId.isEmpty()) {
         return Optional.empty();
       }
+      if (!replayAccountId.get().equals(accountId) || !replayTenantId.get().equals(tenantId)) {
+        return Optional.empty();
+      }
+      String replayConnectScopeId = stringValue(stored.get("connectScopeId"));
+      String replayRequestId = stringValue(stored.get("requestId"));
+      if (!connectScopeId.equals(replayConnectScopeId) || !requestId.equals(replayRequestId)) {
+        return Optional.empty();
+      }
       ConnectTokenResult result =
           new ConnectTokenResult(
               replayAccountId.orElseThrow(),
@@ -147,9 +155,15 @@ public class SessionServiceImpl implements SessionService {
       if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || membershipVersion.isEmpty()) {
         return Optional.empty();
       }
+      if (!replayAccountId.get().equals(accountId) || !replayTenantId.get().equals(tenantId)) {
+        return Optional.empty();
+      }
       String replayWorldSlug = stringValue(stored.get("worldSlug"));
       String replayRealmSlug = stringValue(stored.get("realmSlug"));
       if (!worldSlug.equals(replayWorldSlug) || !realmSlug.equals(replayRealmSlug)) {
+        return Optional.empty();
+      }
+      if (!requestId.equals(stringValue(stored.get("requestId")))) {
         return Optional.empty();
       }
       PublicProductionMembershipResult result =
@@ -265,7 +279,8 @@ public class SessionServiceImpl implements SessionService {
       return Optional.empty();
     }
     try {
-      return Optional.of(Long.parseLong(value.toString()));
+      long parsed = Long.parseLong(value.toString());
+      return parsed <= 0 ? Optional.empty() : Optional.of(parsed);
     } catch (NumberFormatException ex) {
       return Optional.empty();
     }

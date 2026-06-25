@@ -27,10 +27,10 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final String GAME_INSTANCE_ID_HEADER = "X-Game-Instance-Id";
   private static final String TENANT_ID_HEADER = "X-Tenant-Id";
   private static final String SYNTHETIC_PROXY_CONNECTION_ID = "gateway-readiness-probe";
-  // Reserved numeric ids so the readiness JWT matches the game-session parser contract.
-  private static final String PROBE_ACCOUNT_ID = "0";
-  private static final String PROBE_TENANT_ID = "0";
-  private static final String PROBE_GAME_INSTANCE_ID = "0";
+  // Probe identifiers intentionally use non-zero ids to satisfy strict identity claims.
+  private static final String PROBE_ACCOUNT_ID = "1";
+  private static final String PROBE_TENANT_ID = "1";
+  private static final String PROBE_GAME_INSTANCE_ID = "1";
 
   private final int serverPort;
   private final ReadinessTransitionTracker readinessTransitionTracker;
@@ -98,7 +98,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
                   "gameInstanceId",
                   PROBE_GAME_INSTANCE_ID,
                   "pointerVersion",
-                  "0",
+                  "1",
                   "connectScopeId",
                   "readiness-scope",
                   "requestId",

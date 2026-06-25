@@ -10,6 +10,7 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
@@ -59,6 +60,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 class AccountServiceImplTest {
+  private static final String JWT_SECRET = "mysecretkey123456789012345678901";
   @Mock private AccountRepository accountRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -90,8 +92,8 @@ class AccountServiceImplTest {
   void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
-    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
-    jwtAuthProperties.setJwtSecret("mysecretkey123456789012345678901");
+    JwtUtil jwtUtil = new JwtUtil(JWT_SECRET, 3600000L);
+    jwtAuthProperties.setJwtSecret(JWT_SECRET);
     tokenProperties.setPlayerBootstrapExpirationMs(300000L);
     tokenProperties.setConnectScopeExpirationMs(120000L);
     tokenProperties.setConnectTokenExpirationMs(30000L);
@@ -256,12 +258,57 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(300000L));
     assertEquals(
         "player-bootstrap",
-        new JwtUtil("mysecretkey123456789012345678901", 300000L)
+        new JwtUtil(JWT_SECRET, 300000L)
             .parseToken(result.bootstrapToken())
             .getPayload()
             .getAudience()
             .iterator()
             .next());
+  }
+
+  @Test
+  void listBootstrapWorldsRejectsMalformedBootstrapTokenClaims() {
+    String malformedBootstrapToken =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(
+                "11",
+                Map.of("aud", "player-bootstrap", "accountId", "11", "tenantId", "not-a-number"));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(malformedBootstrapToken));
+
+    assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+  }
+
+  @Test
+  void issueConnectTokenRejectsMalformedConnectScopeId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(), new ConnectTokenRequest("bad", "req-err")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
   }
 
   @Test
