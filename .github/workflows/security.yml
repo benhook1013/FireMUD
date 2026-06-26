@@ -34,7 +34,7 @@ jobs:
 
       - name: 💾 Cache OpenAPI Dependencies
         id: cache-openapi
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: config/openapi/node_modules
           key: openapi-node-modules-${{ runner.os }}-${{ hashFiles('config/openapi/package-lock.json') }}
@@ -46,7 +46,7 @@ jobs:
 
       - name: 💾 Cache Web Client Dependencies
         id: cache-web-client
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web-client/node_modules
           key: web-client-node-modules-${{ runner.os }}-${{ hashFiles('web-client/package-lock.json') }}
@@ -57,7 +57,7 @@ jobs:
         run: npm --prefix web-client ci
 
       - name: 💾 Cache Trivy DB
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
