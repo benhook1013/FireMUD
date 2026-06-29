@@ -50,7 +50,7 @@ from smoke_common import (
     gameplay_item_container_equipment_steps,
     http_readiness_up,
     recv_until_socket,
-    run_telnet_command_plan,
+    run_telnet_smoke_session,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -111,34 +111,28 @@ def verify_pre_readiness_telnet_admission():
     raise RuntimeError("tcp-proxy readiness did not converge after verifying pre-readiness admission behavior")
 
 
-try:
-    verify_pre_readiness_telnet_admission()
-    wait_for_account_schema(startup_wait_seconds, timeout_seconds)
-    wait_for_http_readiness(
-        "account-service", account_api_base, startup_wait_seconds, timeout_seconds
-    )
-    wait_for_http_readiness(
-        "game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds
-    )
-    wait_for_http_readiness(
-        "game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds
-    )
-    wait_for_http_readiness(
-        "spring-cloud-gateway", gateway_api_base, startup_wait_seconds, timeout_seconds
-    )
-    wait_for_http_readiness(
-        "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
-    )
-    verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
-    with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-        steps = gameplay_item_container_equipment_steps(
-            username, password, worlds_expect, login_expect, play_expect, look_expect
-        )
-        run_telnet_command_plan(sock, steps, timeout_seconds)
-
-except OSError as exc:
-    sys.stderr.write(f"Failed to connect to {host}:{port}: {exc}\n")
-    sys.exit(1)
+verify_pre_readiness_telnet_admission()
+wait_for_account_schema(startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness(
+    "account-service", account_api_base, startup_wait_seconds, timeout_seconds
+)
+wait_for_http_readiness(
+    "game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds
+)
+wait_for_http_readiness(
+    "game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds
+)
+wait_for_http_readiness(
+    "spring-cloud-gateway", gateway_api_base, startup_wait_seconds, timeout_seconds
+)
+wait_for_http_readiness(
+    "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
+)
+verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
+steps = gameplay_item_container_equipment_steps(
+    username, password, worlds_expect, login_expect, play_expect, look_expect
+)
+run_telnet_smoke_session(host, port, steps, timeout_seconds)
 
 print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test passed.")
 PYTHON

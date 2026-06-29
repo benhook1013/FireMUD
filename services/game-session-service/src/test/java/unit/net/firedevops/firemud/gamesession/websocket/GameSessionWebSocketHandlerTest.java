@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -339,7 +340,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
@@ -415,7 +416,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
@@ -493,5 +494,46 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+  }
+
+  @Test
+  void handleMessageUsesTenantScopedSessionContextWhenTenantAttributePresent() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22"));
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    PlayerOutput output = PlayerOutput.message("Recent room line");
+    SessionContext clearedShell =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    when(parser.parse("LOOK")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.of(clearedShell));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(clearedShell), eq(List.of(output)), eq(true)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOOK");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(ScreenBufferService.BufferedEntry.fromText("Recent room line\n"));
+
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext("41");
   }
 }

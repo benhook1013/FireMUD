@@ -151,6 +151,138 @@ def get(data: Any, dotted: str) -> Any:
     return cur
 
 
+def player_facing_environments() -> tuple[str, ...]:
+    return ("staging", "production", "hobby-self-hosted")
+
+
+def normalize_binding_value(raw: Any) -> tuple[str | None, bool, str]:
+    if isinstance(raw, dict):
+        shared = bool(raw.get("shared"))
+        rationale = str(raw.get("sharedRationale") or "")
+        for key in ("value", "bindingRef", "fingerprint"):
+            value = raw.get(key)
+            if isinstance(value, str) and value:
+                return (value, shared, rationale)
+        return (None, shared, rationale)
+    if isinstance(raw, str) and raw:
+        return (raw, False, "")
+    return (None, False, "")
+
+
+def extract_service_discovery_overrides(rendered_text: str) -> dict[str, str]:
+    overrides = {}
+    for raw_key, raw_value in re.findall(
+        r"(FIREMUD_SERVICES_[A-Z0-9_]+):\s*([^\n]+)", rendered_text
+    ):
+        value = str(raw_value).strip().strip("\"'")
+        overrides[raw_key] = value
+    return overrides
+
+
+def external_binding_uniqueness_issues(
+    manifests_root: Path, env_class: str, current_data: dict[str, Any]
+) -> list[str]:
+    current_backup = current_data.get("backupStorage") or {}
+    current_asset = current_data.get("assetStorage") or {}
+    current_outbound = current_data.get("outboundComms") or {}
+    current_operator = current_data.get("operatorCredentials") or {}
+
+    def add_candidate(
+        issues: list[str],
+        candidates: list[tuple[str, str, bool, str]],
+        label: str,
+        raw_value: Any,
+    ) -> None:
+        value, shared, rationale = normalize_binding_value(raw_value)
+        if value is None:
+            return
+        if shared and not rationale:
+            issues.append(f"{label} is marked shared but missing sharedRationale")
+            return
+        candidates.append((label, value, shared, rationale))
+
+    issues: list[str] = []
+    candidates: list[tuple[str, str, bool, str]] = []
+    add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
+    add_candidate(
+        issues,
+        candidates,
+        "backupStorage.bindingRef",
+        current_backup.get("bindingRef") or current_backup.get("fingerprint"),
+    )
+    add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
+    add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
+    add_candidate(
+        issues,
+        candidates,
+        "assetStorage.bindingRef",
+        current_asset.get("bindingRef") or current_asset.get("fingerprint"),
+    )
+    add_candidate(issues, candidates, "outboundComms.smtpHost", current_outbound.get("smtpHost"))
+    for target_name, raw_target in sorted((current_outbound.get("webhookTargets") or {}).items()):
+        add_candidate(
+            issues, candidates, f"outboundComms.webhookTargets.{target_name}", raw_target
+        )
+    add_candidate(
+        issues,
+        candidates,
+        "operatorCredentials.bindingRef",
+        current_operator.get("bindingRef") or current_operator.get("fingerprint"),
+    )
+    if issues:
+        return issues
+
+    for other_env in player_facing_environments():
+        if other_env == env_class:
+            continue
+        other_path = manifests_root / other_env / "expected-bindings.yaml"
+        if not other_path.exists():
+            issues.append(f"Missing expected-bindings manifest for {other_env}")
+            continue
+        try:
+            other_data = load_yaml(other_path) or {}
+        except Exception as exc:
+            issues.append(f"Unreadable expected-bindings manifest for {other_env}: {exc}")
+            continue
+        other_backup = other_data.get("backupStorage") or {}
+        other_asset = other_data.get("assetStorage") or {}
+        other_outbound = other_data.get("outboundComms") or {}
+        other_operator = other_data.get("operatorCredentials") or {}
+        other_lookup = {
+            "backupStorage.bucket": other_backup.get("bucket"),
+            "backupStorage.bindingRef": other_backup.get("bindingRef") or other_backup.get("fingerprint"),
+            "assetStorage.bucket": other_asset.get("bucket"),
+            "assetStorage.endpoint": other_asset.get("endpoint"),
+            "assetStorage.bindingRef": other_asset.get("bindingRef") or other_asset.get("fingerprint"),
+            "outboundComms.smtpHost": other_outbound.get("smtpHost"),
+            "operatorCredentials.bindingRef": other_operator.get("bindingRef") or other_operator.get("fingerprint"),
+        }
+        for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
+            other_lookup[f"outboundComms.webhookTargets.{target_name}"] = raw_target
+
+        for label, value, current_shared, current_rationale in candidates:
+            other_value, other_shared, other_rationale = normalize_binding_value(
+                other_lookup.get(label)
+            )
+            if other_value != value:
+                continue
+            if current_shared != other_shared:
+                issues.append(
+                    f"{label} matches {other_env} but shared declaration does not match on both manifests"
+                )
+                continue
+            if current_shared and (
+                not current_rationale or not other_rationale or current_rationale != other_rationale
+            ):
+                issues.append(
+                    f"{label} matches {other_env} but sharedRationale is missing or inconsistent"
+                )
+                continue
+            if not current_shared:
+                issues.append(f"{label} matches {other_env} without explicit shared binding approval")
+    return issues
+
+
 def metadata_name(document: dict[str, Any]) -> str | None:
     metadata = document.get("metadata") or {}
     return metadata.get("name")
@@ -402,12 +534,14 @@ def expected_binding_checks(
         ("assetStorage.bucket", None),
         ("assetStorage.endpoint", None),
         ("assetStorage.bindingRef", "assetStorage.fingerprint"),
+        ("outboundComms.smtpHost", None),
         ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
     ]
     missing_external = []
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
+    webhook_targets = get(data, "outboundComms.webhookTargets")
     if missing_external:
         results.append(
             CheckResult(
@@ -417,22 +551,26 @@ def expected_binding_checks(
                 "Expected-bindings missing external binding keys: " + ", ".join(missing_external),
             )
         )
+    elif not isinstance(webhook_targets, dict) or not webhook_targets:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-EXTERNAL-001",
+                True,
+                "fail",
+                "Expected-bindings missing outboundComms.webhookTargets entries",
+            )
+        )
     else:
-        values = [
-            str(get(data, "backupStorage.bucket")),
-            str(get(data, "assetStorage.bucket")),
-            str(get(data, "operatorCredentials.bindingRef") or get(data, "operatorCredentials.fingerprint")),
-        ]
-        env_tokens = [env_class]
-        if env_class == "hobby-self-hosted":
-            env_tokens.append("hobby")
-        if any(not any(token in value for token in env_tokens) for value in values):
+        uniqueness_issues = external_binding_uniqueness_issues(
+            expected_bindings_path.parent.parent, env_class, data
+        )
+        if uniqueness_issues:
             results.append(
                 CheckResult(
                     "PREFLIGHT-EXTERNAL-001",
                     True,
                     "fail",
-                    "External binding values do not consistently identify the target environment",
+                    "External binding isolation check failed: " + "; ".join(uniqueness_issues),
                 )
             )
         else:
@@ -447,7 +585,7 @@ def expected_binding_checks(
 
     mode = get(data, "serviceDiscovery.mode")
     rendered_text = yaml.safe_dump_all(documents, sort_keys=False)
-    override_lines = re.findall(r"FIREMUD_SERVICES_[A-Z0-9_]+:\s*([^\n]+)", rendered_text)
+    override_lines = extract_service_discovery_overrides(rendered_text)
     if mode == "kubernetes-dns-default" and override_lines:
         results.append(
             CheckResult(
@@ -469,14 +607,49 @@ def expected_binding_checks(
                 )
             )
         else:
-            results.append(
-                CheckResult(
-                    "PREFLIGHT-SERVICES-001",
-                    True,
-                    "pass",
-                    "Explicit service-discovery overrides are declared in expected bindings",
+            failures: list[str] = []
+            for override_name, rendered_value in sorted(override_lines.items()):
+                if override_name not in allowed:
+                    failures.append(
+                        f"Rendered override {override_name} is not declared in serviceDiscovery.allowedOverrides"
+                    )
+                    continue
+                expected_value = allowed.get(override_name)
+                if not isinstance(expected_value, str):
+                    failures.append(f"serviceDiscovery.allowedOverrides[{override_name}] must be a string")
+                    continue
+                if expected_value != rendered_value:
+                    failures.append(
+                        f"Rendered {override_name}='{rendered_value}' does not match allowed value '{expected_value}'"
+                    )
+            if failures:
+                results.append(
+                    CheckResult(
+                        "PREFLIGHT-SERVICES-001",
+                        True,
+                        "fail",
+                        "Explicit service-discovery override values do not match expected contract: "
+                        + "; ".join(failures),
+                    )
                 )
-            )
+            elif not override_lines:
+                results.append(
+                    CheckResult(
+                        "PREFLIGHT-SERVICES-001",
+                        True,
+                        "fail",
+                        "No FIREMUD_SERVICES_* overrides were rendered for explicit-overrides mode",
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        "PREFLIGHT-SERVICES-001",
+                        True,
+                        "pass",
+                        "Rendered FIREMUD_SERVICES_* overrides match expected explicit contract",
+                    )
+                )
     elif mode == "kubernetes-dns-default":
         results.append(
             CheckResult(

@@ -5,6 +5,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from contextlib import closing
 from urllib.parse import quote
 
 
@@ -155,6 +156,25 @@ def run_command_plan(steps, executor):
         else:
             raise ValueError(f"Unsupported command-plan step: {step!r}")
         executor(line, expected_substrings, label, timeout)
+
+
+def run_transport_session(
+    open_session,
+    execute_session,
+    session_label,
+    retry_window_seconds=0,
+    retry_interval_seconds=2,
+    retriable_exceptions=(OSError,),
+):
+    deadline = time.time() + retry_window_seconds if retry_window_seconds > 0 else None
+    while True:
+        try:
+            with closing(open_session()) as session:
+                return execute_session(session)
+        except retriable_exceptions as exc:
+            if deadline is None or time.time() >= deadline:
+                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
+            time.sleep(retry_interval_seconds)
 
 
 def login_play_look_steps(
@@ -382,6 +402,35 @@ def run_telnet_command_plan(
     return responses
 
 
+def run_telnet_smoke_session(
+    host,
+    port,
+    steps,
+    timeout_seconds,
+    open_session=None,
+    retry_window_seconds=0,
+    retry_interval_seconds=2,
+    play_drain_timeout=1.0,
+    default_drain_timeout=0.25,
+    step_results=None,
+):
+    return run_transport_session(
+        open_session
+        or (lambda: socket.create_connection((host, port), timeout=timeout_seconds)),
+        lambda sock: run_telnet_command_plan(
+            sock,
+            steps,
+            timeout_seconds,
+            play_drain_timeout=play_drain_timeout,
+            default_drain_timeout=default_drain_timeout,
+            step_results=step_results,
+        ),
+        f"Telnet session {host}:{port}",
+        retry_window_seconds=retry_window_seconds,
+        retry_interval_seconds=retry_interval_seconds,
+    )
+
+
 def recv_text_websocket(ws, label, timeout):
     deadline = time.time() + timeout
     last_error = None
@@ -468,3 +517,28 @@ def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None):
         ),
     )
     return responses
+
+
+def run_websocket_smoke_session(
+    open_session,
+    steps,
+    timeout_seconds,
+    retry_window_seconds=0,
+    retry_interval_seconds=2,
+    retriable_exceptions=(OSError,),
+    session_label="WebSocket session",
+    step_results=None,
+):
+    return run_transport_session(
+        open_session,
+        lambda ws: run_websocket_command_plan(
+            ws,
+            steps,
+            timeout_seconds,
+            step_results=step_results,
+        ),
+        session_label,
+        retry_window_seconds=retry_window_seconds,
+        retry_interval_seconds=retry_interval_seconds,
+        retriable_exceptions=retriable_exceptions,
+    )

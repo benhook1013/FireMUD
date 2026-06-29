@@ -363,8 +363,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.coordinatorId(), "coordinator_id");
     requirePositive(request.originGameInstanceId(), "origin_game_instance_id");
     requireNotBlank(request.originRegionId(), "origin_region_id");
+    requirePositive(request.originRegionEpoch(), "origin_region_epoch");
     requirePositive(request.targetGameInstanceId(), "target_game_instance_id");
     requireNotBlank(request.targetRegionId(), "target_region_id");
+    requirePositive(request.targetRegionEpoch(), "target_region_epoch");
     requireNotBlank(request.followupId(), "followup_id");
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");

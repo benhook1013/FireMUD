@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.util.Optional;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import org.slf4j.Logger;
@@ -36,13 +37,10 @@ public class FirstPartyConnectContextService {
     }
     try {
       Claims claims = jwtUtil.parseToken(token).getPayload();
-      long accountId = parseLong(claims.getSubject());
-      long tenantId = parseLong(claims.get("tenantId"));
-      long gameInstanceId = parseLong(claims.get("gameInstanceId"));
-      long pointerVersion = parseLong(claims.get("pointerVersion"));
-      if (pointerVersion <= 0) {
-        throw new IllegalArgumentException("Missing pointerVersion");
-      }
+      long accountId = parseLong(claims.getSubject(), "accountId");
+      long tenantId = parseLong(claims.get("tenantId"), "tenantId");
+      long gameInstanceId = parseLong(claims.get("gameInstanceId"), "gameInstanceId");
+      long pointerVersion = parseLong(claims.get("pointerVersion"), "pointerVersion");
       return Optional.of(
           new FirstPartyConnectContext(
               accountId,
@@ -61,14 +59,8 @@ public class FirstPartyConnectContextService {
     }
   }
 
-  private static long parseLong(Object value) {
-    if (value instanceof Number number) {
-      return number.longValue();
-    }
-    if (value instanceof String text && StringUtils.hasText(text)) {
-      return Long.parseLong(text);
-    }
-    throw new IllegalArgumentException("Missing numeric claim");
+  private static long parseLong(Object value, String claimName) {
+    return JwtClaims.requireLong(value, claimName, false);
   }
 
   private static String stringClaim(Claims claims, String key) {
@@ -77,10 +69,6 @@ public class FirstPartyConnectContextService {
   }
 
   private static String requiredTextClaim(Claims claims, String key) {
-    String value = stringClaim(claims, key);
-    if (!StringUtils.hasText(value)) {
-      throw new IllegalArgumentException("Missing required claim: " + key);
-    }
-    return value.trim();
+    return JwtClaims.requireText(claims.get(key), key);
   }
 }

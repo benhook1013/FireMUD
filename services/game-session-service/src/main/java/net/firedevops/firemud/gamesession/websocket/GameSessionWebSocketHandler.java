@@ -150,7 +150,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       recordGameplayActivity(sessionId, interpretation);
-      Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(sessionId);
+      Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(session, sessionId);
       PresentationProperties effectivePresentation =
           settingsResolver.presentation(maybeContext.orElse(null));
       java.util.List<PlayerOutput> outputs =
@@ -159,18 +159,20 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               maybeContext.orElse(null),
               interpretation.outputs(),
               shouldForcePromptEmission(command, interpretation));
-      maybePersistLocaleTag(sessionId, resolveLocaleTag(session));
+      maybePersistLocaleTag(maybeContext, resolveLocaleTag(session));
       String response =
           formatResponse(command, interpretation, session, outputs, effectivePresentation);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(
           sessionId,
+          maybeContext,
           interpretation,
           outputs,
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
-      maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
+      maybeReplayScreenBufferAndRefreshLook(
+          session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     }
   }
@@ -247,7 +249,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String resolveLocaleTag(WebSocketSession session, String sessionId) {
-    return resolveNormalizedSessionContext(sessionId)
+    return resolveNormalizedSessionContext(session, sessionId)
         .map(SessionContext::localeTag)
         .filter(StringUtils::hasText)
         .orElse(resolveLocaleTag(session));
@@ -255,6 +257,25 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private Optional<SessionContext> resolveNormalizedSessionContext(String sessionId) {
     return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionId);
+  }
+
+  private Optional<SessionContext> resolveNormalizedSessionContext(
+      WebSocketSession session, String sessionId) {
+    String tenantIdText = resolveTenantId(session);
+    if (!StringUtils.hasText(tenantIdText)) {
+      return resolveNormalizedSessionContext(sessionId);
+    }
+    Optional<Long> maybeSessionId = parseNumericSessionId(sessionId);
+    if (maybeSessionId.isEmpty()) {
+      return Optional.empty();
+    }
+    try {
+      return sessionAuthenticationService.resolveUnverifiedSessionContext(
+          Long.parseLong(tenantIdText), maybeSessionId.get());
+    } catch (NumberFormatException ex) {
+      logger.debug("Ignoring malformed tenantId attribute {}", tenantIdText, ex);
+      return resolveNormalizedSessionContext(sessionId);
+    }
   }
 
   private String formatResponse(
@@ -318,6 +339,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private void maybeAppendToScreenBuffer(
       String sessionId,
+      Optional<SessionContext> maybeContext,
       TextCommandInterpretationResult interpretation,
       java.util.List<PlayerOutput> outputs,
       String localeTag,
@@ -327,7 +349,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!shouldBuffer(interpretation, replayEntries)) {
       return;
     }
-    resolveNormalizedSessionContext(sessionId)
+    maybeContext
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context ->
@@ -342,7 +364,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       WebSocketSession session,
       String sessionId,
       TextCommand command,
-      TextCommandInterpretationResult interpretation)
+      TextCommandInterpretationResult interpretation,
+      Optional<SessionContext> maybeContext)
       throws IOException {
     boolean reconnectRestoreRequested =
         interpretation.reconnectRedrawRecommended()
@@ -352,7 +375,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         || !reconnectRestoreRequested) {
       return;
     }
-    resolveNormalizedSessionContext(sessionId)
+    maybeContext
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context -> {
@@ -505,7 +528,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
     GameplayLoggingContext gameplayContext =
-        resolveNormalizedSessionContext(correlationId)
+        resolveNormalizedSessionContext(session, correlationId)
             .map(GameplayLoggingContext::from)
             .orElseGet(GameplayLoggingContext::empty);
     return new CombinedLoggingContext(runtimeContext, gameplayContext);
@@ -525,11 +548,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return promptComposer.compose(context);
   }
 
-  private void maybePersistLocaleTag(String sessionId, String localeTag) {
+  private void maybePersistLocaleTag(Optional<SessionContext> maybeContext, String localeTag) {
     if (!StringUtils.hasText(localeTag)) {
       return;
     }
-    resolveNormalizedSessionContext(sessionId)
+    maybeContext
         .filter(context -> !StringUtils.hasText(context.localeTag()))
         .ifPresent(
             context ->
