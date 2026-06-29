@@ -15,8 +15,14 @@ export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
 FIREMUD_SMOKE_SERIAL_BUILD="${FIREMUD_SMOKE_SERIAL_BUILD:-1}"
 FIREMUD_SMOKE_NO_CACHE_SERVICES="${FIREMUD_SMOKE_NO_CACHE_SERVICES:-}"
+FIREMUD_SMOKE_COMPOSE_SERVICES="${FIREMUD_SMOKE_COMPOSE_SERVICES:-}"
+FIREMUD_SMOKE_VALIDATE_ONLY="${FIREMUD_SMOKE_VALIDATE_ONLY:-0}"
 
-readarray -t COMPOSE_SERVICES < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
+  readarray -t COMPOSE_SERVICES <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
+else
+  readarray -t COMPOSE_SERVICES < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+fi
 
 declare -A ALL_COMPOSE_SERVICES=()
 for service in "${COMPOSE_SERVICES[@]}"; do
@@ -28,6 +34,7 @@ if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   for service in ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }; do
     if [[ -z "${ALL_COMPOSE_SERVICES[$service]:-}" ]]; then
       echo "Unknown service in FIREMUD_SMOKE_NO_CACHE_SERVICES: $service" >&2
+      echo "Use Docker Compose service ids here, not Gradle module names. Example: 'gateway', not 'spring-cloud-gateway'." >&2
       echo "Known compose services: ${COMPOSE_SERVICES[*]}" >&2
       exit 1
     fi
@@ -39,6 +46,11 @@ echo "Fresh bootstrap proof: destroy local compose containers, networks, and nam
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   echo "Forcing no-cache compose rebuild for: ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }"
+fi
+
+if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
+  echo "Validation-only mode: compose service selector parsing succeeded."
+  exit 0
 fi
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans

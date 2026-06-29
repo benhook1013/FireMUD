@@ -7,7 +7,7 @@ usage() {
   cat <<'EOF' >&2
 Usage: inspect-test-results.sh [--root <repo-root>] <service-name>
 
-Summarize the latest parsed JUnit XML under services/<service>/build/test-results.
+Summarize parsed JUnit XML currently on disk under services/<service>/build/test-results.
 This is diagnostic only; it helps explain quiet Gradle tails but does not prove
 the original Gradle invocation completed cleanly.
 EOF
@@ -147,7 +147,7 @@ def fmt_time(timestamp: float) -> str:
 print(f"Service: {service_name}")
 print(f"Result root: {result_root}")
 print()
-print("Per-suite summary:")
+print("Per-suite summary from XML currently on disk:")
 for bucket_name in sorted(per_bucket):
     bucket = per_bucket[bucket_name]
     latest_path = Path(str(bucket["latest_path"])) if bucket["latest_path"] is not None else None
@@ -173,7 +173,7 @@ print(
     f"{overall['skipped']} skipped"
 )
 if latest_file is not None:
-    print(f"Latest XML: {latest_file.relative_to(service_dir)} at {fmt_time(latest_mtime)}")
+    print(f"Most recent XML on disk: {latest_file.relative_to(service_dir)} at {fmt_time(latest_mtime)}")
 
 if failing_files:
     print()
