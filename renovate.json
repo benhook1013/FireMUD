@@ -52,7 +52,10 @@
         "patch",
         "digest"
       ],
-      "groupName": "github actions non-major updates"
+      "groupName": "github actions non-major updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
     },
     {
       "matchManagers": [
@@ -66,7 +69,16 @@
         "patch",
         "digest"
       ],
-      "groupName": "infrastructure non-major updates"
+      "groupName": "infrastructure non-major updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "automergeType": "pr",
+    "platformAutomerge": true
+  }
 }
