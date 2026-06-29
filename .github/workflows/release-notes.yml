@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'
 
+env:
+  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+
 jobs:
   generate-release-notes:
     runs-on: ubuntu-latest
@@ -66,6 +69,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
           fail-on: policy-violation

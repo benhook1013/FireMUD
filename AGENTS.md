@@ -46,6 +46,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 ## Execution Style
 
 - Prefer a single main-thread workflow for normal repository work.
+- Do all repository work on the currently active branch and in the current working tree unless a human explicitly asks for a different branch or worktree.
 - Treat the active main thread as the orchestrator for outstanding repository and slice work; keep end-to-end reasoning, integration, and final verification on that thread.
 - Use subagents selectively for bounded parallelizable work when delegation is clearly specified or materially improves cost or turnaround.
 - When subagents are useful, prefer cheaper mini-model workers if the available tooling exposes that choice, and give them narrowly scoped tasks with explicit success conditions.

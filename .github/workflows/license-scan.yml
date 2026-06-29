@@ -11,6 +11,9 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+
 concurrency:
   group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
@@ -99,6 +102,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
@@ -161,6 +165,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation

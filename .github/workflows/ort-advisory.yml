@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+
 concurrency:
   group: ort-advisory-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -52,6 +55,7 @@ jobs:
         continue-on-error: true
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,advisor,reporter,upload-results'
           fail-on: 'violations'
