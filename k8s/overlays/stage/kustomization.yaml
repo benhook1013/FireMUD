@@ -13,13 +13,13 @@ images:
   - name: ghcr.io/benhook1013/automation-scripting-service
     digest: sha256:d733bdc5de5e5a7755d802d276d15cbc2fc3d28b2e467e765b4d40cf97930d28
   - name: ghcr.io/benhook1013/entity-management-service
-    digest: sha256:895d420da8695c4b88ef9f50d79c66b6feb42b48537bac2bd9787d06b34e6fb5
+    digest: sha256:0561a37aee247a0ac8d412e7a6cafd35799247c0ddb00bf90687c0de1d93f515
   - name: ghcr.io/benhook1013/game-design-service
     digest: sha256:22a104a4cba3e50bd4d57857065f33d13fae9106dc4fa72fb45b2b409532b985
   - name: ghcr.io/benhook1013/game-logic-service
-    digest: sha256:7785783934266c94d56433d185890e81ec357ee546ab6e28ebc22fee8e7c5925
+    digest: sha256:28be5a9c02df37177bb004e9367da8cb797f812f89b9446a23759a43d646291e
   - name: ghcr.io/benhook1013/game-session-service
-    digest: sha256:924a5e7a00030d170443706bcbf9cbf40cbc0af0fd4e656fff4a4058f6f90e9a
+    digest: sha256:81e215525c6a5a23a989daefc6d29d67c77452f455493884f69c349fb7e9ab43
   - name: ghcr.io/benhook1013/logging-admin-service
     digest: sha256:4fe49a83a0b00fad0f1b37192b7f45f21e1cf3d69f473c08fae0d48df8528799
   - name: ghcr.io/benhook1013/social-groups-service
@@ -29,4 +29,4 @@ images:
   - name: ghcr.io/benhook1013/tcp-proxy-service
     digest: sha256:473505986543626e16639c06decd0143a3a602f3232174110e018cfd518f2c09
   - name: ghcr.io/benhook1013/world-management-service
-    digest: sha256:8d4f582159d5a42806f0c97bca14f33115a3a9d518660b399accba15196aa68f
+    digest: sha256:bfab69f84f2d0b5b62be8d4e47a2fde6313814eaad42c33e4212f697d4cd41ee
