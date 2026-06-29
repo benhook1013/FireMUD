@@ -480,17 +480,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return admissionWithOnLoadHandler(request, schemaVersion, sourceService);
     }
     long tenantKey = Long.parseLong(request.getTenantId());
-    boolean filterByPluginOwnership =
-        !request.getPluginId().isBlank()
-            && !request.getPluginVersionId().isBlank()
-            && scriptDefinitionRepository != null;
-    Map<String, PluginOwner> ownersByScriptId =
-        filterByPluginOwnership
-            ? resolvePluginOwners(
-                tenantKey, request.getScriptPatchVersion(), request, schemaVersion)
-            : Map.of();
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
-    List<ScriptEventBinding> handlers =
+    List<ScriptEventBinding> scopedBindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 tenantKey, request.getScriptPatchVersion(), request.getEventType(), schemaVersion)
@@ -499,48 +490,59 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 binding ->
                     request.getScriptId().isBlank()
                         || binding.getScriptId().equals(request.getScriptId()))
-            .filter(
-                binding ->
-                    !filterByPluginOwnership
-                        || hasMatchingPluginOwner(ownersByScriptId, request, binding))
             .filter(binding -> matchesScope(binding, request, payload))
             .toList();
-    if (filterByPluginOwnership && handlers.isEmpty()) {
+    Map<String, PluginOwner> ownersByScriptId =
+        scriptDefinitionRepository == null
+            ? Map.of()
+            : resolvePluginOwners(tenantKey, request.getScriptPatchVersion(), scopedBindings);
+    boolean filterByRequestPluginOwnership =
+        scriptDefinitionRepository != null
+            && !request.getPluginId().isBlank()
+            && !request.getPluginVersionId().isBlank();
+    Map<String, String> activePluginVersions =
+        scriptDefinitionRepository == null || request.getGameInstanceId().isBlank()
+            ? Map.of()
+            : pluginRuntimeStateService.getActivePluginVersions(
+                request.getTenantId(),
+                request.getGameInstanceId(),
+                normalize(request.getRegionId()),
+                request.getRegionEpoch());
+    List<ResolvedHandler> handlers =
+        scopedBindings.stream()
+            .map(
+                binding ->
+                    new ResolvedHandler(binding, ownersByScriptId.get(binding.getScriptId())))
+            .filter(
+                handler ->
+                    participatesInResolvedHandlerSet(handler.pluginOwner(), activePluginVersions))
+            .filter(
+                handler ->
+                    !filterByRequestPluginOwnership
+                        || hasMatchingPluginOwner(handler.pluginOwner(), request))
+            .toList();
+    if ((filterByRequestPluginOwnership && handlers.isEmpty())
+        || (handlers.isEmpty()
+            && scopedBindings.stream()
+                .anyMatch(binding -> isPluginOwned(ownersByScriptId, binding)))) {
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
     }
-    handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
+    handlers.forEach(handler -> admitHandler(request, schemaVersion, handler, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
 
-  private boolean hasMatchingPluginOwner(
-      Map<String, PluginOwner> ownersByScriptId,
-      TriggerScriptEventRequest request,
-      ScriptEventBinding binding) {
-    PluginOwner owner = ownersByScriptId.get(binding.getScriptId());
+  private boolean hasMatchingPluginOwner(PluginOwner owner, TriggerScriptEventRequest request) {
     return owner != null
         && owner.pluginId().equals(request.getPluginId())
         && owner.pluginVersionId().equals(request.getPluginVersionId());
   }
 
   private Map<String, PluginOwner> resolvePluginOwners(
-      Long tenantId,
-      String scriptPatchVersion,
-      TriggerScriptEventRequest request,
-      String schemaVersion) {
+      Long tenantId, String scriptPatchVersion, List<ScriptEventBinding> scopedBindings) {
     List<String> scriptIds =
-        bindingRepository
-            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-                tenantId, scriptPatchVersion, request.getEventType(), schemaVersion)
-            .stream()
-            .filter(
-                binding ->
-                    request.getScriptId().isBlank()
-                        || binding.getScriptId().equals(request.getScriptId()))
-            .map(ScriptEventBinding::getScriptId)
-            .distinct()
-            .toList();
+        scopedBindings.stream().map(ScriptEventBinding::getScriptId).distinct().toList();
     if (scriptIds.isEmpty()) {
       return Map.of();
     }
@@ -555,6 +557,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       }
     }
     return resolved;
+  }
+
+  private static boolean participatesInResolvedHandlerSet(
+      PluginOwner owner, Map<String, String> activePluginVersions) {
+    if (owner == null) {
+      return true;
+    }
+    return owner.pluginVersionId().equals(activePluginVersions.get(owner.pluginId()));
+  }
+
+  private static boolean isPluginOwned(
+      Map<String, PluginOwner> ownersByScriptId, ScriptEventBinding binding) {
+    return ownersByScriptId.get(binding.getScriptId()) != null;
   }
 
   private PluginOwner resolvePluginOwner(ScriptDefinition definition) {
@@ -604,18 +619,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private void admitHandler(
       TriggerScriptEventRequest request,
       String schemaVersion,
-      ScriptEventBinding binding,
+      ResolvedHandler handler,
       String sourceService) {
-    if (handlerAuditExists(request, schemaVersion, binding)) {
+    if (handlerAuditExists(request, schemaVersion, handler.binding())) {
       return;
     }
     if (!request.getIsDryRun()
         && !isOnLoadRequest(request)
-        && !quotaService.tryAcquire(request.getTenantId(), binding.getScriptId())) {
+        && !quotaService.tryAcquire(request.getTenantId(), handler.binding().getScriptId())) {
       persistHandlerAudit(
           request,
           schemaVersion,
-          binding,
+          handler.binding().getScriptId(),
+          handler.pluginOwner(),
           sourceService,
           null,
           "ADMISSION",
@@ -626,8 +642,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     persistWorkItem(
         request,
         schemaVersion,
-        binding.getScriptId(),
-        binding.getPriorityTag(),
+        handler.binding().getScriptId(),
+        handler.binding().getPriorityTag(),
+        handler.pluginOwner(),
         sourceService,
         requestScopeValues(request));
   }
@@ -637,6 +654,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String scriptId,
       String priorityTag,
+      PluginOwner pluginOwner,
       String sourceService,
       HandlerScopeValues scopeValues) {
     Long admissionEpoch =
@@ -656,8 +674,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRealmSlug(scopeValues.realmSlug());
     item.setPointerVersion(scopeValues.pointerVersion());
     item.setScriptId(scriptId);
-    item.setPluginId(normalize(request.getPluginId()));
-    item.setPluginVersionId(normalize(request.getPluginVersionId()));
+    item.setPluginId(resolveHandlerPluginId(request, pluginOwner));
+    item.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
     item.setScriptPatchVersion(request.getScriptPatchVersion());
@@ -681,6 +699,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         request,
         schemaVersion,
         scriptId,
+        pluginOwner,
         sourceService,
         saved,
         "ADMISSION",
@@ -695,33 +714,20 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String priorityTag,
       String sourceService) {
     persistWorkItem(
-        request, schemaVersion, scriptId, priorityTag, sourceService, requestScopeValues(request));
-  }
-
-  private void persistHandlerAudit(
-      TriggerScriptEventRequest request,
-      String schemaVersion,
-      ScriptEventBinding binding,
-      String sourceService,
-      ScriptWorkItem workItem,
-      String finalStage,
-      String finalOutcome,
-      String finalReason) {
-    persistHandlerAudit(
         request,
         schemaVersion,
-        binding.getScriptId(),
+        scriptId,
+        priorityTag,
+        null,
         sourceService,
-        workItem,
-        finalStage,
-        finalOutcome,
-        finalReason);
+        requestScopeValues(request));
   }
 
   private void persistHandlerAudit(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String scriptId,
+      PluginOwner pluginOwner,
       String sourceService,
       ScriptWorkItem workItem,
       String finalStage,
@@ -740,8 +746,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRealmSlug(scopeValues.realmSlug());
     audit.setPointerVersion(scopeValues.pointerVersion());
     audit.setScriptId(scriptId);
-    audit.setPluginId(normalize(request.getPluginId()));
-    audit.setPluginVersionId(normalize(request.getPluginVersionId()));
+    audit.setPluginId(resolveHandlerPluginId(request, pluginOwner));
+    audit.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
@@ -760,6 +766,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setFinalOutcome(finalOutcome);
     audit.setFinalReason(finalReason);
     eventAuditRepository.save(audit);
+  }
+
+  private static String resolveHandlerPluginId(
+      TriggerScriptEventRequest request, PluginOwner pluginOwner) {
+    return pluginOwner == null ? normalize(request.getPluginId()) : pluginOwner.pluginId();
+  }
+
+  private static String resolveHandlerPluginVersionId(
+      TriggerScriptEventRequest request, PluginOwner pluginOwner) {
+    return pluginOwner == null
+        ? normalize(request.getPluginVersionId())
+        : pluginOwner.pluginVersionId();
   }
 
   private static String sourceKind(TriggerScriptEventRequest request) {
@@ -1062,12 +1080,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         routingBundle.pointerVersion());
   }
 
-  private record PluginOwner(String pluginId, String pluginVersionId) {}
-
   private record HandlerScopeValues(
       String entityId,
       String playableStateScope,
       String worldSlug,
       String realmSlug,
       String pointerVersion) {}
+
+  private record PluginOwner(String pluginId, String pluginVersionId) {}
+
+  private record ResolvedHandler(ScriptEventBinding binding, PluginOwner pluginOwner) {}
 }

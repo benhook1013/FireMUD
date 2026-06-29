@@ -155,6 +155,8 @@ Current live binding-scope consumers on `onCommand` may resolve handlers from:
 - `ACTION_CATEGORY`
 - `ACTION_TAG`
 
+When a resolved handler is plugin-owned, Automation ingress must only admit that handler when the same plugin version is currently active for the runtime scope identified by the event trigger (`gameInstanceId`, `regionId`, `regionEpoch`). Plugin ownership on resolved handler audit/work-item rows must come from that script owner truth rather than from optional producer-supplied plugin identity on the ingress request.
+
 Required Trigger Identity and snapshot fields remain defined by the registry entry itself (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptPatchVersion`, `scriptEventId`, and `readSnapshotToken` where required). Payload contents are intentionally narrower than full Trigger Identity.
 
 ### `onSpawn` payload `v1`

@@ -811,31 +811,38 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (!item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())) {
       return false;
     }
-    Optional<ScriptEventIngressAudit> audit =
-        ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-                item.getTenantId(),
-                item.getGameInstanceId(),
-                item.getRegionId(),
-                item.getRegionEpoch(),
-                item.getEntityId(),
-                blankToEmpty(item.getPlayableStateScope()),
-                blankToEmpty(item.getWorldSlug()),
-                blankToEmpty(item.getRealmSlug()),
-                blankToEmpty(item.getPointerVersion()),
-                item.getEventType(),
-                item.getEventSchemaVersion(),
-                item.getScriptPatchVersion(),
-                item.getScriptEventId(),
-                item.isDryRun());
-    if (audit.isEmpty()
-        || audit.get().getPluginId() == null
-        || audit.get().getPluginId().isBlank()) {
-      return true;
+    String pluginId = blankToEmpty(item.getPluginId());
+    String pluginVersionId = blankToEmpty(item.getPluginVersionId());
+    if (pluginId.isBlank()) {
+      Optional<ScriptEventIngressAudit> audit =
+          ingressAuditRepository
+              .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                  item.getTenantId(),
+                  item.getGameInstanceId(),
+                  item.getRegionId(),
+                  item.getRegionEpoch(),
+                  item.getEntityId(),
+                  blankToEmpty(item.getPlayableStateScope()),
+                  blankToEmpty(item.getWorldSlug()),
+                  blankToEmpty(item.getRealmSlug()),
+                  blankToEmpty(item.getPointerVersion()),
+                  item.getEventType(),
+                  item.getEventSchemaVersion(),
+                  item.getScriptPatchVersion(),
+                  item.getScriptEventId(),
+                  item.isDryRun());
+      if (audit.isEmpty()
+          || audit.get().getPluginId() == null
+          || audit.get().getPluginId().isBlank()) {
+        return true;
+      }
+      pluginId = audit.get().getPluginId();
+      pluginVersionId = blankToEmpty(audit.get().getPluginVersionId());
     }
+    String requiredPluginVersionId = pluginVersionId;
     return pluginRuntimeStateService
-        .getStatus(item.getTenantId(), item.getGameInstanceId(), audit.get().getPluginId())
-        .map(status -> status.activePluginVersionId().equals(audit.get().getPluginVersionId()))
+        .getStatus(item.getTenantId(), item.getGameInstanceId(), pluginId)
+        .map(status -> status.activePluginVersionId().equals(requiredPluginVersionId))
         .orElse(false);
   }
 
