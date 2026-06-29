@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.security.JwtClaims;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -86,8 +87,8 @@ public final class SessionRoutingNormalizationService {
 
   private Optional<Long> parseSessionId(String text) {
     try {
-      return Optional.of(Long.parseLong(text));
-    } catch (NumberFormatException ex) {
+      return Optional.of(JwtClaims.requireLong(text, "sessionId", false));
+    } catch (RuntimeException ex) {
       return Optional.empty();
     }
   }

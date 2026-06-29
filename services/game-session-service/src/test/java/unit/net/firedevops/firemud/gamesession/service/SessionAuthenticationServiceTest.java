@@ -235,6 +235,26 @@ class SessionAuthenticationServiceTest {
   }
 
   @Test
+  void isAuthenticatedReturnsFalseForZeroSessionId() {
+    assertFalse(service.isAuthenticated("0"));
+    verify(sessionContextService, never()).findBySessionId(0L);
+  }
+
+  @Test
+  void isAuthenticatedReturnsFalseForNegativeSessionId() {
+    assertFalse(service.isAuthenticated("-1"));
+    verify(sessionContextService, never()).findBySessionId(-1L);
+  }
+
+  @Test
+  void resolveSessionContextReturnsEmptyForZeroSessionId() {
+    Optional<SessionContext> resolved = service.resolveSessionContext("0");
+
+    assertTrue(resolved.isEmpty());
+    verify(sessionContextService, never()).findBySessionId(0L);
+  }
+
+  @Test
   void resolveByGameplayIdentityNormalizesResolvedContext() {
     SessionContext stale =
         new SessionContext(

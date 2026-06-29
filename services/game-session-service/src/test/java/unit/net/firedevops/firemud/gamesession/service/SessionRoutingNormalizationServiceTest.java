@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +49,23 @@ class SessionRoutingNormalizationServiceTest {
     Optional<SessionContext> resolved = service.resolveProjectedSessionContext("41");
 
     assertTrue(resolved.isEmpty());
+    verify(pointerAuthorityService, never())
+        .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void resolveProjectedSessionContextFailsClosedForNonPositiveSessionId() {
+    Optional<SessionContext> zero = service.resolveProjectedSessionContext("0");
+
+    assertTrue(zero.isEmpty());
+    verify(sessionContextService, never()).findBySessionId(anyLong());
+    verify(pointerAuthorityService, never())
+        .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
+
+    Optional<SessionContext> negative = service.resolveProjectedSessionContext("-1");
+
+    assertTrue(negative.isEmpty());
+    verify(sessionContextService, never()).findBySessionId(anyLong());
     verify(pointerAuthorityService, never())
         .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
   }

@@ -137,6 +137,96 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void invalidSessionIdZeroReturnsInvalidArgument() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    LoginCommandHandlingResult result = handler.handle("0", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void invalidSessionIdNegativeReturnsInvalidArgument() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    LoginCommandHandlingResult result = handler.handle("-1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void invalidAccountIdZeroReturnsInvalidAccount() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("0").build());
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(LoginCommandConstants.INVALID_ACCOUNT_CODE, result.commandResult().errorCode());
+    assertEquals(
+        "ERROR "
+            + LoginCommandConstants.INVALID_ACCOUNT_CODE
+            + " "
+            + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
+        joinedOutputText(result.outputs()));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void invalidAccountIdNegativeReturnsInvalidAccount() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("-1").build());
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(LoginCommandConstants.INVALID_ACCOUNT_CODE, result.commandResult().errorCode());
+    assertEquals(
+        "ERROR "
+            + LoginCommandConstants.INVALID_ACCOUNT_CODE
+            + " "
+            + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
+        joinedOutputText(result.outputs()));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
   void missingGameInstanceReturnsSessionNotFound() {
     TextCommand command =
         new TextCommand(

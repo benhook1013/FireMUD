@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -439,19 +440,16 @@ public final class LoginCommandHandler {
 
   private Long parseSessionId(String sessionIdText) {
     try {
-      return Long.parseLong(sessionIdText);
-    } catch (NumberFormatException ex) {
+      return JwtClaims.requireLong(sessionIdText, "sessionId", false);
+    } catch (RuntimeException ex) {
       return null;
     }
   }
 
   private Long parseAccountId(String accountIdText) {
-    if (accountIdText == null) {
-      return null;
-    }
     try {
-      return Long.parseLong(accountIdText);
-    } catch (NumberFormatException ex) {
+      return JwtClaims.requireLong(accountIdText, "accountId", false);
+    } catch (RuntimeException ex) {
       return null;
     }
   }
