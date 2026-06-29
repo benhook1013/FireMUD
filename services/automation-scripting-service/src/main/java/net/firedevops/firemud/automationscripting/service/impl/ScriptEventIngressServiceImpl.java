@@ -503,6 +503,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                         || hasMatchingPluginOwner(ownersByScriptId, request, binding))
             .filter(binding -> matchesScope(binding, request, payload))
             .toList();
+    if (filterByPluginOwnership && handlers.isEmpty()) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
+    }
     handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
