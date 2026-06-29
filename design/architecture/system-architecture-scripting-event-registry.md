@@ -143,8 +143,9 @@ Minimum payload contract:
 - `commandId`
 - `commandName`
 
-Current optional classification enrichment:
+Current optional producer enrichment:
 
+- `commandAlias` when the producer can preserve the normalized built-in alias that triggered the command
 - `actionCategory`
 - `actionTags[]`
 

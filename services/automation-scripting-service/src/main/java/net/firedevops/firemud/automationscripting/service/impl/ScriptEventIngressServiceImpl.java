@@ -45,6 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected Spring dependencies are not exposed externally")
 public class ScriptEventIngressServiceImpl implements ScriptEventIngressService {
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
+  private static final String SCOPE_COMMAND_ALIAS = "COMMAND_ALIAS";
   private static final String OUTCOME_ADMITTED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name();
   private static final String OUTCOME_REGISTRY_REJECTED =
@@ -486,6 +487,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             ? resolvePluginOwners(
                 tenantKey, request.getScriptPatchVersion(), request, schemaVersion)
             : Map.of();
+    Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
     List<ScriptEventBinding> handlers =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
@@ -499,7 +501,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 binding ->
                     !filterByPluginOwnership
                         || hasMatchingPluginOwner(ownersByScriptId, request, binding))
-            .filter(binding -> matchesScope(binding, request))
+            .filter(binding -> matchesScope(binding, request, payload))
             .toList();
     handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
@@ -851,13 +853,31 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             request.getIsDryRun());
   }
 
-  private boolean matchesScope(ScriptEventBinding binding, TriggerScriptEventRequest request) {
-    return switch (binding.getTargetScopeType()) {
+  private boolean matchesScope(
+      ScriptEventBinding binding, TriggerScriptEventRequest request, Map<String, Object> payload) {
+    return switch (normalizeScopeType(binding.getTargetScopeType())) {
       case "GLOBAL" -> binding.getTargetScopeId().isBlank();
       case "ENTITY" -> binding.getTargetScopeId().equals(request.getEntityId());
       case "REGION" -> binding.getTargetScopeId().equals(request.getRegionId());
+      case SCOPE_COMMAND_ALIAS -> matchesCommandAliasScope(binding, payload);
       default -> false;
     };
+  }
+
+  private boolean matchesCommandAliasScope(
+      ScriptEventBinding binding, Map<String, Object> payload) {
+    if (payload == null) {
+      return false;
+    }
+    String bindingAlias = normalizeCommandAlias(binding.getTargetScopeId());
+    if (bindingAlias.isBlank()) {
+      return false;
+    }
+    String payloadAlias =
+        firstPresent(
+            normalizeCommandAlias(stringValue(payload.get("commandAlias"))),
+            normalizeCommandAlias(stringValue(payload.get("commandName"))));
+    return bindingAlias.equals(payloadAlias);
   }
 
   private ScriptEventIngressAudit findExisting(
@@ -960,6 +980,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String stringValue(Object value) {
+    return value instanceof String text ? text : "";
+  }
+
+  private static String normalizeCommandAlias(String value) {
+    return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private static String normalizeScopeType(String value) {
+    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
   }
 
   private static boolean isOnLoadRequest(TriggerScriptEventRequest request) {

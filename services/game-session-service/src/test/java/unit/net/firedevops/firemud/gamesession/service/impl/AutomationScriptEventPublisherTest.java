@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
@@ -48,9 +49,16 @@ class AutomationScriptEventPublisherTest {
                     TextCommandActionCategory.META, java.util.List.of(TextCommandActionTag.UI)));
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, metadataResolver, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            metadataResolver,
+            builtInAliasResolver(),
+            Runnable::run);
 
-    publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
+    GameplayCommand command = command("cmd-1", "LOOK");
+    command.setCommandText("l");
+    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -72,6 +80,7 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");
     assertThat(request.getPayloadJson()).contains("\"commandId\":\"cmd-1\"");
     assertThat(request.getPayloadJson()).contains("\"commandName\":\"LOOK\"");
+    assertThat(request.getPayloadJson()).contains("\"commandAlias\":\"look\"");
     assertThat(request.getPayloadJson()).contains("\"actionCategory\":\"META\"");
     assertThat(request.getPayloadJson()).contains("\"actionTags\":[\"UI\"]");
   }
@@ -92,6 +101,7 @@ class AutomationScriptEventPublisherTest {
             statusRepository,
             gameInstanceRepository,
             commandToken -> Optional.empty(),
+            builtInAliasResolver(),
             Runnable::run);
 
     publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
@@ -120,6 +130,7 @@ class AutomationScriptEventPublisherTest {
             statusRepository,
             gameInstanceRepository,
             commandToken -> Optional.empty(),
+            builtInAliasResolver(),
             Runnable::run);
 
     publisher.publishSpawnEvent(
@@ -162,6 +173,7 @@ class AutomationScriptEventPublisherTest {
             statusRepository,
             gameInstanceRepository,
             commandToken -> Optional.empty(),
+            builtInAliasResolver(),
             Runnable::run);
 
     publisher.publishRegionTransitionEvents(
@@ -218,6 +230,7 @@ class AutomationScriptEventPublisherTest {
             statusRepository,
             gameInstanceRepository,
             commandToken -> Optional.empty(),
+            builtInAliasResolver(),
             Runnable::run);
 
     publisher.publishRegionExitEvent(
@@ -269,7 +282,12 @@ class AutomationScriptEventPublisherTest {
                 : Optional.empty();
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, metadataResolver, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            metadataResolver,
+            builtInAliasResolver(),
+            Runnable::run);
 
     GameplayCommand command = command("authored-1", "wave");
     command.setCommandText("wave");
@@ -299,5 +317,13 @@ class AutomationScriptEventPublisherTest {
         "production",
         7L,
         "SHARED");
+  }
+
+  private static BuiltInTextCommandAliasResolver builtInAliasResolver() {
+    BuiltInTextCommandAliasResolver resolver = Mockito.mock(BuiltInTextCommandAliasResolver.class);
+    when(resolver.resolve("l")).thenReturn(Optional.of("look"));
+    when(resolver.resolve("LOOK")).thenReturn(Optional.of("look"));
+    when(resolver.resolve("wave")).thenReturn(Optional.empty());
+    return resolver;
   }
 }

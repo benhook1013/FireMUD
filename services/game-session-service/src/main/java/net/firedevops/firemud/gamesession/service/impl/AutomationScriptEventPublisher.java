@@ -9,6 +9,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver.ResolvedTextCommandMetadata;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -35,6 +36,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameInstanceRepository gameInstanceRepository;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
+  private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final Executor scriptEventExecutor;
 
   public AutomationScriptEventPublisher(
@@ -42,11 +44,13 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameInstanceRepository gameInstanceRepository,
       TextCommandMetadataResolver textCommandMetadataResolver,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       @Qualifier("scriptEventExecutor") Executor scriptEventExecutor) {
     this.client = client;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameInstanceRepository = gameInstanceRepository;
     this.textCommandMetadataResolver = textCommandMetadataResolver;
+    this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.scriptEventExecutor = scriptEventExecutor;
   }
 
@@ -197,6 +201,9 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             .append("\",\"commandName\":\"")
             .append(escape(command.getCommandName()))
             .append("\"");
+    resolveBuiltInCommandAlias(command)
+        .ifPresent(
+            alias -> payload.append(",\"commandAlias\":\"").append(escape(alias)).append("\""));
     resolveCommandMetadata(command)
         .ifPresent(
             metadata -> {
@@ -219,6 +226,15 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             () ->
                 textCommandMetadataResolver.resolve(
                     firstCommandToken(command.getCommandText()).orElse(null)));
+  }
+
+  private Optional<String> resolveBuiltInCommandAlias(GameplayCommand command) {
+    if (command == null) {
+      return Optional.empty();
+    }
+    return firstCommandToken(command.getCommandText())
+        .flatMap(builtInTextCommandAliasResolver::resolve)
+        .or(() -> builtInTextCommandAliasResolver.resolve(command.getCommandName()));
   }
 
   private static Optional<String> firstCommandToken(String commandText) {

@@ -47,6 +47,7 @@
     "quotaClass": "STANDARD_RUNTIME",
     "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
     "allowedBindingScopes": [
+      "COMMAND_ALIAS",
       "ENTITY",
       "REGION",
       "GLOBAL"
