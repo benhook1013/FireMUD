@@ -35,6 +35,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   @Transactional
   @Timed(value = "script.update")
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
+    validateBindings(dto);
     ScriptDefinition entity = mapper.toEntity(dto);
     var saga =
         new SagaBuilder("updateScript")
@@ -48,6 +49,25 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
             .build();
     sagaRunner.run(saga);
     return mapper.toDto(entity);
+  }
+
+  private void validateBindings(ScriptDefinitionDto dto) {
+    if (dto.eventBindings() == null || dto.eventBindings().isEmpty()) {
+      return;
+    }
+    dto.eventBindings().forEach(this::validateBinding);
+  }
+
+  private void validateBinding(ScriptDefinitionDto.EventBindingDto binding) {
+    String eventType = requiredText(binding.eventType(), "event type");
+    String eventSchemaVersion =
+        binding.eventSchemaVersion() == null || binding.eventSchemaVersion().isBlank()
+            ? DEFAULT_EVENT_SCHEMA_VERSION
+            : binding.eventSchemaVersion();
+    String targetScopeType =
+        normalizeScopeType(requiredText(binding.targetScopeType(), "target scope type"));
+    validateBindingScope(eventType, eventSchemaVersion, targetScopeType);
+    normalizePriorityTag(binding.priorityTag());
   }
 
   private void replaceEventBindings(ScriptDefinitionDto dto) {

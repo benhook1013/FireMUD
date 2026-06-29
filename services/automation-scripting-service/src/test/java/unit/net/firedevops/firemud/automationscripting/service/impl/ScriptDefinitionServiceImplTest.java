@@ -78,9 +78,8 @@ class ScriptDefinitionServiceImplTest {
                     "onUnknown", "v1", "GLOBAL", "", 0, "normal", false)));
 
     assertThatThrownBy(() -> service.updateScript(dto))
-        .isInstanceOf(SagaException.class)
-        .hasRootCauseInstanceOf(IllegalArgumentException.class)
-        .hasRootCauseMessage("unknown built-in event binding: onUnknown@v1");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("unknown built-in event binding: onUnknown@v1");
   }
 
   @Test
@@ -97,8 +96,7 @@ class ScriptDefinitionServiceImplTest {
                     "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false)));
 
     assertThatThrownBy(() -> service.updateScript(dto))
-        .isInstanceOf(SagaException.class)
-        .hasRootCauseInstanceOf(IllegalArgumentException.class)
-        .hasRootCauseMessage("unsupported binding scope COMMAND_ALIAS for onSpawn@v1");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("unsupported binding scope COMMAND_ALIAS for onSpawn@v1");
   }
 }
