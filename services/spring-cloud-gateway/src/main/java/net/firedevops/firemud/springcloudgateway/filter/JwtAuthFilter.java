@@ -44,7 +44,7 @@ public class JwtAuthFilter implements WebFilter, Ordered {
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         return exchange.getResponse().setComplete();
       }
-    } catch (JwtException ex) {
+    } catch (JwtException | IllegalArgumentException ex) {
       exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
       return exchange.getResponse().setComplete();
     }

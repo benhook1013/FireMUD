@@ -62,6 +62,7 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");
+    assertThat(request.getPayloadJson()).contains("\"commandId\":\"cmd-1\"");
     assertThat(request.getPayloadJson()).contains("\"commandName\":\"LOOK\"");
   }
 

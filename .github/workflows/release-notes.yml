@@ -5,11 +5,19 @@ on:
     tags:
       - 'v*.*.*'
 
+env:
+  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+
 jobs:
   generate-release-notes:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -66,6 +74,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
           fail-on: policy-violation

@@ -26,15 +26,13 @@ echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 
 "$PYTHON" - <<'PY'
 import os
-import socket
 import sys
-import time
 from pathlib import Path
 
 repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
-from smoke_common import login_play_look_steps, run_telnet_command_plan
+from smoke_common import login_play_look_steps, run_telnet_smoke_session
 
 host = os.environ["SMOKE_TELNET_HOST"]
 port = int(os.environ["TCP_PORT"])
@@ -46,34 +44,22 @@ worlds_expect = os.environ.get("SMOKE_WORLDS_EXPECT", "OK WORLDS")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
-session_retry_deadline = time.time() + timeout_seconds
-
-
-last_error = None
-while time.time() < session_retry_deadline:
-    try:
-        with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-            run_telnet_command_plan(
-                sock,
-                login_play_look_steps(
-                    username,
-                    password,
-                    world,
-                    worlds_expect,
-                    login_expect,
-                    play_expect,
-                    look_expect,
-                ),
-                timeout_seconds,
-            )
-            last_error = None
-            break
-    except OSError as exc:
-        last_error = exc
-        time.sleep(2)
-
-if last_error is not None:
-    raise SystemExit(f"Failed to connect to {host}:{port}: {last_error}") from last_error
+run_telnet_smoke_session(
+    host,
+    port,
+    login_play_look_steps(
+        username,
+        password,
+        world,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+    ),
+    timeout_seconds,
+    retry_window_seconds=timeout_seconds,
+    retry_interval_seconds=2,
+)
 
 label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")
 print(f"{label} TCP LOGIN -> PLAY -> LOOK smoke test passed.")

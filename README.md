@@ -6,7 +6,7 @@
 
 [![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)](https://spring.io/)
 [![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)](https://react.dev/)
-[![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)](https://www.postgresql.org/)
+[![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)](design/architecture/infrastructure/deployment-environments.md)
 [![Database: Redis](https://img.shields.io/badge/Database-Redis-blue)](https://redis.io/)
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)

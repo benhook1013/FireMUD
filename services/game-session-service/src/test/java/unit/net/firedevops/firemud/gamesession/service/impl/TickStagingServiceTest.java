@@ -150,7 +150,11 @@ class TickStagingServiceTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         batch.getSelectedWorkManifestJson().contains("\"sourceType\":\"AUTOMATION\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        batch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":77"));
+        batch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"SCHEDULE_TIMER\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":5000"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batch.getSelectedWorkManifestJson().contains("\"sourceState\":\"SCHEDULE_DUE_CLAIMED\""));
     org.junit.jupiter.api.Assertions.assertTrue(
         batch.getSelectedWorkManifestJson().contains("\"worldSlug\":\"demo\""));
     org.junit.jupiter.api.Assertions.assertTrue(

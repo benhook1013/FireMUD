@@ -20,6 +20,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
+- When reporting PR or review status, always report both unresolved non-outdated threads and unresolved outdated threads. Treat non-outdated threads as the actionable truth, but call out outdated unresolved threads separately because they can still appear in GitHub or CodeRabbit UI and confuse merge status.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
@@ -27,11 +28,15 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 - If you change code, run `./gradlew spotlessApply` before hand-off.
 - If you change code, run `./gradlew check` before hand-off.
+- Before marking a slice or seam complete, verify the exact claimed boundary across its public contract, implementation, and focused proof instead of assuming adjacent green work is enough.
 - If formatting-sensitive files changed after `spotlessApply`, run the relevant `spotlessCheck` or `spotlessJavaCheck` task for the touched services.
 - If you change service code, prefer the same validation path CI uses for that service: `./gradlew :<service>:check -PfullCheck`.
+- For heavy local service verification, prefer `dev-tools/validation/run-locked-gradle.sh` over raw `./gradlew` so overlapping local runs do not corrupt shared `build/test-results` state.
 - If you edit Markdown or design docs, run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat failing Markdown hygiene checks as work to fix before hand-off even when the failures were pre-existing.
 - If CI has already exposed multiple failures in the same area, stop relying on incremental remote feedback and rerun the fuller local proof for that area before pushing.
+- If a heavy Gradle verification run goes quiet after test execution, use `dev-tools/validation/inspect-test-results.sh <service>` to inspect fresh parsed XML before assuming a new product regression; treat it as diagnostics only, not proof of clean task completion.
+- If multiple branch lanes or broad migration/build changes have been in flight, do not trust service-local green proof alone; rerun repo-wide validation before hand-off.
 
 ## Smoke And Runtime Proof
 
@@ -45,6 +50,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 ## Execution Style
 
 - Prefer a single main-thread workflow for normal repository work.
+- Do all repository work on the currently active branch and in the current working tree unless a human explicitly asks for a different branch or worktree.
 - Treat the active main thread as the orchestrator for outstanding repository and slice work; keep end-to-end reasoning, integration, and final verification on that thread.
 - Use subagents selectively for bounded parallelizable work when delegation is clearly specified or materially improves cost or turnaround.
 - When subagents are useful, prefer cheaper mini-model workers if the available tooling exposes that choice, and give them narrowly scoped tasks with explicit success conditions.
@@ -77,6 +83,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - In design and architecture docs, describe target-state behavior directly in the main flow.
 - If implementation is partial, keep that status in a dedicated section near the top, such as `Implementation Notes`, and keep it current.
 - Document one canonical current behavior and remove obsolete transitional guidance unless a human explicitly asks for rollout history.
+- When a slice narrows or replaces a shared abstraction, update the surviving high-level docs and nearby helper/module comments in the same pass so the repo keeps teaching one boundary.
 - Do not use emojis in Markdown headings.
 - When linking to repo files in Markdown, prefer plain file links without `:line` suffixes so links stay GitHub-compatible.
 
@@ -95,6 +102,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Prefer standard CLI tools directly for routine archive, JSON, YAML, SQL, and text inspection.
 - If a common utility is missing and installing it is straightforward, prefer installing it once rather than repeatedly working around it.
 - If a missing tool would require a nontrivial or risky system change, ask before installing it.
+- When running Docker from WSL, use a native Linux Docker CLI against `unix:///var/run/docker.sock`; Windows `docker.exe` wrappers can appear connected while breaking bind mounts that the canonical source-built smoke proofs rely on.
 - When invoking Gradle repeatedly from AI workflows, prefer the default daemon behavior; only use `--no-daemon` for daemon debugging.
 - Preview host: `77.42.29.156`; SSH user: `firemud`; current self-hosted runner label: `preview`. Treat it as preview infrastructure first, and check live host or runner state before heavier use.
 
@@ -103,3 +111,4 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Record reusable process, tooling, environment, or design lessons in [design/project-management/ai-observations.md](design/project-management/ai-observations.md).
 - Do not log ordinary one-off bugs fixed as part of the current task unless the underlying lesson still matters after the fix.
 - Treat that file as append-only during normal work: add dated entries and do not rewrite older ones unless a human explicitly asks for cleanup.
+- Do not proactively review or curate that file as routine maintenance; only do an observation cleanup/review pass when a human explicitly asks. If it grows noisy enough to merit a pass, note that and ask whether to schedule one.

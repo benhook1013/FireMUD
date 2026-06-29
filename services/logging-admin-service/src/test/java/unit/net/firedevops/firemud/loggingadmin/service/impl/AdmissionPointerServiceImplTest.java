@@ -69,14 +69,42 @@ class AdmissionPointerServiceImplTest {
   @Test
   void listPointerAuditRequiresAccessibleTenant() {
     SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
-    when(gameSessionControlPlaneClient.listAdmissionPointerAudit("sandbox", "preview"))
+
+    assertThrows(
+        ResponseStatusException.class, () -> service.listPointerAudit(8L, "sandbox", "preview"));
+    org.mockito.Mockito.verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
+  void listPointerAuditUsesCanonicalTenantKey() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.listAdmissionPointerAudit(2L, "sandbox", "preview"))
+        .thenReturn(
+            ListAdmissionPointerAuditResponse.newBuilder()
+                .addAudit(pointerEntry("sandbox", "preview", 2L, 11L, 4L))
+                .build());
+
+    List<AdmissionPointerDto> result = service.listPointerAudit(2L, "sandbox", "preview");
+
+    assertEquals(1, result.size());
+    assertEquals(2L, result.get(0).tenantId());
+  }
+
+  @Test
+  void listPointerAuditRejectsMismatchedControlPlaneTenant() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.listAdmissionPointerAudit(2L, "sandbox", "preview"))
         .thenReturn(
             ListAdmissionPointerAuditResponse.newBuilder()
                 .addAudit(pointerEntry("sandbox", "preview", 8L, 11L, 4L))
                 .build());
 
-    assertThrows(
-        ResponseStatusException.class, () -> service.listPointerAudit("sandbox", "preview"));
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.listPointerAudit(2L, "sandbox", "preview"));
+
+    assertEquals(500, ex.getStatusCode().value());
   }
 
   @Test

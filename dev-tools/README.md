@@ -7,11 +7,13 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 ## Canonical root entrypoints
 
 - `firemud-cli.sh` – simple local stack shortcuts built on top of Gradle tasks.
-- `verify-fresh-bootstrap.sh` – canonical source-built Docker smoke proof from a clean state. Defaults to a per-service serial build path for local reliability; set `FIREMUD_SMOKE_SERIAL_BUILD=0` to use a normal compose build and default `COMPOSE_PARALLEL_LIMIT=4`.
+- `verify-fresh-bootstrap.sh` – canonical source-built Docker smoke proof from a clean state. Defaults to a per-service serial build path for local reliability; set `FIREMUD_SMOKE_SERIAL_BUILD=0` to use a normal compose build and default `COMPOSE_PARALLEL_LIMIT=4`. Set `FIREMUD_SMOKE_NO_CACHE_SERVICES="service-a service-b"` when a smoke proof must force a fresh compose rebuild for specific Docker Compose service ids without turning the whole stack into a cold no-cache build; use `gateway`, not the Gradle module name `spring-cloud-gateway`. When running from WSL, keep Docker on a native Linux CLI pointed at `unix:///var/run/docker.sock`; Windows `docker.exe` wrappers can look healthy but break the bind mounts this proof depends on.
 - `verify-restart-state.sh` – canonical source-built Docker smoke proof with preserved local state.
 - `verify-smoke-images.sh` – canonical GHCR/image-tag Docker smoke proof.
 - `build-compose-service-jars.sh` – rebuilds the service boot jars consumed by the source-built Compose stack.
 - `verify-compose-health.sh` – shared health gate used by the smoke entrypoints.
+- `validation/run-locked-gradle.sh` – canonical local verification wrapper that prevents overlapping service-level Gradle runs from writing the same test-result trees at once.
+- `validation/inspect-test-results.sh` – read-only JUnit XML summary helper for diagnosing quiet post-suite Gradle tails without guessing at process state.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
 ## Folder map

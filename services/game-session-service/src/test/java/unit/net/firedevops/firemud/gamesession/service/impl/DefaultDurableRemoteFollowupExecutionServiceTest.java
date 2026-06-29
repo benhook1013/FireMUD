@@ -106,6 +106,48 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
+  void executeRejectsConflictingDurablePayloadKindAndPayloadJson() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadKind("enqueue_gameplay_command");
+    followup.setRequestedCommand("LOOK");
+    followup.setPayloadJson(
+        """
+        {"kind":"enqueue_automation_command","command":"LOOK"}
+        """);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_FOLLOWUP_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("kind conflicts with durable followup value", result.failureMessage());
+    verifyNoInteractions(
+        gameplayCommandRepository,
+        gameInstanceRepository,
+        runtimeRegionStatusRepository,
+        tickService,
+        automationScriptingClient);
+  }
+
+  @Test
   void executeReplaysTerminalAppliedFollowupWithoutDuplicateResultWrite() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
@@ -412,7 +454,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
-  void executeUsesDurableGameplayRowAuthorityOverConflictingPayloadJson() {
+  void executeRejectsConflictingDurableGameplayRowAndPayloadJson() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
@@ -479,24 +521,17 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
-    assertEquals("APPLIED", result.effectStatus());
-    ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
-        ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
-    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
-        .save(commandCaptor.capture());
-    net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
-        commandCaptor.getAllValues().get(0);
-    assertEquals("321", admittedCommand.getTargetEntityId());
-    assertEquals(Long.valueOf(321L), admittedCommand.getCharacterId());
-    assertEquals("REMOTE_FOLLOWUP", admittedCommand.getOriginSourceKind());
-    assertEquals("TARGET_REGION_EXECUTED", admittedCommand.getOriginSourceState());
-    verify(tickService)
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_GAMEPLAY_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("worldSlug conflicts with durable followup value", result.failureMessage());
+    verify(gameplayCommandRepository, never()).save(org.mockito.ArgumentMatchers.any());
+    verify(tickService, never())
         .enqueueCommand(
-            org.mockito.Mockito.eq(1L),
-            org.mockito.Mockito.eq(9L),
-            org.mockito.Mockito.eq("rfcmd-followup-1"),
-            org.mockito.Mockito.eq("LOOK"),
-            org.mockito.Mockito.eq(true));
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean());
   }
 
   @Test
@@ -594,7 +629,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
-  void executeUsesDurableTriggerEventAuthorityOverConflictingPayloadJson() {
+  void executeRejectsConflictingDurableTriggerEventAndPayloadJson() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
@@ -648,24 +683,11 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
-    assertEquals("APPLIED", result.effectStatus());
-    verify(automationScriptingClient)
-        .triggerScriptEvent(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    "321".equals(request.getEntityId())
-                        && "onEnterRegion".equals(request.getEventType())
-                        && "remote-enter-1".equals(request.getScriptEventId())
-                        && request.getTriggerMode()
-                            == net.firedevops.firemud.automationscripting.v1.TriggerMode
-                                .TRIGGER_MODE_NORMAL
-                        && "game-session:onEnterRegion:9:8:remote-enter-1"
-                            .equals(request.getReadSnapshotToken())
-                        && "demo".equals(request.getWorldSlug())
-                        && "production".equals(request.getRealmSlug())
-                        && "17".equals(request.getPointerVersion())
-                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
-                            .equals(request.getPayloadJson())));
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("worldSlug conflicts with durable followup value", result.failureMessage());
+    verify(automationScriptingClient, never())
+        .triggerScriptEvent(org.mockito.ArgumentMatchers.any());
   }
 
   @Test

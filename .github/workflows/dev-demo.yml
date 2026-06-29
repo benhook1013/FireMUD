@@ -56,6 +56,11 @@ jobs:
       head_sha: ${{ steps.derive.outputs.head_sha }}
       telnet_port: ${{ steps.derive.outputs.telnet_port }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Derive dev-demo target
         id: derive
         run: |

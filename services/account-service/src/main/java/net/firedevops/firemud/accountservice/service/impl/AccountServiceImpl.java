@@ -72,6 +72,7 @@ import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.slf4j.Logger;
@@ -760,19 +761,20 @@ public class AccountServiceImpl implements AccountService {
     } catch (RuntimeException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
-    if (!"player-bootstrap".equals(claimText(claims.get("aud")))) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+    try {
+      if (!"player-bootstrap".equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
+        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+      }
+      long accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
+      long tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
+      Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
+      if (storedAccountId == null || !storedAccountId.equals(accountId)) {
+        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+      }
+      return new BootstrapContext(accountId, tenantId);
+    } catch (IllegalArgumentException ex) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
-    Long accountId = parseLong(claims.get("accountId"));
-    Long tenantId = parseLong(claims.get("tenantId"));
-    if (accountId == null || tenantId == null) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
-    }
-    Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
-    if (storedAccountId == null || !storedAccountId.equals(accountId)) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-    }
-    return new BootstrapContext(accountId, tenantId);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer requireAdmissibleRealm(
@@ -898,23 +900,27 @@ public class AccountServiceImpl implements AccountService {
     } catch (RuntimeException ex) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
-    if (!"bootstrap-connect-scope".equals(claimText(claims.get("aud")))) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+    long accountId;
+    long tenantId;
+    long gameInstanceId;
+    long pointerVersion;
+    String worldSlug;
+    String realmSlug;
+    try {
+      if (!"bootstrap-connect-scope".equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
+        throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+      }
+      accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
+      tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
+      gameInstanceId = JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false);
+      pointerVersion = JwtClaims.requireLong(claims.get("pointerVersion"), "pointerVersion", false);
+      worldSlug = JwtClaims.requireText(claims.get("worldSlug"), "worldSlug");
+      realmSlug = JwtClaims.requireText(claims.get("realmSlug"), "realmSlug");
+    } catch (IllegalArgumentException ex) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
-    Long accountId = parseLong(claims.get("accountId"));
-    Long tenantId = parseLong(claims.get("tenantId"));
-    Long gameInstanceId = parseLong(claims.get("gameInstanceId"));
-    Long pointerVersion = parseLong(claims.get("pointerVersion"));
-    String worldSlug = claimText(claims.get("worldSlug"));
-    String realmSlug = claimText(claims.get("realmSlug"));
     Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
-    if (accountId == null
-        || tenantId == null
-        || gameInstanceId == null
-        || pointerVersion == null
-        || connectScopeExpiresAt == null
-        || worldSlug.isBlank()
-        || realmSlug.isBlank()) {
+    if (connectScopeExpiresAt == null) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
     return new ConnectScopeContext(
@@ -1424,29 +1430,11 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private Long parseLong(Object value) {
-    if (value == null) {
-      return null;
-    }
     try {
-      return Long.valueOf(value.toString());
-    } catch (NumberFormatException ex) {
+      return JwtClaims.requireLong(value, "claim value", false);
+    } catch (RuntimeException ex) {
       return null;
     }
-  }
-
-  private String claimText(Object value) {
-    if (value == null) {
-      return "";
-    }
-    if (value instanceof Iterable<?> iterable) {
-      for (Object candidate : iterable) {
-        if (candidate != null) {
-          return candidate.toString();
-        }
-      }
-      return "";
-    }
-    return value.toString();
   }
 
   private record ConnectScopeContext(

@@ -37,6 +37,7 @@ required_paths = [
     "backupStorage.bindingRef",
     "assetStorage.bucket",
     "assetStorage.bindingRef",
+    "outboundComms.smtpHost",
     "operatorCredentials.bindingRef",
     "serviceDiscovery.mode",
 ]
@@ -297,5 +298,142 @@ if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
 PY
 done
+
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import importlib.util
+import pathlib
+import sys
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+env_root = tmp / "envs"
+for env in ("staging", "production", "hobby-self-hosted"):
+    (env_root / env).mkdir(parents=True, exist_ok=True)
+
+base = {
+    "internalBindings": {},
+    "backupStorage": {"bucket": "unique-backups", "bindingRef": "secret://firemud/unique-backup"},
+    "assetStorage": {
+        "bucket": "unique-assets",
+        "endpoint": "https://assets.unique.internal",
+        "bindingRef": "secret://firemud/unique-assets",
+    },
+    "outboundComms": {
+        "smtpHost": "smtp.unique.internal",
+        "webhookTargets": {"accountNotifications": "unique-only"},
+    },
+    "operatorCredentials": {"bindingRef": "cert-manager://firemud/unique-operator"},
+    "serviceDiscovery": {"mode": "kubernetes-dns-default"},
+}
+
+staging = {"environment": "staging", **base}
+production = {"environment": "production", **base}
+hobby = {"environment": "hobby-self-hosted", **base}
+
+staging["backupStorage"] = {"bucket": "dup-backups", "bindingRef": "secret://firemud/staging-backup"}
+production["backupStorage"] = {"bucket": "dup-backups", "bindingRef": "secret://firemud/production-backup"}
+hobby["backupStorage"] = {"bucket": "hobby-backups", "bindingRef": "secret://firemud/hobby-backup"}
+
+for env, data in (("staging", staging), ("production", production), ("hobby-self-hosted", hobby)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+spec = importlib.util.spec_from_file_location("preflight", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
+if not any("backupStorage.bucket matches production" in issue for issue in issues):
+    raise SystemExit(f"expected duplicate backupStorage.bucket issue, got: {issues}")
+
+shared_value = {"value": "smtp.shared.internal", "shared": True, "sharedRationale": "shared relay"}
+staging["outboundComms"]["smtpHost"] = shared_value
+production["outboundComms"]["smtpHost"] = shared_value
+for env, data in (("staging", staging), ("production", production)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
+if any("outboundComms.smtpHost" in issue for issue in issues):
+    raise SystemExit(f"shared smtpHost should be allowed, got: {issues}")
+
+
+def verify_service_override_contract(case_name, rendered_overrides, allowed_overrides, expected_status, expected_fragment):
+    base_expected = yaml.safe_load((root / "design/operations/environments/staging/expected-bindings.yaml").read_text(encoding="utf-8"))
+    base_expected["environment"] = "staging"
+    base_expected["serviceDiscovery"] = {
+        "mode": "explicit-overrides",
+        "allowedOverrides": allowed_overrides,
+    }
+    expected_path = tmp / f"{case_name}-expected-bindings.yaml"
+    expected_path.write_text(yaml.safe_dump(base_expected, sort_keys=False), encoding="utf-8")
+
+    rendered_payload = pathlib.Path(f"{tmp}/hobby-rendered.yaml").read_text(encoding="utf-8")
+    rendered_payload = (
+        rendered_payload
+        + "\n---\n"
+        + yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": f"service-discovery-{case_name}"},
+                "data": rendered_overrides,
+            },
+            sort_keys=False,
+        )
+    )
+
+    documents = module.parse_documents(rendered_payload)
+    results = module.expected_binding_checks(
+        expected_path, f"design/operations/environments/{case_name}-explicit-overrides.yaml", "staging", documents
+    )
+    service_check = next(
+        (result for result in results if result.policy_id == "PREFLIGHT-SERVICES-001"),
+        None,
+    )
+    if service_check is None:
+        raise SystemExit(f"{case_name}: missing PREFLIGHT-SERVICES-001 result")
+    if service_check.status != expected_status:
+        raise SystemExit(
+            f"{case_name}: expected PREFLIGHT-SERVICES-001 {expected_status}, got {service_check.status}: {service_check.message}"
+        )
+    if expected_fragment and expected_fragment not in service_check.message:
+        raise SystemExit(
+            f"{case_name}: expected services message fragment '{expected_fragment}', got '{service_check.message}'"
+        )
+
+
+verify_service_override_contract(
+    "pass",
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    "pass",
+    "match expected explicit contract",
+)
+verify_service_override_contract(
+    "undeclared",
+    {"FIREMUD_SERVICES_UNKNOWN_SERVICE": "mystery.firemud.svc.cluster.local"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    "fail",
+    "not declared",
+)
+verify_service_override_contract(
+    "mismatch",
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "mismatch.firemud.svc.cluster.local"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    "fail",
+    "does not match allowed value",
+)
+verify_service_override_contract(
+    "missing",
+    {},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    "fail",
+    "No FIREMUD_SERVICES_* overrides were rendered",
+)
+PY
 
 echo "preflight contract checks passed"

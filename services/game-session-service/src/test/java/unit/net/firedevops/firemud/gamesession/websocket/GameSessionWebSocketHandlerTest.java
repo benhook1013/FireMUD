@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -37,6 +39,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -97,6 +100,65 @@ class GameSessionWebSocketHandlerTest {
     when(session.getAttributes())
         .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
     when(settingsResolver.presentation(any())).thenReturn(new PresentationProperties());
+  }
+
+  @Test
+  void afterConnectionEstablishedRegistersValidFirstPartyConnectContext() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "token"));
+    FirstPartyConnectContext connectContext =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(firstPartyConnectContextRegistry).register(41L, connectContext);
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && "demo".equals(context.worldSlug())
+                        && "production".equals(context.realmSlug())
+                        && context.pointerVersion() == 3L
+                        && "scope-1".equals(context.connectScopeId())
+                        && "req-1".equals(context.connectRequestId())));
+  }
+
+  @Test
+  void afterConnectionEstablishedRejectsInvalidFirstPartyConnectContextAsExpected()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "token"));
+    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.empty());
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
+    verify(sessionContextService, never()).save(Mockito.any());
   }
 
   @Test
@@ -278,7 +340,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
@@ -354,7 +416,7 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    verify(sessionAuthenticationService).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
     verify(gameplayPresenceLifecycleService)
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
@@ -432,5 +494,46 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+  }
+
+  @Test
+  void handleMessageUsesTenantScopedSessionContextWhenTenantAttributePresent() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22"));
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    PlayerOutput output = PlayerOutput.message("Recent room line");
+    SessionContext clearedShell =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    when(parser.parse("LOOK")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.of(clearedShell));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(clearedShell), eq(List.of(output)), eq(true)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOOK");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(ScreenBufferService.BufferedEntry.fromText("Recent room line\n"));
+
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext("41");
   }
 }

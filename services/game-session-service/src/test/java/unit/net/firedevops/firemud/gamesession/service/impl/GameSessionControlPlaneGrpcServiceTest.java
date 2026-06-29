@@ -659,6 +659,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     RuntimeRegionStatus runtimeStatus = runtimeStatus(false, 22L);
     Mockito.when(authorityService.listByRuntimeTarget(1L, 7L))
         .thenReturn(
@@ -687,7 +688,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameDesignClient(),
             BuiltInTextCommandAliasResolver.unsupported(),
             Mockito.mock(TickService.class),
-            new SimpleMeterRegistry());
+            meterRegistry);
 
     AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
     service.getGameInstanceRuntimeState(
@@ -707,6 +708,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals(
         "region_id does not match game_instance_id", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
   }
 
   @Test
@@ -1387,22 +1390,6 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "req-0",
                     null,
                     Instant.parse("2026-04-14T00:00:00Z"))));
-    Mockito.when(authorityService.listPointers())
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1418,6 +1405,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointerAuditResponse> responseRef = new AtomicReference<>();
     service.listAdmissionPointerAudit(
         ListAdmissionPointerAuditRequest.newBuilder()
+            .setTenantId("1")
             .setWorldSlug("demo")
             .setRealmSlug("production")
             .build(),
@@ -1432,41 +1420,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(2, responseRef.get().getAuditCount());
     assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
     assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
+    Mockito.verify(authorityService).listPointerAudit(1L, "demo", "production");
+    Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
 
   @Test
-  void listAdmissionPointerAuditRejectsAmbiguousTenantMatches() {
+  void listAdmissionPointerAuditRequiresTenantId() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.listPointers())
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    2L,
-                    8L,
-                    4L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
@@ -1495,12 +1456,12 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertNotNull(responseRef.get());
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
-    assertEquals(
-        "Admission pointer selection is ambiguous", responseRef.get().getError().getMessage());
+    assertEquals("tenant_id is required", responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verify(authorityService, Mockito.never())
         .listPointerAudit(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
 
   @Test
@@ -2812,6 +2773,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
             gameInstanceRepository,
@@ -2821,7 +2783,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
-            new SimpleMeterRegistry());
+            meterRegistry);
 
     AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
     service.enqueueAutomationCommandIfAbsent(
@@ -2839,6 +2801,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "world_slug, realm_slug, and pointer_version must be provided together",
         responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
     Mockito.verifyNoInteractions(tickService);
   }
@@ -4566,8 +4530,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeService.scheduleFollowup(Mockito.any()))
         .thenThrow(new IllegalArgumentException("payload kind is required"));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
+        remoteControlPlaneService(
+            null, null, null, null, null, runtimeService, gameDesignClient(), meterRegistry);
 
     AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
     service.scheduleRemoteFollowup(
@@ -4581,6 +4547,8 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals("payload kind is required", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
   }
 
   @Test
@@ -5737,6 +5705,26 @@ class GameSessionControlPlaneGrpcServiceTest {
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameDesignClient gameDesignClient) {
+    return remoteControlPlaneService(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRuntimeService,
+        gameDesignClient,
+        new SimpleMeterRegistry());
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      MeterRegistry meterRegistry) {
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(
@@ -5768,7 +5756,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         runtimeRegionStatusRepository,
         remoteFollowupRuntimeService,
         gameDesignClient,
-        gameplayAdmissionPointerAuthorityService);
+        gameplayAdmissionPointerAuthorityService,
+        meterRegistry);
   }
 
   private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
@@ -5780,6 +5769,28 @@ class GameSessionControlPlaneGrpcServiceTest {
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       GameDesignClient gameDesignClient,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
+    return remoteControlPlaneService(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRuntimeService,
+        gameDesignClient,
+        gameplayAdmissionPointerAuthorityService,
+        new SimpleMeterRegistry());
+  }
+
+  private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      MeterRegistry meterRegistry) {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
@@ -5814,7 +5825,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         gameDesignClient,
         BuiltInTextCommandAliasResolver.unsupported(),
         Mockito.mock(TickService.class),
-        new SimpleMeterRegistry(),
+        meterRegistry,
         new GameSessionProperties());
   }
 

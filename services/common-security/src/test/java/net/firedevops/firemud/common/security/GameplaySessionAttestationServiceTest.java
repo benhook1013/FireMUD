@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class GameplaySessionAttestationServiceTest {
@@ -99,5 +101,30 @@ class GameplaySessionAttestationServiceTest {
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Gameplay session attestation is missing pointerVersion", ex.getMessage());
+  }
+
+  @Test
+  void requireValidUsesCanonicalIterableClaimParsing() {
+    String token =
+        jwtUtil.generateToken(
+            "gameplay-session:41",
+            Map.ofEntries(
+                Map.entry("attestationType", "GAMEPLAY_SESSION"),
+                Map.entry("tenantId", List.of(" ", "22")),
+                Map.entry("sessionId", "41"),
+                Map.entry("accountId", "7"),
+                Map.entry("characterId", "123"),
+                Map.entry("gameInstanceId", "1"),
+                Map.entry("roomInstanceId", List.of("", "1021")),
+                Map.entry("worldSlug", List.of(" ", "demo")),
+                Map.entry("realmSlug", "production"),
+                Map.entry("pointerVersion", "17"),
+                Map.entry("playableStateScope", "SHARED")));
+
+    GameplaySessionAttestationClaims claims = service.requireValid(token);
+
+    assertEquals("22", claims.tenantId());
+    assertEquals("1021", claims.roomInstanceId());
+    assertEquals("demo", claims.worldSlug());
   }
 }

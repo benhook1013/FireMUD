@@ -11,6 +11,9 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+
 concurrency:
   group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
@@ -24,6 +27,11 @@ jobs:
       run_npm_ort: ${{ steps.filter.outputs.npm }}
       run_any_ort: ${{ steps.filter.outputs.gradle == 'true' || steps.filter.outputs.npm == 'true' }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -65,6 +73,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_gradle_ort == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Use HTTPS for Git
         run: git config --global url.https://github.com/.insteadOf ssh://git@github.com/
 
@@ -99,6 +112,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
@@ -127,6 +141,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_npm_ort == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Use HTTPS for Git
         run: git config --global url.https://github.com/.insteadOf ssh://git@github.com/
 
@@ -161,6 +180,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
+          image: ${{ env.ORT_DOCKER_IMAGE }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
@@ -189,6 +209,11 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Verify ORT results
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

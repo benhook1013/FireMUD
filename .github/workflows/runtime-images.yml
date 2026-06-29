@@ -55,6 +55,11 @@ jobs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Derive image tags
         id: meta
         run: |
@@ -81,6 +86,11 @@ jobs:
     needs: [image-meta]
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -150,6 +160,11 @@ jobs:
           - tcp-proxy-service
           - world-management-service
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:

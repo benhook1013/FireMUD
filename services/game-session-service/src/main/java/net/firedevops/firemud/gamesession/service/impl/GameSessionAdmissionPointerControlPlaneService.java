@@ -51,29 +51,17 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointerAuditResponse listAdmissionPointerAudit(
       ListAdmissionPointerAuditRequest request) {
-    java.util.List<Long> matchingTenantIds =
-        gameplayAdmissionPointerAuthorityService.listPointers().stream()
-            .filter(
-                pointer ->
-                    pointer.worldSlug().equals(request.getWorldSlug())
-                        && pointer.realmSlug().equals(request.getRealmSlug()))
-            .map(GameplayAdmissionPointerSnapshot::tenantId)
-            .distinct()
-            .toList();
-    if (matchingTenantIds.isEmpty()) {
+    long tenantId = parseRequiredLong(request.getTenantId(), "tenant_id");
+    requireText(request.getWorldSlug(), "world_slug is required");
+    requireText(request.getRealmSlug(), "realm_slug is required");
+    java.util.List<GameplayAdmissionPointerAuditEntry> audit =
+        gameplayAdmissionPointerAuthorityService.listPointerAudit(
+            tenantId, request.getWorldSlug(), request.getRealmSlug());
+    if (audit.isEmpty()) {
       throw new IllegalArgumentException("Admission pointer not found");
     }
-    if (matchingTenantIds.size() > 1) {
-      throw new IllegalArgumentException("Admission pointer selection is ambiguous");
-    }
-    long tenantId = matchingTenantIds.get(0);
     return ListAdmissionPointerAuditResponse.newBuilder()
-        .addAllAudit(
-            gameplayAdmissionPointerAuthorityService
-                .listPointerAudit(tenantId, request.getWorldSlug(), request.getRealmSlug())
-                .stream()
-                .map(this::toEntry)
-                .toList())
+        .addAllAudit(audit.stream().map(this::toEntry).toList())
         .build();
   }
 
@@ -303,6 +291,15 @@ final class GameSessionAdmissionPointerControlPlaneService {
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(message);
+    }
+  }
+
+  private long parseRequiredLong(String value, String fieldName) {
+    requireText(value, fieldName + " is required");
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException(fieldName + " must be a number");
     }
   }
 }

@@ -47,7 +47,7 @@ public class HttpJwtAuthInterceptor implements HandlerInterceptor {
       }
       claims.applyToSession();
       return true;
-    } catch (JwtException ex) {
+    } catch (JwtException | IllegalArgumentException ex) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
       return false;
     }

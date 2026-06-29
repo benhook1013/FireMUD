@@ -55,7 +55,7 @@ public class AuthTokenInterceptor implements ServerInterceptor {
           super.onCancel();
         }
       };
-    } catch (JwtException ex) {
+    } catch (JwtException | IllegalArgumentException ex) {
       call.close(Status.UNAUTHENTICATED.withDescription("Invalid token"), new Metadata());
       return new ServerCall.Listener<>() {};
     }

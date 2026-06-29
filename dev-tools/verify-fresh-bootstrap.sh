@@ -14,19 +14,68 @@ BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
 FIREMUD_SMOKE_SERIAL_BUILD="${FIREMUD_SMOKE_SERIAL_BUILD:-1}"
+FIREMUD_SMOKE_NO_CACHE_SERVICES="${FIREMUD_SMOKE_NO_CACHE_SERVICES:-}"
+FIREMUD_SMOKE_COMPOSE_SERVICES="${FIREMUD_SMOKE_COMPOSE_SERVICES:-}"
+FIREMUD_SMOKE_VALIDATE_ONLY="${FIREMUD_SMOKE_VALIDATE_ONLY:-0}"
+
+if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
+  readarray -t COMPOSE_SERVICES <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
+else
+  readarray -t COMPOSE_SERVICES < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+fi
+
+declare -A ALL_COMPOSE_SERVICES=()
+for service in "${COMPOSE_SERVICES[@]}"; do
+  ALL_COMPOSE_SERVICES["$service"]=1
+done
+
+declare -A NO_CACHE_SERVICES=()
+if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
+  for service in ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }; do
+    if [[ -z "${ALL_COMPOSE_SERVICES[$service]:-}" ]]; then
+      echo "Unknown service in FIREMUD_SMOKE_NO_CACHE_SERVICES: $service" >&2
+      echo "Use Docker Compose service ids here, not Gradle module names. Example: 'gateway', not 'spring-cloud-gateway'." >&2
+      echo "Known compose services: ${COMPOSE_SERVICES[*]}" >&2
+      exit 1
+    fi
+    NO_CACHE_SERVICES["$service"]=1
+  done
+fi
 
 echo "Fresh bootstrap proof: destroy local compose containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> item/container/equipment proofs."
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
+if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
+  echo "Forcing no-cache compose rebuild for: ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }"
+fi
+
+if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
+  echo "Validation-only mode: compose service selector parsing succeeded."
+  exit 0
+fi
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$BUILD_JARS_SCRIPT"
 if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
-  while IFS= read -r service; do
-    docker compose "${COMPOSE_FILES[@]}" build "$service"
-  done < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+  for service in "${COMPOSE_SERVICES[@]}"; do
+    if [[ -n "${NO_CACHE_SERVICES[$service]:-}" ]]; then
+      docker compose "${COMPOSE_FILES[@]}" build --no-cache "$service"
+    else
+      docker compose "${COMPOSE_FILES[@]}" build "$service"
+    fi
+  done
 else
+  remaining_services=()
+  for service in "${COMPOSE_SERVICES[@]}"; do
+    if [[ -n "${NO_CACHE_SERVICES[$service]:-}" ]]; then
+      docker compose "${COMPOSE_FILES[@]}" build --no-cache "$service"
+    else
+      remaining_services+=("$service")
+    fi
+  done
   export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-4}"
-  docker compose "${COMPOSE_FILES[@]}" build
+  if ((${#remaining_services[@]} > 0)); then
+    docker compose "${COMPOSE_FILES[@]}" build "${remaining_services[@]}"
+  fi
 fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 

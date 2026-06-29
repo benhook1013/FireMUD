@@ -13,7 +13,6 @@ import static net.firedevops.firemud.gamesession.repository.JooqGameSessionRepos
 import static net.firedevops.firemud.gamesession.repository.JooqGameSessionRepositorySupport.addIfNotBlank;
 import static net.firedevops.firemud.gamesession.repository.JooqGameSessionRepositorySupport.addIfPositive;
 import static org.jooq.impl.DSL.exists;
-import static org.jooq.impl.DSL.max;
 import static org.jooq.impl.DSL.select;
 import static org.jooq.impl.DSL.selectOne;
 
@@ -405,14 +404,16 @@ public class RemoteCommandCoordinatorRepository {
       Condition resultCondition,
       net.firedevops.firemud.gamesession.jooq.tables.RemoteFollowupResult result,
       net.firedevops.firemud.gamesession.jooq.tables.RemoteFollowupResult latest) {
-    Field<java.time.OffsetDateTime> maxObservedAt =
-        select(max(latest.OBSERVED_AT))
+    Field<Long> latestId =
+        select(latest.ID)
             .from(latest)
             .where(
                 latest
                     .TENANT_ID
                     .eq(coordinator.TENANT_ID)
                     .and(latest.COORDINATOR_ID.eq(coordinator.COORDINATOR_ID)))
+            .orderBy(latest.OBSERVED_AT.desc(), latest.ID.desc())
+            .limit(1)
             .asField();
     return exists(
         selectOne()
@@ -423,7 +424,7 @@ public class RemoteCommandCoordinatorRepository {
                     .eq(coordinator.TENANT_ID)
                     .and(result.COORDINATOR_ID.eq(coordinator.COORDINATOR_ID))
                     .and(resultCondition)
-                    .and(result.OBSERVED_AT.eq(maxObservedAt))));
+                    .and(result.ID.eq(latestId))));
   }
 
   private SelectJoinStep<Record> baseControlPlaneQuery(

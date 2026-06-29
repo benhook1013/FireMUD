@@ -2,9 +2,11 @@ package net.firedevops.firemud.common.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.util.StringUtils;
 
 public record SessionClaims(
     String accountId,
@@ -28,12 +30,12 @@ public record SessionClaims(
   public static SessionClaims fromJwt(Jws<Claims> jwt) {
     Claims payload = jwt.getPayload();
     return new SessionClaims(
-        payload.get("accountId", String.class),
-        extractGlobalRoles(payload),
-        extractScopedRoles(payload),
+        JwtClaims.claimText(payload.get("accountId")),
+        extractGlobalRoles(payload.get("globalRoles")),
+        extractScopedRoles(payload.get("scopedRoles")),
         Boolean.TRUE.equals(payload.get("internalService", Boolean.class)),
-        payload.get("serviceName", String.class),
-        payload.get("serviceInstanceId", String.class));
+        JwtClaims.claimText(payload.get("serviceName")),
+        JwtClaims.claimText(payload.get("serviceInstanceId")));
   }
 
   public void applyToSession() {
@@ -63,24 +65,45 @@ public record SessionClaims(
     return false;
   }
 
-  private static List<String> extractGlobalRoles(Claims payload) {
-    List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
-    return rawGlobalRoles == null
-        ? List.of()
-        : rawGlobalRoles.stream().map(String::valueOf).toList();
+  private static List<String> extractGlobalRoles(Object rawGlobalRoles) {
+    if (rawGlobalRoles == null) {
+      return List.of();
+    }
+    if (!(rawGlobalRoles instanceof List<?> roles)) {
+      throw new IllegalArgumentException("Malformed claim: globalRoles");
+    }
+    return normalizeRoleValues(roles);
   }
 
-  private static Map<String, List<String>> extractScopedRoles(Claims payload) {
-    Map<?, ?> rawScopedRoles = payload.get("scopedRoles", Map.class);
-    Map<String, List<String>> scopedRoles = new HashMap<>();
+  private static Map<String, List<String>> extractScopedRoles(Object rawScopedRoles) {
     if (rawScopedRoles == null) {
-      return scopedRoles;
+      return Map.of();
     }
-    for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {
-      List<?> rolesRaw = entry.getValue() instanceof List<?> list ? list : List.of();
-      scopedRoles.put(
-          String.valueOf(entry.getKey()), rolesRaw.stream().map(String::valueOf).toList());
+    if (!(rawScopedRoles instanceof Map<?, ?> scopedRolesMap)) {
+      throw new IllegalArgumentException("Malformed claim: scopedRoles");
+    }
+    Map<String, List<String>> scopedRoles = new HashMap<>();
+    for (Map.Entry<?, ?> entry : scopedRolesMap.entrySet()) {
+      String tenantKey = JwtClaims.requireText(entry.getKey(), "scopedRoles");
+      if (!StringUtils.hasText(tenantKey)) {
+        throw new IllegalArgumentException("Malformed claim: scopedRoles");
+      }
+      if (!(entry.getValue() instanceof List<?> roles)) {
+        throw new IllegalArgumentException("Malformed claim: scopedRoles");
+      }
+      scopedRoles.put(tenantKey, normalizeRoleValues(roles));
     }
     return scopedRoles;
+  }
+
+  private static List<String> normalizeRoleValues(List<?> values) {
+    List<String> normalizedRoles = new ArrayList<>();
+    for (Object role : values) {
+      String value = JwtClaims.claimText(role);
+      if (StringUtils.hasText(value)) {
+        normalizedRoles.add(value);
+      }
+    }
+    return normalizedRoles;
   }
 }

@@ -42,7 +42,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
     gameplay_item_container_equipment_steps,
-    run_websocket_command_plan,
+    run_websocket_smoke_session,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -72,35 +72,33 @@ timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
-def websocket_smoke():
-    ws = websocket.create_connection(
+wait_for_account_schema(startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
+wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
+verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
+steps = gameplay_item_container_equipment_steps(
+    username,
+    password,
+    worlds_expect,
+    login_expect,
+    play_expect,
+    look_expect,
+    "demo",
+    look_timeout_seconds,
+) + [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
+run_websocket_smoke_session(
+    lambda: websocket.create_connection(
         websocket_url,
         timeout=timeout_seconds,
         header=[
             f"X-Game-Instance-Id: {session_id}",
             f"X-Tenant-Id: {tenant_id}",
         ],
-    )
-    try:
-        steps = gameplay_item_container_equipment_steps(
-            username,
-            password,
-            worlds_expect,
-            login_expect,
-            play_expect,
-            look_expect,
-            "demo",
-            look_timeout_seconds,
-        ) + [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
-        run_websocket_command_plan(ws, steps, timeout_seconds)
-    finally:
-        ws.close()
-
-
-wait_for_account_schema(startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
-wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
-verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
-websocket_smoke()
+    ),
+    steps,
+    timeout_seconds,
+    retriable_exceptions=(OSError, websocket.WebSocketException),
+    session_label=f"WebSocket session {websocket_url}",
+)
 PYTHON

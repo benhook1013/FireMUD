@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -108,8 +109,8 @@ public final class SessionAuthenticationService {
 
   private Optional<Long> parseSessionId(String text) {
     try {
-      return Optional.of(Long.parseLong(text));
-    } catch (NumberFormatException ex) {
+      return Optional.of(JwtClaims.requireLong(text, "sessionId", false));
+    } catch (RuntimeException ex) {
       return Optional.empty();
     }
   }

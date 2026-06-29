@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -129,12 +130,17 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       if (!"gameplay-connect".equals(audience)) {
         throw new IllegalArgumentException("Invalid audience");
       }
-      String accountId = requiredClaim(payload, "accountId");
-      String tenantId = requiredClaim(payload, "tenantId");
-      String worldSlug = requiredClaim(payload, "worldSlug");
-      String realmSlug = requiredClaim(payload, "realmSlug");
-      String gameInstanceId = requiredClaim(payload, "gameInstanceId");
-      String pointerVersion = requiredClaim(payload, "pointerVersion");
+      String accountId = JwtClaims.requireText(payload.get("accountId"), "accountId");
+      String tenantId =
+          Long.toString(JwtClaims.requireLong(payload.get("tenantId"), "tenantId", false));
+      String worldSlug = JwtClaims.requireText(payload.get("worldSlug"), "worldSlug");
+      String realmSlug = JwtClaims.requireText(payload.get("realmSlug"), "realmSlug");
+      String gameInstanceId =
+          Long.toString(
+              JwtClaims.requireLong(payload.get("gameInstanceId"), "gameInstanceId", false));
+      String pointerVersion =
+          Long.toString(
+              JwtClaims.requireLong(payload.get("pointerVersion"), "pointerVersion", false));
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -247,6 +253,13 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     boolean hasWorld = StringUtils.hasText(worldSlug);
     boolean hasRealm = StringUtils.hasText(realmSlug);
     boolean hasPointer = StringUtils.hasText(pointerVersion);
+    if (hasPointer) {
+      try {
+        JwtClaims.requireLong(pointerVersion, POINTER_VERSION_HEADER, false);
+      } catch (RuntimeException ex) {
+        return false;
+      }
+    }
     return (hasWorld == hasRealm) && (hasRealm == hasPointer);
   }
 
@@ -277,15 +290,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   }
 
   private String requiredClaim(Claims claims, String name) {
-    Object value = claims.get(name);
-    if (value == null) {
-      throw new IllegalArgumentException("Missing claim: " + name);
-    }
-    String text = String.valueOf(value).trim();
-    if (text.isEmpty() || "null".equalsIgnoreCase(text)) {
-      throw new IllegalArgumentException("Missing claim: " + name);
-    }
-    return text;
+    return JwtClaims.requireClaim(claims, name);
   }
 
   private Mono<Void> recordReplayOrReject(String jti, long expiryMillis) {

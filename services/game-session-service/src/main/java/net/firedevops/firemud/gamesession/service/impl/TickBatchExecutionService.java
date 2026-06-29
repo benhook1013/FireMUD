@@ -528,6 +528,11 @@ final class TickBatchExecutionService {
   }
 
   private long selectionSourceOrdinal(GameplayCommand command, int fallbackIndex) {
+    if (timerOriginSelection(command)
+        && command.getOriginSourceOrdinal() != null
+        && command.getOriginSourceOrdinal() > 0) {
+      return command.getOriginSourceOrdinal();
+    }
     if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
       return command.getEnqueueSeq();
     }
@@ -537,6 +542,9 @@ final class TickBatchExecutionService {
   private String selectionSourceKind(GameplayCommand command) {
     if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
       return "GAMEPLAY_RETRY";
+    }
+    if (timerOriginSelection(command)) {
+      return "SCHEDULE_TIMER";
     }
     return "GAMEPLAY_COMMAND";
   }
@@ -552,6 +560,11 @@ final class TickBatchExecutionService {
     if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
       return "REDIS_RETRY_CLAIMED";
     }
+    if (timerOriginSelection(command)
+        && command.getOriginSourceState() != null
+        && !command.getOriginSourceState().isBlank()) {
+      return command.getOriginSourceState();
+    }
     return "REDIS_PENDING_CLAIMED";
   }
 
@@ -563,11 +576,27 @@ final class TickBatchExecutionService {
   }
 
   private Long selectionSourceDueTickId(GameplayCommand command) {
+    if (timerOriginSelection(command)
+        && command.getOriginSourceDueTickId() != null
+        && command.getOriginSourceDueTickId() > 0) {
+      return command.getOriginSourceDueTickId();
+    }
     return command == null ? null : command.getDueTickId();
   }
 
   private Long selectionSourceDueAtMs(GameplayCommand command) {
+    if (timerOriginSelection(command)
+        && command.getOriginSourceDueAtMs() != null
+        && command.getOriginSourceDueAtMs() > 0) {
+      return command.getOriginSourceDueAtMs();
+    }
     return null;
+  }
+
+  private boolean timerOriginSelection(GameplayCommand command) {
+    return command != null
+        && !"RETRY_QUEUED".equals(command.getExecutionOutcome())
+        && "SCHEDULE_TIMER".equals(command.getOriginSourceKind());
   }
 
   private String normalize(String value) {

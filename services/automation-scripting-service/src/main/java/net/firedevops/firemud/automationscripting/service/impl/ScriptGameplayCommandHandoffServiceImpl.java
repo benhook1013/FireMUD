@@ -97,13 +97,35 @@ public class ScriptGameplayCommandHandoffServiceImpl
               "",
               response.hasError() ? response.getError().getCode() : "");
     } else {
-      ScheduleRemoteFollowupResponse remoteResponse =
-          gameSessionClient.scheduleRemoteFollowup(
-              toRemoteScheduleRequest(workItem, command, dispatchId));
-      result = remoteHandoffResult(remoteResponse);
+      String scopeValidationError = validateRemoteHandoffScope(workItem, command);
+      if (scopeValidationError != null) {
+        result = new HandoffResult(false, "REMOTE_REJECTED", "", "", "", scopeValidationError);
+      } else {
+        ScheduleRemoteFollowupResponse remoteResponse =
+            gameSessionClient.scheduleRemoteFollowup(
+                toRemoteScheduleRequest(workItem, command, dispatchId));
+        result = remoteHandoffResult(remoteResponse);
+      }
     }
     applyOutcome(workItem, command, dispatchId, result, now);
     return result;
+  }
+
+  private static String validateRemoteHandoffScope(
+      ScriptWorkItem workItem, EmittedCommand command) {
+    if (!requiresRemoteHandoff(workItem, command)) {
+      return null;
+    }
+    if (command.targetGameInstanceId() == null || command.targetGameInstanceId().isBlank()) {
+      return "target_game_instance_id is required for remote handoff";
+    }
+    if (command.targetRegionId() == null || command.targetRegionId().isBlank()) {
+      return "target_region_id is required for remote handoff";
+    }
+    if (command.targetRegionEpoch() == null || command.targetRegionEpoch() <= 0) {
+      return "target_region_epoch must be positive for remote handoff";
+    }
+    return null;
   }
 
   private static HandoffResult remoteHandoffResult(ScheduleRemoteFollowupResponse remoteResponse) {
@@ -426,9 +448,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
     }
     if (command.targetRegionId() == null || command.targetRegionId().isBlank()) {
       throw new IllegalArgumentException("target_region_id is required");
-    }
-    if (zeroIfNull(command.targetRegionEpoch()) <= 0) {
-      throw new IllegalArgumentException("target_region_epoch must be positive");
     }
     if (command.ordinal() < 0) {
       throw new IllegalArgumentException("command ordinal must be non-negative");

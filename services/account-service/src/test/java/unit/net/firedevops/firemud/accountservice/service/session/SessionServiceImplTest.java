@@ -128,6 +128,33 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void getConnectTokenReplayReturnsEmptyForMismatchedIdentity() {
+    String key =
+        "session:connect-token:tenant:7:account:11:scope:"
+            + sha256("scope-1")
+            + ":request:"
+            + sha256("req-7");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.ofEntries(
+                Map.entry("success", "true"),
+                Map.entry("accountId", "999"),
+                Map.entry("tenantId", "7"),
+                Map.entry("gameInstanceId", "44"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("connectScopeId", "scope-1"),
+                Map.entry("connectToken", "connect-1"),
+                Map.entry("jti", "jti-1"),
+                Map.entry("requestId", "req-7"),
+                Map.entry("issuedAt", "2026-05-25T00:00:00Z"),
+                Map.entry("expiresAt", "2026-05-25T00:00:30Z")));
+
+    var replay = service.getConnectTokenReplay(7L, 11L, "scope-1", "req-7");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
   void getConnectTokenReplayReturnsEmptyForMalformedNumericFields() {
     String key =
         "session:connect-token:tenant:7:account:11:scope:"
@@ -145,6 +172,22 @@ class SessionServiceImplTest {
                 "7",
                 "gameInstanceId",
                 "44"));
+
+    var replay = service.getConnectTokenReplay(7L, 11L, "scope-1", "req-7");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
+  void getConnectTokenReplayReturnsEmptyForNonPositiveNumericFields() {
+    String key =
+        "session:connect-token:tenant:7:account:11:scope:"
+            + sha256("scope-1")
+            + ":request:"
+            + sha256("req-7");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of("success", "true", "accountId", "0", "tenantId", "7", "gameInstanceId", "44"));
 
     var replay = service.getConnectTokenReplay(7L, 11L, "scope-1", "req-7");
 
@@ -261,6 +304,43 @@ class SessionServiceImplTest {
                 "demo",
                 "realmSlug",
                 "staging",
+                "membershipVersion",
+                "711",
+                "created",
+                "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
+  void getPublicProductionMembershipReplayReturnsEmptyForMismatchedIdentity() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "999",
+                "worldSlug",
+                "demo",
+                "realmSlug",
+                "production",
                 "membershipVersion",
                 "711",
                 "created",

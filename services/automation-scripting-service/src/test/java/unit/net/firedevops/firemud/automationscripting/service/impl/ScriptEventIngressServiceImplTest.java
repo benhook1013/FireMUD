@@ -306,6 +306,81 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void rejectsBuiltInOnCommandPayloadMissingRequiredFields() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.empty());
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            automationQueueService,
+            outputProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            enabledPluginRuntimeStateService(),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setScriptId("script-1")
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .setReadSnapshotToken("snapshot-1")
+                .setPayloadJson("{\"commandId\":\"cmd-1\"}")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("invalid_built_in_payload");
+    verify(workItemRepository, never()).save(Mockito.any());
+    verify(eventAuditRepository, never()).save(Mockito.any());
+    verify(automationQueueService, never()).enqueueWorkItem(Mockito.any());
+  }
+
+  @Test
   void admitsOnLoadAsPatchReadinessWorkForOneScript() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
@@ -1414,6 +1489,7 @@ class ScriptEventIngressServiceImplTest {
                 .setScriptPatchVersion("patch-1")
                 .setScriptEventId("event-missing-routing")
                 .setReadSnapshotToken("snapshot-1")
+                .setPayloadJson("{\"commandId\":\"cmd-1\",\"commandName\":\"LOOK\"}")
                 .build());
 
     assertThat(admission.admitted()).isFalse();
@@ -1447,6 +1523,7 @@ class ScriptEventIngressServiceImplTest {
     return TriggerScriptEventRequest.newBuilder()
         .setWorldSlug("demo")
         .setRealmSlug("production")
-        .setPointerVersion("17");
+        .setPointerVersion("17")
+        .setPayloadJson("{\"commandId\":\"cmd-1\",\"commandName\":\"LOOK\"}");
   }
 }

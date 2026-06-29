@@ -365,26 +365,38 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.RealmView selectedRealm,
       String tenantTag) {
     return resolveFirstPartyConnectContext(context)
-        .filter(
-            connectContext ->
-                connectContext.tenantId() != selectedRealm.tenantId()
-                    || connectContext.gameInstanceId() != selectedRealm.gameInstanceId()
-                    || connectContext.pointerVersion() != selectedRealm.pointerVersion()
-                    || (StringUtils.hasText(connectContext.worldSlug())
-                        && !selectedWorld.slug().equalsIgnoreCase(connectContext.worldSlug()))
-                    || (StringUtils.hasText(connectContext.realmSlug())
-                        && !selectedRealm.slug().equalsIgnoreCase(connectContext.realmSlug())))
-        .map(
-            ignored ->
-                failure(
-                    "CONNECT_SCOPE_MISMATCH",
-                    "Connect scope mismatch",
-                    "error.play.connect-scope-mismatch",
-                    Map.of(),
-                    tenantTag,
-                    Long.toString(selectedRealm.gameInstanceId()),
-                    null,
-                    null));
+        .flatMap(
+            connectContext -> {
+              if (!hasCompleteFirstPartyConnectContext(connectContext)) {
+                return Optional.of(
+                    failure(
+                        "CONNECT_CONTEXT_INVALID",
+                        "Connect context invalid",
+                        "error.play.connect-context-invalid",
+                        Map.of(),
+                        tenantTag,
+                        Long.toString(selectedRealm.gameInstanceId()),
+                        null,
+                        null));
+              }
+              if (connectContext.tenantId() != selectedRealm.tenantId()
+                  || connectContext.gameInstanceId() != selectedRealm.gameInstanceId()
+                  || connectContext.pointerVersion() != selectedRealm.pointerVersion()
+                  || !selectedWorld.slug().equalsIgnoreCase(connectContext.worldSlug())
+                  || !selectedRealm.slug().equalsIgnoreCase(connectContext.realmSlug())) {
+                return Optional.of(
+                    failure(
+                        "CONNECT_SCOPE_MISMATCH",
+                        "Connect scope mismatch",
+                        "error.play.connect-scope-mismatch",
+                        Map.of(),
+                        tenantTag,
+                        Long.toString(selectedRealm.gameInstanceId()),
+                        null,
+                        null));
+              }
+              return Optional.empty();
+            });
   }
 
   private PlayCommandHandlingResult failure(
@@ -514,6 +526,14 @@ public class PlayCommandHandler {
     return context.gameInstanceId() > 0
         || context.characterId() > 0
         || StringUtils.hasText(context.roomInstanceId());
+  }
+
+  private static boolean hasCompleteFirstPartyConnectContext(FirstPartyConnectContext context) {
+    return StringUtils.hasText(context.worldSlug())
+        && StringUtils.hasText(context.realmSlug())
+        && context.pointerVersion() > 0
+        && StringUtils.hasText(context.connectScopeId())
+        && StringUtils.hasText(context.connectRequestId());
   }
 
   private void publishSpawnEvent(SessionContext context) {

@@ -1,0 +1,24 @@
+optConfig:
+  optIn: true
+action: fix
+enforceDefault: true
+enforceBranches:
+  - main
+requireApproval: false
+approvalCount: 0
+requireCodeOwnerReviews: false
+dismissStale: true
+blockForce: true
+requireUpToDateBranch: false
+enforceOnAdmins: true
+requireStatusChecks:
+  - context: Validation Gate
+    appID: 15368
+  - context: Security Gate
+    appID: 15368
+  - context: License Gate
+    appID: 15368
+  - context: Smoke Gate
+    appID: 15368
+  - context: CodeQL Gate
+    appID: 15368

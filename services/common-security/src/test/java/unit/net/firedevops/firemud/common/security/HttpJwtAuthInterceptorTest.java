@@ -135,6 +135,30 @@ class HttpJwtAuthInterceptorTest {
   }
 
   @Test
+  void rejectsMalformedGlobalRolesClaimShape() throws Exception {
+    HttpJwtAuthInterceptor interceptor =
+        new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
+    String token =
+        jwtUtil.generateToken(
+            "user",
+            Map.of(
+                "accountId",
+                "user",
+                "globalRoles",
+                "platformAdmin",
+                "scopedRoles",
+                Map.of("7", List.of("tenantAdmin"))));
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertFalse(result);
+    assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatus());
+  }
+
+  @Test
   void methodMismatchStillRequiresTokenForConfiguredPublicPath() throws Exception {
     HttpAuthProperties props = authenticatedProperties();
     props.setPublicRoutes(List.of(publicRoute("POST", "/accounts")));

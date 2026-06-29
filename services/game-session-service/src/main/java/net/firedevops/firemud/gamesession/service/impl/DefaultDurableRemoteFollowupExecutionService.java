@@ -150,7 +150,12 @@ public final class DefaultDurableRemoteFollowupExecutionService
         }
       }
     }
-    String payloadKind = firstNonBlank(followup.getPayloadKind(), optionalText(root, "kind"));
+    String payloadKind;
+    try {
+      payloadKind = authoritativeText(followup.getPayloadKind(), root, "kind");
+    } catch (IllegalArgumentException ex) {
+      return failure("REMOTE_FOLLOWUP_PAYLOAD_INVALID", ex.getMessage());
+    }
     String requestedCommand =
         firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
     boolean requiresSoloTick =
@@ -469,7 +474,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
 
   private static String authoritativeText(
       String authoritativeValue, JsonNode root, String fieldName) {
-    return firstNonBlank(authoritativeValue, optionalText(root, fieldName));
+    String payloadValue = optionalText(root, fieldName);
+    if (authoritativeValue != null
+        && !authoritativeValue.isBlank()
+        && payloadValue != null
+        && !authoritativeValue.equals(payloadValue)) {
+      throw new IllegalArgumentException(fieldName + " conflicts with durable followup value");
+    }
+    return firstNonBlank(authoritativeValue, payloadValue);
   }
 
   private static String authoritativeTextOrDefault(
@@ -478,10 +490,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static Long authoritativeLong(Long authoritativeValue, JsonNode root, String fieldName) {
+    Long payloadValue = optionalLong(root, fieldName);
     if (authoritativeValue != null && authoritativeValue > 0L) {
+      if (payloadValue != null && !authoritativeValue.equals(payloadValue)) {
+        throw new IllegalArgumentException(fieldName + " conflicts with durable followup value");
+      }
       return authoritativeValue;
     }
-    return optionalLong(root, fieldName);
+    return payloadValue;
   }
 
   private static String optionalText(JsonNode root, String fieldName) {

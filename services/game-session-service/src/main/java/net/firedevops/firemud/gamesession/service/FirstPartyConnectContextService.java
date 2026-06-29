@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.util.Optional;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import org.slf4j.Logger;
@@ -36,21 +37,21 @@ public class FirstPartyConnectContextService {
     }
     try {
       Claims claims = jwtUtil.parseToken(token).getPayload();
-      long accountId = parseLong(claims.getSubject());
-      long tenantId = parseLong(claims.get("tenantId"));
-      long gameInstanceId = parseLong(claims.get("gameInstanceId"));
-      long pointerVersion = parseLong(claims.get("pointerVersion"));
+      long accountId = parseLong(claims.getSubject(), "accountId");
+      long tenantId = parseLong(claims.get("tenantId"), "tenantId");
+      long gameInstanceId = parseLong(claims.get("gameInstanceId"), "gameInstanceId");
+      long pointerVersion = parseLong(claims.get("pointerVersion"), "pointerVersion");
       return Optional.of(
           new FirstPartyConnectContext(
               accountId,
               tenantId,
-              stringClaim(claims, "worldSlug"),
-              stringClaim(claims, "realmSlug"),
+              requiredTextClaim(claims, "worldSlug"),
+              requiredTextClaim(claims, "realmSlug"),
               gameInstanceId,
               pointerVersion,
-              stringClaim(claims, "connectScopeId"),
+              requiredTextClaim(claims, "connectScopeId"),
               stringClaim(claims, "connectTokenJti"),
-              stringClaim(claims, "connectRequestId"),
+              requiredTextClaim(claims, "connectRequestId"),
               stringClaim(claims, "gatewayRequestId")));
     } catch (IllegalArgumentException | JwtException ex) {
       logger.warn("Rejecting invalid first-party connect context", ex);
@@ -58,18 +59,16 @@ public class FirstPartyConnectContextService {
     }
   }
 
-  private static long parseLong(Object value) {
-    if (value instanceof Number number) {
-      return number.longValue();
-    }
-    if (value instanceof String text && StringUtils.hasText(text)) {
-      return Long.parseLong(text);
-    }
-    throw new IllegalArgumentException("Missing numeric claim");
+  private static long parseLong(Object value, String claimName) {
+    return JwtClaims.requireLong(value, claimName, false);
   }
 
   private static String stringClaim(Claims claims, String key) {
     Object value = claims.get(key);
     return value == null ? null : value.toString();
+  }
+
+  private static String requiredTextClaim(Claims claims, String key) {
+    return JwtClaims.requireText(claims.get(key), key);
   }
 }

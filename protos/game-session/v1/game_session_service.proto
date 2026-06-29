@@ -419,8 +419,9 @@ message ListAdmissionPointersResponse {
 }
 
 message ListAdmissionPointerAuditRequest {
-  string world_slug = 1;
-  string realm_slug = 2;
+  string tenant_id = 1;
+  string world_slug = 2;
+  string realm_slug = 3;
 }
 
 message ListAdmissionPointerAuditResponse {
