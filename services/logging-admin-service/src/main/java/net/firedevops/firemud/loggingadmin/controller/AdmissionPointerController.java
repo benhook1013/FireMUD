@@ -40,14 +40,16 @@ public class AdmissionPointerController {
     return ResponseEntity.ok(ApiResponse.success(admissionPointerService.listPointers()));
   }
 
-  @GetMapping("/{worldSlug}/{realmSlug}/audit")
+  @GetMapping("/{tenantId}/{worldSlug}/{realmSlug}/audit")
   @Timed(
       value = "listAdmissionPointerAudit",
       description = "List audit history for one admission pointer")
   public ResponseEntity<ApiResponse<List<AdmissionPointerDto>>> listAudit(
-      @PathVariable String worldSlug, @PathVariable String realmSlug) {
+      @PathVariable long tenantId, @PathVariable String worldSlug, @PathVariable String realmSlug) {
+    SessionContext.requireTenantAccess(tenantId);
     return ResponseEntity.ok(
-        ApiResponse.success(admissionPointerService.listPointerAudit(worldSlug, realmSlug)));
+        ApiResponse.success(
+            admissionPointerService.listPointerAudit(tenantId, worldSlug, realmSlug)));
   }
 
   @PostMapping

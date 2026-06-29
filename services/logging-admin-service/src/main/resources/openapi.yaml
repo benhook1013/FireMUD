@@ -574,11 +574,17 @@ paths:
                     $ref: '#/components/schemas/AdmissionPointerDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /admission-pointers/{worldSlug}/{realmSlug}/audit:
+  /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit:
     get:
       summary: Read admission-pointer audit history
       operationId: listAdmissionPointerAudit
       parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
         - name: worldSlug
           in: path
           required: true

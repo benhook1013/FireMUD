@@ -66,10 +66,11 @@ public class GameSessionControlPlaneClient
   }
 
   public ListAdmissionPointerAuditResponse listAdmissionPointerAudit(
-      String worldSlug, String realmSlug) {
+      long tenantId, String worldSlug, String realmSlug) {
     return stub()
         .listAdmissionPointerAudit(
             ListAdmissionPointerAuditRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
                 .setWorldSlug(worldSlug)
                 .setRealmSlug(realmSlug)
                 .build());

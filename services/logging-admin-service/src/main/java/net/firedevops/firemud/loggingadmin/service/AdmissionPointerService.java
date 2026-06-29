@@ -10,7 +10,7 @@ import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
 public interface AdmissionPointerService {
   List<AdmissionPointerDto> listPointers();
 
-  List<AdmissionPointerDto> listPointerAudit(String worldSlug, String realmSlug);
+  List<AdmissionPointerDto> listPointerAudit(long tenantId, String worldSlug, String realmSlug);
 
   AdmissionPointerDto setPointer(SetAdmissionPointerRequest request);
 

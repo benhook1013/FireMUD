@@ -48,6 +48,7 @@ dependencies {
     annotationProcessor(libs.spring.boot.configuration.processor)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.boot.starter.websocket)
+    implementation(project(":common-saga"))
     implementation(project(":common-security"))
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)

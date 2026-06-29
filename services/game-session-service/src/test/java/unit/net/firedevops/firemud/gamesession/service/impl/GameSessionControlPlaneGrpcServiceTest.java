@@ -1390,22 +1390,6 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "req-0",
                     null,
                     Instant.parse("2026-04-14T00:00:00Z"))));
-    Mockito.when(authorityService.listPointers())
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1421,6 +1405,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointerAuditResponse> responseRef = new AtomicReference<>();
     service.listAdmissionPointerAudit(
         ListAdmissionPointerAuditRequest.newBuilder()
+            .setTenantId("1")
             .setWorldSlug("demo")
             .setRealmSlug("production")
             .build(),
@@ -1435,41 +1420,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(2, responseRef.get().getAuditCount());
     assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
     assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
+    Mockito.verify(authorityService).listPointerAudit(1L, "demo", "production");
+    Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
 
   @Test
-  void listAdmissionPointerAuditRejectsAmbiguousTenantMatches() {
+  void listAdmissionPointerAuditRequiresTenantId() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.listPointers())
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    2L,
-                    8L,
-                    4L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
@@ -1498,12 +1456,12 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertNotNull(responseRef.get());
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
-    assertEquals(
-        "Admission pointer selection is ambiguous", responseRef.get().getError().getMessage());
+    assertEquals("tenant_id is required", responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verify(authorityService, Mockito.never())
         .listPointerAudit(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
 
   @Test

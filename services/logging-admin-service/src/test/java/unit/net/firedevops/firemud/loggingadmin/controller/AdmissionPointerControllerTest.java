@@ -100,6 +100,7 @@ class AdmissionPointerControllerTest {
             "req-1",
             3L,
             null);
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
@@ -114,7 +115,7 @@ class AdmissionPointerControllerTest {
 
   @Test
   void auditReturnsEntries() throws Exception {
-    when(admissionPointerService.listPointerAudit("demo", "production"))
+    when(admissionPointerService.listPointerAudit(2L, "demo", "production"))
         .thenReturn(
             List.of(
                 new AdmissionPointerDto(
@@ -135,14 +136,28 @@ class AdmissionPointerControllerTest {
                     "req-1",
                     "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            get("/admission-pointers/demo/production/audit")
+            get("/admission-pointers/2/demo/production/audit")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
+  }
+
+  @Test
+  void auditRejectsCrossTenantScopedAdmin() throws Exception {
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/2/demo/production/audit")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -150,6 +165,7 @@ class AdmissionPointerControllerTest {
     ExecutePreparedVersionCutoverRequest request =
         new ExecutePreparedVersionCutoverRequest(
             "demo", "production", 2L, 7L, "pvu-1", "cutover", "req-1", 3L);
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
@@ -185,6 +201,7 @@ class AdmissionPointerControllerTest {
 
   @Test
   void getPreparedVersionUpgradeRejectsCrossTenantScopedAdmin() throws Exception {
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 

@@ -54,15 +54,16 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
 
   @Override
   @Timed(value = "loggingadmin.admissionPointer.audit")
-  public List<AdmissionPointerDto> listPointerAudit(String worldSlug, String realmSlug) {
+  public List<AdmissionPointerDto> listPointerAudit(
+      long tenantId, String worldSlug, String realmSlug) {
+    SessionContext.requireTenantAccess(tenantId);
     ListAdmissionPointerAuditResponse response =
-        gameSessionControlPlaneClient.listAdmissionPointerAudit(worldSlug, realmSlug);
+        gameSessionControlPlaneClient.listAdmissionPointerAudit(tenantId, worldSlug, realmSlug);
     requireNoError(response.getError());
     if (response.getAuditCount() == 0) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Admission pointer audit not found");
     }
-    AdmissionPointerControlPlaneEntry first = response.getAudit(0);
-    SessionContext.requireTenantAccess(parseLong(first.getTenantId(), "tenant_id"));
+    ensureAuditTenantMatches(response.getAuditList(), tenantId);
     return response.getAuditList().stream().map(this::toDto).toList();
   }
 
@@ -244,6 +245,19 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         preparation.getExecutionControlPlaneRequestId().isBlank()
             ? null
             : preparation.getExecutionControlPlaneRequestId());
+  }
+
+  private void ensureAuditTenantMatches(
+      List<AdmissionPointerControlPlaneEntry> auditEntries, long tenantId) {
+    boolean mismatchedTenant =
+        auditEntries.stream()
+            .map(entry -> parseLong(entry.getTenantId(), "tenant_id"))
+            .anyMatch(entryTenantId -> entryTenantId != tenantId);
+    if (mismatchedTenant) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane audit response did not match requested tenant_id");
+    }
   }
 
   private String toCutoverResultName(String protoName) {
