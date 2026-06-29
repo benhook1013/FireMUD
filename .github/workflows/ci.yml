@@ -145,7 +145,7 @@ jobs:
           buf --version
 
       - name: 💾 Cache Buf modules
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/buf
           key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto', 'config/protobuf/buf.gen.yaml', 'config/protobuf/buf.work.yaml') }}
@@ -440,7 +440,7 @@ jobs:
 
       - name: 💾 Cache OpenAPI Dependencies
         id: cache-openapi
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: config/openapi/node_modules
           key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
@@ -454,7 +454,7 @@ jobs:
 
       - name: 💾 Cache Web Client Dependencies
         id: cache-web-client
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web-client/node_modules
           key: web-client-node-${{ hashFiles('web-client/package-lock.json') }}
@@ -472,7 +472,7 @@ jobs:
 
       - name: Cache Chrome .deb
         id: cache-chrome
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ./google-chrome-stable_current_amd64.deb
           key: chrome-deb-v1
