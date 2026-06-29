@@ -8,6 +8,7 @@
   - `LOGIN`
   - `PLAY`
   - gameplay commands after admitted gameplay scope
+- Canonical deliberate logout is live: `LOGOUT` tears down authenticated/gameplay session state, clears reconnect-oriented replay state, routes shutdown through the shared runtime termination seam, and closes the transport with a deliberate logout reason instead of falling back to disconnect-style suspension.
 - Stage-aware `LOGIN_REQUIRED` / `PLAY_REQUIRED` guidance is implemented for wrong-stage input instead of older backend-flavored errors.
 - `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices, including nearby room-ground container inspection and transfer.
 - Canonical gameplay presence is live: Game Session now owns a Redis-backed live-presence store, bounded recent-presence state, explicit/auto-AFK activity resolution, first `WHO`, and the shared substrate later social presence reads consume instead of scraping raw session context.
