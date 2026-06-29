@@ -714,12 +714,24 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             Boolean.toString(workItem.isDryRun()),
             "priorityTag",
             normalizePriorityTag(workItem.getPriorityTag()),
+            "sourceKind",
+            normalizeSourceKind(workItem.getSourceKind()),
             "sourceService",
-            normalizeSourceService(workItem.getSourceService()))
+            normalizeSourceService(workItem.getSourceService()),
+            "eventType",
+            normalizeEventType(workItem.getEventType()))
         .increment();
   }
 
+  private static String normalizeSourceKind(String value) {
+    return value == null || value.isBlank() ? "unknown" : value;
+  }
+
   private static String normalizeSourceService(String value) {
+    return value == null || value.isBlank() ? "unknown" : value;
+  }
+
+  private static String normalizeEventType(String value) {
     return value == null || value.isBlank() ? "unknown" : value;
   }
 
