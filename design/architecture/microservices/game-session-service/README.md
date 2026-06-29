@@ -27,6 +27,7 @@ This doc set is the authoritative source for:
 - Maintain gameplay session state, reconnection bindings, and tick timing in Redis.
 - Persist Game Session control-plane metadata in PostgreSQL, including game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and operator/audit-relevant disconnect/remediation metadata.
 - Queue player commands, validate front-door session state, and dispatch gameplay work to Game Logic Service.
+- Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.

@@ -117,6 +117,8 @@ Game Session persists the latest processed `disconnectSequence` per `<proxyConne
 
 Recent/offline account-presence state should preserve the last admitted routing bundle too. When live presence drops to recent presence after transport loss, takeover, or logout, the bounded recent-presence record keeps the last admitted `gameInstanceId`, `worldSlug`, `realmSlug`, and `pointerVersion` so account-presence and friend-presence reads can continue to describe the last resolved realm target directly instead of collapsing immediately to a routing-less timestamp.
 
+Game Session also owns the canonical live gameplay-presence substrate rather than treating authenticated session context as an online-presence proxy. The bounded current implementation persists one live presence record per gameplay-bound session with tenant/game-instance/account/character identity, current role bucket for `WHO`, explicit-AFK state, accepted-command activity, meaningful-gameplay activity, and the admitted routing bundle used by later account/friend presence reads. Player-facing `WHO` is scoped to the current game instance and reads this presence substrate directly, while later social consumers use the same substrate plus bounded recent-presence handoff instead of rebuilding online/offline truth from raw Redis session shells.
+
 ## Runtime Feature Flags
 
 Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. Game Session exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session. See [Game Design Service Feature Flags](../game-design-service/feature-flags.md) for how definitions are created and published.
