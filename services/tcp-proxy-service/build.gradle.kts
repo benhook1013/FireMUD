@@ -12,11 +12,11 @@ import org.gradle.language.jvm.tasks.ProcessResources
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
-    implementation("io.netty:netty-all:4.2.14.Final")
+    implementation("io.netty:netty-all:4.2.15.Final")
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-security"))
     testImplementation(libs.micrometer.registry.prometheus)
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation(libs.spring.cloud.gateway)
     testImplementation(libs.spring.boot.starter.test)
