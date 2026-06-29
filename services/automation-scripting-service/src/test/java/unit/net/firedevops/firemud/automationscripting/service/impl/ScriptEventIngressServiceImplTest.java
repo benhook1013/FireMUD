@@ -11,14 +11,17 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
+import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -209,6 +212,115 @@ class ScriptEventIngressServiceImplTest {
     assertThat(eventAuditCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(eventAuditCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(eventAuditCaptor.getValue().getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
+    verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
+  }
+
+  @Test
+  void filtersHandlersByActivePluginOwnershipWhenScriptIdIsNotProvided() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptDefinitionRepository scriptDefinitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+
+    when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-1",
+                false))
+        .thenReturn(Optional.empty());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                1L, "patch-1", "onCommand", "v1"))
+        .thenReturn(
+            List.of(
+                binding("script-owned", "ENTITY", "entity-1", "high"),
+                binding("script-foreign", "ENTITY", "entity-1", "low")));
+    when(scriptDefinitionRepository
+            .findByTenantIdAndScriptVersionAndNameIn(
+                Mockito.eq(1L), Mockito.eq("patch-1"), Mockito.anyList()))
+        .thenReturn(
+            List.of(
+                scriptDefinition("script-owned", "plugin-1", "plugin-v1"),
+                scriptDefinition("script-foreign", "plugin-2", "plugin-v2")));
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(7L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            automationQueueService,
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            scriptDefinitionRepository,
+            enabledPluginRuntimeStateService(),
+            allowingQuotaService(),
+            allowingDryRunQuotaService(),
+            new ScriptRuntimeProperties());
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setPluginId("plugin-1")
+                .setPluginVersionId("plugin-v1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isTrue();
+    assertThat(admission.outcome())
+        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
+    assertThat(admission.resolvedHandlerCount()).isEqualTo(1);
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-owned");
     verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 
@@ -1502,6 +1614,21 @@ class ScriptEventIngressServiceImplTest {
 
   private static ScriptEventBinding binding(String scriptId, String scopeType, String scopeId) {
     return binding(scriptId, scopeType, scopeId, "normal");
+  }
+
+  private static ScriptDefinition scriptDefinition(
+      String scriptName, String pluginId, String pluginVersionId) {
+    ScriptDefinition definition = new ScriptDefinition();
+    definition.setName(scriptName);
+    definition.setTenantId(1L);
+    definition.setScriptVersion("patch-1");
+    definition.setDefinition(
+        "{\"pluginId\":\""
+            + pluginId
+            + "\",\"pluginVersionId\":\""
+            + pluginVersionId
+            + "\"}");
+    return definition;
   }
 
   private static ScriptEventBinding binding(

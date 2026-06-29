@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -12,10 +13,12 @@ import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
@@ -69,6 +72,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private final ScriptPatchPinProjectionService scriptPatchPinProjectionService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
   private final PluginRuntimeStateService pluginRuntimeStateService;
+  private final ScriptDefinitionRepository scriptDefinitionRepository;
   private final ScriptQuotaService quotaService;
   private final ScriptDryRunQuotaService dryRunQuotaService;
   private final ScriptRuntimeProperties runtimeProperties;
@@ -100,6 +104,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         automationAdmissionStateService,
         scriptPatchPinProjectionService,
         rolloutProjectionService,
+        null,
         pluginRuntimeStateService,
         quotaService,
         dryRunQuotaService,
@@ -119,6 +124,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
       PluginRuntimeStateService pluginRuntimeStateService,
       ScriptQuotaService quotaService,
       ScriptDryRunQuotaService dryRunQuotaService,
@@ -134,6 +140,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.scriptPatchPinProjectionService = scriptPatchPinProjectionService;
     this.rolloutProjectionService = rolloutProjectionService;
+    this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.pluginRuntimeStateService = pluginRuntimeStateService;
     this.quotaService = quotaService;
     this.dryRunQuotaService = dryRunQuotaService;
@@ -470,6 +477,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return admissionWithOnLoadHandler(request, schemaVersion, sourceService);
     }
     long tenantKey = Long.parseLong(request.getTenantId());
+    boolean filterByPluginOwnership =
+        !request.getPluginId().isBlank()
+            && !request.getPluginVersionId().isBlank()
+            && scriptDefinitionRepository != null;
+    Map<String, PluginOwner> ownersByScriptId =
+        filterByPluginOwnership
+            ? resolvePluginOwners(tenantKey, request.getScriptPatchVersion(), request, schemaVersion)
+            : Map.of();
     List<ScriptEventBinding> handlers =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
@@ -479,11 +494,91 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 binding ->
                     request.getScriptId().isBlank()
                         || binding.getScriptId().equals(request.getScriptId()))
+            .filter(binding -> !filterByPluginOwnership || hasMatchingPluginOwner(ownersByScriptId, request, binding))
             .filter(binding -> matchesScope(binding, request))
             .toList();
     handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
+  }
+
+  private boolean hasMatchingPluginOwner(
+      Map<String, PluginOwner> ownersByScriptId,
+      TriggerScriptEventRequest request,
+      ScriptEventBinding binding) {
+    PluginOwner owner = ownersByScriptId.get(binding.getScriptId());
+    return owner != null
+        && owner.pluginId().equals(request.getPluginId())
+        && owner.pluginVersionId().equals(request.getPluginVersionId());
+  }
+
+  private Map<String, PluginOwner> resolvePluginOwners(
+      Long tenantId,
+      String scriptPatchVersion,
+      TriggerScriptEventRequest request,
+      String schemaVersion) {
+    List<String> scriptIds =
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                tenantId,
+                scriptPatchVersion,
+                request.getEventType(),
+                schemaVersion)
+            .stream()
+            .filter(
+                binding ->
+                    request.getScriptId().isBlank()
+                        || binding.getScriptId().equals(request.getScriptId()))
+            .map(ScriptEventBinding::getScriptId)
+            .distinct()
+            .toList();
+    if (scriptIds.isEmpty()) {
+      return Map.of();
+    }
+    List<ScriptDefinition> definitions =
+        scriptDefinitionRepository.findByTenantIdAndScriptVersionAndNameIn(
+            tenantId, scriptPatchVersion, scriptIds);
+    Map<String, PluginOwner> resolved = new HashMap<>();
+    for (ScriptDefinition definition : definitions) {
+      PluginOwner owner = resolvePluginOwner(definition);
+      if (owner != null) {
+        resolved.put(definition.getName(), owner);
+      }
+    }
+    return resolved;
+  }
+
+  private PluginOwner resolvePluginOwner(ScriptDefinition definition) {
+    Map<String, Object> root = parseDefinition(definition.getDefinition());
+    String pluginId =
+        firstPresent(
+            normalizedText(root.get("pluginId")),
+            normalizedText(asObjectMap(root.get("plugin")).get("pluginId")),
+            normalizedText(asObjectMap(root.get("owner")).get("pluginId")));
+    if (pluginId.isBlank()) {
+      return null;
+    }
+    String pluginVersionId =
+        firstPresent(
+            normalizedText(root.get("pluginVersionId")),
+            normalizedText(asObjectMap(root.get("plugin")).get("pluginVersionId")),
+            normalizedText(asObjectMap(root.get("owner")).get("pluginVersionId")));
+    if (pluginVersionId.isBlank()) {
+      return null;
+    }
+    return new PluginOwner(pluginId, pluginVersionId);
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> parseDefinition(String definitionJson) {
+    if (definitionJson == null || definitionJson.isBlank()) {
+      return Map.of();
+    }
+    try {
+      return JsonParserFactory.getJsonParser().parseMap(definitionJson);
+    } catch (RuntimeException ex) {
+      return Map.of();
+    }
   }
 
   private TriggerAdmission admissionWithOnLoadHandler(
@@ -841,6 +936,27 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return value;
   }
 
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> asObjectMap(Object value) {
+    if (value instanceof Map<?, ?> map) {
+      return (Map<String, Object>) map;
+    }
+    return Map.of();
+  }
+
+  private static String firstPresent(String... values) {
+    for (String value : values) {
+      if (value != null && !value.isBlank()) {
+        return value;
+      }
+    }
+    return "";
+  }
+
+  private static String normalizedText(Object value) {
+    return value == null ? "" : value.toString().trim();
+  }
+
   private static String normalize(String value) {
     return value == null ? "" : value;
   }
@@ -872,6 +988,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         routingBundle.realmSlug(),
         routingBundle.pointerVersion());
   }
+
+  private record PluginOwner(String pluginId, String pluginVersionId) {}
 
   private record HandlerScopeValues(
       String entityId,
