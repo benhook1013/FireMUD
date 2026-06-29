@@ -15,6 +15,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Prompt output now has the pre-`06` baseline pipeline: prompt coalescing, a narrow per-session prompt-throttling window, reconnect prompt regeneration, and structured first-party prompt delivery are live. Richer burst-end scheduling, broader game-defined composition, and canonical buffered prompt/status replay remain future work.
 - Built-in/system text now has the first usable localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests.
 - Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work.
+- The canonical transcript storage model is now locked at the architecture layer: reconnect replay and later durable history share one conceptual structured transcript-entry model, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth.
 
 ---
 
@@ -238,6 +239,47 @@ If FireMUD later needs richer output composition for configurable games, accessi
 - multiple renderers consume the same presentation tree
 
 That richer direction is a valid future option, but the first implementation should begin with the smaller output-envelope model rather than jumping immediately to a full presentation document system.
+
+### Canonical transcript persistence model
+
+Structured `PlayerOutput` is the live output contract. Canonical transcript persistence sits one step below that live envelope:
+
+- replay-eligible `PlayerOutput` values are projected into canonical transcript entries;
+- transcript entries are the persistence/replay source of truth;
+- rendered plain text remains a derived compatibility cache for classic text transports.
+
+The canonical persisted transcript unit is one transcript entry carrying:
+
+- session/gameplay identity;
+- ordering token;
+- output kind;
+- structured payload;
+- timestamp metadata.
+
+For the current architecture, that means:
+
+- a reconnect buffer entry may keep derived rendered text alongside the structured transcript entry so Telnet and generic WebSocket replay remain simple;
+- later durable transcript history should persist the same conceptual transcript entry model rather than inventing a second browser-only or archive-only contract;
+- prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
+
+Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.
+
+The first retention classes are intentionally simple:
+
+- `RECONNECT_ONLY`
+- `SHORT_HISTORY`
+- `EXTENDED_HISTORY`
+
+Their intended behavior is:
+
+- `RECONNECT_ONLY`: keep entries only in the hot reconnect buffer; do not write durable transcript history.
+- `SHORT_HISTORY`: keep entries in the hot reconnect buffer and also persist bounded durable transcript history suitable for normal operator troubleshooting and recent-player replay.
+- `EXTENDED_HISTORY`: keep the same transcript-entry model with a longer bounded durable history window for operators or products that explicitly opt into richer replay/history retention.
+
+This model keeps reconnect replay, durable transcript history, and richer client replay on one transcript contract while still allowing the current implementation split:
+
+- hot reconnect buffer in Redis or equivalent runtime storage;
+- longer transcript history in durable storage when that later implementation work lands.
 
 ---
 
