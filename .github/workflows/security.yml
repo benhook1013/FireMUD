@@ -20,6 +20,11 @@ jobs:
     name: Trivy Filesystem Scan
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -95,6 +100,11 @@ jobs:
     needs: [trivy-scan, secret-compliance]
     if: always()
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Enforce security success
         env:
           TRIVY_SCAN: ${{ needs.trivy-scan.result }}
@@ -117,6 +127,11 @@ jobs:
     needs: [trivy-scan, secret-compliance, security-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: 💬 Publish Security Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:

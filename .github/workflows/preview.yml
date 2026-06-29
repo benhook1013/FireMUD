@@ -63,6 +63,11 @@ jobs:
       head_sha: ${{ steps.derive.outputs.head_sha }}
       base_sha: ${{ steps.derive.outputs.base_sha }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Resolve preview eligibility
         id: eligibility
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9

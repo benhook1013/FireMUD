@@ -28,6 +28,11 @@ jobs:
       matrix: ${{ steps.compute.outputs.matrix }}
       should_run: ${{ steps.compute.outputs.should_run }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -113,6 +118,11 @@ jobs:
         include: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -167,6 +177,11 @@ jobs:
     needs: [analyze]
     if: always() && github.event_name == 'pull_request' && github.base_ref == 'main'
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Enforce successful CodeQL analysis
         run: |
           if [ "${{ needs.analyze.result }}" != "success" ] && [ "${{ needs.analyze.result }}" != "skipped" ]; then

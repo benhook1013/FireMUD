@@ -69,6 +69,11 @@ jobs:
       SMOKE_IMAGE_TAG: ${{ inputs.image_tag }}
       CHECKOUT_REF: ${{ inputs.checkout_ref != '' && inputs.checkout_ref || inputs.head_sha }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: ⬇️ Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -119,6 +124,11 @@ jobs:
     needs: [smoke-full]
     if: ${{ always() && inputs.pr_number != '' }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:

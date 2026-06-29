@@ -20,6 +20,11 @@ jobs:
     name: Weekly ORT Advisory Scan
     runs-on: ubuntu-latest
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Use HTTPS for Git
         run: git config --global url.https://github.com/.insteadOf ssh://git@github.com/
 
