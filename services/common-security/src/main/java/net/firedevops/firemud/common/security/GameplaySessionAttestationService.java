@@ -204,16 +204,16 @@ public class GameplaySessionAttestationService {
   }
 
   private String requireClaim(Claims claims, String name) {
-    String value = claimText(claims.get(name));
-    if (!StringUtils.hasText(value)) {
+    try {
+      return JwtClaims.requireClaim(claims, name);
+    } catch (IllegalArgumentException ex) {
       throw new GameplaySessionAttestationException(
-          "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + name);
+          "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + name, ex);
     }
-    return value;
   }
 
   private String claimText(Object value) {
-    return value == null ? "" : value.toString().trim();
+    return JwtClaims.claimText(value);
   }
 
   private void requireText(String value, String fieldName) {

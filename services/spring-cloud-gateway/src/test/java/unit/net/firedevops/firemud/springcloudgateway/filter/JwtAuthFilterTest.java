@@ -48,4 +48,17 @@ class JwtAuthFilterTest {
     assertTrue(
         exchange.getResponse().isCommitted() || exchange.getResponse().getStatusCode() == null);
   }
+
+  @Test
+  void rejectsMalformedScopedRolesClaimShape() {
+    String token = jwtUtil.generateToken("user", Map.of("scopedRoles", List.of("tenantAdmin")));
+    MockServerHttpRequest.BaseBuilder<?> builder =
+        MockServerHttpRequest.get("/routes/test")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    MockServerWebExchange exchange = MockServerWebExchange.from(builder);
+
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+  }
 }
