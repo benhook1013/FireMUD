@@ -10,15 +10,15 @@ import java.util.Map;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
+import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
-import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
-import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
@@ -483,7 +483,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             && scriptDefinitionRepository != null;
     Map<String, PluginOwner> ownersByScriptId =
         filterByPluginOwnership
-            ? resolvePluginOwners(tenantKey, request.getScriptPatchVersion(), request, schemaVersion)
+            ? resolvePluginOwners(
+                tenantKey, request.getScriptPatchVersion(), request, schemaVersion)
             : Map.of();
     List<ScriptEventBinding> handlers =
         bindingRepository
@@ -494,7 +495,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 binding ->
                     request.getScriptId().isBlank()
                         || binding.getScriptId().equals(request.getScriptId()))
-            .filter(binding -> !filterByPluginOwnership || hasMatchingPluginOwner(ownersByScriptId, request, binding))
+            .filter(
+                binding ->
+                    !filterByPluginOwnership
+                        || hasMatchingPluginOwner(ownersByScriptId, request, binding))
             .filter(binding -> matchesScope(binding, request))
             .toList();
     handlers.forEach(binding -> admitHandler(request, schemaVersion, binding, sourceService));
@@ -520,10 +524,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     List<String> scriptIds =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
-                tenantId,
-                scriptPatchVersion,
-                request.getEventType(),
-                schemaVersion)
+                tenantId, scriptPatchVersion, request.getEventType(), schemaVersion)
             .stream()
             .filter(
                 binding ->

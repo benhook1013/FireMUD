@@ -12,16 +12,16 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
+import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
-import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
-import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
@@ -258,9 +258,8 @@ class ScriptEventIngressServiceImplTest {
             List.of(
                 binding("script-owned", "ENTITY", "entity-1", "high"),
                 binding("script-foreign", "ENTITY", "entity-1", "low")));
-    when(scriptDefinitionRepository
-            .findByTenantIdAndScriptVersionAndNameIn(
-                Mockito.eq(1L), Mockito.eq("patch-1"), Mockito.anyList()))
+    when(scriptDefinitionRepository.findByTenantIdAndScriptVersionAndNameIn(
+            Mockito.eq(1L), Mockito.eq("patch-1"), Mockito.anyList()))
         .thenReturn(
             List.of(
                 scriptDefinition("script-owned", "plugin-1", "plugin-v1"),
@@ -1623,11 +1622,7 @@ class ScriptEventIngressServiceImplTest {
     definition.setTenantId(1L);
     definition.setScriptVersion("patch-1");
     definition.setDefinition(
-        "{\"pluginId\":\""
-            + pluginId
-            + "\",\"pluginVersionId\":\""
-            + pluginVersionId
-            + "\"}");
+        "{\"pluginId\":\"" + pluginId + "\",\"pluginVersionId\":\"" + pluginVersionId + "\"}");
     return definition;
   }
 

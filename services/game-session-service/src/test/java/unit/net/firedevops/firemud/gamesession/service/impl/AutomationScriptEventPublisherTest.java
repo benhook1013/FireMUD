@@ -11,6 +11,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -38,9 +41,14 @@ class AutomationScriptEventPublisherTest {
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
     when(client.triggerScriptEvent(Mockito.any()))
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    TextCommandMetadataResolver metadataResolver =
+        commandToken ->
+            Optional.of(
+                new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                    TextCommandActionCategory.META, java.util.List.of(TextCommandActionTag.UI)));
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, Runnable::run);
+            client, statusRepository, gameInstanceRepository, metadataResolver, Runnable::run);
 
     publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
 
@@ -64,6 +72,8 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");
     assertThat(request.getPayloadJson()).contains("\"commandId\":\"cmd-1\"");
     assertThat(request.getPayloadJson()).contains("\"commandName\":\"LOOK\"");
+    assertThat(request.getPayloadJson()).contains("\"actionCategory\":\"META\"");
+    assertThat(request.getPayloadJson()).contains("\"actionTags\":[\"UI\"]");
   }
 
   @Test
@@ -78,7 +88,11 @@ class AutomationScriptEventPublisherTest {
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.empty());
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            Runnable::run);
 
     publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
 
@@ -102,7 +116,11 @@ class AutomationScriptEventPublisherTest {
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            Runnable::run);
 
     publisher.publishSpawnEvent(
         sharedGameplayContext("room"), "play_entry", "play-spawn:17:99:44:7");
@@ -140,7 +158,11 @@ class AutomationScriptEventPublisherTest {
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            Runnable::run);
 
     publisher.publishRegionTransitionEvents(
         sharedGameplayContext("room-a"), sharedGameplayContext("room-b"), "effect-1");
@@ -192,7 +214,11 @@ class AutomationScriptEventPublisherTest {
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
-            client, statusRepository, gameInstanceRepository, Runnable::run);
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            Runnable::run);
 
     publisher.publishRegionExitEvent(
         sharedGameplayContext("room-a"), "disconnect:transport_loss:17:99:44", "TRANSPORT_LOSS");
@@ -216,6 +242,44 @@ class AutomationScriptEventPublisherTest {
     command.setCommandName(commandName);
     command.setAcceptedAt(Instant.now());
     return command;
+  }
+
+  @Test
+  void publishesAuthoredCommandEventWithResolvedCommandIdMetadata() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    TextCommandMetadataResolver metadataResolver =
+        commandToken ->
+            "wave".equals(commandToken)
+                ? Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        TextCommandActionCategory.SOCIAL,
+                        java.util.List.of(TextCommandActionTag.COMMUNICATION)))
+                : Optional.empty();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client, statusRepository, gameInstanceRepository, metadataResolver, Runnable::run);
+
+    GameplayCommand command = command("authored-1", "wave");
+    command.setCommandText("wave");
+    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
+
+    ArgumentCaptor<TriggerScriptEventRequest> captor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(client).triggerScriptEvent(captor.capture());
+    assertThat(captor.getValue().getPayloadJson()).contains("\"actionCategory\":\"SOCIAL\"");
+    assertThat(captor.getValue().getPayloadJson()).contains("\"actionTags\":[\"COMMUNICATION\"]");
   }
 
   private static SessionContext sharedGameplayContext(String roomId) {

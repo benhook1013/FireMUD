@@ -143,6 +143,11 @@ Minimum payload contract:
 - `commandId`
 - `commandName`
 
+Current optional classification enrichment:
+
+- `actionCategory`
+- `actionTags[]`
+
 Required Trigger Identity and snapshot fields remain defined by the registry entry itself (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptPatchVersion`, `scriptEventId`, and `readSnapshotToken` where required). Payload contents are intentionally narrower than full Trigger Identity.
 
 ### `onSpawn` payload `v1`
