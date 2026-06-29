@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.springframework.boot.json.JsonParserFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -222,6 +224,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         && request.getReadSnapshotToken().isBlank()) {
       return rejected("missing_snapshot_token");
     }
+    TriggerAdmission payloadAdmission = validateBuiltInPayload(request);
+    if (payloadAdmission != null) {
+      return payloadAdmission;
+    }
     if (isOnLoadRequest(request) && request.getScriptId().isBlank()) {
       return rejected("missing_script_identity");
     }
@@ -263,6 +269,84 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private TriggerAdmission rejected(String reason) {
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  private TriggerAdmission validateBuiltInPayload(TriggerScriptEventRequest request) {
+    String eventType = request.getEventType();
+    if ("onLoad".equals(eventType)) {
+      return null;
+    }
+    Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
+    if (payload == null) {
+      return rejected("invalid_built_in_payload");
+    }
+    return switch (eventType) {
+      case "onCommand" ->
+          requirePayloadFields(payload, "commandId", "commandName")
+              ? null
+              : rejected("invalid_built_in_payload");
+      case "onSpawn" ->
+          requirePayloadFields(payload, "spawnReason")
+              ? null
+              : rejected("invalid_built_in_payload");
+      case "onEnterRegion" ->
+          requirePayloadFields(payload, "toRegionId")
+              ? null
+              : rejected("invalid_built_in_payload");
+      case "onLeaveRegion" ->
+          requirePayloadFields(payload, "fromRegionId")
+              ? null
+              : rejected("invalid_built_in_payload");
+      case "onTimerExpire", "onInterval" ->
+          requirePayloadFields(payload, "scheduleId") && hasDuePointIdentity(payload)
+              ? null
+              : rejected("invalid_built_in_payload");
+      default -> null;
+    };
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> parsePayloadObject(String payloadJson) {
+    if (payloadJson == null || payloadJson.isBlank()) {
+      return null;
+    }
+    try {
+      Object parsed = JsonParserFactory.getJsonParser().parseMap(payloadJson);
+      return parsed instanceof Map<?, ?> payload ? (Map<String, Object>) payload : null;
+    } catch (RuntimeException ex) {
+      return null;
+    }
+  }
+
+  private boolean requirePayloadFields(Map<String, Object> payload, String... fields) {
+    for (String field : fields) {
+      if (!hasTextValue(payload.get(field))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean hasDuePointIdentity(Map<String, Object> payload) {
+    return hasPositiveLongValue(payload.get("dueTickId")) || hasPositiveLongValue(payload.get("dueAt"));
+  }
+
+  private boolean hasTextValue(Object value) {
+    return value instanceof String text && !text.isBlank();
+  }
+
+  private boolean hasPositiveLongValue(Object value) {
+    if (value instanceof Number number) {
+      return number.longValue() > 0;
+    }
+    if (value instanceof String text && !text.isBlank()) {
+      try {
+        return Long.parseLong(text) > 0;
+      } catch (RuntimeException ex) {
+        return false;
+      }
+    }
+    return false;
   }
 
   private TriggerAdmission validateGameplayRoutingBundle(
