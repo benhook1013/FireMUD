@@ -459,28 +459,6 @@ jobs:
         run: |
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods,svc,ingress
 
-      - name: Show preview rollout diagnostics
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'failure' }}
-        run: |
-          echo "=== pods ==="
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods -o wide || true
-          echo
-          echo "=== events ==="
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get events --sort-by=.lastTimestamp | tail -n 120 || true
-          echo
-          echo "=== pod describe ==="
-          for pod in $(kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods --no-headers | awk '$2 != $3 || $3 != "Running" {print $1}'); do
-            echo "--- ${pod} ---"
-            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" describe pod "${pod}" || true
-            echo
-          done
-          echo "=== recent logs ==="
-          for deployment in account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service; do
-            echo "--- ${deployment} ---"
-            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" logs "deploy/${deployment}" --tail=120 || true
-            echo
-          done
-
       - name: Fail if preview rollout did not complete
         if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'failure' }}
         run: |
@@ -639,6 +617,13 @@ jobs:
                 body,
               });
             }
+
+      - name: Show preview failure diagnostics
+        if: ${{ always() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        run: |
+          bash ./dev-tools/hosted/preview/show-preview-rollout-diagnostics.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${PREVIEW_STAGE:-unknown}"
 
       - name: Summarize preview failure
         if: ${{ always() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
