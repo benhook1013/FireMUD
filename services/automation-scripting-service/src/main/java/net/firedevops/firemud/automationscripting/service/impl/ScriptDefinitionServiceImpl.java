@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -9,6 +10,7 @@ import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -27,6 +29,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private final ScriptEventBindingRepository bindingRepository;
   private final ScriptDefinitionMapper mapper;
   private final SagaRunner sagaRunner;
+  private final ScriptEventRegistryService eventRegistryService;
 
   @Override
   @Transactional
@@ -59,22 +62,46 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   private ScriptEventBinding toEntity(
       ScriptDefinitionDto dto, ScriptDefinitionDto.EventBindingDto binding) {
+    String eventType = requiredText(binding.eventType(), "event type");
+    String eventSchemaVersion =
+        binding.eventSchemaVersion() == null || binding.eventSchemaVersion().isBlank()
+            ? DEFAULT_EVENT_SCHEMA_VERSION
+            : binding.eventSchemaVersion();
+    String targetScopeType =
+        normalizeScopeType(requiredText(binding.targetScopeType(), "target scope type"));
+    validateBindingScope(eventType, eventSchemaVersion, targetScopeType);
     ScriptEventBinding entity = new ScriptEventBinding();
     entity.setTenantId(dto.tenantId());
     entity.setScriptPatchVersion(dto.version());
     entity.setScriptId(requiredText(dto.name(), "script name"));
-    entity.setEventType(requiredText(binding.eventType(), "event type"));
-    entity.setEventSchemaVersion(
-        binding.eventSchemaVersion() == null || binding.eventSchemaVersion().isBlank()
-            ? DEFAULT_EVENT_SCHEMA_VERSION
-            : binding.eventSchemaVersion());
-    entity.setTargetScopeType(requiredText(binding.targetScopeType(), "target scope type"));
+    entity.setEventType(eventType);
+    entity.setEventSchemaVersion(eventSchemaVersion);
+    entity.setTargetScopeType(targetScopeType);
     entity.setTargetScopeId(normalize(binding.targetScopeId()));
     entity.setPriority(binding.priority());
     entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
     entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());
     entity.setEnabled(true);
     return entity;
+  }
+
+  private void validateBindingScope(
+      String eventType, String eventSchemaVersion, String targetScopeType) {
+    ScriptEventRegistryService.EventDefinition definition =
+        eventRegistryService.getDefinition(eventType, eventSchemaVersion).orElse(null);
+    if (definition == null) {
+      throw new IllegalArgumentException(
+          "unknown built-in event binding: " + eventType + "@" + eventSchemaVersion);
+    }
+    if (!definition.allowedBindingScopes().contains(targetScopeType)) {
+      throw new IllegalArgumentException(
+          "unsupported binding scope "
+              + targetScopeType
+              + " for "
+              + eventType
+              + "@"
+              + eventSchemaVersion);
+    }
   }
 
   private static String requiredText(String value, String fieldName) {
@@ -86,6 +113,10 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizeScopeType(String value) {
+    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
   }
 
   private static String normalizePriorityTag(String value) {

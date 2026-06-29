@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -11,8 +12,14 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
+import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.saga.persistence.SagaInstance;
+import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
+import net.firedevops.firemud.common.saga.persistence.SagaStep;
+import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
+import net.firedevops.firemud.metrics.SagaMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -22,15 +29,26 @@ class ScriptDefinitionServiceImplTest {
   private ScriptDefinitionRepository repository;
   private ScriptEventBindingRepository bindingRepository;
   private SagaRunner sagaRunner;
+  private ScriptEventRegistryService eventRegistryService;
   private ScriptDefinitionServiceImpl service;
 
   @BeforeEach
   void setup() {
     repository = Mockito.mock(ScriptDefinitionRepository.class);
     bindingRepository = Mockito.mock(ScriptEventBindingRepository.class);
-    sagaRunner = Mockito.mock(SagaRunner.class);
+    eventRegistryService = new BuiltInScriptEventRegistryService();
+    SagaMetrics sagaMetrics = Mockito.mock(SagaMetrics.class);
+    SagaInstanceRepository instanceRepository = Mockito.mock(SagaInstanceRepository.class);
+    SagaStepRepository stepRepository = Mockito.mock(SagaStepRepository.class);
+    when(instanceRepository.save(any(SagaInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(stepRepository.save(any(SagaStep.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    sagaRunner = new SagaRunner(sagaMetrics, instanceRepository, stepRepository);
     ScriptDefinitionMapper mapper = Mappers.getMapper(ScriptDefinitionMapper.class);
-    service = new ScriptDefinitionServiceImpl(repository, bindingRepository, mapper, sagaRunner);
+    service =
+        new ScriptDefinitionServiceImpl(
+            repository, bindingRepository, mapper, sagaRunner, eventRegistryService);
   }
 
   @Test
@@ -43,6 +61,44 @@ class ScriptDefinitionServiceImplTest {
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertNotNull(result);
-    verify(sagaRunner).run(any(net.firedevops.firemud.common.saga.Saga.class));
+    verify(repository).save(any(ScriptDefinition.class));
+  }
+
+  @Test
+  void updateScriptRejectsUnknownBuiltInEventBinding() {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onUnknown", "v1", "GLOBAL", "", 0, "normal", false)));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(SagaException.class)
+        .hasRootCauseInstanceOf(IllegalArgumentException.class)
+        .hasRootCauseMessage("unknown built-in event binding: onUnknown@v1");
+  }
+
+  @Test
+  void updateScriptRejectsBindingScopeNotAllowedByRegistry() {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false)));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(SagaException.class)
+        .hasRootCauseInstanceOf(IllegalArgumentException.class)
+        .hasRootCauseMessage("unsupported binding scope COMMAND_ALIAS for onSpawn@v1");
   }
 }
