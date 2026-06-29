@@ -65,6 +65,28 @@ class ScriptDefinitionServiceImplTest {
   }
 
   @Test
+  void updateScriptAllowsOnCommandActionTagBinding() throws SagaException {
+    ScriptDefinition saved = new ScriptDefinition();
+    saved.setId(6L);
+    when(repository.save(any(ScriptDefinition.class))).thenReturn(saved);
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false)));
+
+    ScriptDefinitionDto result = service.updateScript(dto);
+
+    assertNotNull(result);
+    verify(bindingRepository).saveAll(any());
+  }
+
+  @Test
   void updateScriptRejectsUnknownBuiltInEventBinding() {
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(

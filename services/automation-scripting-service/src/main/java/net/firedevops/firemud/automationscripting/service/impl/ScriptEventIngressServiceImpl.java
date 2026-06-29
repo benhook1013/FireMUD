@@ -44,6 +44,8 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected Spring dependencies are not exposed externally")
 public class ScriptEventIngressServiceImpl implements ScriptEventIngressService {
+  private static final String SCOPE_ACTION_CATEGORY = "ACTION_CATEGORY";
+  private static final String SCOPE_ACTION_TAG = "ACTION_TAG";
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
   private static final String SCOPE_COMMAND_ALIAS = "COMMAND_ALIAS";
   private static final String OUTCOME_ADMITTED =
@@ -860,12 +862,42 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean matchesScope(
       ScriptEventBinding binding, TriggerScriptEventRequest request, Map<String, Object> payload) {
     return switch (normalizeScopeType(binding.getTargetScopeType())) {
+      case SCOPE_ACTION_CATEGORY -> matchesActionCategoryScope(binding, payload);
+      case SCOPE_ACTION_TAG -> matchesActionTagScope(binding, payload);
       case "GLOBAL" -> binding.getTargetScopeId().isBlank();
       case "ENTITY" -> binding.getTargetScopeId().equals(request.getEntityId());
       case "REGION" -> binding.getTargetScopeId().equals(request.getRegionId());
       case SCOPE_COMMAND_ALIAS -> matchesCommandAliasScope(binding, payload);
       default -> false;
     };
+  }
+
+  private boolean matchesActionCategoryScope(
+      ScriptEventBinding binding, Map<String, Object> payload) {
+    if (payload == null) {
+      return false;
+    }
+    String bindingCategory = normalizeActionClassifier(binding.getTargetScopeId());
+    String payloadCategory = normalizeActionClassifier(stringValue(payload.get("actionCategory")));
+    return !bindingCategory.isBlank() && bindingCategory.equals(payloadCategory);
+  }
+
+  private boolean matchesActionTagScope(ScriptEventBinding binding, Map<String, Object> payload) {
+    if (payload == null) {
+      return false;
+    }
+    String bindingTag = normalizeActionClassifier(binding.getTargetScopeId());
+    if (bindingTag.isBlank()) {
+      return false;
+    }
+    Object payloadTags = payload.get("actionTags");
+    if (!(payloadTags instanceof List<?> tags)) {
+      return false;
+    }
+    return tags.stream()
+        .map(ScriptEventIngressServiceImpl::stringValue)
+        .map(ScriptEventIngressServiceImpl::normalizeActionClassifier)
+        .anyMatch(bindingTag::equals);
   }
 
   private boolean matchesCommandAliasScope(
@@ -992,6 +1024,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private static String normalizeCommandAlias(String value) {
     return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private static String normalizeActionClassifier(String value) {
+    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
   }
 
   private static String normalizeScopeType(String value) {
