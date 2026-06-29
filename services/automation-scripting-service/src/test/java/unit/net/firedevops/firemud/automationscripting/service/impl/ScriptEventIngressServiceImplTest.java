@@ -372,7 +372,8 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.outcome())
-        .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
     assertThat(admission.reason()).isEqualTo("invalid_built_in_payload");
     verify(workItemRepository, never()).save(Mockito.any());
     verify(eventAuditRepository, never()).save(Mockito.any());

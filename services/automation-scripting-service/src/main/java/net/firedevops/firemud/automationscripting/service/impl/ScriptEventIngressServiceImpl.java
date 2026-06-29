@@ -290,9 +290,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
               ? null
               : rejected("invalid_built_in_payload");
       case "onEnterRegion" ->
-          requirePayloadFields(payload, "toRegionId")
-              ? null
-              : rejected("invalid_built_in_payload");
+          requirePayloadFields(payload, "toRegionId") ? null : rejected("invalid_built_in_payload");
       case "onLeaveRegion" ->
           requirePayloadFields(payload, "fromRegionId")
               ? null
@@ -305,14 +303,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     };
   }
 
-  @SuppressWarnings("unchecked")
   private Map<String, Object> parsePayloadObject(String payloadJson) {
     if (payloadJson == null || payloadJson.isBlank()) {
       return null;
     }
     try {
-      Object parsed = JsonParserFactory.getJsonParser().parseMap(payloadJson);
-      return parsed instanceof Map<?, ?> payload ? (Map<String, Object>) payload : null;
+      return JsonParserFactory.getJsonParser().parseMap(payloadJson);
     } catch (RuntimeException ex) {
       return null;
     }
@@ -328,7 +324,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean hasDuePointIdentity(Map<String, Object> payload) {
-    return hasPositiveLongValue(payload.get("dueTickId")) || hasPositiveLongValue(payload.get("dueAt"));
+    return hasPositiveLongValue(payload.get("dueTickId"))
+        || hasPositiveLongValue(payload.get("dueAt"));
   }
 
   private boolean hasTextValue(Object value) {
