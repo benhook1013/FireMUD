@@ -136,6 +136,7 @@ Patch readiness initialization uses a separate admission class from ordinary liv
   - explicit timeout/CPU/memory ceilings, and
   - bounded infrastructure retry policy for transient failures.
 - Exhausting this dedicated initialization capacity must fail the patch deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than leaving readiness pending indefinitely or consuming arbitrary live runtime budget.
+- Current Automation execution now enforces the first bounded slice of that contract through dedicated tenant and cluster readiness-capacity reservations before live `PUBLISH_READINESS` work evaluates, canceling exhausted work with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`.
 - Operators must be able to distinguish:
   - publish/readiness capacity exhaustion,
   - logical `onLoad` failures,
@@ -166,6 +167,7 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
 - **`onLoad`**
   - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
+  - Current Automation execution now reserves that class against dedicated readiness-capacity knobs instead of leaving it as an unbounded live-budget bypass.
 
 Concrete mixed fan-out accounting example:
 

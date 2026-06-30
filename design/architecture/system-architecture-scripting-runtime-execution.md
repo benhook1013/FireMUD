@@ -191,6 +191,7 @@ Quota and budget accounting must be deterministic so operators can reason about 
 - Budget consumption is not refunded for runs that later fail after the charge point.
 - `onLoad` readiness work uses the separate `PUBLISH_READINESS` quota class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
 - Automation must persist the resolved registry `quotaClass` onto each durable `script_work_item` so execution-time budget behavior reads the same canonical policy that ingress used instead of re-inferring from `eventType`.
+- Current Automation execution also reserves dedicated readiness capacity for non-dry-run `PUBLISH_READINESS` work before DSL evaluation; if that bounded substrate is exhausted, the work item is canceled with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`.
 - Implementations may expose additional budget dimensions, but they must map to one of these charge points rather than inventing ad hoc charging semantics per caller or per service.
 
 ## Ordering Between Player and Script Commands

@@ -17,4 +17,8 @@ public final class ScriptQuotaClasses {
   public static boolean consumesLiveTenantBudget(String quotaClass) {
     return STANDARD_RUNTIME.equals(normalize(quotaClass));
   }
+
+  public static boolean usesPublishReadinessCapacity(String quotaClass) {
+    return PUBLISH_READINESS.equals(normalize(quotaClass));
+  }
 }
