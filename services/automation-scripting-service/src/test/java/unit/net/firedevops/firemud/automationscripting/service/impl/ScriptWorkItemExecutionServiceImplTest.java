@@ -988,6 +988,67 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalReason()).isEqualTo("dry_run_capacity_exhausted");
   }
 
+  @Test
+  void tenantBudgetDenialUsesPersistedScheduleTimerSourceAndPriorityTags() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptWorkItem item = workItem();
+    item.setEventType("onTimerExpire");
+    item.setSourceKind("SCHEDULE_TIMER");
+    item.setSourceService("automation-scripting-service");
+    item.setPriorityTag("background");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(tenantBudgetService.tryReserve("1", "background")).thenReturn(false);
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            tenantBudgetService,
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            meterRegistry);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(tenantBudgetService).tryReserve("1", "background");
+    Mockito.verify(definitionRepository, Mockito.never())
+        .findByTenantIdAndScriptVersionAndName(Mockito.anyLong(), Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("tenant_budget_exceeded");
+    assertThat(audit.getFinalOutcome()).isEqualTo("tenant_budget_exceeded");
+    assertThat(
+            meterRegistry
+                .find("automation_script_work_item_outcomes_total")
+                .tag("stage", "ADMISSION")
+                .tag("outcome", "tenant_budget_exceeded")
+                .tag("dryRun", "false")
+                .tag("priorityTag", "background")
+                .tag("sourceKind", "SCHEDULE_TIMER")
+                .tag("sourceService", "automation-scripting-service")
+                .tag("eventType", "onTimerExpire")
+                .counter())
+        .isNotNull();
+  }
+
   private static ScriptTenantBudgetService allowingTenantBudgetService() {
     ScriptTenantBudgetService service = Mockito.mock(ScriptTenantBudgetService.class);
     when(service.tryReserve(Mockito.any(), Mockito.any())).thenReturn(true);

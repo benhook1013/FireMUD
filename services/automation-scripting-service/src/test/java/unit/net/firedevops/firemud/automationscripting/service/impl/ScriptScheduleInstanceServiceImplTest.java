@@ -624,6 +624,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getWorldSlug()).isEqualTo("demo");
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getPriorityTag()).isEqualTo("normal");
     assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
     assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(workItem.getSourceOrdinal()).isEqualTo(5_000L);
