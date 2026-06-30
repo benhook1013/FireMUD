@@ -29,3 +29,6 @@ These scripts are shared because they manage infrastructure or validation behavi
 
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
+
+- `show-rollout-diagnostics.sh`
+  - prints the canonical hosted rollout failure view for both preview lanes, including blocked readiness reasons, service/target ports, safe config summaries, secret/TLS summaries, events, describes, and current plus previous logs for problematic pods
