@@ -30,7 +30,8 @@ final class ConfiguredAuthoredActionDefinitionProvider implements TextCommandDef
                     action.cooldownKey(),
                     action.cooldownMs(),
                     action.costKey(),
-                    action.costAmount()))
+                    action.costAmount(),
+                    action.executionHook()))
         .toList();
   }
 }

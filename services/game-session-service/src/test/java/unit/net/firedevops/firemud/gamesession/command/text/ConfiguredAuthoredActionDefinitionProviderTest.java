@@ -21,6 +21,12 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     action.setActionCategory(TextCommandActionCategory.SOCIAL);
     action.setActionTags(
         List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION));
+    action.setTargetingMode("TARGET_CHARACTER");
+    action.setCooldownKey("wave-cooldown");
+    action.setCooldownMs(10_000L);
+    action.setCostKey("stamina");
+    action.setCostAmount(3L);
+    action.setExecutionHook("action:wave");
     properties.setActions(List.of(action));
 
     ConfiguredAuthoredActionDefinitionProvider provider =
@@ -38,11 +44,12 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
         List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION),
         definition.actionTags());
     assertEquals(TextCommandSource.GAME_AUTHORED, definition.source());
-    assertEquals("NONE", definition.targetingMode());
-    assertEquals(null, definition.cooldownKey());
-    assertEquals(0L, definition.cooldownMs());
-    assertEquals(null, definition.costKey());
-    assertEquals(0L, definition.costAmount());
+    assertEquals("TARGET_CHARACTER", definition.targetingMode());
+    assertEquals("wave-cooldown", definition.cooldownKey());
+    assertEquals(10_000L, definition.cooldownMs());
+    assertEquals("stamina", definition.costKey());
+    assertEquals(3L, definition.costAmount());
+    assertEquals("action:wave", definition.executionHook());
   }
 
   @Test
@@ -74,7 +81,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
   }
 
   @Test
-  void catalogRejectsUnsupportedCooldownMetadata() {
+  void catalogRejectsCooldownMetadataWithoutCooldownKey() {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
@@ -86,7 +93,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
   }
 
   @Test
-  void catalogRejectsUnsupportedCostMetadata() {
+  void catalogRejectsCostMetadataWithoutCostKey() {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
@@ -98,11 +105,54 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
   }
 
   @Test
-  void catalogRejectsUnsupportedTargetingMode() {
+  void providerNormalizesBlankExecutionHookToNull() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setActionId("wave-salute");
+    action.setCommandId("wave-salute");
+    action.setExecutionHook("  ");
+    properties.setActions(List.of(action));
+
+    ConfiguredAuthoredActionDefinitionProvider provider =
+        new ConfiguredAuthoredActionDefinitionProvider(
+            new ConfiguredAuthoredActionCatalog(properties));
+
+    TextCommandDefinition definition = provider.definitions().getFirst();
+    assertEquals(null, definition.executionHook());
+  }
+
+  @Test
+  void catalogRejectsNegativeCooldownMs() {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
-    action.setTargetingMode("TARGET_CHARACTER");
+    action.setCooldownMs(-1);
+    properties.setActions(List.of(action));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
+
+  @Test
+  void catalogRejectsOrphanedCooldownKey() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setCommandId("wave-salute");
+    action.setCooldownMs(0);
+    action.setCooldownKey("wave-cooldown");
+    properties.setActions(List.of(action));
+
+    assertThrows(
+        IllegalStateException.class, () -> new ConfiguredAuthoredActionCatalog(properties));
+  }
+
+  @Test
+  void catalogRejectsOrphanedCostKey() {
+    AuthoredActionProperties properties = new AuthoredActionProperties();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setCommandId("wave-salute");
+    action.setCostAmount(0);
+    action.setCostKey("stamina");
     properties.setActions(List.of(action));
 
     assertThrows(
