@@ -41,6 +41,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     properties = {
       "game-session.require-authenticated-commands=true",
       "firemud.database.enabled=false",
+      "spring.task.scheduling.enabled=false",
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0"
