@@ -332,8 +332,6 @@ def binding_ref_format_error(
     if parsed is None:
         return f"{label} must use <scheme>://<namespace>/<binding> format"
     scheme, namespace, segments = parsed
-    if not namespace:
-        return f"{label} must include a namespace segment"
     if allowed_schemes and scheme not in allowed_schemes:
         allowed = ", ".join(sorted(allowed_schemes))
         return f"{label} must use one of the allowed schemes: {allowed}"

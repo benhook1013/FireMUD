@@ -26,6 +26,7 @@ section() {
 namespace_summary() {
   local json_file
   json_file="$(mktemp)"
+  trap 'rm -f "$json_file"' RETURN
   kubectl get namespace "$namespace" -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -60,12 +61,12 @@ if interesting_annotations:
     for key, value in interesting_annotations.items():
         print(f"  {key}={value}")
 PY
-  rm -f "$json_file"
 }
 
 service_port_detail() {
   local json_file
   json_file="$(mktemp)"
+  trap 'rm -f "$json_file"' RETURN
   kubectl -n "$namespace" get svc -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -90,12 +91,12 @@ for item in items:
     joined = "; ".join(formatted) if formatted else "<no ports>"
     print(f"{item['metadata']['name']}: {joined}")
 PY
-  rm -f "$json_file"
 }
 
 configmap_summary() {
   local json_file
   json_file="$(mktemp)"
+  trap 'rm -f "$json_file"' RETURN
   kubectl -n "$namespace" get configmap -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -146,12 +147,12 @@ for item in items:
     if selected:
         print("\n".join(selected))
 PY
-  rm -f "$json_file"
 }
 
 secret_summary() {
   local json_file
   json_file="$(mktemp)"
+  trap 'rm -f "$json_file"' RETURN
   kubectl -n "$namespace" get secret -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -171,7 +172,6 @@ for item in items:
     keys_display = ",".join(keys) if keys else "<none>"
     print(f"{name}: type={secret_type} dataKeys={keys_display}")
 PY
-  rm -f "$json_file"
 }
 
 tls_secret_summary() {
@@ -202,6 +202,7 @@ tls_secret_summary() {
 blocked_readiness_summary() {
   local json_file
   json_file="$(mktemp)"
+  trap 'rm -f "$json_file"' RETURN
   kubectl -n "$namespace" get deployment,statefulset,pod -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -273,7 +274,6 @@ for pod in sorted(pods, key=lambda entry: entry["metadata"]["name"]):
 if not found:
     print("No blocked workloads or problematic pods detected.")
 PY
-  rm -f "$json_file"
 }
 
 print_problematic_logs() {

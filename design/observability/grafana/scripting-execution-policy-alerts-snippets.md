@@ -85,7 +85,10 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 - alert: ScriptWorkItemOutcomeFailingBurst
   expr: |
     sum by (service, outcome, eventType) (
-      rate(automation_script_work_item_outcomes_total{stage=~"DSL_EVAL|TICK_HANDOFF|SCRIPT_EVAL"}[5m])
+      rate(automation_script_work_item_outcomes_total{
+        stage=~"DSL_EVAL|TICK_HANDOFF|SCRIPT_EVAL",
+        outcome!~"success|dry_run_completed|readiness_success"
+      }[5m])
     ) > 0.05
   for: 10m
   labels:

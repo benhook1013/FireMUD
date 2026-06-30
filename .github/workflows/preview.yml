@@ -620,9 +620,11 @@ jobs:
 
       - name: Show preview failure diagnostics
         if: ${{ always() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
         run: |
           bash ./dev-tools/hosted/preview/show-preview-rollout-diagnostics.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
+            "$PREVIEW_NAMESPACE" \
             "${PREVIEW_STAGE:-unknown}"
 
       - name: Summarize preview failure
