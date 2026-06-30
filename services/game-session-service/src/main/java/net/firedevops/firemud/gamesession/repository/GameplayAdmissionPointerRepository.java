@@ -28,17 +28,6 @@ public class GameplayAdmissionPointerRepository {
     return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
   }
 
-  public Optional<GameplayAdmissionPointer> findByWorldSlugAndRealmSlug(
-      String worldSlug, String realmSlug) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
-        .where(
-            GAMEPLAY_ADMISSION_POINTER
-                .WORLD_SLUG
-                .eq(worldSlug)
-                .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
-        .fetchOptional(this::toEntity);
-  }
-
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
       Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
