@@ -63,29 +63,27 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             return;
           }
           TriggerScriptEventRequest request =
-              TriggerScriptEventRequest.newBuilder()
-                  .setTenantId(scope.tenantId())
-                  .setGameInstanceId(scope.gameInstanceId())
-                  .setRegionId(scope.regionId())
-                  .setRegionEpoch(scope.regionEpoch())
-                  .setEntityId(scope.entityId())
-                  .setEventType("onCommand")
-                  .setEventSchemaVersion("v1")
-                  .setScriptPatchVersion(scope.scriptPatchVersion())
-                  .setScriptEventId(command.getCommandId())
-                  .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
-                  .setPlayableStateScope(scope.playableStateScope())
-                  .setWorldSlug(scope.worldSlug())
-                  .setRealmSlug(scope.realmSlug())
-                  .setPointerVersion(scope.pointerVersion())
-                  .setReadSnapshotToken(
-                      "game-session:onCommand:"
-                          + scope.gameInstanceId()
-                          + ":"
-                          + scope.regionEpoch()
-                          + ":"
-                          + command.getCommandId())
-                  .setPayloadJson(commandPayload(command))
+              TriggerScriptEventRequestFactory.builder(
+                      new TriggerScriptEventRequestFactory.CommonFields(
+                          scope.tenantId(),
+                          scope.gameInstanceId(),
+                          scope.regionId(),
+                          scope.regionEpoch(),
+                          scope.entityId(),
+                          "onCommand",
+                          "v1",
+                          scope.scriptPatchVersion(),
+                          command.getCommandId(),
+                          TriggerMode.TRIGGER_MODE_NORMAL,
+                          scope.playableStateScope(),
+                          "game-session:onCommand:"
+                              + scope.gameInstanceId()
+                              + ":"
+                              + scope.regionEpoch()
+                              + ":"
+                              + command.getCommandId(),
+                          commandPayload(command)),
+                      scope.routingBundle())
                   .build();
           logIfNotAdmitted(
               client.triggerScriptEvent(request),
@@ -268,23 +266,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String readSnapshotToken,
       String payloadJson) {
     TriggerScriptEventRequest request =
-        TriggerScriptEventRequest.newBuilder()
-            .setTenantId(scope.tenantId())
-            .setGameInstanceId(scope.gameInstanceId())
-            .setRegionId(scope.regionId())
-            .setRegionEpoch(scope.regionEpoch())
-            .setEntityId(scope.entityId())
-            .setEventType(eventType)
-            .setEventSchemaVersion("v1")
-            .setScriptPatchVersion(scope.scriptPatchVersion())
-            .setScriptEventId(scriptEventId)
-            .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
-            .setPlayableStateScope(scope.playableStateScope())
-            .setWorldSlug(scope.worldSlug())
-            .setRealmSlug(scope.realmSlug())
-            .setPointerVersion(scope.pointerVersion())
-            .setReadSnapshotToken(readSnapshotToken)
-            .setPayloadJson(payloadJson)
+        TriggerScriptEventRequestFactory.builder(
+                new TriggerScriptEventRequestFactory.CommonFields(
+                    scope.tenantId(),
+                    scope.gameInstanceId(),
+                    scope.regionId(),
+                    scope.regionEpoch(),
+                    scope.entityId(),
+                    eventType,
+                    "v1",
+                    scope.scriptPatchVersion(),
+                    scriptEventId,
+                    TriggerMode.TRIGGER_MODE_NORMAL,
+                    scope.playableStateScope(),
+                    readSnapshotToken,
+                    payloadJson),
+                scope.routingBundle())
             .build();
     logIfNotAdmitted(
         client.triggerScriptEvent(request), eventType, scope.gameInstanceId(), scriptEventId);
@@ -362,9 +359,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         Long.toString(context.characterId()),
         resolvePlayableStateScope(context),
         scriptPatchVersion,
-        normalize(context.worldSlug()),
-        normalize(context.realmSlug()),
-        context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : "");
+        new TriggerScriptEventRequestFactory.RoutingBundle(
+            normalize(context.worldSlug()),
+            normalize(context.realmSlug()),
+            context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : ""));
   }
 
   private static String regionTransitionPayload(String fromRegionId, String toRegionId) {
@@ -404,9 +402,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
-      String worldSlug,
-      String realmSlug,
-      String pointerVersion) {}
+      TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
 
   private static PlayableStateScope resolvePlayableStateScope(SessionContext context) {
     if (!StringUtils.hasText(context.playableStateScope())) {
