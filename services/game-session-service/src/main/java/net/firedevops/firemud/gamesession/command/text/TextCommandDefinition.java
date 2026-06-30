@@ -59,6 +59,32 @@ record TextCommandDefinition(
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
       TextCommandActionCategory actionCategory,
+      TextCommandSource source) {
+    this(
+        commandId,
+        type,
+        aliases,
+        dispatchGroup,
+        stageRequirement,
+        promptPolicy,
+        actionCategory,
+        List.of(),
+        source,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L);
+  }
+
+  TextCommandDefinition(
+      String commandId,
+      TextCommandType type,
+      List<String> aliases,
+      TextCommandDispatchGroup dispatchGroup,
+      TextCommandStageRequirement stageRequirement,
+      TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory,
       List<TextCommandActionTag> actionTags,
       TextCommandSource source) {
     this(
