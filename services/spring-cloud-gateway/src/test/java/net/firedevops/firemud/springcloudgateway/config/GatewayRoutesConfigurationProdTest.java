@@ -36,7 +36,6 @@ class GatewayRoutesConfigurationProdTest {
   private static final Set<String> ROUTE_IDS =
       Set.of(
           "session-ping",
-          "session-sessions",
           "admin-ping",
           "admin-admission-pointers",
           "admin-feature-flags",

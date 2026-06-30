@@ -36,7 +36,6 @@ class GatewayRoutesConfigurationTestProfileTest {
   private static final Set<String> ROUTE_IDS =
       Set.of(
           "session-ping",
-          "session-sessions",
           "admin-ping",
           "admin-admission-pointers",
           "admin-feature-flags",
@@ -84,7 +83,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertThat(pathArgs("design").values()).containsExactly("/api/design/**");
 
     assertThat(pathArgs("session-ping").values()).containsExactly("/api/session/ping");
-    assertThat(pathArgs("session-sessions").values()).containsExactly("/api/session/sessions/**");
 
     assertThat(pathArgs("account-auth").values()).containsExactly("/api/account/auth/**");
     assertThat(pathArgs("account-accounts").values()).containsExactly("/api/account/accounts/**");
@@ -104,7 +102,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertThat(pathArgs("asset-store-public").values()).containsExactly("/assets/**");
 
     assertHasStripPrefix("session-ping", "2");
-    assertHasStripPrefix("session-sessions", "2");
     assertHasStripPrefix("admin-ping", "2");
     assertHasStripPrefix("admin-admission-pointers", "2");
     assertHasStripPrefix("admin-feature-flags", "2");

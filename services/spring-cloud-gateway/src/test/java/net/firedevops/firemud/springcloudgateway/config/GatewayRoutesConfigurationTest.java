@@ -34,7 +34,6 @@ class GatewayRoutesConfigurationTest {
   private static final Set<String> ROUTE_IDS =
       Set.of(
           "session-ping",
-          "session-sessions",
           "admin-ping",
           "admin-admission-pointers",
           "admin-feature-flags",
@@ -91,10 +90,6 @@ class GatewayRoutesConfigurationTest {
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertThat(route("session-ping").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/session/ping");
-    assertThat(route("session-sessions").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/session/sessions/**");
-    assertHasStripPrefixTwo(route("session-sessions"));
-
     assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/admin/ping");
     assertThat(route("admin-admission-pointers").getPredicates().get(0).getArgs().values())

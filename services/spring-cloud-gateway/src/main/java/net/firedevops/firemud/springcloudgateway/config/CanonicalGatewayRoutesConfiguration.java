@@ -31,12 +31,6 @@ public class CanonicalGatewayRoutesConfiguration {
                 "/api/session/ping",
                 2),
             route(
-                "session-sessions",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_SESSION_URI", "http://game-session-service:8080"),
-                "/api/session/sessions/**",
-                2),
-            route(
                 "admin-ping",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),

@@ -50,12 +50,12 @@
 - `/api/admin/**` -> Logging & Admin Service.
 - `/api/design/**` -> Game Design Service.
 - `/api/account/**` -> Account Service.
-- `/api/session/**` -> Game Session Service control-plane and admin APIs.
+- `/api/session/**` -> Game Session Service HTTP control-plane family; the current public inventory is limited to `GET /api/session/ping`, while internal/operator `/sessions*` mutations remain non-public owner-side routes.
 - `/api/social/**` -> Social Groups Service.
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
 
-Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `/api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. `/api/session/**` is forwarded as an HTTP control-plane family, while `/ws/game/**` remains the separate gameplay WebSocket path. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
+Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `/api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. `/api/session/ping` is forwarded as the current public HTTP control-plane route, while `/ws/game/**` remains the separate gameplay WebSocket path. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
 
 These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
 
@@ -63,7 +63,7 @@ These public prefixes are route families, not blanket permission to expose every
 - internal-only or operator/debug service-local subtrees such as `/internal/**` and `/actuator/**` remain non-public even when the service has a public `/api/{service}/**` prefix, and the gateway now blocks `/api/{public-family}/internal/**` and `/api/{public-family}/actuator/**` requests instead of forwarding them; and
 - gateway config and filters must converge on deny-by-default behavior for undocumented internal subtrees instead of treating the coarse family prefix as the final exposure contract.
 
-Current route YAML still forwards coarse `/api/{service}/**` families. Treat that as an implementation gap to converge, not as permission for external clients to rely on undocumented service-local internal paths.
+The canonical gateway route catalog now publishes that explicit external inventory directly rather than forwarding blanket `/api/{service}/**` families for the current public services. Adding a new externally reachable route now requires an explicit route-catalog entry plus matching owner-side contract documentation, not just a new service-local controller path under an existing prefix.
 
 ## Tenant and Header Trust Model
 

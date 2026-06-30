@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
@@ -19,8 +20,12 @@ public final class HttpTestSupport {
   }
 
   public static String getBodyUnchecked(String url) {
+    return getBodyUnchecked(url, Map.of());
+  }
+
+  public static String getBodyUnchecked(String url, Map<String, String> headers) {
     try {
-      return getBody(url);
+      return getBody(url, headers);
     } catch (IOException | InterruptedException e) {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
@@ -31,23 +36,45 @@ public final class HttpTestSupport {
 
   public static String getBody(String url, Charset charset)
       throws IOException, InterruptedException {
-    HttpRequest request = HttpRequest.newBuilder(URI.create(url)).GET().build();
+    return getBody(url, charset, Map.of());
+  }
+
+  public static String getBody(String url, Map<String, String> headers)
+      throws IOException, InterruptedException {
+    return getBody(url, StandardCharsets.UTF_8, headers);
+  }
+
+  public static String getBody(String url, Charset charset, Map<String, String> headers)
+      throws IOException, InterruptedException {
+    HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(url));
+    headers.forEach(requestBuilder::header);
+    HttpRequest request = requestBuilder.GET().build();
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(charset)).body();
   }
 
   public static String postJsonBody(String url, String requestBody)
       throws IOException, InterruptedException {
+    return postJsonBody(url, requestBody, Map.of());
+  }
+
+  public static String postJsonBody(String url, String requestBody, Map<String, String> headers)
+      throws IOException, InterruptedException {
+    HttpRequest.Builder requestBuilder =
+        HttpRequest.newBuilder(URI.create(url)).header("Content-Type", "application/json");
+    headers.forEach(requestBuilder::header);
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create(url))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-            .build();
+        requestBuilder.POST(HttpRequest.BodyPublishers.ofString(requestBody)).build();
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
   }
 
   public static String postJsonBodyUnchecked(String url, String requestBody) {
+    return postJsonBodyUnchecked(url, requestBody, Map.of());
+  }
+
+  public static String postJsonBodyUnchecked(
+      String url, String requestBody, Map<String, String> headers) {
     try {
-      return postJsonBody(url, requestBody);
+      return postJsonBody(url, requestBody, headers);
     } catch (IOException | InterruptedException e) {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();

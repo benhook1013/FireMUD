@@ -80,7 +80,7 @@ Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the
 
 #### External HTTP route classification
 
-Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract.
+Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract. The current public gateway inventory exposes only `GET /api/session/ping`; the mutating `/sessions*` routes remain owner-side operator hooks protected by privileged HTTP auth on the service itself and are not part of the public gateway allowlist.
 
 | Service-local route | External classification | Notes |
 | --- | --- | --- |
@@ -93,13 +93,17 @@ Game Session owns the `/api/session/**` Gateway family, but that family is not a
 If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
 
 ```bash
-curl http://localhost:8080/ping
+curl http://localhost:8086/ping
+```
+
+```bash
+curl http://localhost:8080/api/session/ping
 ```
 
 To start a session via REST:
 
 ```bash
-curl -X POST http://localhost:8080/sessions \
+curl -X POST http://localhost:8086/sessions \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":"1","gameTemplateId":"7","controlPlaneRequestId":"cp-req-1001","ownerAccountId":123}'
 ```
