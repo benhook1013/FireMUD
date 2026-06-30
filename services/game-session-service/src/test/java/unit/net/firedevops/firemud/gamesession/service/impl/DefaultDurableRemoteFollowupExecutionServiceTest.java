@@ -10,7 +10,9 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -431,21 +433,29 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         service.execute(effect);
 
     assertEquals("APPLIED", result.effectStatus());
+    ArgumentCaptor<TriggerScriptEventRequest> triggerCaptor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
     org.mockito.Mockito.verify(automationScriptingClient)
-        .triggerScriptEvent(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    "1".equals(request.getTenantId())
-                        && "9".equals(request.getGameInstanceId())
-                        && "region-b".equals(request.getRegionId())
-                        && request.getRegionEpoch() == 8L
-                        && "321".equals(request.getEntityId())
-                        && "script-1".equals(request.getScriptId())
-                        && "patch-1".equals(request.getScriptPatchVersion())
-                        && "onEnterRegion".equals(request.getEventType())
-                        && "remote-enter-1".equals(request.getScriptEventId())
-                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
-                            .equals(request.getPayloadJson())));
+        .triggerScriptEvent(triggerCaptor.capture());
+    TriggerScriptEventRequest request = triggerCaptor.getValue();
+    assertEquals("1", request.getTenantId());
+    assertEquals("9", request.getGameInstanceId());
+    assertEquals("region-b", request.getRegionId());
+    assertEquals(8L, request.getRegionEpoch());
+    assertEquals("321", request.getEntityId());
+    assertEquals("script-1", request.getScriptId());
+    assertEquals("patch-1", request.getScriptPatchVersion());
+    assertEquals("onEnterRegion", request.getEventType());
+    assertEquals("remote-enter-1", request.getScriptEventId());
+    assertEquals("v1", request.getEventSchemaVersion());
+    assertEquals(
+        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}", request.getPayloadJson());
+    assertEquals("demo", request.getWorldSlug());
+    assertEquals("production", request.getRealmSlug());
+    assertEquals("17", request.getPointerVersion());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, request.getPlayableStateScope());
+    assertEquals("game-session:onEnterRegion:9:8:remote-enter-1", request.getReadSnapshotToken());
+    assertEquals(55L, request.getDueTickId());
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
