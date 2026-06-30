@@ -7,3 +7,4 @@ This file is now the index for the core FireMUD alert snippet split. The domain-
 - [backup-alerts-snippets.md](./backup-alerts-snippets.md) – Backup pipeline, pause window, and restore-drill health alerts.
 - [player-experience-alerts-snippets.md](./player-experience-alerts-snippets.md) – Player-centric SLO alerts for login, command latency, chat delivery, and entry-path availability.
 - [observability-stack-alerts-snippets.md](./observability-stack-alerts-snippets.md) – Alertmanager, Prometheus, OTel, Elasticsearch, Jaeger, Fluent Bit, and Grafana health plus smoke-test alerts.
+- [scripting-execution-policy-alerts-snippets.md](./scripting-execution-policy-alerts-snippets.md) – Script execution policy metrics (quota, tenant budget, dry-run isolation, and work-item outcomes) with practical operator-facing threshold rules.
