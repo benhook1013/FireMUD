@@ -308,10 +308,52 @@ def rendered_references_secret(documents: list[dict[str, Any]], name: str) -> bo
     return False
 
 
-def secret_binding_name(ref: Any) -> str | None:
-    if not isinstance(ref, str) or not ref.startswith("secret://"):
+def parse_binding_ref(ref: Any) -> tuple[str, str, list[str]] | None:
+    if not isinstance(ref, str):
         return None
-    return ref.rstrip("/").split("/")[-1] or None
+    match = re.match(r"^(?P<scheme>[a-z][a-z0-9-]*)://(?P<namespace>[^/]+)/(?P<path>.+)$", ref)
+    if not match:
+        return None
+    segments = [segment for segment in match.group("path").split("/") if segment]
+    if not segments:
+        return None
+    return match.group("scheme"), match.group("namespace"), segments
+
+
+def binding_ref_format_error(
+    label: str,
+    ref: Any,
+    *,
+    allowed_schemes: set[str] | None = None,
+    exact_segment_count: int | None = None,
+    allowed_leading_segments: set[str] | None = None,
+) -> str | None:
+    parsed = parse_binding_ref(ref)
+    if parsed is None:
+        return f"{label} must use <scheme>://<namespace>/<binding> format"
+    scheme, namespace, segments = parsed
+    if not namespace:
+        return f"{label} must include a namespace segment"
+    if allowed_schemes and scheme not in allowed_schemes:
+        allowed = ", ".join(sorted(allowed_schemes))
+        return f"{label} must use one of the allowed schemes: {allowed}"
+    if exact_segment_count is not None and len(segments) != exact_segment_count:
+        return f"{label} must include exactly {exact_segment_count} binding path segment(s)"
+    if allowed_leading_segments is not None:
+        if len(segments) < 2 or segments[0] not in allowed_leading_segments:
+            allowed = ", ".join(sorted(allowed_leading_segments))
+            return f"{label} must use one of the allowed binding kinds: {allowed}"
+    return None
+
+
+def secret_binding_name(ref: Any) -> str | None:
+    parsed = parse_binding_ref(ref)
+    if parsed is None:
+        return None
+    scheme, _, segments = parsed
+    if scheme != "secret" or len(segments) != 1:
+        return None
+    return segments[0] or None
 
 
 def rendered_references_image_pull_secret(documents: list[dict[str, Any]], name: str) -> bool:
@@ -456,6 +498,67 @@ def expected_binding_checks(
             get(data, "internalBindings.jwt.signingKeysRef"),
             get(data, "internalBindings.jwt.jwksRef"),
         ]
+        invalid_internal_refs = [
+            error
+            for error in [
+                binding_ref_format_error(
+                    "internalBindings.postgres.credentialsRef",
+                    get(data, "internalBindings.postgres.credentialsRef"),
+                    allowed_schemes={"secret"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.jwt.signingKeysRef",
+                    get(data, "internalBindings.jwt.signingKeysRef"),
+                    allowed_schemes={"secret"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.jwt.jwksRef",
+                    get(data, "internalBindings.jwt.jwksRef"),
+                    allowed_schemes={"secret"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.certificates.issuerRef",
+                    get(data, "internalBindings.certificates.issuerRef"),
+                    allowed_schemes={"cert-manager"},
+                    exact_segment_count=2,
+                    allowed_leading_segments={"clusterissuers", "issuers"},
+                ),
+                binding_ref_format_error(
+                    "internalBindings.certificates.workloadMtlsRef",
+                    get(data, "internalBindings.certificates.workloadMtlsRef"),
+                    allowed_schemes={"cert-manager"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.certificates.gatewayInternalWsListenerRef",
+                    get(data, "internalBindings.certificates.gatewayInternalWsListenerRef"),
+                    allowed_schemes={"cert-manager"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.certificates.tcpProxyBridgeClientRef",
+                    get(data, "internalBindings.certificates.tcpProxyBridgeClientRef"),
+                    allowed_schemes={"cert-manager"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.certificates.backupControlPlaneClientRef",
+                    get(data, "internalBindings.certificates.backupControlPlaneClientRef"),
+                    allowed_schemes={"cert-manager"},
+                    exact_segment_count=1,
+                ),
+                binding_ref_format_error(
+                    "internalBindings.registry.imagePullSecretRef",
+                    get(data, "internalBindings.registry.imagePullSecretRef"),
+                    allowed_schemes={"secret"},
+                    exact_segment_count=1,
+                ),
+            ]
+            if error
+        ]
         missing_rendered_refs = []
         for ref_value in secret_refs:
             name = secret_binding_name(ref_value)
@@ -469,6 +572,15 @@ def expected_binding_checks(
                     True,
                     "fail",
                     "Expected-bindings missing internal keys: " + ", ".join(missing),
+                )
+            )
+        elif invalid_internal_refs:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    "Expected-bindings internal binding refs are invalid: " + "; ".join(invalid_internal_refs),
                 )
             )
         elif missing_rendered_refs:
@@ -542,6 +654,17 @@ def expected_binding_checks(
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
     webhook_targets = get(data, "outboundComms.webhookTargets")
+    invalid_external_refs = [
+        error
+        for error in [
+            binding_ref_format_error("backupStorage.bindingRef", get(data, "backupStorage.bindingRef")),
+            binding_ref_format_error("assetStorage.bindingRef", get(data, "assetStorage.bindingRef")),
+            binding_ref_format_error(
+                "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
+            ),
+        ]
+        if error
+    ]
     if missing_external:
         results.append(
             CheckResult(
@@ -549,6 +672,15 @@ def expected_binding_checks(
                 True,
                 "fail",
                 "Expected-bindings missing external binding keys: " + ", ".join(missing_external),
+            )
+        )
+    elif invalid_external_refs:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-EXTERNAL-001",
+                True,
+                "fail",
+                "Expected-bindings external binding refs are invalid: " + "; ".join(invalid_external_refs),
             )
         )
     elif not isinstance(webhook_targets, dict) or not webhook_targets:
