@@ -81,6 +81,7 @@ class TextCommandParserTest {
                         TextCommandStageRequirement.GAMEPLAY,
                         TextCommandPromptPolicy.WHEN_GAMEPLAY,
                         TextCommandActionCategory.GAMEPLAY,
+                        List.of(),
                         TextCommandSource.GAME_AUTHORED));
               }
             });

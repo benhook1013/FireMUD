@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.entity;
 
 import java.time.Instant;
 import lombok.Data;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 
 @Data
 public class ScriptEventIngressAudit {
@@ -21,6 +22,7 @@ public class ScriptEventIngressAudit {
   private String pluginVersionId;
   private String eventType;
   private String eventSchemaVersion;
+  private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
   private String scriptEventId;
   private String sourceService;

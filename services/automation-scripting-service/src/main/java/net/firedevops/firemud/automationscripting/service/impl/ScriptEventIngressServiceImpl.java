@@ -192,6 +192,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setPluginVersionId(normalize(request.getPluginVersionId()));
     audit.setEventType(requiredText(request.getEventType(), "event_type"));
     audit.setEventSchemaVersion(schemaVersion);
+    audit.setQuotaClass(
+        ScriptQuotaClasses.normalize(definition == null ? null : definition.quotaClass()));
     audit.setScriptPatchVersion(
         requiredText(request.getScriptPatchVersion(), "script_patch_version"));
     audit.setScriptEventId(requiredText(request.getScriptEventId(), "script_event_id"));

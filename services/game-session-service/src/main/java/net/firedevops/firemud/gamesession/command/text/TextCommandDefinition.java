@@ -12,7 +12,12 @@ record TextCommandDefinition(
     TextCommandPromptPolicy promptPolicy,
     TextCommandActionCategory actionCategory,
     List<TextCommandActionTag> actionTags,
-    TextCommandSource source) {
+    TextCommandSource source,
+    String targetingMode,
+    String cooldownKey,
+    long cooldownMs,
+    String costKey,
+    long costAmount) {
   TextCommandDefinition {
     Objects.requireNonNull(commandId, "commandId must not be null");
     Objects.requireNonNull(type, "type must not be null");
@@ -25,6 +30,7 @@ record TextCommandDefinition(
     Objects.requireNonNull(source, "source must not be null");
     aliases = List.copyOf(aliases);
     actionTags = List.copyOf(actionTags);
+    targetingMode = targetingMode == null || targetingMode.isBlank() ? "NONE" : targetingMode;
   }
 
   static TextCommandDefinition extensionDefinition(TextCommandType type, String commandId) {
@@ -37,7 +43,12 @@ record TextCommandDefinition(
         TextCommandPromptPolicy.NEVER,
         TextCommandActionCategory.SYSTEM,
         List.of(),
-        TextCommandSource.EXTENSION);
+        TextCommandSource.EXTENSION,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L);
   }
 
   TextCommandDefinition(
@@ -48,6 +59,7 @@ record TextCommandDefinition(
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
       TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags,
       TextCommandSource source) {
     this(
         commandId,
@@ -57,8 +69,13 @@ record TextCommandDefinition(
         stageRequirement,
         promptPolicy,
         actionCategory,
-        List.of(),
-        source);
+        actionTags,
+        source,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L);
   }
 
   TextCommandDefinition(
@@ -79,7 +96,12 @@ record TextCommandDefinition(
         promptPolicy,
         actionCategory,
         actionTags,
-        source);
+        source,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L);
   }
 
   TextCommandDefinition(
@@ -99,6 +121,11 @@ record TextCommandDefinition(
         promptPolicy,
         actionCategory,
         List.of(),
-        source);
+        source,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L);
   }
 }

@@ -489,6 +489,39 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
+  void executePublishesSessionlessAuthoredActionOnlyForLiveExecution() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setSessionId(0L);
+    command.setTenantId(22L);
+    command.setGameInstanceId(7L);
+    command.setCharacterId(91L);
+    TickEffect effect = tickEffect("tfx-8b", "cmd-8b");
+    TextCommand parsed =
+        new TextCommand(
+            "wave-salute",
+            TextCommandType.AUTHORED,
+            java.util.List.of("captain"),
+            "wave captain",
+            "wave",
+            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
+                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
+    when(parser.parse("wave captain")).thenReturn(parsed);
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 7L, 91L))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-8b")).thenReturn(Optional.empty());
+    when(authoredActionCommandHandler.handle(parsed))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), java.util.List.of()));
+
+    service.execute(effect, command).orElseThrow();
+
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
+  }
+
+  @Test
   void executeReplaysStoredAuthoredActionWithoutInvokingHandler() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
@@ -520,6 +553,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
     verify(authoredActionCommandHandler, never()).handle(Mockito.any());
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   private GameplayCommand gameplayCommand(String commandName, String commandText) {

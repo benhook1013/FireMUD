@@ -57,7 +57,9 @@ class GameInstanceControllerTest {
             post("/sessions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + privilegedToken()))
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.id").value(1));
   }
@@ -71,7 +73,9 @@ class GameInstanceControllerTest {
     mockMvc
         .perform(
             post("/sessions/1/stop")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + privilegedToken()))
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("STOPPED"));
   }
@@ -85,7 +89,9 @@ class GameInstanceControllerTest {
     mockMvc
         .perform(
             post("/sessions/1/restart")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + privilegedToken()))
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("RUNNING"));
   }
@@ -108,9 +114,5 @@ class GameInstanceControllerTest {
   @Test
   void stopSessionRejectsUnauthenticatedCaller() throws Exception {
     mockMvc.perform(post("/sessions/1/stop")).andExpect(status().isUnauthorized());
-  }
-
-  private String privilegedToken() {
-    return jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
   }
 }

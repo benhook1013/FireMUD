@@ -202,11 +202,7 @@ class GameSessionApplicationIntegrationTest {
         HttpTestSupport.postJsonBodyUnchecked(
             "http://localhost:" + port + "/sessions",
             OBJECT_MAPPER.writeValueAsString(request),
-            Map.of(
-                HttpHeaders.AUTHORIZATION,
-                "Bearer "
-                    + JWT_UTIL.generateToken(
-                        "game-session-test", Map.of("globalRoles", List.of("platformAdmin")))));
+            privilegedHeaders());
     ApiResponse<GameInstanceDto> body =
         OBJECT_MAPPER.readValue(responseBody, new TypeReference<ApiResponse<GameInstanceDto>>() {});
 

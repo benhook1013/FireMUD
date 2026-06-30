@@ -43,7 +43,9 @@ class SessionRoleControllerTest {
     mockMvc
         .perform(
             post("/sessions/1/refresh-roles")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + privilegedToken()))
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data").value("refreshed"));
   }
@@ -57,9 +59,5 @@ class SessionRoleControllerTest {
         .perform(
             post("/sessions/1/refresh-roles").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
-  }
-
-  private String privilegedToken() {
-    return jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
   }
 }

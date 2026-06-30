@@ -100,7 +100,9 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
-    publishCommandEventIfSessionless(context, command);
+    if (parsed.type() != TextCommandType.AUTHORED) {
+      publishCommandEventIfSessionless(context, command);
+    }
     if (isDurableItemMutation(parsed.type())) {
       return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
     }
@@ -287,6 +289,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
+    publishCommandEventIfSessionless(context, command);
     var result = authoredActionCommandHandler.handle(parsed);
     durableGameplayReplayService.save(
         context.tenantId(),

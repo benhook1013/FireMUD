@@ -68,15 +68,8 @@ class GatewayRoutesConfigurationTest {
 
     URI targetUri = sessionRoute.getUri();
     assertThat(targetUri.getScheme()).isEqualTo("http");
-
-    var pathArgs =
-        sessionRoute.getPredicates().stream()
-            .filter(predicate -> predicate.getName().equalsIgnoreCase("path"))
-            .findFirst()
-            .map(predicate -> predicate.getArgs())
-            .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
-
-    assertThat(pathArgs.values()).containsExactly("/api/session/ping");
+    assertHasPath(sessionRoute, "/api/session/ping");
+    assertHasMethod(sessionRoute, "GET");
     assertHasStripPrefixTwo(sessionRoute);
   }
 
@@ -88,24 +81,15 @@ class GatewayRoutesConfigurationTest {
 
   @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
-    assertThat(route("session-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/session/ping");
-    assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/ping");
-    assertThat(route("admin-admission-pointers").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/admission-pointers/**");
-    assertThat(route("admin-feature-flags").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/feature-flags/**");
-    assertThat(route("admin-logs").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/logs/**");
-    assertThat(route("admin-moderation").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/moderation/**");
-    assertThat(route("admin-reports").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/reports/**");
-    assertThat(route("admin-sagas").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/sagas/**");
-    assertThat(route("admin-tick-remediation").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/tick-remediation/**");
+    assertHasPath(route("session-ping"), "/api/session/ping");
+    assertHasPath(route("admin-ping"), "/api/admin/ping");
+    assertHasPath(route("admin-admission-pointers"), "/api/admin/admission-pointers/**");
+    assertHasPath(route("admin-feature-flags"), "/api/admin/feature-flags/**");
+    assertHasPath(route("admin-logs"), "/api/admin/logs/**");
+    assertHasPath(route("admin-moderation"), "/api/admin/moderation/**");
+    assertHasPath(route("admin-reports"), "/api/admin/reports/**");
+    assertHasPath(route("admin-sagas"), "/api/admin/sagas/**");
+    assertHasPath(route("admin-tick-remediation"), "/api/admin/tick-remediation/**");
 
     assertHasStripPrefixTwo(route("admin-ping"));
     assertHasStripPrefixTwo(route("admin-admission-pointers"));
@@ -116,20 +100,14 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(route("admin-sagas"));
     assertHasStripPrefixTwo(route("admin-tick-remediation"));
 
-    assertThat(route("design").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/design/**");
+    assertHasPath(route("design"), "/api/design/**");
     assertHasStripPrefixTwo(route("design"));
 
-    assertThat(route("account-auth").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/auth/**");
-    assertThat(route("account-accounts").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/accounts/**");
-    assertThat(route("account-profiles").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/profiles/**");
-    assertThat(route("account-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/ping");
-    assertThat(route("account-jwks").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/.well-known/jwks.json");
+    assertHasPath(route("account-auth"), "/api/account/auth/**");
+    assertHasPath(route("account-accounts"), "/api/account/accounts/**");
+    assertHasPath(route("account-profiles"), "/api/account/profiles/**");
+    assertHasPath(route("account-ping"), "/api/account/ping");
+    assertHasPath(route("account-jwks"), "/api/account/.well-known/jwks.json");
 
     assertHasStripPrefixTwo(route("account-auth"));
     assertHasStripPrefixTwo(route("account-accounts"));
@@ -137,18 +115,12 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(route("account-ping"));
     assertHasStripPrefixTwo(route("account-jwks"));
 
-    assertThat(route("social-chat").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/chat/**");
-    assertThat(route("social-friends").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/friends/**");
-    assertThat(route("social-guilds").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/guilds/**");
-    assertThat(route("social-mail").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/mail/**");
-    assertThat(route("social-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/ping");
-    assertThat(route("social-voice-token").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/voice/token/**");
+    assertHasPath(route("social-chat"), "/api/social/chat/**");
+    assertHasPath(route("social-friends"), "/api/social/friends/**");
+    assertHasPath(route("social-guilds"), "/api/social/guilds/**");
+    assertHasPath(route("social-mail"), "/api/social/mail/**");
+    assertHasPath(route("social-ping"), "/api/social/ping");
+    assertHasPath(route("social-voice-token"), "/api/social/voice/token/**");
 
     assertHasStripPrefixTwo(route("social-chat"));
     assertHasStripPrefixTwo(route("social-friends"));
@@ -157,8 +129,7 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(route("social-ping"));
     assertHasStripPrefixTwo(route("social-voice-token"));
 
-    assertThat(route("asset-store-public").getPredicates().get(0).getArgs().values())
-        .containsExactly("/assets/**");
+    assertHasPath(route("asset-store-public"), "/assets/**");
     assertHasStripPrefix(route("asset-store-public"), "1");
   }
 
@@ -171,6 +142,22 @@ class GatewayRoutesConfigurationTest {
 
   private void assertHasStripPrefixTwo(RouteDefinition route) {
     assertHasStripPrefix(route, "2");
+  }
+
+  private void assertHasPath(RouteDefinition route, String path) {
+    assertThat(predicate(route, "Path").getArgs().values()).containsExactly(path);
+  }
+
+  private void assertHasMethod(RouteDefinition route, String method) {
+    assertThat(predicate(route, "Method").getArgs().values()).containsExactly(method);
+  }
+
+  private org.springframework.cloud.gateway.handler.predicate.PredicateDefinition predicate(
+      RouteDefinition route, String name) {
+    return route.getPredicates().stream()
+        .filter(candidate -> name.equalsIgnoreCase(candidate.getName()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Expected predicate " + name));
   }
 
   private void assertHasStripPrefix(RouteDefinition route, String value) {

@@ -29,7 +29,8 @@ public class CanonicalGatewayRoutesConfiguration {
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_SESSION_URI", "http://game-session-service:8080"),
                 "/api/session/ping",
-                2),
+                2,
+                "GET"),
             route(
                 "admin-ping",
                 environment.getProperty(
@@ -160,13 +161,25 @@ public class CanonicalGatewayRoutesConfiguration {
   }
 
   private static RouteDefinition route(String id, String uri, String path, int stripPrefix) {
+    return route(id, uri, path, stripPrefix, null);
+  }
+
+  private static RouteDefinition route(
+      String id, String uri, String path, int stripPrefix, String method) {
     RouteDefinition definition = new RouteDefinition();
     definition.setId(id);
     definition.setUri(URI.create(uri));
-    definition.setPredicates(
-        List.of(
-            new org.springframework.cloud.gateway.handler.predicate.PredicateDefinition(
-                "Path=" + path)));
+    List<org.springframework.cloud.gateway.handler.predicate.PredicateDefinition> predicates =
+        new java.util.ArrayList<>();
+    predicates.add(
+        new org.springframework.cloud.gateway.handler.predicate.PredicateDefinition(
+            "Path=" + path));
+    if (method != null && !method.isBlank()) {
+      predicates.add(
+          new org.springframework.cloud.gateway.handler.predicate.PredicateDefinition(
+              "Method=" + method));
+    }
+    definition.setPredicates(predicates);
     definition.setFilters(
         List.of(
             new org.springframework.cloud.gateway.filter.FilterDefinition(

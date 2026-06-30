@@ -38,6 +38,11 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
         List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION),
         definition.actionTags());
     assertEquals(TextCommandSource.GAME_AUTHORED, definition.source());
+    assertEquals("NONE", definition.targetingMode());
+    assertEquals(null, definition.cooldownKey());
+    assertEquals(0L, definition.cooldownMs());
+    assertEquals(null, definition.costKey());
+    assertEquals(0L, definition.costAmount());
   }
 
   @Test

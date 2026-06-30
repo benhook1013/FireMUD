@@ -7,7 +7,18 @@ public final class ScriptQuotaClasses {
   private ScriptQuotaClasses() {}
 
   public static String normalize(String quotaClass) {
-    return quotaClass == null || quotaClass.isBlank() ? STANDARD_RUNTIME : quotaClass;
+    if (quotaClass == null) {
+      return STANDARD_RUNTIME;
+    }
+    String normalized = quotaClass.trim();
+    if (normalized.isEmpty()) {
+      return STANDARD_RUNTIME;
+    }
+    return switch (normalized) {
+      case STANDARD_RUNTIME -> STANDARD_RUNTIME;
+      case PUBLISH_READINESS -> PUBLISH_READINESS;
+      default -> STANDARD_RUNTIME;
+    };
   }
 
   public static boolean consumesLiveScriptQuota(String quotaClass) {

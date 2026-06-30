@@ -199,6 +199,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(auditCaptor.getValue().getPointerVersion()).isEqualTo("17");
     assertThat(auditCaptor.getValue().getSourceKind()).isEqualTo("GAMEPLAY_EVENT");
     assertThat(auditCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_ADMITTED");
+    assertThat(auditCaptor.getValue().getQuotaClass())
+        .isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
@@ -1530,6 +1532,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(ingressCaptor.getValue().getWorldSlug()).isBlank();
     assertThat(ingressCaptor.getValue().getRealmSlug()).isBlank();
     assertThat(ingressCaptor.getValue().getPointerVersion()).isBlank();
+    assertThat(ingressCaptor.getValue().getQuotaClass())
+        .isEqualTo(ScriptQuotaClasses.PUBLISH_READINESS);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getWorldSlug()).isBlank();
