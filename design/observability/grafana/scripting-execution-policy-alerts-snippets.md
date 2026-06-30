@@ -7,7 +7,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 ```yaml
 - alert: ScriptTenantBudgetDeniedSpike
   expr: |
-    sum by (tenantId, tier) (rate(automation_script_tenant_budget_denied_total[5m])) > 0.5
+    sum by (scope, tier) (rate(automation_script_tenant_budget_denied_total[5m])) > 0.5
   for: 10m
   labels:
     service: automation-scripting-service
@@ -38,7 +38,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 
 - alert: ScriptDryRunCapacitySaturated
   expr: |
-    sum by (tenantId, scope) (rate(automation_script_test_capacity_denied_total[5m])) > 0
+    sum by (scope) (rate(automation_script_test_capacity_denied_total[5m])) > 0
   for: 10m
   labels:
     service: automation-scripting-service
@@ -52,7 +52,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 
 - alert: ScriptWorkItemBudgetOutcomeCritical
   expr: |
-    sum by (tenantId, eventType, priorityTag, sourceKind, sourceService, dryRun) (
+    sum by (eventType, priorityTag, sourceKind, sourceService, dryRun) (
       rate(automation_script_work_item_outcomes_total{stage="ADMISSION", outcome="tenant_budget_exceeded"}[10m])
     ) > 0
   for: 10m
@@ -68,7 +68,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 
 - alert: ScriptWorkItemDryRunCapacityOutcomeCritical
   expr: |
-    sum by (tenantId, eventType, priorityTag, sourceKind, sourceService) (
+    sum by (eventType, priorityTag, sourceKind, sourceService) (
       rate(automation_script_work_item_outcomes_total{stage="ADMISSION", outcome="dry_run_capacity_exhausted"}[10m])
     ) > 0
   for: 10m
