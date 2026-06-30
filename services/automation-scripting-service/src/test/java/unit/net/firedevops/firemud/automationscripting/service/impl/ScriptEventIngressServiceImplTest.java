@@ -28,6 +28,7 @@ import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunQuotaService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -78,6 +79,12 @@ class ScriptEventIngressServiceImplTest {
   private static ScriptQuotaService allowingQuotaService() {
     ScriptQuotaService service = Mockito.mock(ScriptQuotaService.class);
     when(service.tryAcquire(Mockito.anyString(), Mockito.anyString())).thenReturn(true);
+    return service;
+  }
+
+  private static ScriptQuotaService denyingQuotaService() {
+    ScriptQuotaService service = Mockito.mock(ScriptQuotaService.class);
+    when(service.tryAcquire(Mockito.anyString(), Mockito.anyString())).thenReturn(false);
     return service;
   }
 
@@ -928,7 +935,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.mock(ScriptPatchPinProjectionService.class),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
             enabledPluginRuntimeStateService(),
-            allowingQuotaService(),
+            denyingQuotaService(),
             allowingDryRunQuotaService());
 
     ScriptEventIngressService.TriggerAdmission admission =
@@ -1417,6 +1424,8 @@ class ScriptEventIngressServiceImplTest {
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getGameInstanceId()).isEmpty();
+    assertThat(workItemCaptor.getValue().getQuotaClass())
+        .isEqualTo(ScriptQuotaClasses.PUBLISH_READINESS);
     assertThat(workItemCaptor.getValue().getSourceKind()).isEqualTo("PATCH_READINESS_EVENT");
     verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }

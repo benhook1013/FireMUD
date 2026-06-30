@@ -20,6 +20,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkIte
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
@@ -257,7 +258,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
     if (!workItem.isDryRun()
-        && !isOnLoad(workItem)
+        && ScriptQuotaClasses.consumesLiveTenantBudget(workItem.getQuotaClass())
         && !tenantBudgetService.tryReserve(
             workItem.getTenantId(), normalizePriorityTag(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);

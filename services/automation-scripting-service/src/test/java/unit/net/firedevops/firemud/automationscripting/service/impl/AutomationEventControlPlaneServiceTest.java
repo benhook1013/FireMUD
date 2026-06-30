@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import org.junit.jupiter.api.Test;
 
 class AutomationEventControlPlaneServiceTest {
@@ -35,5 +36,19 @@ class AutomationEventControlPlaneServiceTest {
     assertThat(response.getDefinitionsList())
         .extracting(definition -> definition.getEventType())
         .contains("onLoad", "onInterval", "onTimerExpire");
+  }
+
+  @Test
+  void exposesPublishReadinessQuotaClassForOnLoad() {
+    var response =
+        service.getScriptEventDefinition(
+            net.firedevops.firemud.automationscripting.v1.GetScriptEventDefinitionRequest
+                .newBuilder()
+                .setEventType("onLoad")
+                .build());
+
+    assertThat(response.hasError()).isFalse();
+    assertThat(response.getDefinition().getQuotaClass())
+        .isEqualTo(ScriptQuotaClasses.PUBLISH_READINESS);
   }
 }

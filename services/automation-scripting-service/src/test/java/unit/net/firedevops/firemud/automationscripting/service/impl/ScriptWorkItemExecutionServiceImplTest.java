@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
@@ -695,6 +696,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setRegionId("");
     item.setEntityId("");
     item.setEventType("onLoad");
+    item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptDefinition definition = new ScriptDefinition();
     definition.setDefinition("{\"eventHandlers\":{\"onLoad\":{}}}");
@@ -745,6 +747,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setRegionId("");
     item.setEntityId("");
     item.setEventType("onLoad");
+    item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptDefinition definition = new ScriptDefinition();
     definition.setDefinition(
@@ -1088,6 +1091,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setScriptId("script-1");
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
+    item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion("patch-1");
     item.setScriptEventId("event-1");
     item.setSourceKind("GAMEPLAY_EVENT");

@@ -14,7 +14,7 @@
     ],
     "snapshotAuthority": "NON_AUTHORITATIVE_NO_SNAPSHOT",
     "consistencyClass": "BEST_EFFORT",
-    "quotaClass": "STANDARD_RUNTIME",
+    "quotaClass": "PUBLISH_READINESS",
     "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
     "allowedBindingScopes": [
       "GLOBAL"

@@ -283,6 +283,7 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
+            .set(SCRIPT_WORK_ITEMS.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
@@ -381,6 +382,7 @@ public class ScriptWorkItemRepository {
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
+    record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
@@ -419,6 +421,7 @@ public class ScriptWorkItemRepository {
     entity.setPluginVersionId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
+    entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
     entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
     entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));

@@ -27,6 +27,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventIngressServ
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunQuotaService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -160,6 +161,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
     String schemaVersion = schemaVersion(request);
+    ScriptEventRegistryService.EventDefinition definition =
+        eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
     ScriptEventIngressAudit existing = findExisting(request, schemaVersion);
     if (existing != null) {
       return new TriggerAdmission(
@@ -169,9 +172,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           existing.getResolvedHandlerCount());
     }
 
-    TriggerAdmission admission = validate(request, schemaVersion);
+    TriggerAdmission admission = validate(request, schemaVersion, sourceService, definition);
     if (admission.admitted()) {
-      admission = admissionWithHandlers(request, schemaVersion, sourceService);
+      admission = admissionWithHandlers(request, schemaVersion, definition, sourceService);
     }
     HandlerScopeValues requestScopeValues = requestScopeValues(request);
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
@@ -210,7 +213,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return admission;
   }
 
-  private TriggerAdmission validate(TriggerScriptEventRequest request, String schemaVersion) {
+  private TriggerAdmission validate(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String sourceService,
+      ScriptEventRegistryService.EventDefinition definition) {
     requiredText(request.getTenantId(), "tenant_id");
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
@@ -220,13 +227,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return new TriggerAdmission(
           false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0);
     }
-
-    ScriptEventRegistryService.EventDefinition definition =
-        eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
     if (definition == null) {
       return rejected("unknown_event_type");
     }
-    String sourceService = resolveSourceService();
     if (!definition.allowedProducerPrincipals().contains(sourceService)) {
       return rejected("unauthorized_producer");
     }
@@ -475,9 +478,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private TriggerAdmission admissionWithHandlers(
-      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventRegistryService.EventDefinition definition,
+      String sourceService) {
     if (isOnLoadRequest(request)) {
-      return admissionWithOnLoadHandler(request, schemaVersion, sourceService);
+      return admissionWithOnLoadHandler(request, schemaVersion, definition, sourceService);
     }
     long tenantKey = Long.parseLong(request.getTenantId());
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
@@ -535,7 +541,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
     }
-    handlers.forEach(handler -> admitHandler(request, schemaVersion, handler, sourceService));
+    handlers.forEach(
+        handler -> admitHandler(request, schemaVersion, definition, handler, sourceService));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
@@ -625,26 +632,30 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private TriggerAdmission admissionWithOnLoadHandler(
-      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventRegistryService.EventDefinition definition,
+      String sourceService) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
     if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
         || workItemExistsForScript(request, schemaVersion, scriptId)) {
       return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
     }
-    persistWorkItemForScript(request, schemaVersion, scriptId, "", sourceService);
+    persistWorkItemForScript(request, schemaVersion, definition, scriptId, "", sourceService);
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
   }
 
   private void admitHandler(
       TriggerScriptEventRequest request,
       String schemaVersion,
+      ScriptEventRegistryService.EventDefinition definition,
       ResolvedHandler handler,
       String sourceService) {
     if (handlerAuditExists(request, schemaVersion, handler.binding())) {
       return;
     }
     if (!request.getIsDryRun()
-        && !isOnLoadRequest(request)
+        && ScriptQuotaClasses.consumesLiveScriptQuota(definition.quotaClass())
         && !quotaService.tryAcquire(request.getTenantId(), handler.binding().getScriptId())) {
       persistHandlerAudit(
           request,
@@ -661,6 +672,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     persistWorkItem(
         request,
         schemaVersion,
+        definition,
         handler.binding().getScriptId(),
         handler.binding().getPriorityTag(),
         handler.pluginOwner(),
@@ -671,6 +683,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private void persistWorkItem(
       TriggerScriptEventRequest request,
       String schemaVersion,
+      ScriptEventRegistryService.EventDefinition definition,
       String scriptId,
       String priorityTag,
       PluginOwner pluginOwner,
@@ -697,6 +710,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
+    item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
     item.setScriptPatchVersion(request.getScriptPatchVersion());
     item.setScriptEventId(request.getScriptEventId());
     item.setDryRun(request.getIsDryRun());
@@ -729,12 +743,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private void persistWorkItemForScript(
       TriggerScriptEventRequest request,
       String schemaVersion,
+      ScriptEventRegistryService.EventDefinition definition,
       String scriptId,
       String priorityTag,
       String sourceService) {
     persistWorkItem(
         request,
         schemaVersion,
+        definition,
         scriptId,
         priorityTag,
         null,

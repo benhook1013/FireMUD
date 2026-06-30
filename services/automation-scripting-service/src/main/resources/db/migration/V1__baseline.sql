@@ -84,6 +84,7 @@ CREATE TABLE script_event_ingress_audit (
     plugin_version_id VARCHAR(128),
     event_type VARCHAR(128) NOT NULL,
     event_schema_version VARCHAR(32) NOT NULL,
+    quota_class VARCHAR(64) NOT NULL DEFAULT 'STANDARD_RUNTIME',
     script_patch_version VARCHAR(128) NOT NULL,
     script_event_id VARCHAR(128) NOT NULL,
     source_service VARCHAR(128) NOT NULL,

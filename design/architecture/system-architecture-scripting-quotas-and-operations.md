@@ -129,6 +129,7 @@ Patch readiness initialization uses a separate admission class from ordinary liv
 
 - `onLoad` is part of the publish/readiness lifecycle for `<tenantId, scriptPatchVersion>`, not part of steady-state gameplay traffic.
 - `onLoad` must **not** consume ordinary live-trigger quota windows or compete indefinitely in the same admission queues as `onEnterRegion`, `onInterval`, or other runtime events.
+- The canonical registry classification for that split is `quotaClass=PUBLISH_READINESS`, and Automation must carry that class onto durable work items so later execution-time budget decisions do not fall back to event-name inference.
 - In the first implementation slice, `onLoad` capacity exists only for **ephemeral readiness work**. Durable or semi-durable artifact creation is not part of the `onLoad` contract and must be rejected at design/runtime review until a dedicated cleanup lifecycle exists.
 - Implementations must reserve bounded publish-time capacity for `onLoad`, including:
   - explicit concurrency ceilings,
@@ -151,12 +152,12 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
   - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
   - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
-  - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
+  - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized when the event registry class is `STANDARD_RUNTIME`. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
 - **Per-tenant tier budgets**
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
-  - Current Automation execution persists the binding `priorityTag` onto durable work items and enforces the matching tier with `ScriptTenantBudgetService` before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
+  - Current Automation execution persists both `priorityTag` and registry `quotaClass` onto durable work items, and enforces `ScriptTenantBudgetService` only for `STANDARD_RUNTIME` work before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.

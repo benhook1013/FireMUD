@@ -66,7 +66,8 @@ Required semantics for those fields:
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`
-  - The event-scope quota policy used before handler resolution.
+  - The canonical budget-policy class used at handler admission and then persisted onto durable work items so execution-time tenant-budget handling reads the same classification instead of re-inferring from `eventType`.
+  - Current built-in classes are `STANDARD_RUNTIME` for ordinary live gameplay/scheduler work and `PUBLISH_READINESS` for tenant-readiness `onLoad`.
 - `replaySemantics`
   - Whether duplicate ingress is expected to be idempotent, rejected, or coalesced.
 - `allowedBindingScopes`
@@ -132,6 +133,11 @@ Minimum payload contract:
 - `isDryRun`
 
 No authoritative gameplay snapshot token is required. This payload exists for readiness-only initialization and must not imply mutable shared runtime ownership.
+
+Registry policy:
+
+- `quotaClass=PUBLISH_READINESS`
+- This event must bypass ordinary live per-script quota and tenant runtime budget charging because it belongs to publish/readiness capacity rather than steady-state gameplay automation.
 
 ### `onCommand` payload `v1`
 

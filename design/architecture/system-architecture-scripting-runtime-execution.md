@@ -189,7 +189,8 @@ Quota and budget accounting must be deterministic so operators can reason about 
 - Per-tenant and cluster execution budgets are charged when a handler-scoped run leaves admission and is reserved onto sandbox execution capacity.
 - Duplicate deliveries for the same handler-scoped Trigger Identity must not consume additional quota.
 - Budget consumption is not refunded for runs that later fail after the charge point.
-- `onLoad` readiness work uses a separate publish-time budget class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
+- `onLoad` readiness work uses the separate `PUBLISH_READINESS` quota class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
+- Automation must persist the resolved registry `quotaClass` onto each durable `script_work_item` so execution-time budget behavior reads the same canonical policy that ingress used instead of re-inferring from `eventType`.
 - Implementations may expose additional budget dimensions, but they must map to one of these charge points rather than inventing ad hoc charging semantics per caller or per service.
 
 ## Ordering Between Player and Script Commands
