@@ -3,8 +3,11 @@ package net.firedevops.firemud.gamesession;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ResultStatus;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
@@ -16,6 +19,7 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
@@ -23,6 +27,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -38,9 +43,20 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionServiceApplication.class,
-    properties = {"spring.application.name=game-session-service", "spring.grpc.server.port=0"})
+    properties = {
+      "spring.application.name=game-session-service",
+      "spring.grpc.server.port=0",
+      FiremudAuthTestProperties.JWT_SECRET,
+      FiremudAuthTestProperties.JWT_EXPIRATION,
+      FiremudAuthTestProperties.HTTP_ENABLED,
+      FiremudAuthTestProperties.HTTP_ROLE_REQUIREMENT_PRIVILEGED,
+      "firemud.auth.http.public-routes[0].method=GET",
+      "firemud.auth.http.public-routes[0].path-pattern=/ping"
+    })
 class GameSessionApplicationIntegrationTest {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final JwtUtil JWT_UTIL =
+      new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -184,7 +200,9 @@ class GameSessionApplicationIntegrationTest {
 
     String responseBody =
         HttpTestSupport.postJsonBodyUnchecked(
-            "http://localhost:" + port + "/sessions", OBJECT_MAPPER.writeValueAsString(request));
+            "http://localhost:" + port + "/sessions",
+            OBJECT_MAPPER.writeValueAsString(request),
+            privilegedHeaders());
     ApiResponse<GameInstanceDto> body =
         OBJECT_MAPPER.readValue(responseBody, new TypeReference<ApiResponse<GameInstanceDto>>() {});
 
@@ -207,7 +225,9 @@ class GameSessionApplicationIntegrationTest {
 
   @Test
   void infoEndpointExposesRuntimeIdentity() throws Exception {
-    String body = HttpTestSupport.getBody("http://localhost:" + port + "/actuator/runtime");
+    String body =
+        HttpTestSupport.getBody(
+            "http://localhost:" + port + "/actuator/runtime", privilegedHeaders());
 
     assertThat(body).contains("\"service\":\"game-session-service\"");
     assertThat(body).contains("\"serviceInstanceId\"");
@@ -261,7 +281,8 @@ class GameSessionApplicationIntegrationTest {
 
     String body =
         HttpTestSupport.getBodyUnchecked(
-            "http://localhost:" + port + "/actuator/settings/effective?sessionId=999");
+            "http://localhost:" + port + "/actuator/settings/effective?sessionId=999",
+            privilegedHeaders());
 
     assertThat(body).contains("\"persistedSession\":true");
     assertThat(body).contains("\"sessionId\":999");
@@ -291,5 +312,13 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"sources\":[\"tenantPersistedOverride:42\"]");
     assertThat(body).contains("\"resumeWindowMs\":240000");
     assertThat(body).contains("\"minMessages\":8");
+  }
+
+  private Map<String, String> privilegedHeaders() {
+    return Map.of(
+        HttpHeaders.AUTHORIZATION,
+        "Bearer "
+            + JWT_UTIL.generateToken(
+                "game-session-test", Map.of("globalRoles", List.of("platformAdmin"))));
   }
 }

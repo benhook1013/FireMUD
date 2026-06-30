@@ -267,24 +267,10 @@ jobs:
       - name: Show dev-demo rollout diagnostics
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
         run: |
-          echo "=== pods ==="
-          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods -o wide || true
-          echo
-          echo "=== events ==="
-          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get events --sort-by=.lastTimestamp | tail -n 120 || true
-          echo
-          echo "=== pod describe ==="
-          for pod in $(kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods --no-headers | awk '$2 != $3 || $3 != "Running" {print $1}'); do
-            echo "--- ${pod} ---"
-            kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" describe pod "${pod}" || true
-            echo
-          done
-          echo "=== recent logs ==="
-          for deployment in account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service; do
-            echo "--- ${deployment} ---"
-            kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" logs "deploy/${deployment}" --tail=120 || true
-            echo
-          done
+          bash ./dev-tools/hosted/shared/show-rollout-diagnostics.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${DEV_DEMO_STAGE:-unknown}" \
+            "Dev-demo"
 
       - name: Fail if dev-demo rollout did not complete
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}

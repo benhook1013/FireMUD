@@ -7,6 +7,9 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 public interface PluginRuntimeStateService {
   Optional<PluginRuntimeStatus> getStatus(String tenantId, String gameInstanceId, String pluginId);
 
+  java.util.Map<String, String> getActivePluginVersions(
+      String tenantId, String gameInstanceId, String runtimeRegionId, long runtimeRegionEpoch);
+
   ActivationResult setActiveVersion(ActivationCommand command);
 
   boolean disable(PluginStateCommand command);

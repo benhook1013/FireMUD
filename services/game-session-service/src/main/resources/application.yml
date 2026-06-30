@@ -109,6 +109,12 @@ firemud:
     scope-model: MAP_ONLY
     regions-enabled: false
   auth:
+    http:
+      enabled: true
+      role-requirement: PRIVILEGED
+      public-routes:
+        - method: GET
+          path-pattern: /ping
     grpc:
       force-internal-service-outbound: true
       public-methods:

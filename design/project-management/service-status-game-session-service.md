@@ -8,8 +8,10 @@
   - `LOGIN`
   - `PLAY`
   - gameplay commands after admitted gameplay scope
+- Canonical deliberate logout is live: `LOGOUT` tears down authenticated/gameplay session state, clears reconnect-oriented replay state, routes shutdown through the shared runtime termination seam, and closes the transport with a deliberate logout reason instead of falling back to disconnect-style suspension.
 - Stage-aware `LOGIN_REQUIRED` / `PLAY_REQUIRED` guidance is implemented for wrong-stage input instead of older backend-flavored errors.
 - `LOOK`, `SAY`, `WHISPER`, `TELL`, `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE` are implemented through the current gameplay slices, including nearby room-ground container inspection and transfer.
+- Canonical gameplay presence is live: Game Session now owns a Redis-backed live-presence store, bounded recent-presence state, explicit/auto-AFK activity resolution, first `WHO`, and the shared substrate later social presence reads consume instead of scraping raw session context.
 - Item command invocation/failure metrics are emitted through `gamesession.command.item.*` with command type and error tags.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
 - Game Session owns the idempotent automation-command admission boundary through `EnqueueAutomationCommandIfAbsent`, with Automation dispatch/work-item correlation plus script-patch and plugin-version provenance persisted on the gameplay command ledger before tick staging.
@@ -24,6 +26,7 @@
 - Owns gameplay session ingress, session binding, and command dispatch. `LOOK`, communication, movement, and the first item/container/equipment command surface now go through Game Logic rather than binding text-session handlers directly to Entity Management.
 - Owns gameplay admission semantics and the distinction between account authentication (`LOGIN`) and gameplay binding (`PLAY`).
 - Maintains gameplay session state and coordination responsibilities in Redis.
+- Owns the canonical live gameplay-presence and recent-presence substrate used by `WHO`, AFK/activity state, disconnect disposition, and later account/friend presence consumers.
 - Fronts Account authentication for gameplay login and bridges player input into the runtime.
 
 ## Partial / Stubbed / Deferred Areas

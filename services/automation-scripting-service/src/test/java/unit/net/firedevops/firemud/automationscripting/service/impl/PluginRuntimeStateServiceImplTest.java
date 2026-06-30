@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -30,6 +32,101 @@ import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
 
 class PluginRuntimeStateServiceImplTest {
+  @Test
+  void listsActivePluginVersionsForCurrentRuntimeScope() {
+    PluginRuntimeState enabledMatching = new PluginRuntimeState();
+    enabledMatching.setTenantId("1");
+    enabledMatching.setGameInstanceId("game-1");
+    enabledMatching.setRuntimeRegionId("region-7");
+    enabledMatching.setRuntimeRegionEpoch(12L);
+    enabledMatching.setPluginId("plugin-1");
+    enabledMatching.setActivePluginVersionId("plugin-v1");
+    enabledMatching.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    enabledMatching.setLastChangedAt(Instant.ofEpochMilli(1));
+
+    PluginRuntimeState enabledOtherRegion = new PluginRuntimeState();
+    enabledOtherRegion.setTenantId("1");
+    enabledOtherRegion.setGameInstanceId("game-1");
+    enabledOtherRegion.setRuntimeRegionId("region-8");
+    enabledOtherRegion.setRuntimeRegionEpoch(13L);
+    enabledOtherRegion.setPluginId("plugin-2");
+    enabledOtherRegion.setActivePluginVersionId("plugin-v2");
+    enabledOtherRegion.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+
+    PluginRuntimeState disabledMatching = new PluginRuntimeState();
+    disabledMatching.setTenantId("1");
+    disabledMatching.setGameInstanceId("game-1");
+    disabledMatching.setRuntimeRegionId("region-7");
+    disabledMatching.setRuntimeRegionEpoch(12L);
+    disabledMatching.setPluginId("plugin-3");
+    disabledMatching.setActivePluginVersionId("plugin-v3");
+    disabledMatching.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(enabledMatching, enabledOtherRegion, disabledMatching));
+
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            Mockito.mock(GameDesignControlPlaneClient.class),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Map<String, String> active = service.getActivePluginVersions("1", "game-1", "region-7", 12L);
+
+    assertThat(active).containsExactly(Map.entry("plugin-1", "plugin-v1"));
+  }
+
+  @Test
+  void listsAllEnabledPluginVersionsWhenRuntimeScopeIsUnknown() {
+    PluginRuntimeState enabledScopedA = new PluginRuntimeState();
+    enabledScopedA.setTenantId("1");
+    enabledScopedA.setGameInstanceId("game-1");
+    enabledScopedA.setRuntimeRegionId("region-7");
+    enabledScopedA.setRuntimeRegionEpoch(12L);
+    enabledScopedA.setPluginId("plugin-1");
+    enabledScopedA.setActivePluginVersionId("plugin-v1");
+    enabledScopedA.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+
+    PluginRuntimeState enabledScopedB = new PluginRuntimeState();
+    enabledScopedB.setTenantId("1");
+    enabledScopedB.setGameInstanceId("game-1");
+    enabledScopedB.setRuntimeRegionId("region-8");
+    enabledScopedB.setRuntimeRegionEpoch(13L);
+    enabledScopedB.setPluginId("plugin-2");
+    enabledScopedB.setActivePluginVersionId("plugin-v2");
+    enabledScopedB.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+
+    PluginRuntimeState disabledScoped = new PluginRuntimeState();
+    disabledScoped.setTenantId("1");
+    disabledScoped.setGameInstanceId("game-1");
+    disabledScoped.setRuntimeRegionId("region-9");
+    disabledScoped.setRuntimeRegionEpoch(14L);
+    disabledScoped.setPluginId("plugin-3");
+    disabledScoped.setActivePluginVersionId("plugin-v3");
+    disabledScoped.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(enabledScopedA, enabledScopedB, disabledScoped));
+
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            Mockito.mock(GameDesignControlPlaneClient.class),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Map<String, String> active = service.getActivePluginVersions("1", "game-1", "", 0L);
+
+    assertThat(active)
+        .containsExactlyInAnyOrderEntriesOf(
+            Map.of("plugin-1", "plugin-v1", "plugin-2", "plugin-v2"));
+  }
+
   @Test
   void createsRuntimeActivationState() {
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);

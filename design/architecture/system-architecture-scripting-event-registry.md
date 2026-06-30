@@ -66,7 +66,8 @@ Required semantics for those fields:
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`
-  - The event-scope quota policy used before handler resolution.
+  - The canonical budget-policy class used at handler admission and then persisted onto durable work items so execution-time tenant-budget handling reads the same classification instead of re-inferring from `eventType`.
+  - Current built-in classes are `STANDARD_RUNTIME` for ordinary live gameplay/scheduler work and `PUBLISH_READINESS` for tenant-readiness `onLoad`.
 - `replaySemantics`
   - Whether duplicate ingress is expected to be idempotent, rejected, or coalesced.
 - `allowedBindingScopes`
@@ -133,6 +134,11 @@ Minimum payload contract:
 
 No authoritative gameplay snapshot token is required. This payload exists for readiness-only initialization and must not imply mutable shared runtime ownership.
 
+Registry policy:
+
+- `quotaClass=PUBLISH_READINESS`
+- This event must bypass ordinary live per-script quota and tenant runtime budget charging because it belongs to publish/readiness capacity rather than steady-state gameplay automation.
+
 ### `onCommand` payload `v1`
 
 Anchor target for `payloadSchemaRef`:
@@ -142,6 +148,20 @@ Minimum payload contract:
 
 - `commandId`
 - `commandName`
+
+Current optional producer enrichment:
+
+- `commandAlias` when the producer can preserve the normalized built-in alias that triggered the command
+- `actionCategory`
+- `actionTags[]`
+
+Current live binding-scope consumers on `onCommand` still support the baseline binding scopes (`GLOBAL`, `ENTITY`, and `REGION`) and additionally may resolve handlers from:
+
+- `COMMAND_ALIAS`
+- `ACTION_CATEGORY`
+- `ACTION_TAG`
+
+When a resolved handler is plugin-owned, Automation ingress must only admit that handler when the same plugin version is currently active for the runtime scope identified by the event trigger (`gameInstanceId`, `regionId`, `regionEpoch`). Plugin ownership on resolved handler audit/work-item rows must come from that script owner truth rather than from optional producer-supplied plugin identity on the ingress request.
 
 Required Trigger Identity and snapshot fields remain defined by the registry entry itself (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptPatchVersion`, `scriptEventId`, and `readSnapshotToken` where required). Payload contents are intentionally narrower than full Trigger Identity.
 

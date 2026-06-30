@@ -217,6 +217,18 @@ The reconnect/session-recovery and screen-buffer defaults themselves are exposed
 
 These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
+The canonical transcript retention model sitting behind these reconnect settings is now explicit:
+
+- `RECONNECT_ONLY`: only the hot reconnect buffer is retained; no durable transcript history is written.
+- `SHORT_HISTORY`: the same transcript-entry model used by reconnect replay is also written to bounded durable history suitable for normal operator troubleshooting and recent-player replay.
+- `EXTENDED_HISTORY`: the same transcript-entry model is retained for a longer bounded durable history window when a product/operator explicitly wants richer replay retention.
+
+Current implementation status remains intentionally narrower than the full model:
+
+- structured replay metadata is already stored in the hot reconnect buffer for new replayable outputs;
+- legacy text-only reconnect buffer entries remain readable;
+- durable transcript history for `SHORT_HISTORY` and `EXTENDED_HISTORY` is still later implementation work, but it must reuse the same canonical transcript-entry model rather than inventing a second transport- or client-specific history contract.
+
 ### Abnormal WebSocket Transport Loss
 
 Client implementations must not assume every disconnect includes a close frame and reason token. Planned drains and many graceful failures will carry canonical close codes, but abrupt process/node/network failures can terminate transport before the edge emits a close frame.

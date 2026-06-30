@@ -4,6 +4,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
+import java.util.Map;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.LoginCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
@@ -14,6 +17,7 @@ import net.firedevops.firemud.gamesession.service.SessionRoleService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -21,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class SessionRoleControllerTest {
 
   @Autowired private MockMvc mockMvc;
+  @Autowired private JwtUtil jwtUtil;
   @MockitoBean private SessionRoleService sessionRoleService;
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LoginCommandHandler loginCommandHandler;
@@ -36,8 +41,23 @@ class SessionRoleControllerTest {
             sessionRoleService.refreshRoles(org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn("refreshed");
     mockMvc
-        .perform(post("/sessions/1/refresh-roles"))
+        .perform(
+            post("/sessions/1/refresh-roles")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data").value("refreshed"));
+  }
+
+  @Test
+  void refreshRolesRejectsScopedTenantAdmin() throws Exception {
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            post("/sessions/1/refresh-roles").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
   }
 }

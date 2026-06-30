@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -24,6 +25,12 @@ import org.springframework.context.annotation.Import;
     classes = GameSessionServiceApplication.class,
     properties = {
       "firemud.database.enabled=false",
+      FiremudAuthTestProperties.JWT_SECRET,
+      FiremudAuthTestProperties.JWT_EXPIRATION,
+      FiremudAuthTestProperties.HTTP_ENABLED,
+      FiremudAuthTestProperties.HTTP_ROLE_REQUIREMENT_PRIVILEGED,
+      "firemud.auth.http.public-routes[0].method=GET",
+      "firemud.auth.http.public-routes[0].path-pattern=/ping",
       "spring.main.allow-bean-definition-overriding=true",
       "firemud.grpc.plaintext=true",
       "spring.application.name=game-session-service",

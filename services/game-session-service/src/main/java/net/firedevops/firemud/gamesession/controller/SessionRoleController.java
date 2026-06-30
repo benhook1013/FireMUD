@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.controller;
 
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoleService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +20,7 @@ public class SessionRoleController {
 
   @PostMapping("/{sessionId}/refresh-roles")
   public ResponseEntity<ApiResponse<String>> refreshRoles(@PathVariable long sessionId) {
+    SessionContext.requireGlobalPrivilegedRole();
     String result = sessionRoleService.refreshRoles(sessionId);
     return ResponseEntity.ok(ApiResponse.success(result));
   }

@@ -434,6 +434,43 @@ verify_service_override_contract(
     "fail",
     "No FIREMUD_SERVICES_* overrides were rendered",
 )
+
+rendered_documents = module.parse_documents(pathlib.Path(tmp / "hobby-rendered.yaml").read_text(encoding="utf-8"))
+
+def verify_binding_ref_contract(case_name, mutate, policy_id, expected_fragment):
+    expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = tmp / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"design/operations/environments/{case_name}-expected-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    policy = next((result for result in results if result.policy_id == policy_id), None)
+    if policy is None:
+        raise SystemExit(f"{case_name}: missing {policy_id} result")
+    if policy.status != "fail":
+        raise SystemExit(f"{case_name}: expected {policy_id} fail, got {policy.status}: {policy.message}")
+    if expected_fragment not in policy.message:
+        raise SystemExit(
+            f"{case_name}: expected {policy_id} message to include '{expected_fragment}', got '{policy.message}'"
+        )
+
+verify_binding_ref_contract(
+    "invalid-internal-binding-ref",
+    lambda data: data["internalBindings"]["certificates"].__setitem__("issuerRef", "cert-manager://firemud/not-a-kind/firemud-hobby"),
+    "PREFLIGHT-SECRETS-002",
+    "internalBindings.certificates.issuerRef must use one of the allowed binding kinds",
+)
+verify_binding_ref_contract(
+    "invalid-external-binding-ref",
+    lambda data: data["backupStorage"].__setitem__("bindingRef", "not-a-binding-ref"),
+    "PREFLIGHT-EXTERNAL-001",
+    "backupStorage.bindingRef must use <scheme>://<namespace>/<binding> format",
+)
 PY
 
 echo "preflight contract checks passed"

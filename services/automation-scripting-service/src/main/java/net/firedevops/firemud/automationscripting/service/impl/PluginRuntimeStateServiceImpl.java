@@ -92,6 +92,30 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
 
   @Override
   @Transactional(readOnly = true)
+  public Map<String, String> getActivePluginVersions(
+      String tenantId, String gameInstanceId, String runtimeRegionId, long runtimeRegionEpoch) {
+    requireText(tenantId, "tenant_id");
+    requireText(gameInstanceId, "game_instance_id");
+    Map<String, String> active = new HashMap<>();
+    for (PluginRuntimeState state :
+        repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
+      if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
+        continue;
+      }
+      if (!matchesRuntimeScope(state, runtimeRegionId, runtimeRegionEpoch)) {
+        continue;
+      }
+      String pluginId = normalize(state.getPluginId());
+      String activePluginVersionId = normalize(state.getActivePluginVersionId());
+      if (!pluginId.isBlank() && !activePluginVersionId.isBlank()) {
+        active.put(pluginId, activePluginVersionId);
+      }
+    }
+    return Map.copyOf(active);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<PluginRuntimeEventSummary> listEvents(
       String tenantId,
       String gameInstanceId,
@@ -223,6 +247,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         command.pluginId(),
         command.targetPluginVersionId());
     return runtime;
+  }
+
+  private static boolean matchesRuntimeScope(
+      PluginRuntimeState state, String runtimeRegionId, long runtimeRegionEpoch) {
+    if (runtimeRegionId == null || runtimeRegionId.isBlank() || runtimeRegionEpoch <= 0) {
+      return true;
+    }
+    return runtimeRegionId.equals(normalize(state.getRuntimeRegionId()))
+        && runtimeRegionEpoch == zeroIfNull(state.getRuntimeRegionEpoch());
   }
 
   private void requireAbilitySchemaMatch(

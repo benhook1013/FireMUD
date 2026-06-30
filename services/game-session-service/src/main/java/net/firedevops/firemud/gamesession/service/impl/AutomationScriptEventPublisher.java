@@ -1,12 +1,17 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver.ResolvedTextCommandMetadata;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -30,16 +35,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   private final AutomationScriptingClient client;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameInstanceRepository gameInstanceRepository;
+  private final TextCommandMetadataResolver textCommandMetadataResolver;
+  private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final Executor scriptEventExecutor;
 
   public AutomationScriptEventPublisher(
       AutomationScriptingClient client,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameInstanceRepository gameInstanceRepository,
+      TextCommandMetadataResolver textCommandMetadataResolver,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       @Qualifier("scriptEventExecutor") Executor scriptEventExecutor) {
     this.client = client;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameInstanceRepository = gameInstanceRepository;
+    this.textCommandMetadataResolver = textCommandMetadataResolver;
+    this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.scriptEventExecutor = scriptEventExecutor;
   }
 
@@ -183,12 +194,67 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         });
   }
 
-  private static String commandPayload(GameplayCommand command) {
-    return "{\"commandId\":\""
-        + escape(command.getCommandId())
-        + "\",\"commandName\":\""
-        + escape(command.getCommandName())
-        + "\"}";
+  private String commandPayload(GameplayCommand command) {
+    StringBuilder payload =
+        new StringBuilder("{\"commandId\":\"")
+            .append(escape(command.getCommandId()))
+            .append("\",\"commandName\":\"")
+            .append(escape(command.getCommandName()))
+            .append("\"");
+    resolveBuiltInCommandAlias(command)
+        .ifPresent(
+            alias -> payload.append(",\"commandAlias\":\"").append(escape(alias)).append("\""));
+    resolveCommandMetadata(command)
+        .ifPresent(
+            metadata -> {
+              payload
+                  .append(",\"actionCategory\":\"")
+                  .append(metadata.actionCategory().name())
+                  .append("\",\"actionTags\":")
+                  .append(actionTagsJson(metadata.actionTags()));
+            });
+    return payload.append("}").toString();
+  }
+
+  private Optional<ResolvedTextCommandMetadata> resolveCommandMetadata(GameplayCommand command) {
+    if (command == null) {
+      return Optional.empty();
+    }
+    return textCommandMetadataResolver
+        .resolve(command.getCommandName())
+        .or(
+            () ->
+                textCommandMetadataResolver.resolve(
+                    firstCommandToken(command.getCommandText()).orElse(null)));
+  }
+
+  private Optional<String> resolveBuiltInCommandAlias(GameplayCommand command) {
+    if (command == null) {
+      return Optional.empty();
+    }
+    return firstCommandToken(command.getCommandText())
+        .flatMap(builtInTextCommandAliasResolver::resolve)
+        .or(() -> builtInTextCommandAliasResolver.resolve(command.getCommandName()));
+  }
+
+  private static Optional<String> firstCommandToken(String commandText) {
+    if (commandText == null || commandText.isBlank()) {
+      return Optional.empty();
+    }
+    String trimmed = commandText.trim();
+    int firstSpace = trimmed.indexOf(' ');
+    return Optional.of(firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace));
+  }
+
+  private static String actionTagsJson(List<?> actionTags) {
+    StringBuilder payload = new StringBuilder("[");
+    for (int i = 0; i < actionTags.size(); i++) {
+      if (i > 0) {
+        payload.append(',');
+      }
+      payload.append('"').append(escape(String.valueOf(actionTags.get(i)))).append('"');
+    }
+    return payload.append(']').toString();
   }
 
   private static String escape(String value) {

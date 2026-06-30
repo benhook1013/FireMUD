@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.Set;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -32,15 +33,40 @@ import org.springframework.context.annotation.Import;
 @Import({NoGrpcServerTestConfiguration.class, TestGatewayRateLimiterConfig.class})
 class GatewayRoutesConfigurationProdTest {
 
+  private static final Set<String> ROUTE_IDS =
+      Set.of(
+          "session-ping",
+          "admin-ping",
+          "admin-admission-pointers",
+          "admin-feature-flags",
+          "admin-logs",
+          "admin-moderation",
+          "admin-reports",
+          "admin-sagas",
+          "admin-tick-remediation",
+          "design",
+          "account-auth",
+          "account-accounts",
+          "account-profiles",
+          "account-ping",
+          "account-jwks",
+          "social-chat",
+          "social-friends",
+          "social-guilds",
+          "social-mail",
+          "social-ping",
+          "social-voice-token",
+          "asset-store-public");
+
   @Autowired private GatewayProperties gatewayProperties;
 
   @Test
   void sessionRouteUsesHttpSchemeForControlPlaneTraffic() {
     RouteDefinition sessionRoute =
         gatewayProperties.getRoutes().stream()
-            .filter(route -> "session".equals(route.getId()))
+            .filter(route -> "session-ping".equals(route.getId()))
             .findFirst()
-            .orElseThrow(() -> new AssertionError("Expected session route to be configured"));
+            .orElseThrow(() -> new AssertionError("Expected session-ping route to be configured"));
 
     URI targetUri = sessionRoute.getUri();
     assertThat(targetUri.getScheme()).isEqualTo("http");
@@ -52,21 +78,34 @@ class GatewayRoutesConfigurationProdTest {
             .map(predicate -> predicate.getArgs())
             .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
 
-    assertThat(pathArgs.values()).containsExactly("/api/session/**");
+    assertThat(pathArgs.values()).containsExactly("/api/session/ping");
     assertHasStripPrefixTwo(sessionRoute);
   }
 
   @Test
+  void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
-    assertThat(route("admin").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/**");
-    assertHasStripPrefixTwo(route("admin"));
-    assertHasStripPrefixTwo(route("design"));
-    assertHasStripPrefixTwo(route("account"));
-    assertHasStripPrefixTwo(route("social"));
-    assertThat(route("asset-store").getPredicates().get(0).getArgs().values())
+    assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/admin/ping");
+    assertThat(route("design").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/design/**");
+    assertThat(route("account-auth").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/account/auth/**");
+    assertThat(route("social-chat").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/social/chat/**");
+    assertThat(route("asset-store-public").getPredicates().get(0).getArgs().values())
         .containsExactly("/assets/**");
-    assertHasStripPrefix(route("asset-store"), "1");
+
+    assertHasStripPrefixTwo("admin-ping");
+    assertHasStripPrefixTwo("design");
+    assertHasStripPrefixTwo("account-auth");
+    assertHasStripPrefixTwo("social-chat");
+    assertHasStripPrefix("asset-store-public", "1");
   }
 
   private RouteDefinition route(String routeId) {
@@ -80,12 +119,21 @@ class GatewayRoutesConfigurationProdTest {
     assertHasStripPrefix(route, "2");
   }
 
+  private void assertHasStripPrefixTwo(String routeId) {
+    assertHasStripPrefix(route(routeId), "2");
+  }
+
+  private void assertHasStripPrefix(String route, String value) {
+    assertHasStripPrefix(route(route), value);
+  }
+
   private void assertHasStripPrefix(RouteDefinition route, String value) {
     FilterDefinition filter =
         route.getFilters().stream()
             .filter(candidate -> "StripPrefix".equals(candidate.getName()))
             .findFirst()
-            .orElseThrow(() -> new AssertionError("Expected StripPrefix filter"));
+            .orElseThrow(
+                () -> new AssertionError("Expected StripPrefix filter for " + route.getId()));
     assertThat(filter.getArgs().values()).containsExactly(value);
   }
 }

@@ -14,7 +14,7 @@
     ],
     "snapshotAuthority": "NON_AUTHORITATIVE_NO_SNAPSHOT",
     "consistencyClass": "BEST_EFFORT",
-    "quotaClass": "STANDARD_RUNTIME",
+    "quotaClass": "PUBLISH_READINESS",
     "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
     "allowedBindingScopes": [
       "GLOBAL"
@@ -47,6 +47,9 @@
     "quotaClass": "STANDARD_RUNTIME",
     "replaySemantics": "IDEMPOTENT_BY_TRIGGER_IDENTITY",
     "allowedBindingScopes": [
+      "ACTION_CATEGORY",
+      "ACTION_TAG",
+      "COMMAND_ALIAS",
       "ENTITY",
       "REGION",
       "GLOBAL"

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.controller;
 
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -30,18 +31,21 @@ public class GameInstanceController {
   @PostMapping
   public ResponseEntity<ApiResponse<GameInstanceDto>> startSession(
       @Valid @RequestBody StartSessionRequest request) {
+    SessionContext.requireGlobalPrivilegedRole();
     GameInstanceDto dto = gameInstanceService.startSession(request, false);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PostMapping("/{sessionId}/stop")
   public ResponseEntity<ApiResponse<GameInstanceDto>> stopSession(@PathVariable long sessionId) {
+    SessionContext.requireGlobalPrivilegedRole();
     GameInstanceDto dto = gameInstanceService.stopSession(sessionId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PostMapping("/{sessionId}/restart")
   public ResponseEntity<ApiResponse<GameInstanceDto>> restartSession(@PathVariable long sessionId) {
+    SessionContext.requireGlobalPrivilegedRole();
     GameInstanceDto dto = gameInstanceService.restartSession(sessionId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }

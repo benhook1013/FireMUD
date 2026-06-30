@@ -25,6 +25,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRol
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
@@ -1322,6 +1323,109 @@ class ScriptWorkItemServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("REPLAY");
     assertThat(audit.getFinalOutcome()).isEqualTo("requeued");
     assertThat(audit.getFinalReason()).isEqualTo("retry");
+  }
+
+  @Test
+  void replaysPluginOwnedDeadLetterUsingWorkItemPluginIdentityBeforeIngressAuditFallback() {
+    ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
+    item.setId(78L);
+    item.setTenantId("1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(3L);
+    item.setEntityId("entity-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
+    item.setEventType("onCommand");
+    item.setEventSchemaVersion("v1");
+    item.setScriptEventId("event-2");
+    item.setCreatedAt(Instant.ofEpochMilli(100));
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptEventIngressAudit ingressAudit = new ScriptEventIngressAudit();
+    ingressAudit.setPluginId("");
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    PluginRuntimeStateService pluginRuntimeStateService =
+        Mockito.mock(PluginRuntimeStateService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
+    when(workItemRepository.findById(78L)).thenReturn(Optional.of(item));
+    when(workItemRepository.save(item)).thenReturn(item);
+    when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
+    when(ingressAuditRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                3L,
+                "entity-1",
+                "",
+                "",
+                "",
+                "",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-2",
+                false))
+        .thenReturn(Optional.of(ingressAudit));
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
+        .thenReturn(
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(
+                Optional.of(
+                    new ScriptPatchPinProjectionService.PinConvergenceSummary(
+                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
+                        "")),
+                "",
+                ""));
+    when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
+        .thenReturn(
+            Optional.of(
+                new PluginRuntimeStateService.PluginRuntimeStatus(
+                    "plugin-v1",
+                    "",
+                    "region-1",
+                    3L,
+                    PluginState.PLUGIN_STATE_ENABLED,
+                    "operator_activation",
+                    100L,
+                    "req-1",
+                    "admin",
+                    System.currentTimeMillis(),
+                    null,
+                    null)));
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository,
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            pinProjectionService,
+            rolloutProjectionService(),
+            pluginRuntimeStateService,
+            gameDesignClient());
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1",
+                "game-1",
+                "region-1",
+                List.of("78"),
+                "patch-1",
+                0L,
+                0L,
+                10,
+                "req-1",
+                "admin",
+                "retry"));
+
+    assertThat(result.replayedCount()).isEqualTo(1L);
+    assertThat(result.rejectedCount()).isEqualTo(0L);
+    verify(pluginRuntimeStateService).getStatus("1", "game-1", "plugin-1");
   }
 
   @Test

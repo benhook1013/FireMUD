@@ -19,9 +19,11 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueService
 import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -695,6 +697,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setRegionId("");
     item.setEntityId("");
     item.setEventType("onLoad");
+    item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptDefinition definition = new ScriptDefinition();
     definition.setDefinition("{\"eventHandlers\":{\"onLoad\":{}}}");
@@ -704,6 +707,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptReadinessCapacityService readinessCapacityService = allowingReadinessCapacityService();
     ScriptWorkItemExecutionService service =
         new ScriptWorkItemExecutionServiceImpl(
             workItemService,
@@ -715,7 +719,11 @@ class ScriptWorkItemExecutionServiceImplTest {
             outputProperties,
             denyingTenantBudgetService(),
             allowingDryRunCapacityService(),
-            new ObjectMapper());
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            null,
+            readinessCapacityService);
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result =
         service.processPendingWorkItems(10);
@@ -728,6 +736,64 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
     assertThat(audit.getFinalOutcome()).isEqualTo("readiness_success");
     assertThat(audit.getFinalReason()).isEqualTo("ready_for_tenant");
+    Mockito.verify(readinessCapacityService)
+        .release(Mockito.any(ScriptReadinessCapacityService.Reservation.class));
+  }
+
+  @Test
+  void cancelsOnLoadWhenPublishReadinessCapacityIsExhausted() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptWorkItem item = workItem();
+    item.setGameInstanceId("");
+    item.setRegionId("");
+    item.setEntityId("");
+    item.setEventType("onLoad");
+    item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
+    ScriptReadinessCapacityService readinessCapacityService = denyingReadinessCapacityService();
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            tenantBudgetService,
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry(),
+            null,
+            null,
+            readinessCapacityService);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("onload_budget_exceeded");
+    assertThat(audit.getFinalStage()).isEqualTo("ADMISSION");
+    assertThat(audit.getFinalOutcome()).isEqualTo("quota_denied");
+    assertThat(audit.getFinalReason()).isEqualTo("onload_budget_exceeded");
+    Mockito.verify(tenantBudgetService, Mockito.never()).tryReserve(Mockito.any(), Mockito.any());
+    Mockito.verify(readinessCapacityService, Mockito.never())
+        .release(Mockito.any(ScriptReadinessCapacityService.Reservation.class));
+    Mockito.verify(definitionRepository, Mockito.never())
+        .findByTenantIdAndScriptVersionAndName(Mockito.anyLong(), Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -745,6 +811,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setRegionId("");
     item.setEntityId("");
     item.setEventType("onLoad");
+    item.setQuotaClass(ScriptQuotaClasses.PUBLISH_READINESS);
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptDefinition definition = new ScriptDefinition();
     definition.setDefinition(
@@ -937,7 +1004,9 @@ class ScriptWorkItemExecutionServiceImplTest {
                 .tag("outcome", "tenant_budget_exceeded")
                 .tag("dryRun", "false")
                 .tag("priorityTag", "high")
+                .tag("sourceKind", "GAMEPLAY_EVENT")
                 .tag("sourceService", "game-session-service")
+                .tag("eventType", "onCommand")
                 .counter())
         .isNotNull();
   }
@@ -986,6 +1055,67 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalReason()).isEqualTo("dry_run_capacity_exhausted");
   }
 
+  @Test
+  void tenantBudgetDenialUsesPersistedScheduleTimerSourceAndPriorityTags() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptOutputProperties outputProperties = new ScriptOutputProperties();
+    ScriptTenantBudgetService tenantBudgetService = Mockito.mock(ScriptTenantBudgetService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptWorkItem item = workItem();
+    item.setEventType("onTimerExpire");
+    item.setSourceKind("SCHEDULE_TIMER");
+    item.setSourceService("automation-scripting-service");
+    item.setPriorityTag("background");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(10)).thenReturn(List.of(item));
+    when(tenantBudgetService.tryReserve("1", "background")).thenReturn(false);
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            outputProperties,
+            tenantBudgetService,
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            meterRegistry);
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result =
+        service.processPendingWorkItems(10);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    Mockito.verify(tenantBudgetService).tryReserve("1", "background");
+    Mockito.verify(definitionRepository, Mockito.never())
+        .findByTenantIdAndScriptVersionAndName(Mockito.anyLong(), Mockito.any(), Mockito.any());
+    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getCancelReason()).isEqualTo("tenant_budget_exceeded");
+    assertThat(audit.getFinalOutcome()).isEqualTo("tenant_budget_exceeded");
+    assertThat(
+            meterRegistry
+                .find("automation_script_work_item_outcomes_total")
+                .tag("stage", "ADMISSION")
+                .tag("outcome", "tenant_budget_exceeded")
+                .tag("dryRun", "false")
+                .tag("priorityTag", "background")
+                .tag("sourceKind", "SCHEDULE_TIMER")
+                .tag("sourceService", "automation-scripting-service")
+                .tag("eventType", "onTimerExpire")
+                .counter())
+        .isNotNull();
+  }
+
   private static ScriptTenantBudgetService allowingTenantBudgetService() {
     ScriptTenantBudgetService service = Mockito.mock(ScriptTenantBudgetService.class);
     when(service.tryReserve(Mockito.any(), Mockito.any())).thenReturn(true);
@@ -1014,6 +1144,22 @@ class ScriptWorkItemExecutionServiceImplTest {
     return service;
   }
 
+  private static ScriptReadinessCapacityService allowingReadinessCapacityService() {
+    ScriptReadinessCapacityService service = Mockito.mock(ScriptReadinessCapacityService.class);
+    when(service.tryReserve(Mockito.any(), Mockito.anyLong()))
+        .thenReturn(
+            Optional.of(
+                new ScriptReadinessCapacityService.Reservation(
+                    "1", 99L, "readiness-tenant-token", "readiness-cluster-token")));
+    return service;
+  }
+
+  private static ScriptReadinessCapacityService denyingReadinessCapacityService() {
+    ScriptReadinessCapacityService service = Mockito.mock(ScriptReadinessCapacityService.class);
+    when(service.tryReserve(Mockito.any(), Mockito.anyLong())).thenReturn(Optional.empty());
+    return service;
+  }
+
   private static ScriptWorkItem workItem() {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(99L);
@@ -1025,8 +1171,10 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setScriptId("script-1");
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
+    item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion("patch-1");
     item.setScriptEventId("event-1");
+    item.setSourceKind("GAMEPLAY_EVENT");
     item.setSourceService("game-session-service");
     item.setPayloadJson("{\"commandName\":\"LOOK\"}");
     item.setStatus("EVALUATING");

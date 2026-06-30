@@ -65,6 +65,28 @@ public final class AutomationRedisKeys {
         + requirePart("workItemId", workItemId);
   }
 
+  public static String automationReadinessCapacityCounter(String tenantId) {
+    return "automation:readiness:capacity:" + requirePart("tenantId", tenantId) + ":tenant";
+  }
+
+  public static String automationReadinessCapacityLease(String tenantId, String workItemId) {
+    return "automation:readiness:capacity:"
+        + requirePart("tenantId", tenantId)
+        + ":lease:"
+        + requirePart("workItemId", workItemId);
+  }
+
+  public static String automationReadinessClusterCapacityCounter() {
+    return "automation:readiness:capacity:cluster";
+  }
+
+  public static String automationReadinessClusterCapacityLease(String tenantId, String workItemId) {
+    return "automation:readiness:capacity:cluster:lease:"
+        + requirePart("tenantId", tenantId)
+        + ":"
+        + requirePart("workItemId", workItemId);
+  }
+
   private static String tenantInstanceTag(String tenantId, String gameInstanceId) {
     return "tenant:"
         + requirePart("tenantId", tenantId)

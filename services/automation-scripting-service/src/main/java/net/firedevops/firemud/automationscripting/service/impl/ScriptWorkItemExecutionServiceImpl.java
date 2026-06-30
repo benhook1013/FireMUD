@@ -20,9 +20,11 @@ import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkIte
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemExecutionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
+import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,6 +61,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptOutputProperties outputProperties;
   private final ScriptTenantBudgetService tenantBudgetService;
   private final ScriptDryRunCapacityService dryRunCapacityService;
+  private final ScriptReadinessCapacityService readinessCapacityService;
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
   private final AutomationQueueService automationQueueService;
@@ -87,6 +90,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         objectMapper,
         new SimpleMeterRegistry(),
         null,
+        null,
         null);
   }
 
@@ -102,6 +106,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptOutputProperties outputProperties,
       ScriptTenantBudgetService tenantBudgetService,
       ScriptDryRunCapacityService dryRunCapacityService,
+      ScriptReadinessCapacityService readinessCapacityService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry) {
@@ -118,7 +123,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         objectMapper,
         meterRegistry,
         automationQueueService,
-        readinessProjectionService);
+        readinessProjectionService,
+        readinessCapacityService);
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -145,6 +151,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null,
         null);
   }
@@ -175,6 +182,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         objectMapper,
         meterRegistry,
         automationQueueService,
+        null,
         null);
   }
 
@@ -191,7 +199,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry,
       AutomationQueueService automationQueueService,
-      ScriptPatchReadinessProjectionService readinessProjectionService) {
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -201,6 +210,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.outputProperties = outputProperties;
     this.tenantBudgetService = tenantBudgetService;
     this.dryRunCapacityService = dryRunCapacityService;
+    this.readinessCapacityService = readinessCapacityService;
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
     this.automationQueueService = automationQueueService;
@@ -257,11 +267,26 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
     if (!workItem.isDryRun()
-        && !isOnLoad(workItem)
+        && ScriptQuotaClasses.consumesLiveTenantBudget(workItem.getQuotaClass())
         && !tenantBudgetService.tryReserve(
             workItem.getTenantId(), normalizePriorityTag(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
       return false;
+    }
+    if (!workItem.isDryRun()
+        && ScriptQuotaClasses.usesPublishReadinessCapacity(workItem.getQuotaClass())
+        && readinessCapacityService != null) {
+      Optional<ScriptReadinessCapacityService.Reservation> reservation =
+          readinessCapacityService.tryReserve(workItem.getTenantId(), requireWorkItemId(workItem));
+      if (reservation.isEmpty()) {
+        cancel(workItem, STAGE_ADMISSION, "quota_denied", "onload_budget_exceeded", now);
+        return false;
+      }
+      try {
+        return evaluateClaimedWorkItem(workItem, now);
+      } finally {
+        readinessCapacityService.release(reservation.get());
+      }
     }
     if (workItem.isDryRun()) {
       Optional<ScriptDryRunCapacityService.Reservation> reservation =
@@ -714,12 +739,24 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             Boolean.toString(workItem.isDryRun()),
             "priorityTag",
             normalizePriorityTag(workItem.getPriorityTag()),
+            "sourceKind",
+            normalizeSourceKind(workItem.getSourceKind()),
             "sourceService",
-            normalizeSourceService(workItem.getSourceService()))
+            normalizeSourceService(workItem.getSourceService()),
+            "eventType",
+            normalizeEventType(workItem.getEventType()))
         .increment();
   }
 
+  private static String normalizeSourceKind(String value) {
+    return value == null || value.isBlank() ? "unknown" : value;
+  }
+
   private static String normalizeSourceService(String value) {
+    return value == null || value.isBlank() ? "unknown" : value;
+  }
+
+  private static String normalizeEventType(String value) {
     return value == null || value.isBlank() ? "unknown" : value;
   }
 
