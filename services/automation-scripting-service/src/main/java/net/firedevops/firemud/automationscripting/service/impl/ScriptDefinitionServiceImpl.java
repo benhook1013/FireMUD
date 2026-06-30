@@ -59,14 +59,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   }
 
   private void validateBinding(ScriptDefinitionDto.EventBindingDto binding) {
-    String eventType = requiredText(binding.eventType(), "event type");
-    String eventSchemaVersion =
-        binding.eventSchemaVersion() == null || binding.eventSchemaVersion().isBlank()
-            ? DEFAULT_EVENT_SCHEMA_VERSION
-            : binding.eventSchemaVersion();
-    String targetScopeType =
-        normalizeScopeType(requiredText(binding.targetScopeType(), "target scope type"));
-    validateBindingScope(eventType, eventSchemaVersion, targetScopeType);
+    normalizeBinding(binding);
     normalizePriorityTag(binding.priorityTag());
   }
 
@@ -82,6 +75,23 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   private ScriptEventBinding toEntity(
       ScriptDefinitionDto dto, ScriptDefinitionDto.EventBindingDto binding) {
+    NormalizedBinding normalized = normalizeBinding(binding);
+    ScriptEventBinding entity = new ScriptEventBinding();
+    entity.setTenantId(dto.tenantId());
+    entity.setScriptPatchVersion(dto.version());
+    entity.setScriptId(requiredText(dto.name(), "script name"));
+    entity.setEventType(normalized.eventType());
+    entity.setEventSchemaVersion(normalized.eventSchemaVersion());
+    entity.setTargetScopeType(normalized.targetScopeType());
+    entity.setTargetScopeId(normalize(binding.targetScopeId()));
+    entity.setPriority(binding.priority());
+    entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
+    entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());
+    entity.setEnabled(true);
+    return entity;
+  }
+
+  private NormalizedBinding normalizeBinding(ScriptDefinitionDto.EventBindingDto binding) {
     String eventType = requiredText(binding.eventType(), "event type");
     String eventSchemaVersion =
         binding.eventSchemaVersion() == null || binding.eventSchemaVersion().isBlank()
@@ -90,19 +100,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     String targetScopeType =
         normalizeScopeType(requiredText(binding.targetScopeType(), "target scope type"));
     validateBindingScope(eventType, eventSchemaVersion, targetScopeType);
-    ScriptEventBinding entity = new ScriptEventBinding();
-    entity.setTenantId(dto.tenantId());
-    entity.setScriptPatchVersion(dto.version());
-    entity.setScriptId(requiredText(dto.name(), "script name"));
-    entity.setEventType(eventType);
-    entity.setEventSchemaVersion(eventSchemaVersion);
-    entity.setTargetScopeType(targetScopeType);
-    entity.setTargetScopeId(normalize(binding.targetScopeId()));
-    entity.setPriority(binding.priority());
-    entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
-    entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());
-    entity.setEnabled(true);
-    return entity;
+    return new NormalizedBinding(eventType, eventSchemaVersion, targetScopeType);
   }
 
   private void validateBindingScope(
@@ -150,4 +148,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
           throw new IllegalArgumentException("priority tag must be high, normal, or background");
     };
   }
+
+  private record NormalizedBinding(
+      String eventType, String eventSchemaVersion, String targetScopeType) {}
 }

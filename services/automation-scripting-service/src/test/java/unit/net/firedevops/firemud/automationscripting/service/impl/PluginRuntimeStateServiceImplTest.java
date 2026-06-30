@@ -80,6 +80,54 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void listsAllEnabledPluginVersionsWhenRuntimeScopeIsUnknown() {
+    PluginRuntimeState enabledScopedA = new PluginRuntimeState();
+    enabledScopedA.setTenantId("1");
+    enabledScopedA.setGameInstanceId("game-1");
+    enabledScopedA.setRuntimeRegionId("region-7");
+    enabledScopedA.setRuntimeRegionEpoch(12L);
+    enabledScopedA.setPluginId("plugin-1");
+    enabledScopedA.setActivePluginVersionId("plugin-v1");
+    enabledScopedA.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+
+    PluginRuntimeState enabledScopedB = new PluginRuntimeState();
+    enabledScopedB.setTenantId("1");
+    enabledScopedB.setGameInstanceId("game-1");
+    enabledScopedB.setRuntimeRegionId("region-8");
+    enabledScopedB.setRuntimeRegionEpoch(13L);
+    enabledScopedB.setPluginId("plugin-2");
+    enabledScopedB.setActivePluginVersionId("plugin-v2");
+    enabledScopedB.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+
+    PluginRuntimeState disabledScoped = new PluginRuntimeState();
+    disabledScoped.setTenantId("1");
+    disabledScoped.setGameInstanceId("game-1");
+    disabledScoped.setRuntimeRegionId("region-9");
+    disabledScoped.setRuntimeRegionEpoch(14L);
+    disabledScoped.setPluginId("plugin-3");
+    disabledScoped.setActivePluginVersionId("plugin-v3");
+    disabledScoped.setPluginState(PluginState.PLUGIN_STATE_DISABLED.name());
+
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(enabledScopedA, enabledScopedB, disabledScoped));
+
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            Mockito.mock(PluginRuntimeEventRepository.class),
+            Mockito.mock(GameDesignControlPlaneClient.class),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptScheduleInstanceService.class));
+
+    Map<String, String> active = service.getActivePluginVersions("1", "game-1", "", 0L);
+
+    assertThat(active)
+        .containsExactlyInAnyOrderEntriesOf(
+            Map.of("plugin-1", "plugin-v1", "plugin-2", "plugin-v2"));
+  }
+
+  @Test
   void createsRuntimeActivationState() {
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);

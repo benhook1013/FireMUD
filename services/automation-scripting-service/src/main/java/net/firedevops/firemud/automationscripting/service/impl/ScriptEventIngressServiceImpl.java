@@ -492,16 +492,23 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                         || binding.getScriptId().equals(request.getScriptId()))
             .filter(binding -> matchesScope(binding, request, payload))
             .toList();
-    Map<String, PluginOwner> ownersByScriptId =
+    PluginOwnerResolution ownerResolution =
         scriptDefinitionRepository == null
-            ? Map.of()
+            ? PluginOwnerResolution.EMPTY
             : resolvePluginOwners(tenantKey, request.getScriptPatchVersion(), scopedBindings);
+    Map<String, PluginOwner> ownersByScriptId = ownerResolution.ownersByScriptId();
+    if (ownerResolution.hasUnresolvedPluginOwner()) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
+    }
     boolean filterByRequestPluginOwnership =
         scriptDefinitionRepository != null
             && !request.getPluginId().isBlank()
             && !request.getPluginVersionId().isBlank();
     Map<String, String> activePluginVersions =
-        scriptDefinitionRepository == null || request.getGameInstanceId().isBlank()
+        scriptDefinitionRepository == null
+                || request.getGameInstanceId().isBlank()
+                || ownersByScriptId.isEmpty()
             ? Map.of()
             : pluginRuntimeStateService.getActivePluginVersions(
                 request.getTenantId(),
@@ -539,24 +546,29 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         && owner.pluginVersionId().equals(request.getPluginVersionId());
   }
 
-  private Map<String, PluginOwner> resolvePluginOwners(
+  private PluginOwnerResolution resolvePluginOwners(
       Long tenantId, String scriptPatchVersion, List<ScriptEventBinding> scopedBindings) {
     List<String> scriptIds =
         scopedBindings.stream().map(ScriptEventBinding::getScriptId).distinct().toList();
     if (scriptIds.isEmpty()) {
-      return Map.of();
+      return PluginOwnerResolution.EMPTY;
     }
     List<ScriptDefinition> definitions =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndNameIn(
             tenantId, scriptPatchVersion, scriptIds);
     Map<String, PluginOwner> resolved = new HashMap<>();
+    boolean hasUnresolvedPluginOwner = false;
     for (ScriptDefinition definition : definitions) {
-      PluginOwner owner = resolvePluginOwner(definition);
-      if (owner != null) {
-        resolved.put(definition.getName(), owner);
+      PluginOwnerResolutionResult result = resolvePluginOwner(definition);
+      if (result.pluginOwnerUnresolved()) {
+        hasUnresolvedPluginOwner = true;
+        continue;
+      }
+      if (result.owner() != null) {
+        resolved.put(definition.getName(), result.owner());
       }
     }
-    return resolved;
+    return new PluginOwnerResolution(Map.copyOf(resolved), hasUnresolvedPluginOwner);
   }
 
   private static boolean participatesInResolvedHandlerSet(
@@ -572,25 +584,32 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return ownersByScriptId.get(binding.getScriptId()) != null;
   }
 
-  private PluginOwner resolvePluginOwner(ScriptDefinition definition) {
+  private PluginOwnerResolutionResult resolvePluginOwner(ScriptDefinition definition) {
     Map<String, Object> root = parseDefinition(definition.getDefinition());
+    Map<String, Object> plugin = asObjectMap(root.get("plugin"));
+    Map<String, Object> owner = asObjectMap(root.get("owner"));
     String pluginId =
         firstPresent(
             normalizedText(root.get("pluginId")),
-            normalizedText(asObjectMap(root.get("plugin")).get("pluginId")),
-            normalizedText(asObjectMap(root.get("owner")).get("pluginId")));
-    if (pluginId.isBlank()) {
-      return null;
-    }
+            normalizedText(plugin.get("pluginId")),
+            normalizedText(owner.get("pluginId")));
     String pluginVersionId =
         firstPresent(
             normalizedText(root.get("pluginVersionId")),
-            normalizedText(asObjectMap(root.get("plugin")).get("pluginVersionId")),
-            normalizedText(asObjectMap(root.get("owner")).get("pluginVersionId")));
-    if (pluginVersionId.isBlank()) {
-      return null;
+            normalizedText(plugin.get("pluginVersionId")),
+            normalizedText(owner.get("pluginVersionId")));
+    boolean declaresPluginOwnership =
+        root.containsKey("pluginId")
+            || root.containsKey("pluginVersionId")
+            || root.containsKey("plugin")
+            || root.containsKey("owner");
+    if (!declaresPluginOwnership) {
+      return PluginOwnerResolutionResult.firstParty();
     }
-    return new PluginOwner(pluginId, pluginVersionId);
+    if (pluginId.isBlank() || pluginVersionId.isBlank()) {
+      return PluginOwnerResolutionResult.unresolvedPluginOwner();
+    }
+    return PluginOwnerResolutionResult.resolved(new PluginOwner(pluginId, pluginVersionId));
   }
 
   @SuppressWarnings("unchecked")
@@ -1088,6 +1107,25 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String pointerVersion) {}
 
   private record PluginOwner(String pluginId, String pluginVersionId) {}
+
+  private record PluginOwnerResolution(
+      Map<String, PluginOwner> ownersByScriptId, boolean hasUnresolvedPluginOwner) {
+    private static final PluginOwnerResolution EMPTY = new PluginOwnerResolution(Map.of(), false);
+  }
+
+  private record PluginOwnerResolutionResult(PluginOwner owner, boolean pluginOwnerUnresolved) {
+    private static PluginOwnerResolutionResult firstParty() {
+      return new PluginOwnerResolutionResult(null, false);
+    }
+
+    private static PluginOwnerResolutionResult unresolvedPluginOwner() {
+      return new PluginOwnerResolutionResult(null, true);
+    }
+
+    private static PluginOwnerResolutionResult resolved(PluginOwner owner) {
+      return new PluginOwnerResolutionResult(owner, false);
+    }
+  }
 
   private record ResolvedHandler(ScriptEventBinding binding, PluginOwner pluginOwner) {}
 }

@@ -149,7 +149,7 @@ Current optional producer enrichment:
 - `actionCategory`
 - `actionTags[]`
 
-Current live binding-scope consumers on `onCommand` may resolve handlers from:
+Current live binding-scope consumers on `onCommand` still support the baseline binding scopes (`GLOBAL`, `ENTITY`, and `REGION`) and additionally may resolve handlers from:
 
 - `COMMAND_ALIAS`
 - `ACTION_CATEGORY`
