@@ -8,15 +8,16 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
-final class AuthoredActionCommandHandler {
+final class AuthoredActionCommandHandler implements AuthoredActionRuntimeHandler {
   private final ConfiguredAuthoredActionCatalog catalog;
 
   AuthoredActionCommandHandler(ConfiguredAuthoredActionCatalog catalog) {
     this.catalog = catalog;
   }
 
+  @Override
   @Timed(value = "gamesession.command.authored")
-  TextCommandInterpretationResult handle(TextCommand command) {
+  public TextCommandInterpretationResult handle(TextCommand command) {
     TextCommandPayload.AuthoredActionInvocation invocation =
         command.authoredActionPayload().orElseThrow();
     return catalog

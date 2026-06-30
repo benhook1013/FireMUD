@@ -10,6 +10,7 @@ import java.util.Optional;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
@@ -49,6 +50,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
   private final ActionStateCommandHandler actionStateCommandHandler =
       Mockito.mock(ActionStateCommandHandler.class);
+  private final AuthoredActionRuntimeHandler authoredActionCommandHandler =
+      Mockito.mock(AuthoredActionRuntimeHandler.class);
   private final DurableGameplayReplayService durableGameplayReplayService =
       Mockito.mock(DurableGameplayReplayService.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
@@ -74,6 +77,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             communicationCommandHandler,
             afkCommandHandler,
             actionStateCommandHandler,
+            authoredActionCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
@@ -446,6 +450,75 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.failureCode()).isEqualTo("INVALID_ARGUMENT");
     verify(afkCommandHandler, never())
         .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeAppliesDurableAuthoredActionAndStoresReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    TickEffect effect = tickEffect("tfx-8", "cmd-8");
+    TextCommand parsed =
+        new TextCommand(
+            "wave-salute",
+            TextCommandType.AUTHORED,
+            java.util.List.of("captain"),
+            "wave captain",
+            "wave",
+            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
+                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
+    PlayerOutput output = PlayerOutput.notice("Authored action executed: wave-salute");
+    when(parser.parse("wave captain")).thenReturn(parsed);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-8")).thenReturn(Optional.empty());
+    when(authoredActionCommandHandler.handle(parsed))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of(output));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeReplaysStoredAuthoredActionWithoutInvokingHandler() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    TickEffect effect = tickEffect("tfx-8", "cmd-8");
+    TextCommand parsed =
+        new TextCommand(
+            "wave-salute",
+            TextCommandType.AUTHORED,
+            java.util.List.of("captain"),
+            "wave captain",
+            "wave",
+            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
+                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
+    PlayerOutput output = PlayerOutput.notice("Authored action executed: wave-salute");
+    when(parser.parse("wave captain")).thenReturn(parsed);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-8"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
+    verify(authoredActionCommandHandler, never()).handle(Mockito.any());
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
   }
 
