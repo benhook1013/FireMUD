@@ -188,7 +188,9 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
       return Long.parseLong(value);
     } catch (NumberFormatException ex) {
       throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, field + " was not numeric in control-plane response");
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          field + " was not numeric in control-plane response",
+          ex);
     }
   }
 
@@ -200,7 +202,9 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
       return Long.parseLong(value);
     } catch (NumberFormatException ex) {
       throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, field + " was not numeric in control-plane response");
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          field + " was not numeric in control-plane response",
+          ex);
     }
   }
 
