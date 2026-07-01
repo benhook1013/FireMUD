@@ -33,6 +33,8 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -100,6 +102,17 @@ public class GameSessionControlPlaneClient
   public GetPreparedVersionUpgradeResponse getPreparedVersionUpgrade(
       GetPreparedVersionUpgradeRequest request) {
     return stub().getPreparedVersionUpgrade(request);
+  }
+
+  public ValidateInstanceCutoverCompatibilityResponse validateInstanceCutoverCompatibility(
+      long tenantId, long sourceGameInstanceId, long targetVersionId) {
+    return stub()
+        .validateInstanceCutoverCompatibility(
+            ValidateInstanceCutoverCompatibilityRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setSourceGameInstanceId(Long.toString(sourceGameInstanceId))
+                .setTargetVersionId(Long.toString(targetVersionId))
+                .build());
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(

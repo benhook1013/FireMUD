@@ -23,10 +23,12 @@ import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
+import net.firedevops.firemud.loggingadmin.dto.InstanceCutoverCompatibilityDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -319,6 +321,36 @@ class AdmissionPointerServiceImplTest {
 
     assertThrows(
         ResponseStatusException.class, () -> service.getPreparedVersionUpgrade(8L, "pvu-1"));
+  }
+
+  @Test
+  void validateInstanceCutoverCompatibilityReturnsCanonicalControlPlaneProof() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.validateInstanceCutoverCompatibility(2L, 7L, 9L))
+        .thenReturn(
+            ValidateInstanceCutoverCompatibilityResponse.newBuilder()
+                .setResult(CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE)
+                .addReasons("checked")
+                .addCheckedParticipants("entity")
+                .setCheckedAtMs(1_774_672_000_000L)
+                .setRemapSetId("remap-1")
+                .addParticipantResults(
+                    CutoverParticipantResult.newBuilder()
+                        .setParticipant("entity")
+                        .setResult(
+                            CutoverCompatibilityResult.CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE)
+                        .addReasons("clean")
+                        .addStateClassesChecked("S3")
+                        .addCheckedFamilies("room_ground_inventory")
+                        .build())
+                .build());
+
+    InstanceCutoverCompatibilityDto result =
+        service.validateInstanceCutoverCompatibility(2L, 7L, 9L);
+
+    assertEquals("COMPATIBLE", result.result());
+    assertEquals("remap-1", result.remapSetId());
+    assertEquals("entity", result.participantResults().getFirst().participant());
   }
 
   private AdmissionPointerControlPlaneEntry pointerEntry(
