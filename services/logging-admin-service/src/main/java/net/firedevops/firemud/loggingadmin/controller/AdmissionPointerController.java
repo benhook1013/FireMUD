@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
+import net.firedevops.firemud.loggingadmin.dto.InstanceCutoverCompatibilityDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -104,5 +105,22 @@ public class AdmissionPointerController {
     return ResponseEntity.ok(
         ApiResponse.success(
             admissionPointerService.getPreparedVersionUpgrade(tenantId, preparationId)));
+  }
+
+  @GetMapping("/version-upgrades/{tenantId}/{sourceGameInstanceId}/compatibility/{targetVersionId}")
+  @Timed(
+      value = "validateInstanceCutoverCompatibility",
+      description =
+          "Read bounded version cutover compatibility for one source instance and target version")
+  public ResponseEntity<ApiResponse<InstanceCutoverCompatibilityDto>>
+      validateInstanceCutoverCompatibility(
+          @PathVariable long tenantId,
+          @PathVariable long sourceGameInstanceId,
+          @PathVariable long targetVersionId) {
+    SessionContext.requireTenantAccess(tenantId);
+    return ResponseEntity.ok(
+        ApiResponse.success(
+            admissionPointerService.validateInstanceCutoverCompatibility(
+                tenantId, sourceGameInstanceId, targetVersionId)));
   }
 }

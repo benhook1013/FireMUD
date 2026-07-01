@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
+import net.firedevops.firemud.loggingadmin.dto.InstanceCutoverCompatibilityDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -243,6 +244,36 @@ class AdmissionPointerControllerTest {
         .andExpect(status().isForbidden());
   }
 
+  @Test
+  void validateInstanceCutoverCompatibilityReturnsBoundedCompatibilityProof() throws Exception {
+    when(admissionPointerService.validateInstanceCutoverCompatibility(2L, 7L, 9L))
+        .thenReturn(cutoverCompatibility());
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/version-upgrades/2/7/compatibility/9")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.result").value("COMPATIBLE"))
+        .andExpect(jsonPath("$.data.remapSetId").value("remap-1"))
+        .andExpect(jsonPath("$.data.participantResults[0].participant").value("entity"));
+  }
+
+  @Test
+  void validateInstanceCutoverCompatibilityRejectsCrossTenantScopedAdmin() throws Exception {
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/version-upgrades/2/7/compatibility/9")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+  }
+
   private PreparedVersionUpgradeDto preparedUpgrade() {
     return new PreparedVersionUpgradeDto(
         "pvu-1",
@@ -269,6 +300,23 @@ class AdmissionPointerControllerTest {
         4L,
         Instant.parse("2026-04-18T00:00:01Z"),
         "req-cutover");
+  }
+
+  private InstanceCutoverCompatibilityDto cutoverCompatibility() {
+    return new InstanceCutoverCompatibilityDto(
+        "COMPATIBLE",
+        List.of("checked"),
+        List.of("entity"),
+        Instant.parse("2026-04-18T00:00:00Z"),
+        "remap-1",
+        List.of(
+            new InstanceCutoverCompatibilityDto.CutoverParticipantResultDto(
+                "entity",
+                "COMPATIBLE",
+                List.of("clean"),
+                List.of("S3"),
+                List.of("room_ground_inventory"),
+                false)));
   }
 
   private GameInstanceRuntimeStateDto runtimeStateDto() {
