@@ -125,6 +125,14 @@ components:
           type: string
         enabled:
           type: boolean
+    BuiltInCommandAliasValidationDto:
+      type: object
+      properties:
+        supported:
+          type: boolean
+        normalizedAlias:
+          type: string
+          nullable: true
     QueryLogsRequest:
       type: object
       properties:
@@ -555,6 +563,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseString'
+  /command-registry/built-in-aliases/{alias}:
+    get:
+      summary: Validate one built-in command alias
+      operationId: validateBuiltInCommandAlias
+      parameters:
+        - name: alias
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Built-in command alias validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/BuiltInCommandAliasValidationDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
   /reports:
     post:
       summary: Create a player report

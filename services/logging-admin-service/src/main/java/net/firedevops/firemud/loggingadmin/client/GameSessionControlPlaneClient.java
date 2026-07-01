@@ -33,6 +33,8 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
+import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import org.springframework.stereotype.Component;
@@ -113,6 +115,12 @@ public class GameSessionControlPlaneClient
                 .setSourceGameInstanceId(Long.toString(sourceGameInstanceId))
                 .setTargetVersionId(Long.toString(targetVersionId))
                 .build());
+  }
+
+  public ValidateBuiltInCommandAliasResponse validateBuiltInCommandAlias(String alias) {
+    return stub()
+        .validateBuiltInCommandAlias(
+            ValidateBuiltInCommandAliasRequest.newBuilder().setAlias(alias).build());
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
