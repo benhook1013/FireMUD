@@ -54,6 +54,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     outputs:
       eligible: ${{ steps.eligibility.outputs.eligible }}
+      eligibility_reason: ${{ steps.eligibility.outputs.reason }}
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
       namespace: ${{ steps.derive.outputs.namespace }}
@@ -74,8 +75,10 @@ jobs:
         with:
           script: |
             let prAuthor;
+            let baseRef = "";
             if (context.eventName === "pull_request") {
               prAuthor = context.payload.pull_request.user.login;
+              baseRef = context.payload.pull_request.base.ref;
             } else {
               const prNumber = Number("${{ inputs.pr_number }}");
               const { data: pull } = await github.rest.pulls.get({
@@ -83,6 +86,7 @@ jobs:
                 pull_number: prNumber,
               });
               prAuthor = pull.user.login;
+              baseRef = pull.base.ref;
             }
 
             const ineligibleAuthors = new Set([
@@ -91,12 +95,24 @@ jobs:
               "app/renovate",
               "renovate[bot]",
             ]);
-            const eligible = !ineligibleAuthors.has(prAuthor);
+            const previewSupportedBases = new Set(["main", "develop"]);
+            let reason = "eligible";
+            if (ineligibleAuthors.has(prAuthor)) {
+              reason = "dependency-bot";
+            } else if (
+              context.eventName === "pull_request" &&
+              !previewSupportedBases.has(baseRef)
+            ) {
+              reason = "unsupported-base-branch";
+            }
+
+            const eligible = reason === "eligible";
             core.setOutput("eligible", eligible ? "true" : "false");
+            core.setOutput("reason", reason);
             core.info(
               eligible
-                ? `Preview target is eligible (author=${prAuthor}).`
-                : `Skipping preview orchestration for dependency bot PR (author=${prAuthor}).`
+                ? `Preview target is eligible (author=${prAuthor}, base=${baseRef || "<none>"}).`
+                : `Skipping preview orchestration (reason=${reason}, author=${prAuthor}, base=${baseRef || "<none>"}).`
             );
 
       - name: Derive preview identifiers
@@ -140,13 +156,28 @@ jobs:
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
         run: |
-          cat <<'EOF'
-          Preview orchestration is skipped for dependency bot PRs.
-
-          Dependabot and Renovate updates do not get preview namespace
-          preparation, hosted preview reconciliation, or hosted preview
-          validation work.
-          EOF
+          case "${{ steps.eligibility.outputs.reason }}" in
+            dependency-bot)
+              printf '%s\n' \
+                'Preview orchestration is skipped for dependency bot PRs.' \
+                '' \
+                'Dependabot and Renovate updates do not get preview namespace' \
+                'preparation, hosted preview reconciliation, or hosted preview' \
+                'validation work.'
+              ;;
+            unsupported-base-branch)
+              printf '%s\n' \
+                'Preview orchestration is skipped for stacked PRs whose base branch' \
+                'is not main or develop.' \
+                '' \
+                'The runtime image and smoke workflows only publish PR image tags' \
+                'for PRs targeting main or develop, so hosted preview deploys' \
+                'cannot succeed for other PR base branches.'
+              ;;
+            *)
+              echo "Preview orchestration is skipped for this target."
+              ;;
+          esac
 
       - name: Show derived target
         env:
