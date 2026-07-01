@@ -15,6 +15,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
@@ -104,6 +106,19 @@ public class GameSessionControlPlaneClient
                 .setTenantId(Long.toString(tenantId))
                 .setGameInstanceId(Long.toString(gameInstanceId))
                 .build());
+  }
+
+  public GetRuntimeOwnershipStatusResponse getRuntimeOwnershipStatus(
+      long tenantId, String gameInstanceId, String regionId) {
+    GetRuntimeOwnershipStatusRequest.Builder builder =
+        GetRuntimeOwnershipStatusRequest.newBuilder().setTenantId(Long.toString(tenantId));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      builder.setGameInstanceId(gameInstanceId);
+    }
+    if (regionId != null && !regionId.isBlank()) {
+      builder.setRegionId(regionId);
+    }
+    return stub().getRuntimeOwnershipStatus(builder.build());
   }
 
   public PauseTicksForScopeResponse pauseTicksForScope(PauseTicksForScopeRequest request) {
