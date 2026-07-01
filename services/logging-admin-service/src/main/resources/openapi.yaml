@@ -450,6 +450,41 @@ components:
           type: string
         reason:
           type: string
+    RuntimeOwnershipStatusDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        regionEpoch:
+          type: integer
+        executorFence:
+          type: string
+        ownerService:
+          type: string
+        ownerInstanceId:
+          type: string
+        paused:
+          type: boolean
+        lastCommittedTickBatchId:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastCommittedTickId:
+          type: integer
+        regionId:
+          type: string
+        pendingGameplayCommandCount:
+          type: integer
+        dueRemoteFollowupCount:
+          type: integer
+        oldestDueRemoteFollowupTickId:
+          type: integer
+        remoteFollowupDrainLagMs:
+          type: integer
 paths:
   /ping:
     get:
@@ -816,6 +851,41 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/TickRemediationActionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /tick-remediation/status/{tenantId}:
+    get:
+      summary: Read durable runtime ownership status
+      operationId: getRuntimeOwnershipStatus
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: regionId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current runtime ownership and backlog status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/RuntimeOwnershipStatusDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/resume:

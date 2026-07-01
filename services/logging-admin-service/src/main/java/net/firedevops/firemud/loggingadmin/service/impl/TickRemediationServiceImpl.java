@@ -1,11 +1,15 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest;
+import net.firedevops.firemud.loggingadmin.dto.RuntimeOwnershipStatusDto;
 import net.firedevops.firemud.loggingadmin.dto.TickRemediationActionDto;
 import net.firedevops.firemud.loggingadmin.dto.TickRemediationRequest;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
@@ -34,20 +38,50 @@ public class TickRemediationServiceImpl implements TickRemediationService {
   }
 
   @Override
+  public RuntimeOwnershipStatusDto getRuntimeOwnershipStatus(
+      long tenantId, String gameInstanceId, String regionId) {
+    validateScope(gameInstanceId, regionId);
+    GetRuntimeOwnershipStatusResponse response =
+        gameSessionControlPlaneClient.getRuntimeOwnershipStatus(tenantId, gameInstanceId, regionId);
+    requireNoError(response.getError());
+    RuntimeOwnershipStatus ownership = response.getOwnership();
+    if (parseLong(ownership.getTenantId(), "tenant_id") != tenantId) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane runtime ownership response did not match requested tenant_id");
+    }
+    if (hasText(gameInstanceId)
+        && parseLong(ownership.getGameInstanceId(), "game_instance_id")
+            != parseLong(gameInstanceId, "gameInstanceId")) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane runtime ownership response did not match requested gameInstanceId");
+    }
+    if (hasText(regionId) && !regionId.equals(ownership.getRegionId())) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane runtime ownership response did not match requested regionId");
+    }
+    return toDto(ownership);
+  }
+
+  @Override
   public TickRemediationActionDto pauseTicksForScope(TickRemediationRequest request) {
-    validateScope(request);
+    validateScope(request.gameInstanceId(), request.regionId());
     PauseTicksForScopeResponse response =
         gameSessionControlPlaneClient.pauseTicksForScope(toPauseRequest(request));
-    requireSuccess(response.getSuccess(), response.getError());
+    requireNoError(response.getError());
+    requireSuccess(response.getSuccess());
     return auditAndReturn(request, ACTION_PAUSE);
   }
 
   @Override
   public TickRemediationActionDto resumeTicksForScope(TickRemediationRequest request) {
-    validateScope(request);
+    validateScope(request.gameInstanceId(), request.regionId());
     ResumeTicksForScopeResponse response =
         gameSessionControlPlaneClient.resumeTicksForScope(toResumeRequest(request));
-    requireSuccess(response.getSuccess(), response.getError());
+    requireNoError(response.getError());
+    requireSuccess(response.getSuccess());
     return auditAndReturn(request, ACTION_RESUME);
   }
 
@@ -101,27 +135,49 @@ public class TickRemediationServiceImpl implements TickRemediationService {
     return dto;
   }
 
-  private void requireSuccess(boolean success, ErrorDetail error) {
-    if (success && (error == null || error.getCode().isBlank())) {
+  private RuntimeOwnershipStatusDto toDto(RuntimeOwnershipStatus ownership) {
+    return new RuntimeOwnershipStatusDto(
+        parseLong(ownership.getTenantId(), "tenant_id"),
+        parseLong(ownership.getGameInstanceId(), "game_instance_id"),
+        ownership.getRegionEpoch(),
+        ownership.getExecutorFence(),
+        ownership.getOwnerService(),
+        ownership.getOwnerInstanceId(),
+        ownership.getPaused(),
+        ownership.getLastCommittedTickBatchId(),
+        ownership.getUpdatedAtMs() <= 0 ? null : Instant.ofEpochMilli(ownership.getUpdatedAtMs()),
+        ownership.getLastCommittedTickId(),
+        ownership.getRegionId(),
+        ownership.getPendingGameplayCommandCount(),
+        ownership.getDueRemoteFollowupCount(),
+        ownership.getOldestDueRemoteFollowupTickId(),
+        ownership.getRemoteFollowupDrainLagMs());
+  }
+
+  private void requireSuccess(boolean success) {
+    if (success) {
       return;
     }
+    throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Tick remediation failed");
+  }
+
+  private void requireNoError(ErrorDetail error) {
     if (error == null || error.getCode().isBlank()) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, "Tick remediation failed");
+      return;
     }
-    HttpStatus status =
+    throw new ResponseStatusException(
         switch (error.getCode()) {
           case "INVALID_ARGUMENT" -> HttpStatus.BAD_REQUEST;
           case "PERMISSION_DENIED" -> HttpStatus.FORBIDDEN;
           case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
           default -> HttpStatus.INTERNAL_SERVER_ERROR;
-        };
-    throw new ResponseStatusException(status, error.getMessage());
+        },
+        error.getMessage());
   }
 
-  private void validateScope(TickRemediationRequest request) {
-    boolean hasGameInstance = hasText(request.gameInstanceId());
-    boolean hasRegion = hasText(request.regionId());
+  private void validateScope(String gameInstanceId, String regionId) {
+    boolean hasGameInstance = hasText(gameInstanceId);
+    boolean hasRegion = hasText(regionId);
     if (hasGameInstance == hasRegion) {
       throw new ResponseStatusException(
           HttpStatus.BAD_REQUEST, "Exactly one of gameInstanceId or regionId is required");
@@ -172,5 +228,14 @@ public class TickRemediationServiceImpl implements TickRemediationService {
 
   private static boolean hasText(String value) {
     return value != null && !value.isBlank();
+  }
+
+  private long parseLong(String value, String field) {
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException ex) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, field + " was not numeric in control-plane response");
+    }
   }
 }
