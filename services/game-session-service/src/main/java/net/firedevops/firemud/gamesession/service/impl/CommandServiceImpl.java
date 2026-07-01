@@ -267,19 +267,24 @@ public class CommandServiceImpl implements CommandService {
   private Optional<QueueTarget> resolveQueueTarget(
       String sessionIdText, Optional<SessionContext> sessionContext) {
     try {
-      long sessionId = Long.parseLong(sessionIdText);
-      if (sessionContext.isPresent()) {
-        SessionContext context = sessionContext.get();
-        if (context.tenantId() <= 0) {
-          return Optional.empty();
-        }
-        long queueTargetId = context.gameInstanceId() > 0 ? context.gameInstanceId() : sessionId;
-        return Optional.of(new QueueTarget(context.tenantId(), queueTargetId));
-      }
-      return Optional.empty();
+      Long.parseLong(sessionIdText);
     } catch (NumberFormatException ex) {
       return Optional.empty();
     }
+    if (sessionContext.isEmpty()) {
+      return Optional.empty();
+    }
+    SessionContext context = sessionContext.get();
+    if (context.tenantId() <= 0) {
+      return Optional.empty();
+    }
+    if (context.gameInstanceId() > 0) {
+      return Optional.of(new QueueTarget(context.tenantId(), context.gameInstanceId()));
+    }
+    if (hasBootstrapRoutingAuthority(context)) {
+      return Optional.of(new QueueTarget(context.tenantId(), context.bootstrapGameInstanceId()));
+    }
+    return Optional.empty();
   }
 
   private RoutingMetadata resolveRoutingMetadata(
@@ -346,10 +351,17 @@ public class CommandServiceImpl implements CommandService {
     if (context.gameInstanceId() > 0) {
       return context.gameInstanceId();
     }
-    if (context.bootstrapGameInstanceId() > 0) {
+    if (hasBootstrapRoutingAuthority(context)) {
       return context.bootstrapGameInstanceId();
     }
     return queueTarget.queueTargetId();
+  }
+
+  private boolean hasBootstrapRoutingAuthority(SessionContext context) {
+    return context.bootstrapGameInstanceId() > 0
+        && normalizeRoutingBundle(
+                context.worldSlug(), context.realmSlug(), context.pointerVersion())
+            .isPresent();
   }
 
   private Optional<GameplayAdmissionPointerSnapshot> resolveUnambiguousRuntimePointer(
