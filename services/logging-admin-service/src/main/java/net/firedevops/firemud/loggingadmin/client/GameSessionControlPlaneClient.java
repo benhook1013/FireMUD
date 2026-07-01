@@ -13,6 +13,10 @@ import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRespon
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
+import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
@@ -103,6 +107,26 @@ public class GameSessionControlPlaneClient
     return stub()
         .getGameInstanceRuntimeState(
             GetGameInstanceRuntimeStateRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameInstanceId(Long.toString(gameInstanceId))
+                .build());
+  }
+
+  public GetPinnedScriptPatchVersionResponse getPinnedScriptPatchVersion(
+      long tenantId, long gameInstanceId) {
+    return stub()
+        .getPinnedScriptPatchVersion(
+            GetPinnedScriptPatchVersionRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameInstanceId(Long.toString(gameInstanceId))
+                .build());
+  }
+
+  public GetGameSessionPinConvergenceResponse getGameSessionPinConvergence(
+      long tenantId, long gameInstanceId) {
+    return stub()
+        .getGameSessionPinConvergence(
+            GetGameSessionPinConvergenceRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
                 .setGameInstanceId(Long.toString(gameInstanceId))
                 .build());

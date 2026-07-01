@@ -420,6 +420,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdmissionPointerDto'
+    PinnedScriptPatchVersionDto:
+      type: object
+      properties:
+        pinnedScriptPatchVersion:
+          type: string
+        pinnedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pinnedBy:
+          type: string
+        controlPlaneRequestId:
+          type: string
+        publication:
+          $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
+    GameSessionPinConvergenceDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        observedPinnedScriptPatchVersion:
+          type: string
+        lastObservedControlPlaneRequestId:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        stale:
+          type: boolean
+        publication:
+          $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
     TickRemediationRequest:
       type: object
       properties:
@@ -827,6 +861,68 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/PreparedVersionUpgradeDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /game-session-pins/{tenantId}/{gameInstanceId}:
+    get:
+      summary: Read current pinned script patch version
+      operationId: getPinnedScriptPatchVersion
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Current pinned script patch version and publication metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/PinnedScriptPatchVersionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /game-session-pins/{tenantId}/{gameInstanceId}/convergence:
+    get:
+      summary: Read persisted Game Session pin convergence
+      operationId: getGameSessionPinConvergence
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Persisted Game Session pin convergence state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/GameSessionPinConvergenceDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:
