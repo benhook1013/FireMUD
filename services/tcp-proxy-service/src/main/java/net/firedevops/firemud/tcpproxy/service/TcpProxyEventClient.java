@@ -76,7 +76,6 @@ public class TcpProxyEventClient implements AutoCloseable {
             .setProxyConnectionId(proxyConnectionId)
             .setDisconnectSequence(disconnectSequence);
     if (StringUtils.hasText(gameInstanceId)) {
-      builder.setSessionId(gameInstanceId);
       builder.setGameInstanceId(gameInstanceId);
     }
     if (StringUtils.hasText(tenantId)) {
