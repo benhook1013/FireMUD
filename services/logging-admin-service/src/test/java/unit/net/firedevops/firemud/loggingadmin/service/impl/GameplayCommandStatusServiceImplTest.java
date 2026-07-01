@@ -1,10 +1,12 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -47,10 +49,136 @@ class GameplayCommandStatusServiceImplTest {
 
     GameplayCommandStatusDto result = service.getGameplayCommandStatus(2L, "cmd-123");
 
-    assertEquals("cmd-123", result.commandId());
-    assertEquals(2L, result.tenantId());
-    assertEquals(17L, result.publication().versionId());
-    assertTrue(result.currentRuntimeRoutingBundleStale());
+    assertAll(
+        () -> assertEquals("cmd-123", result.commandId()),
+        () -> assertEquals(2L, result.tenantId()),
+        () -> assertEquals(7L, result.gameInstanceId()),
+        () -> assertEquals(11L, result.sessionId()),
+        () -> assertEquals(42L, result.accountId()),
+        () -> assertEquals(99L, result.characterId()),
+        () -> assertEquals("LOOK", result.commandName()),
+        () -> assertEquals("look", result.sanitizedCommandText()),
+        () -> assertEquals("NONE", result.failureCode()),
+        () -> assertEquals("ok", result.failureMessage()),
+        () -> assertEquals("AUTOMATION", result.originSourceKind()),
+        () -> assertEquals("REMOTE_FOLLOWUP_QUEUE", result.queueSourceKind()),
+        () -> assertEquals("coord-1", result.remoteCoordinatorId()),
+        () -> assertEquals("follow-1", result.remoteFollowupId()),
+        () -> assertEquals("remote ok", result.remoteResultMessage()),
+        () -> assertEquals(17L, result.publication().versionId()),
+        () -> assertEquals(88L, result.pluginPublication().publicationId()),
+        () -> assertEquals(7L, result.remoteOriginGameInstanceId()),
+        () -> assertEquals(8L, result.remoteTargetGameInstanceId()),
+        () -> assertEquals("NONE", result.remoteFollowupFailureCode()),
+        () -> assertEquals("ok", result.remoteFollowupFailureMessage()),
+        () -> assertEquals("current-region", result.currentRuntimeRegionId()),
+        () -> assertEquals(7L, result.currentRuntimeGameInstanceId()),
+        () -> assertEquals(9L, result.currentRuntimePointerVersion()),
+        () -> assertTrue(result.currentRuntimeRoutingBundleStale()));
+  }
+
+  @Test
+  void gameplayCommandStatusDtoRecordOrderMatchesCanonicalProjectionShape() {
+    List<String> componentNames =
+        List.of(GameplayCommandStatusDto.class.getRecordComponents()).stream()
+            .map(RecordComponent::getName)
+            .toList();
+
+    assertEquals(
+        List.of(
+            "commandId",
+            "tenantId",
+            "gameInstanceId",
+            "sessionId",
+            "accountId",
+            "characterId",
+            "commandName",
+            "sanitizedCommandText",
+            "requiresSoloTick",
+            "executionOutcome",
+            "gameplayResult",
+            "acceptedAt",
+            "stagedAt",
+            "completedAt",
+            "lastAttemptAt",
+            "attemptCount",
+            "failureCode",
+            "failureMessage",
+            "sourceType",
+            "automationDispatchId",
+            "automationWorkItemId",
+            "scriptId",
+            "scriptPatchVersion",
+            "pluginId",
+            "pluginVersionId",
+            "targetEntityId",
+            "regionId",
+            "regionEpoch",
+            "dueTickId",
+            "enqueueSeq",
+            "playableStateScope",
+            "worldSlug",
+            "realmSlug",
+            "pointerVersion",
+            "originSourceKind",
+            "originSourceState",
+            "originSourceOrdinal",
+            "originSourceDueTickId",
+            "originSourceDueAtMs",
+            "queueSourceKind",
+            "queueSourceState",
+            "queueSourceOrdinal",
+            "queueSourceDueTickId",
+            "queueSourceDueAtMs",
+            "remoteCoordinatorId",
+            "remoteFollowupId",
+            "remoteState",
+            "remoteResultOutcome",
+            "remoteResultPayloadJson",
+            "remoteResultObservedAt",
+            "publication",
+            "remoteResultCommandId",
+            "remoteResultErrorCode",
+            "remoteResultMessage",
+            "pluginPublication",
+            "remoteOriginGameInstanceId",
+            "remoteOriginRegionId",
+            "remoteOriginRegionEpoch",
+            "remoteTargetGameInstanceId",
+            "remoteTargetRegionId",
+            "remoteTargetRegionEpoch",
+            "remoteOriginDeadlineRegionEpoch",
+            "remoteOriginDeadlineTickId",
+            "remoteLateResultPolicy",
+            "remoteTargetCommandExecutionOutcome",
+            "remoteTargetCommandGameplayResult",
+            "remoteFollowupStatus",
+            "remoteFollowupPayloadKind",
+            "remoteFollowupRequestedCommand",
+            "remoteFollowupRequiresSoloTick",
+            "remoteFollowupOriginSourceKind",
+            "remoteFollowupOriginSourceState",
+            "remoteFollowupOriginSourceOrdinal",
+            "remoteFollowupOriginSourceDueTickId",
+            "remoteFollowupOriginSourceDueAtMs",
+            "remoteTargetEntityId",
+            "remoteFollowupEffectKey",
+            "remoteFollowupFailureCode",
+            "remoteFollowupFailureMessage",
+            "remoteFollowupEventType",
+            "remoteFollowupEventSchemaVersion",
+            "remoteFollowupScriptEventId",
+            "remoteFollowupTriggerMode",
+            "remoteFollowupClaimTargetAggregate",
+            "currentRuntimeRegionId",
+            "currentRuntimeRegionEpoch",
+            "currentRuntimeGameInstanceId",
+            "currentRuntimePlayableStateScope",
+            "currentRuntimeWorldSlug",
+            "currentRuntimeRealmSlug",
+            "currentRuntimePointerVersion",
+            "currentRuntimeRoutingBundleStale"),
+        componentNames);
   }
 
   @Test
@@ -93,6 +221,8 @@ class GameplayCommandStatusServiceImplTest {
         .setCompletedAtMs(Instant.parse("2026-06-30T00:00:02Z").toEpochMilli())
         .setLastAttemptAtMs(Instant.parse("2026-06-30T00:00:03Z").toEpochMilli())
         .setAttemptCount(2)
+        .setFailureCode("NONE")
+        .setFailureMessage("ok")
         .setSourceType("PLAYER")
         .setAutomationDispatchId("dispatch-1")
         .setAutomationWorkItemId("work-1")
@@ -139,6 +269,7 @@ class GameplayCommandStatusServiceImplTest {
                 .build())
         .setRemoteResultCommandId("remote-cmd-1")
         .setRemoteResultErrorCode("NONE")
+        .setRemoteResultMessage("remote ok")
         .setPluginPublication(
             PluginPublicationLink.newBuilder()
                 .setPluginVersionId("plugin-v1")
@@ -170,6 +301,8 @@ class GameplayCommandStatusServiceImplTest {
         .setRemoteFollowupOriginSourceDueAtMs(27L)
         .setRemoteTargetEntityId("entity-8")
         .setRemoteFollowupEffectKey("effect-1")
+        .setRemoteFollowupFailureCode("NONE")
+        .setRemoteFollowupFailureMessage("ok")
         .setRemoteFollowupEventType("onCommand")
         .setRemoteFollowupEventSchemaVersion("v1")
         .setRemoteFollowupScriptEventId("event-1")

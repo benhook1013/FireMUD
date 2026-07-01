@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,10 +52,24 @@ class RemoteCommandCoordinatorServiceImplTest {
 
     RemoteCommandCoordinatorDto result = service.getRemoteCommandCoordinator(2L, "coord-123");
 
-    assertEquals("coord-123", result.coordinatorId());
-    assertEquals(2L, result.tenantId());
-    assertEquals(17L, result.publication().versionId());
-    assertTrue(result.targetRoutingBundleStale());
+    assertAll(
+        () -> assertEquals("coord-123", result.coordinatorId()),
+        () -> assertEquals(2L, result.tenantId()),
+        () -> assertEquals("cmd-123", result.commandId()),
+        () -> assertEquals("follow-1", result.followupId()),
+        () -> assertEquals(7L, result.originGameInstanceId()),
+        () -> assertEquals(8L, result.targetGameInstanceId()),
+        () -> assertEquals("PENDING_REMOTE", result.state()),
+        () -> assertEquals("DROP_STALE", result.lateResultPolicy()),
+        () -> assertEquals("target-cmd-1", result.targetCommandId()),
+        () -> assertEquals("latest ok", result.latestResultMessage()),
+        () -> assertEquals(17L, result.publication().versionId()),
+        () -> assertEquals(88L, result.pluginPublication().publicationId()),
+        () -> assertEquals("snapshot-1", result.followupReadSnapshotToken()),
+        () -> assertEquals("{\"target\":8}", result.followupEventPayloadJson()),
+        () -> assertEquals(7L, result.currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals(8L, result.currentTargetRuntimeGameInstanceId()),
+        () -> assertTrue(result.targetRoutingBundleStale()));
   }
 
   @Test
@@ -128,6 +143,26 @@ class RemoteCommandCoordinatorServiceImplTest {
     assertEquals("coord-123", result.getFirst().coordinatorId());
   }
 
+  @Test
+  void listRemoteCommandCoordinatorsRejectsMismatchedTenantRow() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.listRemoteCommandCoordinators(
+            argThat(grpcRequest -> "2".equals(grpcRequest.getTenantId()))))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse.newBuilder()
+                .addCoordinators(remoteCoordinator("8", "coord-123"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () ->
+                service.listRemoteCommandCoordinators(
+                    2L, new RemoteCommandCoordinatorListRequest()));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
   private RemoteCommandCoordinatorEntry remoteCoordinator(String tenantId, String coordinatorId) {
     return RemoteCommandCoordinatorEntry.newBuilder()
         .setCoordinatorId(coordinatorId)
@@ -180,6 +215,7 @@ class RemoteCommandCoordinatorServiceImplTest {
         .setFollowupRequestedCommand("look north")
         .setLatestResultCommandId("target-cmd-1")
         .setLatestResultErrorCode("NONE")
+        .setLatestResultMessage("latest ok")
         .setTargetCommandId("target-cmd-1")
         .setTargetCommandExecutionOutcome("SUCCEEDED")
         .setTargetCommandGameplayResult("OK")
@@ -200,6 +236,8 @@ class RemoteCommandCoordinatorServiceImplTest {
         .setFollowupOriginSourceDueAtMs(27L)
         .setTargetEntityId("entity-8")
         .setFollowupEffectKey("effect-1")
+        .setFollowupFailureCode("NONE")
+        .setFollowupFailureMessage("ok")
         .setFollowupEventType("onCommand")
         .setFollowupEventSchemaVersion("v1")
         .setFollowupScriptEventId("event-1")
