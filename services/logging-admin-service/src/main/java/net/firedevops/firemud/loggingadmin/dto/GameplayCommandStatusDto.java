@@ -2,6 +2,8 @@ package net.firedevops.firemud.loggingadmin.dto;
 
 import java.time.Instant;
 
+// Keep this positional record aligned with GameplayCommandStatusServiceImpl.toDto();
+// GameplayCommandStatusServiceImplTest guards the component order explicitly.
 public record GameplayCommandStatusDto(
     String commandId,
     long tenantId,
