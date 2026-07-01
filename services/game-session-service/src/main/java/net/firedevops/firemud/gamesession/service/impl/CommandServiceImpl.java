@@ -9,9 +9,11 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -41,6 +43,7 @@ public class CommandServiceImpl implements CommandService {
   private final SessionRateLimiter sessionRateLimiter;
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
+  private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final ScriptEventPublisher scriptEventPublisher;
@@ -63,6 +66,7 @@ public class CommandServiceImpl implements CommandService {
       SessionRateLimiter sessionRateLimiter,
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       SessionAuthenticationService sessionAuthenticationService,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       ScriptEventPublisher scriptEventPublisher) {
@@ -70,6 +74,7 @@ public class CommandServiceImpl implements CommandService {
     this.sessionRateLimiter = sessionRateLimiter;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
+    this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.sessionAuthenticationService = sessionAuthenticationService;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.scriptEventPublisher = scriptEventPublisher;
@@ -169,7 +174,11 @@ public class CommandServiceImpl implements CommandService {
     sessionContext
         .map(SessionContext::characterId)
         .filter(id -> id > 0)
-        .ifPresent(gameplayCommand::setCharacterId);
+        .ifPresent(
+            characterId -> {
+              gameplayCommand.setCharacterId(characterId);
+              gameplayCommand.setTargetEntityId(Long.toString(characterId));
+            });
     gameplayCommand.setCommandName(commandName(command));
     gameplayCommand.setCommandText(command);
     gameplayCommand.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(command));
@@ -184,6 +193,12 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setWorldSlug(routingMetadata.worldSlug());
     gameplayCommand.setRealmSlug(routingMetadata.realmSlug());
     gameplayCommand.setPointerVersion(routingMetadata.pointerVersion());
+    resolveRuntimeScope(queueTarget)
+        .ifPresent(
+            runtimeScope -> {
+              gameplayCommand.setRegionId(runtimeScope.getRegionId());
+              gameplayCommand.setRegionEpoch(runtimeScope.getRegionEpoch());
+            });
     return gameplayCommandRepository.save(gameplayCommand);
   }
 
@@ -395,6 +410,13 @@ public class CommandServiceImpl implements CommandService {
 
   private static RoutingMetadata unspecifiedRoutingMetadata() {
     return new RoutingMetadata("UNSPECIFIED", null, null, null);
+  }
+
+  private Optional<RuntimeRegionStatus> resolveRuntimeScope(QueueTarget queueTarget) {
+    return runtimeRegionStatusRepository
+        .findByTenantIdAndGameInstanceId(queueTarget.tenantId(), queueTarget.queueTargetId())
+        .filter(status -> status.getRegionId() != null && !status.getRegionId().isBlank())
+        .filter(status -> status.getRegionEpoch() > 0);
   }
 
   private static String blankToNull(String value) {
