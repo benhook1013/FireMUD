@@ -186,6 +186,8 @@ components:
           type: integer
         visible:
           type: boolean
+        publicProductionRealm:
+          type: boolean
         requiresCharacterSelection:
           type: boolean
         stateScope:
@@ -345,6 +347,79 @@ components:
         executionControlPlaneRequestId:
           type: string
           nullable: true
+    ScriptPatchPublicationLinkDto:
+      type: object
+      properties:
+        scriptPatchVersion:
+          type: string
+        versionId:
+          type: integer
+          nullable: true
+        baseVersionId:
+          type: integer
+          nullable: true
+        publicationState:
+          type: string
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lookupErrorCode:
+          type: string
+        lookupErrorMessage:
+          type: string
+    GameInstanceRuntimeStateDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        runtimeVersionId:
+          type: string
+        pinnedScriptPatchVersion:
+          type: string
+        launchDescriptorId:
+          type: string
+        status:
+          type: string
+        versionId:
+          type: integer
+          nullable: true
+        releaseBundleId:
+          type: integer
+          nullable: true
+        versionStateEpoch:
+          type: integer
+        scriptPatchPinnedAt:
+          type: string
+          format: date-time
+          nullable: true
+        scriptPatchPinnedBy:
+          type: string
+        scriptPatchPinnedReason:
+          type: string
+        scriptPatchPinnedControlPlaneRequestId:
+          type: string
+        playableStateScope:
+          type: string
+        worldSlug:
+          type: string
+        realmSlug:
+          type: string
+        pointerVersion:
+          type: integer
+          nullable: true
+        publication:
+          $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
+        regionId:
+          type: string
+        regionEpoch:
+          type: integer
+        currentAdmissionPointers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdmissionPointerDto'
     TickRemediationRequest:
       type: object
       properties:
@@ -609,6 +684,37 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/AdmissionPointerDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/runtime-state/{tenantId}/{gameInstanceId}:
+    get:
+      summary: Read canonical current runtime state
+      operationId: getAdmissionPointerRuntimeState
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Current runtime state and current admission pointers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/GameInstanceRuntimeStateDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/cutover:
