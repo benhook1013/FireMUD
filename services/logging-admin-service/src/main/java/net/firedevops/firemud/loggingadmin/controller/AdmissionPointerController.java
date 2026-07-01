@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -50,6 +51,17 @@ public class AdmissionPointerController {
     return ResponseEntity.ok(
         ApiResponse.success(
             admissionPointerService.listPointerAudit(tenantId, worldSlug, realmSlug)));
+  }
+
+  @GetMapping("/runtime-state/{tenantId}/{gameInstanceId}")
+  @Timed(
+      value = "getAdmissionPointerRuntimeState",
+      description = "Read canonical current runtime state and current admission pointers")
+  public ResponseEntity<ApiResponse<GameInstanceRuntimeStateDto>> getRuntimeState(
+      @PathVariable long tenantId, @PathVariable long gameInstanceId) {
+    SessionContext.requireTenantAccess(tenantId);
+    return ResponseEntity.ok(
+        ApiResponse.success(admissionPointerService.getRuntimeState(tenantId, gameInstanceId)));
   }
 
   @PostMapping

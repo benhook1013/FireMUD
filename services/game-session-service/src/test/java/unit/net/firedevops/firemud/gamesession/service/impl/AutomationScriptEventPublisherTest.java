@@ -110,6 +110,56 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
+  void publishesCommandEventUsingPersistedCommandAuthorityWhenPresent() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(client.triggerScriptEvent(Mockito.any()))
+        .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    GameplayCommand command = command("cmd-1", "LOOK");
+    command.setTenantId(9L);
+    command.setGameInstanceId(99L);
+    command.setCharacterId(44L);
+    command.setTargetEntityId("44");
+    command.setRegionId("region-staged");
+    command.setRegionEpoch(11L);
+    command.setPlayableStateScope("ISOLATED");
+    command.setWorldSlug("staged-world");
+    command.setRealmSlug("staged-realm");
+    command.setPointerVersion(17L);
+
+    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
+
+    ArgumentCaptor<TriggerScriptEventRequest> captor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    verify(client).triggerScriptEvent(captor.capture());
+    TriggerScriptEventRequest request = captor.getValue();
+    assertThat(request.getRegionId()).isEqualTo("region-staged");
+    assertThat(request.getRegionEpoch()).isEqualTo(11L);
+    assertThat(request.getPlayableStateScope())
+        .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(request.getWorldSlug()).isEqualTo("staged-world");
+    assertThat(request.getRealmSlug()).isEqualTo("staged-realm");
+    assertThat(request.getPointerVersion()).isEqualTo("17");
+    assertThat(request.getReadSnapshotToken()).isEqualTo("game-session:onCommand:99:11:cmd-1");
+    verify(statusRepository, never())
+        .findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
   void publishesSpawnEventWithGameplayRoutingBundle() {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =

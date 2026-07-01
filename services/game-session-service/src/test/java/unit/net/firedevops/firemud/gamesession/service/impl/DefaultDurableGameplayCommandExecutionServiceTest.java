@@ -190,6 +190,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                 .count())
         .isEqualTo(1.0);
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test
@@ -264,7 +265,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-4", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
-    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test
@@ -362,6 +363,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-5", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test
@@ -389,6 +391,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-6", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test
@@ -416,6 +419,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
     verify(communicationCommandHandler, never()).handle(Mockito.any(), Mockito.any());
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   @Test
@@ -486,6 +490,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(durableGameplayReplayService)
         .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
   @Test

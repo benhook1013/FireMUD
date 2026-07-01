@@ -48,7 +48,7 @@ class TcpProxyEventClientTest {
         ArgumentCaptor.forClass(net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.class);
     verify(stub).withDeadlineAfter(2000L, TimeUnit.MILLISECONDS);
     verify(deadlineStub).notifyDisconnect(requestCaptor.capture());
-    org.junit.jupiter.api.Assertions.assertEquals("42", requestCaptor.getValue().getSessionId());
+    org.junit.jupiter.api.Assertions.assertEquals("", requestCaptor.getValue().getSessionId());
     org.junit.jupiter.api.Assertions.assertEquals(
         "42", requestCaptor.getValue().getGameInstanceId());
     org.junit.jupiter.api.Assertions.assertEquals("7", requestCaptor.getValue().getTenantId());

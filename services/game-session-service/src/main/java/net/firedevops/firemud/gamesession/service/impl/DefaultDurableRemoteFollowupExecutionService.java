@@ -359,30 +359,27 @@ public final class DefaultDurableRemoteFollowupExecutionService
       Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
       RoutingBundle routingBundle = resolveRoutingBundle(worldSlug, realmSlug, pointerVersion);
       TriggerScriptEventRequest.Builder request =
-          TriggerScriptEventRequest.newBuilder()
-              .setTenantId(Long.toString(followup.getTenantId()))
-              .setGameInstanceId(Long.toString(followup.getTargetGameInstanceId()))
-              .setRegionId(followup.getTargetRegionId())
-              .setRegionEpoch(followup.getTargetRegionEpoch())
-              .setEntityId(
-                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId"))
-              .setEventType(requiredAuthoritativeText(followup.getEventType(), root, "eventType"))
-              .setScriptPatchVersion(
-                  requiredAuthoritativeText(
-                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"))
-              .setScriptEventId(
-                  requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"))
-              .setTriggerMode(triggerMode(root, followup))
-              .setPayloadJson(eventPayloadJson(root, followup))
-              .setEventSchemaVersion(
+          TriggerScriptEventRequestFactory.builder(
+              new TriggerScriptEventRequestFactory.CommonFields(
+                  Long.toString(followup.getTenantId()),
+                  Long.toString(followup.getTargetGameInstanceId()),
+                  followup.getTargetRegionId(),
+                  followup.getTargetRegionEpoch(),
+                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId"),
+                  requiredAuthoritativeText(followup.getEventType(), root, "eventType"),
                   firstNonBlank(
                       authoritativeText(
                           followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
-                      firstNonBlank(followup.getEventSchemaVersion(), "v1")))
-              .setReadSnapshotToken(
+                      firstNonBlank(followup.getEventSchemaVersion(), "v1")),
                   requiredAuthoritativeText(
-                      followup.getReadSnapshotToken(), root, "readSnapshotToken"))
-              .setPlayableStateScope(playableStateScope(followup.getPlayableStateScope()));
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
+                  requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
+                  triggerMode(root, followup),
+                  playableStateScope(followup.getPlayableStateScope()),
+                  requiredAuthoritativeText(
+                      followup.getReadSnapshotToken(), root, "readSnapshotToken"),
+                  eventPayloadJson(root, followup)),
+              toRequestRoutingBundle(routingBundle));
       if (scriptId != null) {
         request.setScriptId(scriptId);
       }
@@ -391,11 +388,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       }
       if (pluginVersionId != null) {
         request.setPluginVersionId(pluginVersionId);
-      }
-      if (routingBundle != null) {
-        request.setWorldSlug(routingBundle.worldSlug());
-        request.setRealmSlug(routingBundle.realmSlug());
-        request.setPointerVersion(Long.toString(routingBundle.pointerVersion()));
       }
       Long dueTickId = authoritativeLong(followup.getDueTickId(), root, "dueTickId");
       if (dueTickId != null) {
@@ -584,6 +576,17 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     throw new IllegalArgumentException(
         "worldSlug, realmSlug, and pointerVersion must be provided together");
+  }
+
+  private static TriggerScriptEventRequestFactory.RoutingBundle toRequestRoutingBundle(
+      RoutingBundle routingBundle) {
+    if (routingBundle == null) {
+      return null;
+    }
+    return new TriggerScriptEventRequestFactory.RoutingBundle(
+        routingBundle.worldSlug(),
+        routingBundle.realmSlug(),
+        Long.toString(routingBundle.pointerVersion()));
   }
 
   private static String jsonStringField(String fieldName, String value) {

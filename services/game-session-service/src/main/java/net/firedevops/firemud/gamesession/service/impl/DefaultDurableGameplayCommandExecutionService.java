@@ -100,10 +100,8 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
-    if (parsed.type() != TextCommandType.AUTHORED) {
-      publishCommandEventIfSessionless(context, command);
-    }
     if (isDurableItemMutation(parsed.type())) {
+      publishCommandEventForLiveExecution(context, command);
       return Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
     }
     if (isDurableCommunication(parsed.type())) {
@@ -120,6 +118,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     if (parsed.type() == TextCommandType.AUTHORED) {
       return Optional.of(executeAuthoredMutation(context, parsed, command, effect.getEffectId()));
     }
+    publishCommandEventForLiveExecution(context, command);
     PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
     if (!prepared.commandResult().accepted()) {
       if (prepared.responseOutput() != null) {
@@ -211,6 +210,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
+    publishCommandEventForLiveExecution(context, command);
     var result = communicationCommandHandler.handle(context, parsed, effectId);
     durableGameplayReplayService.save(
         context.tenantId(),
@@ -237,6 +237,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
+    publishCommandEventForLiveExecution(context, command);
     var result = afkCommandHandler.handle(context, parsed);
     durableGameplayReplayService.save(
         context.tenantId(),
@@ -263,6 +264,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
+    publishCommandEventForLiveExecution(context, command);
     var result = actionStateCommandHandler.handle(context, parsed, effectId);
     durableGameplayReplayService.save(
         context.tenantId(),
@@ -289,7 +291,7 @@ public final class DefaultDurableGameplayCommandExecutionService
       }
       return recordResult(command, replayResult(record));
     }
-    publishCommandEventIfSessionless(context, command);
+    publishCommandEventForLiveExecution(context, command);
     var result = authoredActionCommandHandler.handle(parsed);
     durableGameplayReplayService.save(
         context.tenantId(),
@@ -379,10 +381,8 @@ public final class DefaultDurableGameplayCommandExecutionService
     scriptEventPublisher.publishRegionTransitionEvents(originalContext, updatedContext, effectId);
   }
 
-  private void publishCommandEventIfSessionless(SessionContext context, GameplayCommand command) {
-    if (command.getSessionId() != null && command.getSessionId() > 0) {
-      return;
-    }
+  private void publishCommandEventForLiveExecution(
+      SessionContext context, GameplayCommand command) {
     scriptEventPublisher.publishCommandEvent(context, command);
   }
 

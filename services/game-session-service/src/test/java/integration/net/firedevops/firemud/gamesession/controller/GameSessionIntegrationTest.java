@@ -25,6 +25,7 @@ import org.springframework.context.annotation.Import;
     classes = GameSessionServiceApplication.class,
     properties = {
       "firemud.database.enabled=false",
+      "spring.task.scheduling.enabled=false",
       FiremudAuthTestProperties.JWT_SECRET,
       FiremudAuthTestProperties.JWT_EXPIRATION,
       FiremudAuthTestProperties.HTTP_ENABLED,

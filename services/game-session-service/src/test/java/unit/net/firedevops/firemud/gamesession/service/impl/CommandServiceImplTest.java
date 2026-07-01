@@ -12,8 +12,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -42,7 +44,7 @@ class CommandServiceImplTest {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -77,9 +79,9 @@ class CommandServiceImplTest {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
-        .thenReturn(Optional.of(new SessionContext(7L, 9L, 0L, null, 0L, null, 0L, null, null)));
+        .thenReturn(Optional.of(bootstrapShell(7L, 9L, 7L)));
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -121,7 +123,7 @@ class CommandServiceImplTest {
     instance.setTenantId(9L);
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -161,7 +163,7 @@ class CommandServiceImplTest {
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -179,7 +181,116 @@ class CommandServiceImplTest {
   }
 
   @Test
-  void staleGameplaySessionQueuesAgainstBootstrapShellAfterNormalization() {
+  void gameplayCommandsPersistCurrentRuntimeScopeForDurableCommandEventFallback() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(
+                    17L,
+                    9L,
+                    3L,
+                    "demo",
+                    44L,
+                    "char",
+                    99L,
+                    "room",
+                    "jwt",
+                    null,
+                    99L,
+                    "demo",
+                    "production",
+                    7L,
+                    "SHARED")));
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
+        .thenReturn(Optional.of(status));
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            runtimeRegionStatusRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.accepted());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getAllValues().get(0);
+    assertEquals("44", accepted.getTargetEntityId());
+    assertEquals("region-99", accepted.getRegionId());
+    assertEquals(7L, accepted.getRegionEpoch());
+  }
+
+  @Test
+  void bootstrapShellQueuesAgainstBootstrapRuntimeWhenSessionIdDiffers() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    SessionContext bootstrapShell =
+        new SessionContext(
+            17L,
+            9L,
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            null,
+            99L,
+            "demo",
+            "production",
+            1L,
+            null);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(Optional.of(bootstrapShell));
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            scriptEventPublisher);
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.accepted());
+    verify(tickService).enqueueCommand(9L, 99L, result.commandId(), "look", false);
+    verify(scriptEventPublisher, never())
+        .publishCommandEvent(Mockito.any(SessionContext.class), Mockito.any(GameplayCommand.class));
+  }
+
+  @Test
+  void staleNormalizedGameplaySessionFailsClosedWithoutBootstrapRoutingBundle() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
@@ -196,7 +307,7 @@ class CommandServiceImplTest {
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -207,8 +318,16 @@ class CommandServiceImplTest {
 
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
-    assertTrue(result.accepted());
-    verify(tickService).enqueueCommand(9L, 17L, result.commandId(), "look", false);
+    assertTrue(result.hasError());
+    assertEquals("NOT_FOUND", result.errorCode());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+    verify(commandRepository, never()).save(Mockito.any());
     verify(scriptEventPublisher, never())
         .publishCommandEvent(Mockito.any(SessionContext.class), Mockito.any(GameplayCommand.class));
   }
@@ -245,7 +364,7 @@ class CommandServiceImplTest {
             Mockito.eq(false));
 
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -278,7 +397,7 @@ class CommandServiceImplTest {
             Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -345,7 +464,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -378,11 +497,7 @@ class CommandServiceImplTest {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
-        .thenReturn(
-            Optional.of(
-                new SessionContext(
-                    17L, 9L, 3L, "demo", 0L, null, 0L, null, "jwt", null, 99L, null, null, 0L,
-                    null)));
+        .thenReturn(Optional.of(bootstrapShell(17L, 9L, 99L, 3L, "demo", "jwt")));
     Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
             java.util.List.of(
@@ -401,7 +516,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -434,11 +549,7 @@ class CommandServiceImplTest {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
-        .thenReturn(
-            Optional.of(
-                new SessionContext(
-                    17L, 9L, 3L, "demo", 0L, null, 0L, null, "jwt", null, 99L, null, null, 0L,
-                    null)));
+        .thenReturn(Optional.of(bootstrapShell(17L, 9L, 99L, 3L, "demo", "jwt")));
     Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
             java.util.List.of(
@@ -470,7 +581,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -487,9 +598,9 @@ class CommandServiceImplTest {
     verify(commandRepository, times(2)).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
-    assertNull(accepted.getWorldSlug());
-    assertNull(accepted.getRealmSlug());
-    assertNull(accepted.getPointerVersion());
+    assertEquals("demo-world", accepted.getWorldSlug());
+    assertEquals("live", accepted.getRealmSlug());
+    assertEquals(12L, accepted.getPointerVersion());
   }
 
   @Test
@@ -503,11 +614,7 @@ class CommandServiceImplTest {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
-        .thenReturn(
-            Optional.of(
-                new SessionContext(
-                    17L, 9L, 3L, "demo", 0L, null, 0L, null, "jwt", null, 99L, null, null, 0L,
-                    null)));
+        .thenReturn(Optional.of(bootstrapShell(17L, 9L, 99L, 3L, "demo", "jwt")));
     Mockito.when(pointerAuthorityService.listByRuntimeTarget(9L, 99L))
         .thenReturn(
             java.util.List.of(
@@ -526,7 +633,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -543,9 +650,9 @@ class CommandServiceImplTest {
     verify(commandRepository, times(2)).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
-    assertNull(accepted.getWorldSlug());
-    assertNull(accepted.getRealmSlug());
-    assertNull(accepted.getPointerVersion());
+    assertEquals("demo-world", accepted.getWorldSlug());
+    assertEquals("live", accepted.getRealmSlug());
+    assertEquals(12L, accepted.getPointerVersion());
   }
 
   @Test
@@ -595,7 +702,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -666,7 +773,7 @@ class CommandServiceImplTest {
         .thenReturn(java.util.List.of());
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -736,7 +843,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -791,7 +898,7 @@ class CommandServiceImplTest {
         .thenReturn(java.util.List.of());
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -846,7 +953,7 @@ class CommandServiceImplTest {
         .thenReturn(java.util.List.of());
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -915,7 +1022,7 @@ class CommandServiceImplTest {
                     "OPEN")));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -960,7 +1067,7 @@ class CommandServiceImplTest {
             Mockito.eq("look"),
             Mockito.eq(false));
     CommandServiceImpl service =
-        new CommandServiceImpl(
+        newCommandService(
             tickService,
             rateLimiter,
             repository,
@@ -982,6 +1089,49 @@ class CommandServiceImplTest {
     assertEquals("FAILED", failed.getExecutionOutcome());
     assertEquals("NOT_APPLIED", failed.getGameplayResult());
     assertEquals("INVALID_ARGUMENT", failed.getFailureCode());
+  }
+
+  private CommandServiceImpl newCommandService(
+      TickService tickService,
+      SessionRateLimiter rateLimiter,
+      GameInstanceRepository repository,
+      GameplayCommandRepository commandRepository,
+      SessionAuthenticationService sessionAuthenticationService,
+      GameplayAdmissionPointerAuthorityService pointerAuthorityService,
+      ScriptEventPublisher scriptEventPublisher) {
+    return newCommandService(
+        tickService,
+        rateLimiter,
+        repository,
+        commandRepository,
+        emptyRuntimeRegionStatusRepository(),
+        sessionAuthenticationService,
+        pointerAuthorityService,
+        scriptEventPublisher);
+  }
+
+  private CommandServiceImpl newCommandService(
+      TickService tickService,
+      SessionRateLimiter rateLimiter,
+      GameInstanceRepository repository,
+      GameplayCommandRepository commandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      SessionAuthenticationService sessionAuthenticationService,
+      GameplayAdmissionPointerAuthorityService pointerAuthorityService,
+      ScriptEventPublisher scriptEventPublisher) {
+    return new CommandServiceImpl(
+        tickService,
+        rateLimiter,
+        repository,
+        commandRepository,
+        runtimeRegionStatusRepository,
+        sessionAuthenticationService,
+        pointerAuthorityService,
+        scriptEventPublisher);
+  }
+
+  private RuntimeRegionStatusRepository emptyRuntimeRegionStatusRepository() {
+    return Mockito.mock(RuntimeRegionStatusRepository.class);
   }
 
   private GameplayCommandRepository commandRepositorySavingArgument() {
@@ -1008,5 +1158,35 @@ class CommandServiceImplTest {
     Mockito.when(service.normalizeResolvedContext(Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     return service;
+  }
+
+  private SessionContext bootstrapShell(
+      long sessionId, long tenantId, long bootstrapGameInstanceId) {
+    return bootstrapShell(sessionId, tenantId, bootstrapGameInstanceId, 0L, null, null);
+  }
+
+  private SessionContext bootstrapShell(
+      long sessionId,
+      long tenantId,
+      long bootstrapGameInstanceId,
+      long accountId,
+      String loginName,
+      String jwt) {
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        0L,
+        null,
+        0L,
+        null,
+        jwt,
+        null,
+        bootstrapGameInstanceId,
+        "demo-world",
+        "live",
+        12L,
+        null);
   }
 }

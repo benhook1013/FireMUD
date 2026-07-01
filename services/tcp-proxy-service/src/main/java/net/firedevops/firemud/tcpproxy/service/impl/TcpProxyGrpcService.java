@@ -16,7 +16,6 @@ import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
-import org.springframework.util.StringUtils;
 
 /** gRPC endpoints for the TCP Proxy Service. */
 @GrpcService
@@ -56,13 +55,9 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
         request.getProxyConnectionId(),
         request.getDisconnectSequence());
     try {
-      String gameInstanceId =
-          StringUtils.hasText(request.getGameInstanceId())
-              ? request.getGameInstanceId()
-              : request.getSessionId();
       NotifyDisconnectResponse response =
           eventService.notifyDisconnect(
-              gameInstanceId,
+              request.getGameInstanceId(),
               request.getTenantId(),
               request.getProxyConnectionId(),
               request.getDisconnectSequence());

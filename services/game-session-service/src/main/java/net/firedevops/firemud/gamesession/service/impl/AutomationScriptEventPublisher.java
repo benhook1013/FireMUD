@@ -14,7 +14,6 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolv
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver.ResolvedTextCommandMetadata;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
-import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -58,34 +57,32 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   public void publishCommandEvent(SessionContext context, GameplayCommand command) {
     submitBestEffort(
         () -> {
-          PublishingScope scope = resolvePublishingScope(context);
+          PublishingScope scope = resolvePublishingScope(context, command);
           if (scope == null) {
             return;
           }
           TriggerScriptEventRequest request =
-              TriggerScriptEventRequest.newBuilder()
-                  .setTenantId(scope.tenantId())
-                  .setGameInstanceId(scope.gameInstanceId())
-                  .setRegionId(scope.regionId())
-                  .setRegionEpoch(scope.regionEpoch())
-                  .setEntityId(scope.entityId())
-                  .setEventType("onCommand")
-                  .setEventSchemaVersion("v1")
-                  .setScriptPatchVersion(scope.scriptPatchVersion())
-                  .setScriptEventId(command.getCommandId())
-                  .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
-                  .setPlayableStateScope(scope.playableStateScope())
-                  .setWorldSlug(scope.worldSlug())
-                  .setRealmSlug(scope.realmSlug())
-                  .setPointerVersion(scope.pointerVersion())
-                  .setReadSnapshotToken(
-                      "game-session:onCommand:"
-                          + scope.gameInstanceId()
-                          + ":"
-                          + scope.regionEpoch()
-                          + ":"
-                          + command.getCommandId())
-                  .setPayloadJson(commandPayload(command))
+              TriggerScriptEventRequestFactory.builder(
+                      new TriggerScriptEventRequestFactory.CommonFields(
+                          scope.tenantId(),
+                          scope.gameInstanceId(),
+                          scope.regionId(),
+                          scope.regionEpoch(),
+                          scope.entityId(),
+                          "onCommand",
+                          "v1",
+                          scope.scriptPatchVersion(),
+                          command.getCommandId(),
+                          TriggerMode.TRIGGER_MODE_NORMAL,
+                          scope.playableStateScope(),
+                          "game-session:onCommand:"
+                              + scope.gameInstanceId()
+                              + ":"
+                              + scope.regionEpoch()
+                              + ":"
+                              + command.getCommandId(),
+                          commandPayload(command)),
+                      scope.routingBundle())
                   .build();
           logIfNotAdmitted(
               client.triggerScriptEvent(request),
@@ -268,23 +265,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String readSnapshotToken,
       String payloadJson) {
     TriggerScriptEventRequest request =
-        TriggerScriptEventRequest.newBuilder()
-            .setTenantId(scope.tenantId())
-            .setGameInstanceId(scope.gameInstanceId())
-            .setRegionId(scope.regionId())
-            .setRegionEpoch(scope.regionEpoch())
-            .setEntityId(scope.entityId())
-            .setEventType(eventType)
-            .setEventSchemaVersion("v1")
-            .setScriptPatchVersion(scope.scriptPatchVersion())
-            .setScriptEventId(scriptEventId)
-            .setTriggerMode(TriggerMode.TRIGGER_MODE_NORMAL)
-            .setPlayableStateScope(scope.playableStateScope())
-            .setWorldSlug(scope.worldSlug())
-            .setRealmSlug(scope.realmSlug())
-            .setPointerVersion(scope.pointerVersion())
-            .setReadSnapshotToken(readSnapshotToken)
-            .setPayloadJson(payloadJson)
+        TriggerScriptEventRequestFactory.builder(
+                new TriggerScriptEventRequestFactory.CommonFields(
+                    scope.tenantId(),
+                    scope.gameInstanceId(),
+                    scope.regionId(),
+                    scope.regionEpoch(),
+                    scope.entityId(),
+                    eventType,
+                    "v1",
+                    scope.scriptPatchVersion(),
+                    scriptEventId,
+                    TriggerMode.TRIGGER_MODE_NORMAL,
+                    scope.playableStateScope(),
+                    readSnapshotToken,
+                    payloadJson),
+                scope.routingBundle())
             .build();
     logIfNotAdmitted(
         client.triggerScriptEvent(request), eventType, scope.gameInstanceId(), scriptEventId);
@@ -323,48 +319,144 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   }
 
   private PublishingScope resolvePublishingScope(SessionContext context) {
-    if (context == null || context.gameInstanceId() <= 0 || context.characterId() <= 0) {
+    return resolvePublishingScope(context, null);
+  }
+
+  private PublishingScope resolvePublishingScope(SessionContext context, GameplayCommand command) {
+    long tenantId =
+        positive(
+            command == null ? null : command.getTenantId(),
+            context == null ? 0L : context.tenantId());
+    long gameInstanceId =
+        positive(
+            command == null ? null : command.getGameInstanceId(),
+            context == null ? 0L : context.gameInstanceId());
+    String entityId = resolveEntityId(context, command);
+    if (gameInstanceId <= 0 || !StringUtils.hasText(entityId)) {
       return null;
     }
     String scriptPatchVersion =
         gameInstanceRepository
-            .findById(context.gameInstanceId())
+            .findById(gameInstanceId)
             .map(GameInstance::getScriptPatchVersion)
             .filter(StringUtils::hasText)
             .orElse("");
     if (scriptPatchVersion.isBlank()) {
       LOG.debug(
           "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
-          context.tenantId(),
-          context.gameInstanceId(),
-          context.characterId());
+          tenantId,
+          gameInstanceId,
+          entityId);
       return null;
     }
-    RuntimeRegionStatus ownership =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(context.tenantId(), context.gameInstanceId())
-            .orElse(null);
-    if (ownership == null) {
+    PublishedRegionScope scopeRegion =
+        resolvePublishedRegionScope(command)
+            .orElseGet(() -> resolveCurrentRegionScope(tenantId, gameInstanceId).orElse(null));
+    if (scopeRegion == null) {
       LOG.debug(
           "Skipping script event publish because runtime ownership is not initialized tenantId={} gameInstanceId={} characterId={}",
-          context.tenantId(),
-          context.gameInstanceId(),
-          context.characterId());
+          tenantId,
+          gameInstanceId,
+          entityId);
       return null;
     }
     return new PublishingScope(
-        Long.toString(context.tenantId()),
-        Long.toString(context.gameInstanceId()),
-        StringUtils.hasText(ownership.getRegionId())
-            ? ownership.getRegionId()
-            : Long.toString(context.gameInstanceId()),
-        ownership.getRegionEpoch(),
-        Long.toString(context.characterId()),
-        resolvePlayableStateScope(context),
+        Long.toString(tenantId),
+        Long.toString(gameInstanceId),
+        scopeRegion.regionId(),
+        scopeRegion.regionEpoch(),
+        entityId,
+        resolvePlayableStateScope(context, command),
         scriptPatchVersion,
-        normalize(context.worldSlug()),
-        normalize(context.realmSlug()),
-        context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : "");
+        resolveRoutingBundle(context, command));
+  }
+
+  private Optional<PublishedRegionScope> resolveCurrentRegionScope(
+      long tenantId, long gameInstanceId) {
+    return runtimeRegionStatusRepository
+        .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+        .map(
+            ownership ->
+                new PublishedRegionScope(
+                    StringUtils.hasText(ownership.getRegionId())
+                        ? ownership.getRegionId()
+                        : Long.toString(gameInstanceId),
+                    ownership.getRegionEpoch()));
+  }
+
+  private Optional<PublishedRegionScope> resolvePublishedRegionScope(GameplayCommand command) {
+    if (command == null
+        || !StringUtils.hasText(command.getRegionId())
+        || command.getRegionEpoch() == null
+        || command.getRegionEpoch() <= 0) {
+      return Optional.empty();
+    }
+    return Optional.of(new PublishedRegionScope(command.getRegionId(), command.getRegionEpoch()));
+  }
+
+  private static String resolveEntityId(SessionContext context, GameplayCommand command) {
+    if (command != null && StringUtils.hasText(command.getTargetEntityId())) {
+      return command.getTargetEntityId();
+    }
+    if (command != null && command.getCharacterId() != null && command.getCharacterId() > 0) {
+      return Long.toString(command.getCharacterId());
+    }
+    if (context != null && context.characterId() > 0) {
+      return Long.toString(context.characterId());
+    }
+    return null;
+  }
+
+  private static PlayableStateScope resolvePlayableStateScope(
+      SessionContext context, GameplayCommand command) {
+    if (command != null && StringUtils.hasText(command.getPlayableStateScope())) {
+      return resolvePlayableStateScope(command.getPlayableStateScope());
+    }
+    return context == null
+        ? PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        : resolvePlayableStateScope(context.playableStateScope());
+  }
+
+  private static TriggerScriptEventRequestFactory.RoutingBundle resolveRoutingBundle(
+      SessionContext context, GameplayCommand command) {
+    TriggerScriptEventRequestFactory.RoutingBundle commandBundle =
+        completeRoutingBundle(
+            command == null ? null : command.getWorldSlug(),
+            command == null ? null : command.getRealmSlug(),
+            command == null
+                    || command.getPointerVersion() == null
+                    || command.getPointerVersion() <= 0
+                ? null
+                : Long.toString(command.getPointerVersion()));
+    if (commandBundle != null) {
+      return commandBundle;
+    }
+    TriggerScriptEventRequestFactory.RoutingBundle contextBundle =
+        completeRoutingBundle(
+            context == null ? null : context.worldSlug(),
+            context == null ? null : context.realmSlug(),
+            context != null && context.pointerVersion() > 0
+                ? Long.toString(context.pointerVersion())
+                : null);
+    return contextBundle == null
+        ? new TriggerScriptEventRequestFactory.RoutingBundle("", "", "")
+        : contextBundle;
+  }
+
+  private static TriggerScriptEventRequestFactory.RoutingBundle completeRoutingBundle(
+      String worldSlug, String realmSlug, String pointerVersion) {
+    String normalizedWorldSlug = normalize(worldSlug);
+    String normalizedRealmSlug = normalize(realmSlug);
+    String normalizedPointerVersion = normalize(pointerVersion);
+    boolean hasAll =
+        StringUtils.hasText(normalizedWorldSlug)
+            && StringUtils.hasText(normalizedRealmSlug)
+            && StringUtils.hasText(normalizedPointerVersion);
+    if (hasAll) {
+      return new TriggerScriptEventRequestFactory.RoutingBundle(
+          normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
+    }
+    return null;
   }
 
   private static String regionTransitionPayload(String fromRegionId, String toRegionId) {
@@ -404,20 +496,24 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
-      String worldSlug,
-      String realmSlug,
-      String pointerVersion) {}
+      TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
 
-  private static PlayableStateScope resolvePlayableStateScope(SessionContext context) {
-    if (!StringUtils.hasText(context.playableStateScope())) {
+  private record PublishedRegionScope(String regionId, long regionEpoch) {}
+
+  private static PlayableStateScope resolvePlayableStateScope(String playableStateScope) {
+    if (!StringUtils.hasText(playableStateScope)) {
       return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
     }
-    return switch (context.playableStateScope()) {
+    return switch (playableStateScope) {
       case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
       case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
       default ->
           throw new IllegalArgumentException(
-              "Unsupported playableStateScope=" + context.playableStateScope());
+              "Unsupported playableStateScope=" + playableStateScope);
     };
+  }
+
+  private static long positive(Long value, long fallback) {
+    return value != null && value > 0 ? value : fallback;
   }
 }

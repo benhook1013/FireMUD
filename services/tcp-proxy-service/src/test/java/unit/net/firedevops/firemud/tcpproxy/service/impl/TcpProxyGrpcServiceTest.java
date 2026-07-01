@@ -167,7 +167,46 @@ class TcpProxyGrpcServiceTest {
   }
 
   @Test
-  void notifyDisconnectForwardsSessionAndTenant() {
+  void notifyDisconnectForwardsExplicitGameInstanceAndTenant() {
+    PingService pingService = Mockito.mock(PingService.class);
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    NotifyDisconnectResponse upstream =
+        NotifyDisconnectResponse.newBuilder()
+            .setError(ErrorDetail.newBuilder().setCode("OK").setMessage("ok").build())
+            .build();
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(upstream);
+
+    TcpProxyGrpcService service = newService(pingService, eventService);
+
+    service.notifyDisconnect(
+        net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
+            .setSessionId("sess-123")
+            .setGameInstanceId("runtime-77")
+            .setTenantId("tenant-xyz")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyDisconnectResponse value) {}
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    Mockito.verify(eventService).notifyDisconnect("runtime-77", "tenant-xyz", "conn-1", 1L);
+  }
+
+  @Test
+  void notifyDisconnectDoesNotFallbackFromMissingGameInstanceIdToSessionId() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     NotifyDisconnectResponse upstream =
@@ -201,7 +240,7 @@ class TcpProxyGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    Mockito.verify(eventService).notifyDisconnect("sess-123", "tenant-xyz", "conn-1", 1L);
+    Mockito.verify(eventService).notifyDisconnect("", "tenant-xyz", "conn-1", 1L);
   }
 
   @Test
