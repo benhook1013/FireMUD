@@ -15,6 +15,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
@@ -121,6 +123,12 @@ public class GameSessionControlPlaneClient
     return stub()
         .validateBuiltInCommandAlias(
             ValidateBuiltInCommandAliasRequest.newBuilder().setAlias(alias).build());
+  }
+
+  public GetGameplayCommandStatusResponse getGameplayCommandStatus(String commandId) {
+    return stub()
+        .getGameplayCommandStatus(
+            GetGameplayCommandStatusRequest.newBuilder().setCommandId(commandId).build());
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
