@@ -9,6 +9,8 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
@@ -18,6 +20,7 @@ import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -180,6 +183,25 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     return toDto(preparation);
   }
 
+  @Override
+  @Timed(value = "loggingadmin.admissionPointer.getRuntimeState")
+  public GameInstanceRuntimeStateDto getRuntimeState(long tenantId, long gameInstanceId) {
+    SessionContext.requireTenantAccess(tenantId);
+    GetGameInstanceRuntimeStateResponse response =
+        gameSessionControlPlaneClient.getGameInstanceRuntimeState(tenantId, gameInstanceId);
+    requireNoError(response.getError());
+    GameInstanceRuntimeState runtimeState = response.getRuntimeState();
+    if (runtimeState.getGameInstanceId().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Runtime state not found");
+    }
+    if (parseLong(runtimeState.getTenantId(), "tenant_id") != tenantId) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane runtime state response did not match requested tenant_id");
+    }
+    return toDto(runtimeState);
+  }
+
   private boolean hasTenantAccess(AdmissionPointerControlPlaneEntry entry) {
     return SessionContext.hasTenantAccess(parseLong(entry.getTenantId(), "tenant_id"));
   }
@@ -245,6 +267,50 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         preparation.getExecutionControlPlaneRequestId().isBlank()
             ? null
             : preparation.getExecutionControlPlaneRequestId());
+  }
+
+  private GameInstanceRuntimeStateDto toDto(GameInstanceRuntimeState runtimeState) {
+    return new GameInstanceRuntimeStateDto(
+        parseLong(runtimeState.getTenantId(), "tenant_id"),
+        parseLong(runtimeState.getGameInstanceId(), "game_instance_id"),
+        runtimeState.getRuntimeVersionId(),
+        runtimeState.getPinnedScriptPatchVersion(),
+        runtimeState.getLaunchDescriptorId(),
+        runtimeState.getStatus(),
+        runtimeState.getVersionId().isBlank()
+            ? null
+            : parseLong(runtimeState.getVersionId(), "version_id"),
+        runtimeState.getReleaseBundleId().isBlank()
+            ? null
+            : parseLong(runtimeState.getReleaseBundleId(), "release_bundle_id"),
+        runtimeState.getVersionStateEpoch(),
+        runtimeState.getScriptPatchPinnedAtMs() <= 0
+            ? null
+            : Instant.ofEpochMilli(runtimeState.getScriptPatchPinnedAtMs()),
+        runtimeState.getScriptPatchPinnedBy(),
+        runtimeState.getScriptPatchPinnedReason(),
+        runtimeState.getScriptPatchPinnedControlPlaneRequestId(),
+        runtimeState.getPlayableStateScope().name(),
+        runtimeState.getWorldSlug(),
+        runtimeState.getRealmSlug(),
+        runtimeState.getPointerVersion() <= 0 ? null : runtimeState.getPointerVersion(),
+        new GameInstanceRuntimeStateDto.ScriptPatchPublicationLinkDto(
+            runtimeState.getPublication().getScriptPatchVersion(),
+            runtimeState.getPublication().getVersionId() <= 0
+                ? null
+                : runtimeState.getPublication().getVersionId(),
+            runtimeState.getPublication().getBaseVersionId() <= 0
+                ? null
+                : runtimeState.getPublication().getBaseVersionId(),
+            runtimeState.getPublication().getPublicationState().name(),
+            runtimeState.getPublication().getLastChangedAtMs() <= 0
+                ? null
+                : Instant.ofEpochMilli(runtimeState.getPublication().getLastChangedAtMs()),
+            runtimeState.getPublication().getLookupErrorCode(),
+            runtimeState.getPublication().getLookupErrorMessage()),
+        runtimeState.getRegionId(),
+        runtimeState.getRegionEpoch(),
+        runtimeState.getCurrentAdmissionPointersList().stream().map(this::toDto).toList());
   }
 
   private void ensureAuditTenantMatches(

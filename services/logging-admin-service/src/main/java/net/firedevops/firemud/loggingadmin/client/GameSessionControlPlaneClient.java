@@ -11,6 +11,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -92,6 +94,16 @@ public class GameSessionControlPlaneClient
   public GetPreparedVersionUpgradeResponse getPreparedVersionUpgrade(
       GetPreparedVersionUpgradeRequest request) {
     return stub().getPreparedVersionUpgrade(request);
+  }
+
+  public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
+      long tenantId, long gameInstanceId) {
+    return stub()
+        .getGameInstanceRuntimeState(
+            GetGameInstanceRuntimeStateRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameInstanceId(Long.toString(gameInstanceId))
+                .build());
   }
 
   public PauseTicksForScopeResponse pauseTicksForScope(PauseTicksForScopeRequest request) {
