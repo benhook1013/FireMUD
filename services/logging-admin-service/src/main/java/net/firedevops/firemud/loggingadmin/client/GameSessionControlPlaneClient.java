@@ -29,6 +29,8 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
@@ -141,6 +143,11 @@ public class GameSessionControlPlaneClient
                 .setTenantId(Long.toString(tenantId))
                 .setCoordinatorId(coordinatorId)
                 .build());
+  }
+
+  public ListRemoteCommandCoordinatorsResponse listRemoteCommandCoordinators(
+      ListRemoteCommandCoordinatorsRequest request) {
+    return stub().listRemoteCommandCoordinators(request);
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(

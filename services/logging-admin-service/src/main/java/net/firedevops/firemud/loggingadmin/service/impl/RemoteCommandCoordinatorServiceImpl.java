@@ -3,11 +3,15 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import java.util.List;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.RemoteCommandCoordinatorEntry;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorDto;
+import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorListRequest;
 import net.firedevops.firemud.loggingadmin.service.RemoteCommandCoordinatorService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.http.HttpStatus;
@@ -51,6 +55,59 @@ public class RemoteCommandCoordinatorServiceImpl implements RemoteCommandCoordin
           "control-plane remote command coordinator response did not match requested coordinator_id");
     }
     return toDto(coordinator);
+  }
+
+  @Override
+  @Timed(value = "loggingadmin.remoteCommandCoordinator.listRemoteCommandCoordinators")
+  public List<RemoteCommandCoordinatorDto> listRemoteCommandCoordinators(
+      long tenantId, RemoteCommandCoordinatorListRequest request) {
+    SessionContext.requireTenantAccess(tenantId);
+    ListRemoteCommandCoordinatorsResponse response =
+        gameSessionControlPlaneClient.listRemoteCommandCoordinators(toRequest(tenantId, request));
+    requireNoError(response.getError());
+    return response.getCoordinatorsList().stream()
+        .map(
+            coordinator -> {
+              long responseTenantId = parseLong(coordinator.getTenantId(), "tenant_id");
+              if (responseTenantId != tenantId) {
+                throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "control-plane remote command coordinator list response did not match requested tenant_id");
+              }
+              return toDto(coordinator);
+            })
+        .toList();
+  }
+
+  private ListRemoteCommandCoordinatorsRequest toRequest(
+      long tenantId, RemoteCommandCoordinatorListRequest request) {
+    ListRemoteCommandCoordinatorsRequest.Builder builder =
+        ListRemoteCommandCoordinatorsRequest.newBuilder().setTenantId(Long.toString(tenantId));
+    if (hasText(request.getOriginGameInstanceId())) {
+      builder.setOriginGameInstanceId(request.getOriginGameInstanceId());
+    }
+    if (hasText(request.getOriginRegionId())) {
+      builder.setOriginRegionId(request.getOriginRegionId());
+    }
+    if (hasText(request.getTargetGameInstanceId())) {
+      builder.setTargetGameInstanceId(request.getTargetGameInstanceId());
+    }
+    if (hasText(request.getTargetRegionId())) {
+      builder.setTargetRegionId(request.getTargetRegionId());
+    }
+    if (hasText(request.getState())) {
+      builder.setState(request.getState());
+    }
+    if (hasText(request.getFollowupId())) {
+      builder.setFollowupId(request.getFollowupId());
+    }
+    if (hasText(request.getCommandId())) {
+      builder.setCommandId(request.getCommandId());
+    }
+    if (request.getLimit() != null) {
+      builder.setLimit(request.getLimit());
+    }
+    return builder.build();
   }
 
   private RemoteCommandCoordinatorDto toDto(RemoteCommandCoordinatorEntry coordinator) {
@@ -213,5 +270,9 @@ public class RemoteCommandCoordinatorServiceImpl implements RemoteCommandCoordin
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private boolean hasText(String value) {
+    return value != null && !value.isBlank();
   }
 }

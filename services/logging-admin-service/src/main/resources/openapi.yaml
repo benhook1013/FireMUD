@@ -1676,6 +1676,73 @@ paths:
                     $ref: '#/components/schemas/RemoteCommandCoordinatorDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+  /remote-command-coordinators/{tenantId}:
+    get:
+      summary: List canonical remote command coordinators with bounded filters
+      operationId: listRemoteCommandCoordinators
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: originGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: followupId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: commandId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Matching remote command coordinators
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RemoteCommandCoordinatorDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:
     post:
       summary: Pause ticks for one scoped runtime target
