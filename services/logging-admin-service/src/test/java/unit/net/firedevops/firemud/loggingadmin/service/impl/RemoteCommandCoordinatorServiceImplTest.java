@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.gamesession.v1.RemoteCommandCoordinatorEntry;
 import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorDto;
+import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorListRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,6 +97,35 @@ class RemoteCommandCoordinatorServiceImplTest {
 
     assertThrows(
         ResponseStatusException.class, () -> service.getRemoteCommandCoordinator(2L, "coord-123"));
+  }
+
+  @Test
+  void listRemoteCommandCoordinatorsBuildsBoundedFilterRequestAndMapsRows() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    RemoteCommandCoordinatorListRequest request = new RemoteCommandCoordinatorListRequest();
+    request.setOriginGameInstanceId("7");
+    request.setTargetRegionId("target-region");
+    request.setState("PENDING_REMOTE");
+    request.setCommandId("cmd-123");
+    request.setLimit(5);
+    when(gameSessionControlPlaneClient.listRemoteCommandCoordinators(
+            argThat(
+                grpcRequest ->
+                    "2".equals(grpcRequest.getTenantId())
+                        && "7".equals(grpcRequest.getOriginGameInstanceId())
+                        && "target-region".equals(grpcRequest.getTargetRegionId())
+                        && "PENDING_REMOTE".equals(grpcRequest.getState())
+                        && "cmd-123".equals(grpcRequest.getCommandId())
+                        && grpcRequest.getLimit() == 5)))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse.newBuilder()
+                .addCoordinators(remoteCoordinator("2", "coord-123"))
+                .build());
+
+    List<RemoteCommandCoordinatorDto> result = service.listRemoteCommandCoordinators(2L, request);
+
+    assertEquals(1, result.size());
+    assertEquals("coord-123", result.getFirst().coordinatorId());
   }
 
   private RemoteCommandCoordinatorEntry remoteCoordinator(String tenantId, String coordinatorId) {

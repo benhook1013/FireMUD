@@ -4,9 +4,11 @@ import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorDto;
+import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorListRequest;
 import net.firedevops.firemud.loggingadmin.service.RemoteCommandCoordinatorService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,6 +21,20 @@ public class RemoteCommandCoordinatorController {
   public RemoteCommandCoordinatorController(
       RemoteCommandCoordinatorService remoteCommandCoordinatorService) {
     this.remoteCommandCoordinatorService = remoteCommandCoordinatorService;
+  }
+
+  @GetMapping("/{tenantId}")
+  @Timed(
+      value = "listRemoteCommandCoordinators",
+      description = "List canonical remote command coordinators for a tenant with bounded filters")
+  public ResponseEntity<ApiResponse<java.util.List<RemoteCommandCoordinatorDto>>>
+      listRemoteCommandCoordinators(
+          @PathVariable long tenantId,
+          @ModelAttribute RemoteCommandCoordinatorListRequest request) {
+    SessionContext.requireTenantAccess(tenantId);
+    return ResponseEntity.ok(
+        ApiResponse.success(
+            remoteCommandCoordinatorService.listRemoteCommandCoordinators(tenantId, request)));
   }
 
   @GetMapping("/{tenantId}/{coordinatorId}")

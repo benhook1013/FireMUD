@@ -71,6 +71,24 @@ class RemoteCommandCoordinatorControllerTest {
         .andExpect(status().isForbidden());
   }
 
+  @Test
+  void listRemoteCommandCoordinatorsReturnsBoundedRows() throws Exception {
+    when(remoteCommandCoordinatorService.listRemoteCommandCoordinators(
+            org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(List.of(remoteCommandCoordinatorDto()));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-command-coordinators/2")
+                .param("state", "PENDING_REMOTE")
+                .param("limit", "5")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].coordinatorId").value("coord-123"));
+  }
+
   private RemoteCommandCoordinatorDto remoteCommandCoordinatorDto() {
     return new RemoteCommandCoordinatorDto(
         "coord-123",
