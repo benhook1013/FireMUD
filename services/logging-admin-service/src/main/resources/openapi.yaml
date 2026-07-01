@@ -133,6 +133,322 @@ components:
         normalizedAlias:
           type: string
           nullable: true
+    GameplayCommandStatusDto:
+      type: object
+      properties:
+        commandId:
+          type: string
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        sessionId:
+          type: integer
+        accountId:
+          type: integer
+          nullable: true
+        characterId:
+          type: integer
+          nullable: true
+        commandName:
+          type: string
+        sanitizedCommandText:
+          type: string
+        requiresSoloTick:
+          type: boolean
+        executionOutcome:
+          type: string
+        gameplayResult:
+          type: string
+        acceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        stagedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        attemptCount:
+          type: integer
+        failureCode:
+          type: string
+          nullable: true
+        failureMessage:
+          type: string
+          nullable: true
+        sourceType:
+          type: string
+          nullable: true
+        automationDispatchId:
+          type: string
+          nullable: true
+        automationWorkItemId:
+          type: string
+          nullable: true
+        scriptId:
+          type: string
+          nullable: true
+        scriptPatchVersion:
+          type: string
+          nullable: true
+        pluginId:
+          type: string
+          nullable: true
+        pluginVersionId:
+          type: string
+          nullable: true
+        targetEntityId:
+          type: string
+          nullable: true
+        regionId:
+          type: string
+          nullable: true
+        regionEpoch:
+          type: integer
+          nullable: true
+        dueTickId:
+          type: integer
+          nullable: true
+        enqueueSeq:
+          type: integer
+          nullable: true
+        playableStateScope:
+          type: string
+        worldSlug:
+          type: string
+          nullable: true
+        realmSlug:
+          type: string
+          nullable: true
+        pointerVersion:
+          type: integer
+          nullable: true
+        originSourceKind:
+          type: string
+          nullable: true
+        originSourceState:
+          type: string
+          nullable: true
+        originSourceOrdinal:
+          type: integer
+          nullable: true
+        originSourceDueTickId:
+          type: integer
+          nullable: true
+        originSourceDueAtMs:
+          type: integer
+          nullable: true
+        queueSourceKind:
+          type: string
+          nullable: true
+        queueSourceState:
+          type: string
+          nullable: true
+        queueSourceOrdinal:
+          type: integer
+          nullable: true
+        queueSourceDueTickId:
+          type: integer
+          nullable: true
+        queueSourceDueAtMs:
+          type: integer
+          nullable: true
+        remoteCoordinatorId:
+          type: string
+          nullable: true
+        remoteFollowupId:
+          type: string
+          nullable: true
+        remoteState:
+          type: string
+          nullable: true
+        remoteResultOutcome:
+          type: string
+          nullable: true
+        remoteResultPayloadJson:
+          type: string
+          nullable: true
+        remoteResultObservedAt:
+          type: string
+          format: date-time
+          nullable: true
+        publication:
+          $ref: '#/components/schemas/GameplayCommandStatusScriptPatchPublicationLinkDto'
+        remoteResultCommandId:
+          type: string
+          nullable: true
+        remoteResultErrorCode:
+          type: string
+          nullable: true
+        remoteResultMessage:
+          type: string
+          nullable: true
+        pluginPublication:
+          $ref: '#/components/schemas/GameplayCommandStatusPluginPublicationLinkDto'
+        remoteOriginGameInstanceId:
+          type: integer
+          nullable: true
+        remoteOriginRegionId:
+          type: string
+          nullable: true
+        remoteOriginRegionEpoch:
+          type: integer
+          nullable: true
+        remoteTargetGameInstanceId:
+          type: integer
+          nullable: true
+        remoteTargetRegionId:
+          type: string
+          nullable: true
+        remoteTargetRegionEpoch:
+          type: integer
+          nullable: true
+        remoteOriginDeadlineRegionEpoch:
+          type: integer
+          nullable: true
+        remoteOriginDeadlineTickId:
+          type: integer
+          nullable: true
+        remoteLateResultPolicy:
+          type: string
+          nullable: true
+        remoteTargetCommandExecutionOutcome:
+          type: string
+          nullable: true
+        remoteTargetCommandGameplayResult:
+          type: string
+          nullable: true
+        remoteFollowupStatus:
+          type: string
+          nullable: true
+        remoteFollowupPayloadKind:
+          type: string
+          nullable: true
+        remoteFollowupRequestedCommand:
+          type: string
+          nullable: true
+        remoteFollowupRequiresSoloTick:
+          type: boolean
+        remoteFollowupOriginSourceKind:
+          type: string
+          nullable: true
+        remoteFollowupOriginSourceState:
+          type: string
+          nullable: true
+        remoteFollowupOriginSourceOrdinal:
+          type: integer
+          nullable: true
+        remoteFollowupOriginSourceDueTickId:
+          type: integer
+          nullable: true
+        remoteFollowupOriginSourceDueAtMs:
+          type: integer
+          nullable: true
+        remoteTargetEntityId:
+          type: string
+          nullable: true
+        remoteFollowupEffectKey:
+          type: string
+          nullable: true
+        remoteFollowupFailureCode:
+          type: string
+          nullable: true
+        remoteFollowupFailureMessage:
+          type: string
+          nullable: true
+        remoteFollowupEventType:
+          type: string
+          nullable: true
+        remoteFollowupEventSchemaVersion:
+          type: string
+          nullable: true
+        remoteFollowupScriptEventId:
+          type: string
+          nullable: true
+        remoteFollowupTriggerMode:
+          type: string
+          nullable: true
+        remoteFollowupClaimTargetAggregate:
+          type: string
+          nullable: true
+        currentRuntimeRegionId:
+          type: string
+          nullable: true
+        currentRuntimeRegionEpoch:
+          type: integer
+          nullable: true
+        currentRuntimeGameInstanceId:
+          type: integer
+          nullable: true
+        currentRuntimePlayableStateScope:
+          type: string
+        currentRuntimeWorldSlug:
+          type: string
+          nullable: true
+        currentRuntimeRealmSlug:
+          type: string
+          nullable: true
+        currentRuntimePointerVersion:
+          type: integer
+          nullable: true
+        currentRuntimeRoutingBundleStale:
+          type: boolean
+    GameplayCommandStatusScriptPatchPublicationLinkDto:
+      type: object
+      properties:
+        scriptPatchVersion:
+          type: string
+          nullable: true
+        versionId:
+          type: integer
+          nullable: true
+        baseVersionId:
+          type: integer
+          nullable: true
+        publicationState:
+          type: string
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lookupErrorCode:
+          type: string
+          nullable: true
+        lookupErrorMessage:
+          type: string
+          nullable: true
+    GameplayCommandStatusPluginPublicationLinkDto:
+      type: object
+      properties:
+        pluginVersionId:
+          type: string
+          nullable: true
+        publicationId:
+          type: integer
+          nullable: true
+        publicationState:
+          type: string
+        statusReason:
+          type: string
+          nullable: true
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lookupErrorCode:
+          type: string
+          nullable: true
+        lookupErrorMessage:
+          type: string
+          nullable: true
     QueryLogsRequest:
       type: object
       properties:
@@ -1013,6 +1329,36 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/GameSessionPinConvergenceDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /gameplay-commands/{tenantId}/{commandId}:
+    get:
+      summary: Read canonical gameplay command status by tenant-qualified command id
+      operationId: getGameplayCommandStatus
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: commandId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Canonical gameplay command status and current routing/runtime context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/GameplayCommandStatusDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:
