@@ -109,10 +109,11 @@ final class GameSessionRemoteControlPlaneService {
   ListRemoteCommandCoordinatorsResponse listRemoteCommandCoordinators(
       long tenantId, ListRemoteCommandCoordinatorsRequest request) {
     RoutingBundle filterRoutingBundle =
-        normalizeRoutingBundle(
+        requireCompleteOrAbsentRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+            "routing filter");
     List<RemoteCommandCoordinator> coordinators =
         remoteCommandCoordinatorRepository.findForControlPlane(
             tenantId,
@@ -198,10 +199,11 @@ final class GameSessionRemoteControlPlaneService {
       throw new IllegalStateException("Remote followup runtime service is not configured");
     }
     RoutingBundle requestRoutingBundle =
-        normalizeRoutingBundle(
+        requireCompleteOrAbsentRoutingBundle(
             normalizeBlank(request.getWorldSlug()),
             normalizeBlank(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+            "routing bundle");
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         remoteFollowupRuntimeService.scheduleFollowup(
             new RemoteFollowupRuntimeService.ScheduleRequest(
@@ -257,10 +259,11 @@ final class GameSessionRemoteControlPlaneService {
   ListRemoteFollowupsResponse listRemoteFollowups(
       long tenantId, ListRemoteFollowupsRequest request) {
     RoutingBundle filterRoutingBundle =
-        normalizeRoutingBundle(
+        requireCompleteOrAbsentRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+            "routing filter");
     List<RemoteFollowup> followups =
         remoteFollowupRepository.findForControlPlane(
             tenantId,
@@ -335,10 +338,11 @@ final class GameSessionRemoteControlPlaneService {
   ListRemoteFollowupResultsResponse listRemoteFollowupResults(
       long tenantId, ListRemoteFollowupResultsRequest request) {
     RoutingBundle filterRoutingBundle =
-        normalizeRoutingBundle(
+        requireCompleteOrAbsentRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+            "routing filter");
     List<RemoteFollowupResult> results =
         remoteFollowupResultRepository.findForControlPlane(
             tenantId,
@@ -1501,6 +1505,21 @@ final class GameSessionRemoteControlPlaneService {
       return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
     }
     return null;
+  }
+
+  private static RoutingBundle requireCompleteOrAbsentRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion, String bundleName) {
+    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
+    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
+    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
+    if (!hasWorld && !hasRealm && !hasPointer) {
+      return null;
+    }
+    if (hasWorld && hasRealm && hasPointer) {
+      return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
+    }
+    throw new IllegalArgumentException(
+        bundleName + " must include world_slug, realm_slug, and pointer_version together");
   }
 
   private static void applyTargetCommandStatus(
