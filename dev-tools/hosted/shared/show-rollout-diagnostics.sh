@@ -26,7 +26,7 @@ section() {
 namespace_summary() {
   local json_file
   json_file="$(mktemp)"
-  trap 'rm -f "$json_file"' RETURN
+  trap 'rm -f "${json_file:-}"' RETURN
   kubectl get namespace "$namespace" -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -66,7 +66,7 @@ PY
 service_port_detail() {
   local json_file
   json_file="$(mktemp)"
-  trap 'rm -f "$json_file"' RETURN
+  trap 'rm -f "${json_file:-}"' RETURN
   kubectl -n "$namespace" get svc -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -96,7 +96,7 @@ PY
 configmap_summary() {
   local json_file
   json_file="$(mktemp)"
-  trap 'rm -f "$json_file"' RETURN
+  trap 'rm -f "${json_file:-}"' RETURN
   kubectl -n "$namespace" get configmap -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -152,7 +152,7 @@ PY
 secret_summary() {
   local json_file
   json_file="$(mktemp)"
-  trap 'rm -f "$json_file"' RETURN
+  trap 'rm -f "${json_file:-}"' RETURN
   kubectl -n "$namespace" get secret -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
@@ -202,7 +202,7 @@ tls_secret_summary() {
 blocked_readiness_summary() {
   local json_file
   json_file="$(mktemp)"
-  trap 'rm -f "$json_file"' RETURN
+  trap 'rm -f "${json_file:-}"' RETURN
   kubectl -n "$namespace" get deployment,statefulset,pod -o json >"$json_file"
   python3 - "$json_file" <<'PY'
 import json
