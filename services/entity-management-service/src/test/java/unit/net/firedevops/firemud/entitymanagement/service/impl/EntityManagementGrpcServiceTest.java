@@ -2,6 +2,9 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
@@ -1411,6 +1414,17 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityDraftDesignDigestService digestService =
         Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    Mockito.when(
+            effectReplayService.execute(
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenAnswer(
+            invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(3)).get());
     Mockito.when(
             conditionMutationService.applyCondition(
                 1L,
@@ -1446,7 +1460,7 @@ class EntityManagementGrpcServiceTest {
             inventoryService,
             containerService,
             roomEntityService,
-            effectReplayService(),
+            effectReplayService,
             Mockito.mock(EntityUpgradeValidationService.class),
             attestationService(),
             new SimpleMeterRegistry());
@@ -1496,6 +1510,106 @@ class EntityManagementGrpcServiceTest {
             "effect-1",
             Instant.parse("2026-04-24T00:00:05Z"),
             "{\"modifiers\":[]}");
+    verify(effectReplayService)
+        .execute(eq(1L), eq("effect-1"), eq("ApplyActorCondition"), any(), any());
+  }
+
+  @Test
+  void applyActorConditionReplaysStoredResponseWithoutInvokingMutationService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    ApplyActorConditionResponse replayed =
+        ApplyActorConditionResponse.newBuilder()
+            .setActiveCondition(
+                net.firedevops.firemud.entitymanagement.v1.ActorConditionState.newBuilder()
+                    .setConditionKey("blocking")
+                    .setSourceType("ACTION_STATE")
+                    .setSourceId("effect-1")
+                    .setStartedAt("2026-04-24T00:00:00Z")
+                    .setExpiresAt("2026-04-24T00:00:05Z")
+                    .setEffectPayloadJson("{\"modifiers\":[]}")
+                    .build())
+            .build();
+    Mockito.when(
+            effectReplayService.execute(
+                Mockito.eq(1L),
+                Mockito.eq("effect-1"),
+                Mockito.eq("ApplyActorCondition"),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(replayed);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setStackCount(1)
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .setExpiresAt("2026-04-24T00:00:05Z")
+            .setEffectPayloadJson("{\"modifiers\":[]}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("blocking", ref.get().getActiveCondition().getConditionKey());
+    verify(conditionMutationService, never())
+        .applyCondition(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString());
   }
 
   @Test
