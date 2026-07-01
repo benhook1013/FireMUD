@@ -17,10 +17,12 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
+import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
+import net.firedevops.firemud.loggingadmin.dto.InstanceCutoverCompatibilityDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -181,6 +183,34 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     }
     SessionContext.requireTenantAccess(parseLong(preparation.getTenantId(), "tenant_id"));
     return toDto(preparation);
+  }
+
+  @Override
+  @Timed(value = "loggingadmin.admissionPointer.validateInstanceCutoverCompatibility")
+  public InstanceCutoverCompatibilityDto validateInstanceCutoverCompatibility(
+      long tenantId, long sourceGameInstanceId, long targetVersionId) {
+    SessionContext.requireTenantAccess(tenantId);
+    ValidateInstanceCutoverCompatibilityResponse response =
+        gameSessionControlPlaneClient.validateInstanceCutoverCompatibility(
+            tenantId, sourceGameInstanceId, targetVersionId);
+    requireNoError(response.getError());
+    return new InstanceCutoverCompatibilityDto(
+        toCutoverResultName(response.getResult().name()),
+        response.getReasonsList(),
+        response.getCheckedParticipantsList(),
+        response.getCheckedAtMs() <= 0 ? null : Instant.ofEpochMilli(response.getCheckedAtMs()),
+        response.getRemapSetId().isBlank() ? null : response.getRemapSetId(),
+        response.getParticipantResultsList().stream()
+            .map(
+                participant ->
+                    new InstanceCutoverCompatibilityDto.CutoverParticipantResultDto(
+                        participant.getParticipant(),
+                        toCutoverResultName(participant.getResult().name()),
+                        participant.getReasonsList(),
+                        participant.getStateClassesCheckedList(),
+                        participant.getCheckedFamiliesList(),
+                        participant.getHasS2Rows()))
+            .toList());
   }
 
   @Override

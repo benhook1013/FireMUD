@@ -125,6 +125,14 @@ components:
           type: string
         enabled:
           type: boolean
+    BuiltInCommandAliasValidationDto:
+      type: object
+      properties:
+        supported:
+          type: boolean
+        normalizedAlias:
+          type: string
+          nullable: true
     QueryLogsRequest:
       type: object
       properties:
@@ -347,6 +355,30 @@ components:
         executionControlPlaneRequestId:
           type: string
           nullable: true
+    InstanceCutoverCompatibilityDto:
+      type: object
+      properties:
+        result:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        checkedParticipants:
+          type: array
+          items:
+            type: string
+        checkedAt:
+          type: string
+          format: date-time
+          nullable: true
+        remapSetId:
+          type: string
+          nullable: true
+        participantResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/CutoverParticipantResultDto'
     ScriptPatchPublicationLinkDto:
       type: object
       properties:
@@ -420,6 +452,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdmissionPointerDto'
+    PinnedScriptPatchVersionDto:
+      type: object
+      properties:
+        pinnedScriptPatchVersion:
+          type: string
+        pinnedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pinnedBy:
+          type: string
+        controlPlaneRequestId:
+          type: string
+        publication:
+          $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
+    GameSessionPinConvergenceDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        observedPinnedScriptPatchVersion:
+          type: string
+        lastObservedControlPlaneRequestId:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        stale:
+          type: boolean
+        publication:
+          $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
     TickRemediationRequest:
       type: object
       properties:
@@ -450,6 +516,41 @@ components:
           type: string
         reason:
           type: string
+    RuntimeOwnershipStatusDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        regionEpoch:
+          type: integer
+        executorFence:
+          type: string
+        ownerService:
+          type: string
+        ownerInstanceId:
+          type: string
+        paused:
+          type: boolean
+        lastCommittedTickBatchId:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastCommittedTickId:
+          type: integer
+        regionId:
+          type: string
+        pendingGameplayCommandCount:
+          type: integer
+        dueRemoteFollowupCount:
+          type: integer
+        oldestDueRemoteFollowupTickId:
+          type: integer
+        remoteFollowupDrainLagMs:
+          type: integer
 paths:
   /ping:
     get:
@@ -462,6 +563,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseString'
+  /command-registry/built-in-aliases/{alias}:
+    get:
+      summary: Validate one built-in command alias
+      operationId: validateBuiltInCommandAlias
+      parameters:
+        - name: alias
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Built-in command alias validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/BuiltInCommandAliasValidationDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
   /reports:
     post:
       summary: Create a player report
@@ -794,6 +919,102 @@ paths:
                     $ref: '#/components/schemas/PreparedVersionUpgradeDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+  /admission-pointers/version-upgrades/{tenantId}/{sourceGameInstanceId}/compatibility/{targetVersionId}:
+    get:
+      summary: Read version cutover compatibility for one source instance and target version
+      operationId: validateInstanceCutoverCompatibility
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: sourceGameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: targetVersionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Version cutover compatibility proof
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/InstanceCutoverCompatibilityDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /game-session-pins/{tenantId}/{gameInstanceId}:
+    get:
+      summary: Read current pinned script patch version
+      operationId: getPinnedScriptPatchVersion
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Current pinned script patch version and publication metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/PinnedScriptPatchVersionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /game-session-pins/{tenantId}/{gameInstanceId}/convergence:
+    get:
+      summary: Read persisted Game Session pin convergence
+      operationId: getGameSessionPinConvergence
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Persisted Game Session pin convergence state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/GameSessionPinConvergenceDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:
     post:
       summary: Pause ticks for one scoped runtime target
@@ -816,6 +1037,41 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/TickRemediationActionDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /tick-remediation/status/{tenantId}:
+    get:
+      summary: Read durable runtime ownership status
+      operationId: getRuntimeOwnershipStatus
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: regionId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current runtime ownership and backlog status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/RuntimeOwnershipStatusDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/resume:
