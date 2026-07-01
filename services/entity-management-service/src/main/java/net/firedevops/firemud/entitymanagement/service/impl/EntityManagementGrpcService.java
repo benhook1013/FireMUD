@@ -857,22 +857,30 @@ public class EntityManagementGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       requireTenantAccessWhenPresent(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
-      ActorConditionStateDto activeCondition =
-          actorConditionMutationService.applyCondition(
+      ApplyActorConditionResponse response =
+          entityMutationEffectReplayService.execute(
               tenantId,
-              characterId,
-              resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
-              resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-              request.getConditionKey(),
-              request.getStackCount(),
-              request.getSourceType(),
               request.getSourceId(),
-              parseOptionalInstant(request.getExpiresAt()),
-              request.getEffectPayloadJson());
-      responseObserver.onNext(
-          ApplyActorConditionResponse.newBuilder()
-              .setActiveCondition(toProto(activeCondition))
-              .build());
+              "ApplyActorCondition",
+              () -> {
+                ActorConditionStateDto activeCondition =
+                    actorConditionMutationService.applyCondition(
+                        tenantId,
+                        characterId,
+                        resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
+                        resolvePlayableStateScope(request.getPlayableStateScope(), claims),
+                        request.getConditionKey(),
+                        request.getStackCount(),
+                        request.getSourceType(),
+                        request.getSourceId(),
+                        parseOptionalInstant(request.getExpiresAt()),
+                        request.getEffectPayloadJson());
+                return ApplyActorConditionResponse.newBuilder()
+                    .setActiveCondition(toProto(activeCondition))
+                    .build();
+              },
+              ApplyActorConditionResponse::parseFrom);
+      responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
       responseObserver.onNext(
