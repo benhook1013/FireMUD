@@ -21,6 +21,8 @@ import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -129,6 +131,16 @@ public class GameSessionControlPlaneClient
     return stub()
         .getGameplayCommandStatus(
             GetGameplayCommandStatusRequest.newBuilder().setCommandId(commandId).build());
+  }
+
+  public GetRemoteCommandCoordinatorResponse getRemoteCommandCoordinator(
+      long tenantId, String coordinatorId) {
+    return stub()
+        .getRemoteCommandCoordinator(
+            GetRemoteCommandCoordinatorRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setCoordinatorId(coordinatorId)
+                .build());
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
