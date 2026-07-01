@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -161,6 +162,36 @@ class AdmissionPointerControllerTest {
   }
 
   @Test
+  void getRuntimeStateReturnsCanonicalRuntimeState() throws Exception {
+    when(admissionPointerService.getRuntimeState(2L, 7L)).thenReturn(runtimeStateDto());
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/runtime-state/2/7")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.tenantId").value(2))
+        .andExpect(jsonPath("$.data.gameInstanceId").value(7))
+        .andExpect(jsonPath("$.data.worldSlug").value("demo"))
+        .andExpect(jsonPath("$.data.currentAdmissionPointers[0].realmSlug").value("production"));
+  }
+
+  @Test
+  void getRuntimeStateRejectsCrossTenantScopedAdmin() throws Exception {
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/runtime-state/2/7")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
   void executePreparedVersionCutoverRejectsCrossTenantScopedAdmin() throws Exception {
     ExecutePreparedVersionCutoverRequest request =
         new ExecutePreparedVersionCutoverRequest(
@@ -238,5 +269,55 @@ class AdmissionPointerControllerTest {
         4L,
         Instant.parse("2026-04-18T00:00:01Z"),
         "req-cutover");
+  }
+
+  private GameInstanceRuntimeStateDto runtimeStateDto() {
+    return new GameInstanceRuntimeStateDto(
+        2L,
+        7L,
+        "runtime-v7",
+        "patch-2",
+        "ld-9",
+        "RUNNING",
+        11L,
+        19L,
+        77L,
+        Instant.parse("2026-04-22T00:00:00Z"),
+        "operator-1",
+        "roll-forward",
+        "req-77",
+        "PLAYABLE_STATE_SCOPE_SHARED",
+        "demo",
+        "production",
+        11L,
+        new GameInstanceRuntimeStateDto.ScriptPatchPublicationLinkDto(
+            "patch-2",
+            17L,
+            7L,
+            "VERSION_LIFECYCLE_STATE_PUBLISHED",
+            Instant.parse("2026-04-22T00:00:01Z"),
+            "",
+            ""),
+        "region-7",
+        22L,
+        List.of(
+            new AdmissionPointerDto(
+                "demo",
+                "Demo World",
+                "production",
+                "Live Realm",
+                2L,
+                7L,
+                11L,
+                true,
+                true,
+                false,
+                "SHARED",
+                "ALLOW_NEW",
+                "",
+                "",
+                "",
+                null,
+                null)));
   }
 }

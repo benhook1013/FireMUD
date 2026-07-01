@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -13,15 +14,19 @@ import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.CutoverCompatibilityResult;
 import net.firedevops.firemud.gamesession.v1.CutoverParticipantResult;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.PreparedVersionUpgrade;
+import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.AdmissionPointerDto;
 import net.firedevops.firemud.loggingadmin.dto.ExecutePreparedVersionCutoverRequest;
+import net.firedevops.firemud.loggingadmin.dto.GameInstanceRuntimeStateDto;
 import net.firedevops.firemud.loggingadmin.dto.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.loggingadmin.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.loggingadmin.dto.SetAdmissionPointerRequest;
@@ -205,6 +210,77 @@ class AdmissionPointerServiceImplTest {
                     request.getActorPrincipal().equals("42")
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")
                         && request.getExpectedPointerVersion() == 3L));
+  }
+
+  @Test
+  void getRuntimeStateReturnsCanonicalRuntimeState() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState(2L, 7L))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("2")
+                        .setGameInstanceId("7")
+                        .setRuntimeVersionId("runtime-v7")
+                        .setPinnedScriptPatchVersion("patch-2")
+                        .setLaunchDescriptorId("ld-9")
+                        .setStatus("RUNNING")
+                        .setVersionId("11")
+                        .setReleaseBundleId("19")
+                        .setVersionStateEpoch(77L)
+                        .setScriptPatchPinnedAtMs(
+                            Instant.parse("2026-04-22T00:00:00Z").toEpochMilli())
+                        .setScriptPatchPinnedBy("operator-1")
+                        .setScriptPatchPinnedReason("roll-forward")
+                        .setScriptPatchPinnedControlPlaneRequestId("req-77")
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setPointerVersion(11L)
+                        .setPublication(
+                            ScriptPatchPublicationLink.newBuilder()
+                                .setScriptPatchVersion("patch-2")
+                                .setVersionId(17L)
+                                .setBaseVersionId(7L)
+                                .setPublicationState(
+                                    net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                        .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                                .setLastChangedAtMs(
+                                    Instant.parse("2026-04-22T00:00:01Z").toEpochMilli())
+                                .build())
+                        .setRegionId("region-7")
+                        .setRegionEpoch(22L)
+                        .addCurrentAdmissionPointers(
+                            pointerEntry("demo", "production", 2L, 7L, 11L))
+                        .build())
+                .build());
+
+    GameInstanceRuntimeStateDto result = service.getRuntimeState(2L, 7L);
+
+    assertEquals(2L, result.tenantId());
+    assertEquals(7L, result.gameInstanceId());
+    assertEquals("demo", result.worldSlug());
+    assertEquals("production", result.currentAdmissionPointers().getFirst().realmSlug());
+    assertEquals("VERSION_LIFECYCLE_STATE_PUBLISHED", result.publication().publicationState());
+  }
+
+  @Test
+  void getRuntimeStateRejectsMismatchedControlPlaneTenant() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState(2L, 7L))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder().setTenantId("8").setGameInstanceId("7"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRuntimeState(2L, 7L));
+
+    assertEquals(500, ex.getStatusCode().value());
   }
 
   @Test
