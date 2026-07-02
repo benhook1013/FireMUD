@@ -60,6 +60,10 @@ import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -3468,6 +3472,217 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-05-01T00:00:05Z").toEpochMilli(),
         responseRef.get().getCoordinator().getLatestResultObservedAtMs());
+  }
+
+  @Test
+  void getRemoteFollowupReturnsCanonicalRowForAdminCaller() {
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("rf-1");
+    followup.setTenantId(1L);
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("region-a");
+    followup.setOriginRegionEpoch(3L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(4L);
+    followup.setDueTickId(55L);
+    followup.setClaimOrdinal(2L);
+    followup.setClaimedTickBatchId("tick-batch-7");
+    followup.setPlayableStateScope("ISOLATED");
+    followup.setWorldSlug("ops");
+    followup.setRealmSlug("preview");
+    followup.setPointerVersion(29L);
+    followup.setCommandId("cmd-1");
+    followup.setAutomationDispatchId("dispatch-1");
+    followup.setAutomationWorkItemId("work-1");
+    followup.setScriptId("script-1");
+    followup.setScriptPatchVersion("patch-1");
+    followup.setPluginId("plugin-1");
+    followup.setPluginVersionId("plugin-v1");
+    followup.setEffectKey("damage:1");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("TARGET_REGION_EXECUTED");
+    followup.setOriginSourceOrdinal(44L);
+    followup.setOriginSourceDueTickId(55L);
+    followup.setOriginSourceDueAtMs(1700L);
+    followup.setTargetEntityId("entity-9");
+    followup.setClaimTargetAggregate("entity:entity-9");
+    followup.setStatus("SCHEDULED");
+    followup.setCreatedAt(Instant.parse("2026-05-01T00:00:00Z"));
+    followup.setUpdatedAt(Instant.parse("2026-05-01T00:00:01Z"));
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setFollowupId("rf-1");
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("target-cmd-1");
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("SUCCESS");
+    Mockito.when(repository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(followup));
+    Mockito.when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(coordinator));
+    Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(targetCommand));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            repository,
+            coordinatorRepository,
+            null,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            null,
+            gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowup(
+        GetRemoteFollowupRequest.newBuilder().setTenantId("1").setFollowupId("rf-1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("rf-1", responseRef.get().getFollowup().getFollowupId());
+    assertEquals("cmd-1", responseRef.get().getFollowup().getCommandId());
+    assertEquals("target-cmd-1", responseRef.get().getFollowup().getTargetCommandId());
+    assertEquals("LOOK", responseRef.get().getFollowup().getRequestedCommand());
+    assertEquals("REMOTE_FOLLOWUP", responseRef.get().getFollowup().getOriginSourceKind());
+    assertEquals(
+        "region-origin-current", responseRef.get().getFollowup().getCurrentOriginRuntimeRegionId());
+    assertEquals("7", responseRef.get().getFollowup().getCurrentOriginRuntimeGameInstanceId());
+    assertEquals(
+        "region-target-current", responseRef.get().getFollowup().getCurrentTargetRuntimeRegionId());
+    assertEquals("9", responseRef.get().getFollowup().getCurrentTargetRuntimeGameInstanceId());
+    assertTrue(responseRef.get().getFollowup().getIsTargetRoutingBundleStale());
+  }
+
+  @Test
+  void getRemoteFollowupResultReturnsCanonicalRowForAdminCaller() {
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setResultId("rr-1");
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-1");
+    result.setFollowupId("rf-1");
+    result.setOriginGameInstanceId(7L);
+    result.setOriginRegionId("region-a");
+    result.setOriginRegionEpoch(3L);
+    result.setTargetGameInstanceId(9L);
+    result.setTargetRegionId("region-b");
+    result.setTargetRegionEpoch(4L);
+    result.setOutcome("REMOTE_APPLIED");
+    result.setResultPayloadJson(
+        "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload message\"}");
+    result.setResultCommandId("auto-1");
+    result.setResultErrorCode("RATE_LIMIT");
+    result.setResultMessage("Target region rejected the remote gameplay command");
+    result.setPlayableStateScope("SHARED");
+    result.setWorldSlug("demo");
+    result.setRealmSlug("production");
+    result.setPointerVersion(17L);
+    result.setCommandId("cmd-1");
+    result.setAutomationDispatchId("dispatch-1");
+    result.setAutomationWorkItemId("work-1");
+    result.setScriptId("script-1");
+    result.setScriptPatchVersion("patch-1");
+    result.setPluginId("plugin-1");
+    result.setPluginVersionId("plugin-v1");
+    result.setObservedAt(Instant.parse("2026-05-01T00:00:02Z"));
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        runtimeRegionStatusRepository(
+            runtimeStatus(1L, 7L, "region-origin-current", 13L),
+            runtimeStatus(1L, 9L, "region-target-current", 14L));
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("rf-1");
+    followup.setTargetEntityId("npc-7");
+    followup.setClaimTargetAggregate("entity:npc-7");
+    followup.setEffectKey("remote-followup:dispatch-1");
+    followup.setFailureCode("REMOTE_REJECTED");
+    followup.setFailureMessage("Target runtime rejected the remote followup");
+    followup.setClaimedTickBatchId("tick-batch-7");
+    followup.setPayloadKind("trigger_script_event");
+    followup.setRequiresSoloTick(true);
+    followup.setOriginSourceKind("REMOTE_FOLLOWUP");
+    followup.setOriginSourceState("SCHEDULED");
+    followup.setOriginSourceOrdinal(15L);
+    followup.setOriginSourceDueTickId(44L);
+    followup.setOriginSourceDueAtMs(1714521600000L);
+    GameplayCommand targetCommand = new GameplayCommand();
+    targetCommand.setCommandId("auto-1");
+    targetCommand.setRemoteFollowupId("rf-1");
+    targetCommand.setExecutionOutcome("APPLIED");
+    targetCommand.setGameplayResult("SUCCESS");
+    Mockito.when(repository.findByTenantIdAndResultId(1L, "rr-1")).thenReturn(Optional.of(result));
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    Mockito.when(followupRepository.findByTenantIdAndFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(followup));
+    Mockito.when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "rf-1"))
+        .thenReturn(Optional.of(targetCommand));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            followupRepository,
+            coordinatorRepository,
+            repository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            null,
+            gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResultResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowupResult(
+        GetRemoteFollowupResultRequest.newBuilder().setTenantId("1").setResultId("rr-1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResultResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("rr-1", responseRef.get().getResult().getResultId());
+    assertEquals("coord-1", responseRef.get().getResult().getCoordinatorId());
+    assertEquals("rf-1", responseRef.get().getResult().getFollowupId());
+    assertEquals("auto-1", responseRef.get().getResult().getResultCommandId());
+    assertEquals("REMOTE_REJECTED", responseRef.get().getResult().getFailureCode());
+    assertEquals("entity:npc-7", responseRef.get().getResult().getClaimTargetAggregate());
+    assertEquals(
+        "region-origin-current", responseRef.get().getResult().getCurrentOriginRuntimeRegionId());
+    assertEquals("7", responseRef.get().getResult().getCurrentOriginRuntimeGameInstanceId());
+    assertEquals(
+        "region-target-current", responseRef.get().getResult().getCurrentTargetRuntimeRegionId());
+    assertEquals("9", responseRef.get().getResult().getCurrentTargetRuntimeGameInstanceId());
+    assertTrue(responseRef.get().getResult().getIsTargetRoutingBundleStale());
   }
 
   @Test

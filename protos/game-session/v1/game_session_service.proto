@@ -50,6 +50,9 @@ service GameSessionControlPlaneService {
       returns (GetRuntimeOwnershipStatusResponse);
   rpc GetRemoteCommandCoordinator(GetRemoteCommandCoordinatorRequest)
       returns (GetRemoteCommandCoordinatorResponse);
+  rpc GetRemoteFollowup(GetRemoteFollowupRequest) returns (GetRemoteFollowupResponse);
+  rpc GetRemoteFollowupResult(GetRemoteFollowupResultRequest)
+      returns (GetRemoteFollowupResultResponse);
   rpc ListRemoteCommandCoordinators(ListRemoteCommandCoordinatorsRequest)
       returns (ListRemoteCommandCoordinatorsResponse);
   rpc ScheduleRemoteFollowup(ScheduleRemoteFollowupRequest)
@@ -662,6 +665,11 @@ message GetRemoteCommandCoordinatorResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetRemoteFollowupRequest {
+  string tenant_id = 1;
+  string followup_id = 2;
+}
+
 message ListRemoteCommandCoordinatorsRequest {
   string tenant_id = 1;
   string origin_region_id = 2;
@@ -908,6 +916,16 @@ message ListRemoteFollowupsResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message GetRemoteFollowupResponse {
+  RemoteFollowupEntry followup = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetRemoteFollowupResultRequest {
+  string tenant_id = 1;
+  string result_id = 2;
+}
+
 message ListRemoteFollowupResultsRequest {
   string tenant_id = 1;
   string coordinator_id = 2;
@@ -1039,6 +1057,11 @@ message RemoteFollowupResultEntry {
 
 message ListRemoteFollowupResultsResponse {
   repeated RemoteFollowupResultEntry results = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetRemoteFollowupResultResponse {
+  RemoteFollowupResultEntry result = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

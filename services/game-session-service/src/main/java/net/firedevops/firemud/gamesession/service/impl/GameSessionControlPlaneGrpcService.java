@@ -25,6 +25,10 @@ import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -312,6 +316,72 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetRemoteCommandCoordinator failed", ex);
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getRemoteFollowup")
+  public void getRemoteFollowup(
+      GetRemoteFollowupRequest request,
+      StreamObserver<GetRemoteFollowupResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      responseObserver.onNext(
+          remoteControlPlaneService.getRemoteFollowup(
+              parseTenantId(request.getTenantId()), request.getFollowupId()));
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResponse.newBuilder()
+              .setError(authorizationError("GetRemoteFollowup", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResponse.newBuilder()
+              .setError(invalidArgumentError("GetRemoteFollowup", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetRemoteFollowup failed", ex);
+      responseObserver.onNext(
+          GetRemoteFollowupResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getRemoteFollowupResult")
+  public void getRemoteFollowupResult(
+      GetRemoteFollowupResultRequest request,
+      StreamObserver<GetRemoteFollowupResultResponse> responseObserver) {
+    try {
+      requireAdminRole();
+      responseObserver.onNext(
+          remoteControlPlaneService.getRemoteFollowupResult(
+              parseTenantId(request.getTenantId()), request.getResultId()));
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResultResponse.newBuilder()
+              .setError(authorizationError("GetRemoteFollowupResult", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResultResponse.newBuilder()
+              .setError(invalidArgumentError("GetRemoteFollowupResult", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetRemoteFollowupResult failed", ex);
+      responseObserver.onNext(
+          GetRemoteFollowupResultResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build());
       responseObserver.onCompleted();

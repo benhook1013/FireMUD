@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.PluginPublicationLink;
 import net.firedevops.firemud.gamesession.v1.RemoteFollowupEntry;
@@ -40,6 +41,63 @@ class RemoteFollowupServiceImplTest {
   @AfterEach
   void clear() {
     SessionContext.clear();
+  }
+
+  @Test
+  void getRemoteFollowupReturnsCanonicalProjection() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowup(2L, "rf-1"))
+        .thenReturn(
+            GetRemoteFollowupResponse.newBuilder().setFollowup(remoteFollowup("2")).build());
+
+    RemoteFollowupDto result = service.getRemoteFollowup(2L, "rf-1");
+
+    assertAll(
+        () -> assertEquals("rf-1", result.followupId()),
+        () -> assertEquals(2L, result.tenantId()),
+        () -> assertEquals(7L, result.originGameInstanceId()),
+        () -> assertEquals(9L, result.targetGameInstanceId()),
+        () -> assertEquals("SCHEDULED", result.status()),
+        () -> assertEquals("LOOK", result.requestedCommand()),
+        () -> assertEquals("target-cmd-1", result.targetCommandId()),
+        () -> assertEquals(7L, result.currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals(9L, result.currentTargetRuntimeGameInstanceId()),
+        () -> assertEquals(31L, result.pluginPublication().publicationId()));
+  }
+
+  @Test
+  void getRemoteFollowupRejectsMismatchedTenantRow() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowup(2L, "rf-1"))
+        .thenReturn(
+            GetRemoteFollowupResponse.newBuilder().setFollowup(remoteFollowup("8")).build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getRemoteFollowupRejectsMismatchedFollowupId() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowup(2L, "rf-1"))
+        .thenReturn(
+            GetRemoteFollowupResponse.newBuilder()
+                .setFollowup(remoteFollowup("2", "rf-9"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getRemoteFollowupRequiresAccessibleTenant() {
+    SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
+
+    assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-1"));
   }
 
   @Test
@@ -218,8 +276,12 @@ class RemoteFollowupServiceImplTest {
   }
 
   private RemoteFollowupEntry remoteFollowup(String tenantId) {
+    return remoteFollowup(tenantId, "rf-1");
+  }
+
+  private RemoteFollowupEntry remoteFollowup(String tenantId, String followupId) {
     return RemoteFollowupEntry.newBuilder()
-        .setFollowupId("rf-1")
+        .setFollowupId(followupId)
         .setTenantId(tenantId)
         .setOriginGameInstanceId("7")
         .setOriginRegionId("region-a")

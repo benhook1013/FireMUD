@@ -23,6 +23,10 @@ import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
@@ -154,8 +158,26 @@ public class GameSessionControlPlaneClient
     return stub().listRemoteCommandCoordinators(request);
   }
 
+  public GetRemoteFollowupResponse getRemoteFollowup(long tenantId, String followupId) {
+    return stub()
+        .getRemoteFollowup(
+            GetRemoteFollowupRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setFollowupId(followupId)
+                .build());
+  }
+
   public ListRemoteFollowupsResponse listRemoteFollowups(ListRemoteFollowupsRequest request) {
     return stub().listRemoteFollowups(request);
+  }
+
+  public GetRemoteFollowupResultResponse getRemoteFollowupResult(long tenantId, String resultId) {
+    return stub()
+        .getRemoteFollowupResult(
+            GetRemoteFollowupResultRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setResultId(resultId)
+                .build());
   }
 
   public ListRemoteFollowupResultsResponse listRemoteFollowupResults(

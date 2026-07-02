@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.RemoteFollowupEntry;
@@ -27,6 +28,31 @@ public class RemoteFollowupServiceImpl implements RemoteFollowupService {
 
   public RemoteFollowupServiceImpl(GameSessionControlPlaneClient gameSessionControlPlaneClient) {
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
+  }
+
+  @Override
+  @Timed(value = "loggingadmin.remoteFollowup.getRemoteFollowup")
+  public RemoteFollowupDto getRemoteFollowup(long tenantId, String followupId) {
+    SessionContext.requireTenantAccess(tenantId);
+    GetRemoteFollowupResponse response =
+        gameSessionControlPlaneClient.getRemoteFollowup(tenantId, followupId);
+    requireNoError(response.getError());
+    RemoteFollowupEntry followup = response.getFollowup();
+    if (followup.getFollowupId().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Remote followup not found");
+    }
+    long responseTenantId = parseLong(followup.getTenantId(), "tenant_id");
+    if (responseTenantId != tenantId) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane remote followup response did not match requested tenant_id");
+    }
+    if (!followupId.equals(followup.getFollowupId())) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane remote followup response did not match requested followup_id");
+    }
+    return toDto(followup);
   }
 
   @Override
