@@ -184,7 +184,6 @@ public class GameSessionControlPlaneClient
       ListRemoteFollowupResultsRequest request) {
     return stub().listRemoteFollowupResults(request);
   }
-
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
       long tenantId, long gameInstanceId) {
     return stub()
