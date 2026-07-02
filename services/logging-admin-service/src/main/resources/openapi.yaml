@@ -734,6 +734,267 @@ components:
         lookupErrorMessage:
           type: string
           nullable: true
+    RemoteFollowupDto:
+      type: object
+      properties:
+        followupId:
+          type: string
+        tenantId:
+          type: integer
+        originGameInstanceId:
+          type: integer
+        originRegionId:
+          type: string
+          nullable: true
+        originRegionEpoch:
+          type: integer
+        targetGameInstanceId:
+          type: integer
+        targetRegionId:
+          type: string
+          nullable: true
+        targetRegionEpoch:
+          type: integer
+        dueTickId:
+          type: integer
+          nullable: true
+        effectKey:
+          type: string
+          nullable: true
+        targetEntityId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        claimedTickBatchId:
+          type: string
+          nullable: true
+        payloadJson:
+          type: string
+          nullable: true
+        failureCode:
+          type: string
+          nullable: true
+        failureMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        claimOrdinal:
+          type: integer
+          nullable: true
+        scriptPatchVersion:
+          type: string
+          nullable: true
+        pluginId:
+          type: string
+          nullable: true
+        pluginVersionId:
+          type: string
+          nullable: true
+        publication:
+          $ref: '#/components/schemas/RemoteFollowupScriptPatchPublicationLinkDto'
+        playableStateScope:
+          type: string
+        worldSlug:
+          type: string
+          nullable: true
+        realmSlug:
+          type: string
+          nullable: true
+        pointerVersion:
+          type: integer
+          nullable: true
+        commandId:
+          type: string
+          nullable: true
+        automationDispatchId:
+          type: string
+          nullable: true
+        automationWorkItemId:
+          type: string
+          nullable: true
+        scriptId:
+          type: string
+          nullable: true
+        payloadKind:
+          type: string
+          nullable: true
+        requestedCommand:
+          type: string
+          nullable: true
+        targetCommandId:
+          type: string
+          nullable: true
+        targetCommandExecutionOutcome:
+          type: string
+          nullable: true
+        targetCommandGameplayResult:
+          type: string
+          nullable: true
+        pluginPublication:
+          $ref: '#/components/schemas/RemoteFollowupPluginPublicationLinkDto'
+        requiresSoloTick:
+          type: boolean
+        originSourceKind:
+          type: string
+          nullable: true
+        originSourceState:
+          type: string
+          nullable: true
+        originSourceOrdinal:
+          type: integer
+          nullable: true
+        originSourceDueTickId:
+          type: integer
+          nullable: true
+        originSourceDueAtMs:
+          type: integer
+          nullable: true
+        originDeadlineRegionEpoch:
+          type: integer
+          nullable: true
+        originDeadlineTickId:
+          type: integer
+          nullable: true
+        lateResultPolicy:
+          type: string
+          nullable: true
+        eventType:
+          type: string
+          nullable: true
+        eventSchemaVersion:
+          type: string
+          nullable: true
+        scriptEventId:
+          type: string
+          nullable: true
+        triggerMode:
+          type: string
+          nullable: true
+        readSnapshotToken:
+          type: string
+          nullable: true
+        eventPayloadJson:
+          type: string
+          nullable: true
+        claimTargetAggregate:
+          type: string
+          nullable: true
+        currentOriginRuntimeRegionId:
+          type: string
+          nullable: true
+        currentOriginRuntimeRegionEpoch:
+          type: integer
+          nullable: true
+        currentTargetRuntimeRegionId:
+          type: string
+          nullable: true
+        currentTargetRuntimeRegionEpoch:
+          type: integer
+          nullable: true
+        queueSourceKind:
+          type: string
+          nullable: true
+        queueSourceState:
+          type: string
+          nullable: true
+        queueSourceOrdinal:
+          type: integer
+          nullable: true
+        queueSourceDueTickId:
+          type: integer
+          nullable: true
+        queueSourceDueAtMs:
+          type: integer
+          nullable: true
+        currentOriginRuntimeGameInstanceId:
+          type: integer
+          nullable: true
+        currentTargetRuntimeGameInstanceId:
+          type: integer
+          nullable: true
+        currentOriginRuntimePlayableStateScope:
+          type: string
+        currentOriginRuntimeWorldSlug:
+          type: string
+          nullable: true
+        currentOriginRuntimeRealmSlug:
+          type: string
+          nullable: true
+        currentOriginRuntimePointerVersion:
+          type: integer
+          nullable: true
+        currentTargetRuntimePlayableStateScope:
+          type: string
+        currentTargetRuntimeWorldSlug:
+          type: string
+          nullable: true
+        currentTargetRuntimeRealmSlug:
+          type: string
+          nullable: true
+        currentTargetRuntimePointerVersion:
+          type: integer
+          nullable: true
+        originRoutingBundleStale:
+          type: boolean
+        targetRoutingBundleStale:
+          type: boolean
+    RemoteFollowupScriptPatchPublicationLinkDto:
+      type: object
+      properties:
+        scriptPatchVersion:
+          type: string
+          nullable: true
+        versionId:
+          type: integer
+          nullable: true
+        baseVersionId:
+          type: integer
+          nullable: true
+        publicationState:
+          type: string
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lookupErrorCode:
+          type: string
+          nullable: true
+        lookupErrorMessage:
+          type: string
+          nullable: true
+    RemoteFollowupPluginPublicationLinkDto:
+      type: object
+      properties:
+        pluginVersionId:
+          type: string
+          nullable: true
+        publicationId:
+          type: integer
+          nullable: true
+        publicationState:
+          type: string
+        statusReason:
+          type: string
+          nullable: true
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lookupErrorCode:
+          type: string
+          nullable: true
+        lookupErrorMessage:
+          type: string
+          nullable: true
     QueryLogsRequest:
       type: object
       properties:
@@ -1741,6 +2002,278 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/RemoteCommandCoordinatorDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /remote-followups/{tenantId}:
+    get:
+      summary: List canonical remote followups with durable control-plane filters
+      operationId: listRemoteFollowups
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: targetRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetRegionEpoch
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: followupId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: scriptId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pluginId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: automationDispatchId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: commandId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: originRegionEpoch
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: scriptPatchVersion
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pluginVersionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: playableStateScope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: worldSlug
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: realmSlug
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pointerVersion
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: payloadKind
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originSourceKind
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: automationWorkItemId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetEntityId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: effectKey
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: failureCode
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: requiresSoloTick
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: eventType
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: scriptEventId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetCommandId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetCommandExecutionOutcome
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetCommandGameplayResult
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: claimedTickBatchId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: requestedCommand
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originSourceState
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: originDeadlineRegionEpoch
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: originDeadlineTickId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: lateResultPolicy
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: claimTargetAggregate
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: currentOriginRuntimeRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: currentOriginRuntimeRegionEpoch
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: currentTargetRuntimeRegionId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: currentTargetRuntimeRegionEpoch
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: queueSourceKind
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: queueSourceState
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: queueSourceOrdinal
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: queueSourceDueTickId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: queueSourceDueAtMs
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: currentOriginRuntimeGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: currentTargetRuntimeGameInstanceId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching remote followups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RemoteFollowupDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:

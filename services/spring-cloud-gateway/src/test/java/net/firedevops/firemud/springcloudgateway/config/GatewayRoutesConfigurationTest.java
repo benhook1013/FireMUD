@@ -40,6 +40,7 @@ class GatewayRoutesConfigurationTest {
           "admin-logs",
           "admin-moderation",
           "admin-reports",
+          "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
           "design",
@@ -88,6 +89,7 @@ class GatewayRoutesConfigurationTest {
     assertHasPath(route("admin-logs"), "/api/admin/logs/**");
     assertHasPath(route("admin-moderation"), "/api/admin/moderation/**");
     assertHasPath(route("admin-reports"), "/api/admin/reports/**");
+    assertHasPath(route("admin-remote-followups"), "/api/admin/remote-followups/**");
     assertHasPath(route("admin-sagas"), "/api/admin/sagas/**");
     assertHasPath(route("admin-tick-remediation"), "/api/admin/tick-remediation/**");
 
@@ -97,6 +99,7 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(route("admin-logs"));
     assertHasStripPrefixTwo(route("admin-moderation"));
     assertHasStripPrefixTwo(route("admin-reports"));
+    assertHasStripPrefixTwo(route("admin-remote-followups"));
     assertHasStripPrefixTwo(route("admin-sagas"));
     assertHasStripPrefixTwo(route("admin-tick-remediation"));
 
