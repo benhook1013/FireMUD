@@ -151,15 +151,16 @@ public final class DefaultDurableRemoteFollowupExecutionService
       }
     }
     String payloadKind;
+    boolean requiresSoloTick;
     try {
       payloadKind = authoritativeText(followup.getPayloadKind(), root, "kind");
+      requiresSoloTick =
+          authoritativeBoolean(followup.isRequiresSoloTick(), root, "requiresSoloTick");
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_FOLLOWUP_PAYLOAD_INVALID", ex.getMessage());
     }
     String requestedCommand =
         firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
-    boolean requiresSoloTick =
-        followup.isRequiresSoloTick() || root.path("requiresSoloTick").asBoolean(false);
     if ((payloadJson == null || payloadJson.isBlank())
         && (payloadKind == null || payloadKind.isBlank())
         && (requestedCommand == null || requestedCommand.isBlank())) {
@@ -492,6 +493,18 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return payloadValue;
   }
 
+  private static boolean authoritativeBoolean(
+      boolean authoritativeValue, JsonNode root, String fieldName) {
+    Boolean payloadValue = optionalBoolean(root, fieldName);
+    if (authoritativeValue) {
+      if (payloadValue != null && !payloadValue) {
+        throw new IllegalArgumentException(fieldName + " conflicts with durable followup value");
+      }
+      return true;
+    }
+    return payloadValue != null ? payloadValue : false;
+  }
+
   private static String optionalText(JsonNode root, String fieldName) {
     if (root == null) {
       return null;
@@ -553,6 +566,24 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     long value = node.asLong();
     return value > 0 ? Long.valueOf(value) : defaultValue;
+  }
+
+  @SuppressFBWarnings(
+      value = "NP_BOOLEAN_RETURN_NULL",
+      justification =
+          "Tri-state payload parsing distinguishes absent booleans from explicit false.")
+  private static Boolean optionalBoolean(JsonNode root, String fieldName) {
+    if (root == null) {
+      return null;
+    }
+    JsonNode node = root.path(fieldName);
+    if (node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (!node.isBoolean()) {
+      throw new IllegalArgumentException(fieldName + " must be boolean");
+    }
+    return node.booleanValue();
   }
 
   private static String firstNonBlank(String primary, String fallback) {
