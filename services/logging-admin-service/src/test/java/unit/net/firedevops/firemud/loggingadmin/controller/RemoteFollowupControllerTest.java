@@ -43,7 +43,15 @@ class RemoteFollowupControllerTest {
   @Test
   void listRemoteFollowupsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupService.listRemoteFollowups(
-            org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
+            org.mockito.ArgumentMatchers.eq(2L),
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    "SCHEDULED".equals(request.getStatus())
+                        && "enqueue_automation_command".equals(request.getPayloadKind())
+                        && "ops".equals(request.getWorldSlug())
+                        && "preview".equals(request.getRealmSlug())
+                        && Long.valueOf(29L).equals(request.getPointerVersion())
+                        && Integer.valueOf(10).equals(request.getLimit()))))
         .thenReturn(List.of(remoteFollowupDto()));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
@@ -77,94 +85,94 @@ class RemoteFollowupControllerTest {
   }
 
   private RemoteFollowupDto remoteFollowupDto() {
-    return new RemoteFollowupDto(
-        "rf-1",
-        2L,
-        7L,
-        "region-a",
-        3L,
-        9L,
-        "region-b",
-        4L,
-        55L,
-        "damage:1",
-        "entity-9",
-        "SCHEDULED",
-        "tick-batch-7",
-        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
-        "NONE",
-        "ok",
-        Instant.parse("2026-07-02T00:00:00Z"),
-        Instant.parse("2026-07-02T00:00:01Z"),
-        2L,
-        "patch-1",
-        "plugin-1",
-        "plugin-v1",
-        new RemoteFollowupDto.ScriptPatchPublicationLinkDto(
-            "patch-1",
-            17L,
-            7L,
-            "VERSION_LIFECYCLE_STATE_PUBLISHED",
-            Instant.parse("2026-07-02T00:00:02Z"),
-            null,
-            null),
-        "PLAYABLE_STATE_SCOPE_ISOLATED",
-        "ops",
-        "preview",
-        29L,
-        "cmd-1",
-        "dispatch-1",
-        "work-1",
-        "script-1",
-        "enqueue_automation_command",
-        "LOOK",
-        "target-cmd-1",
-        "APPLIED",
-        "SUCCESS",
-        new RemoteFollowupDto.PluginPublicationLinkDto(
-            "plugin-v1",
-            31L,
-            "VERSION_LIFECYCLE_STATE_PUBLISHED",
-            null,
-            Instant.parse("2026-07-02T00:00:03Z"),
-            null,
-            null),
-        true,
-        "REMOTE_FOLLOWUP",
-        "TARGET_REGION_EXECUTED",
-        44L,
-        55L,
-        1700L,
-        3L,
-        88L,
-        "late_result_safe_to_ignore",
-        "onEnterRegion",
-        "v1",
-        "evt-1",
-        "TRIGGER_MODE_CATCH_UP",
-        "game-session:onEnterRegion:9:8:evt-1",
-        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
-        "entity:entity-9",
-        "region-origin-current",
-        13L,
-        "region-target-current",
-        14L,
-        "REMOTE_FOLLOWUP",
-        "TARGET_REGION_CLAIMED",
-        2L,
-        55L,
-        1700L,
-        7L,
-        9L,
-        "PLAYABLE_STATE_SCOPE_SHARED",
-        "world-7",
-        "realm-7",
-        107L,
-        "PLAYABLE_STATE_SCOPE_SHARED",
-        "world-9",
-        "realm-9",
-        109L,
-        true,
-        true);
+    return RemoteFollowupDto.builder()
+        .followupId("rf-1")
+        .tenantId(2L)
+        .originGameInstanceId(7L)
+        .originRegionId("region-a")
+        .originRegionEpoch(3L)
+        .targetGameInstanceId(9L)
+        .targetRegionId("region-b")
+        .targetRegionEpoch(4L)
+        .dueTickId(55L)
+        .effectKey("damage:1")
+        .targetEntityId("entity-9")
+        .status("SCHEDULED")
+        .claimedTickBatchId("tick-batch-7")
+        .payloadJson("{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}")
+        .failureCode("NONE")
+        .failureMessage("ok")
+        .createdAt(Instant.parse("2026-07-02T00:00:00Z"))
+        .updatedAt(Instant.parse("2026-07-02T00:00:01Z"))
+        .claimOrdinal(2L)
+        .scriptPatchVersion("patch-1")
+        .pluginId("plugin-1")
+        .pluginVersionId("plugin-v1")
+        .publication(
+            RemoteFollowupDto.ScriptPatchPublicationLinkDto.builder()
+                .scriptPatchVersion("patch-1")
+                .versionId(17L)
+                .baseVersionId(7L)
+                .publicationState("VERSION_LIFECYCLE_STATE_PUBLISHED")
+                .lastChangedAt(Instant.parse("2026-07-02T00:00:02Z"))
+                .build())
+        .playableStateScope("PLAYABLE_STATE_SCOPE_ISOLATED")
+        .worldSlug("ops")
+        .realmSlug("preview")
+        .pointerVersion(29L)
+        .commandId("cmd-1")
+        .automationDispatchId("dispatch-1")
+        .automationWorkItemId("work-1")
+        .scriptId("script-1")
+        .payloadKind("enqueue_automation_command")
+        .requestedCommand("LOOK")
+        .targetCommandId("target-cmd-1")
+        .targetCommandExecutionOutcome("APPLIED")
+        .targetCommandGameplayResult("SUCCESS")
+        .pluginPublication(
+            RemoteFollowupDto.PluginPublicationLinkDto.builder()
+                .pluginVersionId("plugin-v1")
+                .publicationId(31L)
+                .publicationState("VERSION_LIFECYCLE_STATE_PUBLISHED")
+                .lastChangedAt(Instant.parse("2026-07-02T00:00:03Z"))
+                .build())
+        .requiresSoloTick(true)
+        .originSourceKind("REMOTE_FOLLOWUP")
+        .originSourceState("TARGET_REGION_EXECUTED")
+        .originSourceOrdinal(44L)
+        .originSourceDueTickId(55L)
+        .originSourceDueAtMs(1700L)
+        .originDeadlineRegionEpoch(3L)
+        .originDeadlineTickId(88L)
+        .lateResultPolicy("late_result_safe_to_ignore")
+        .eventType("onEnterRegion")
+        .eventSchemaVersion("v1")
+        .scriptEventId("evt-1")
+        .triggerMode("TRIGGER_MODE_CATCH_UP")
+        .readSnapshotToken("game-session:onEnterRegion:9:8:evt-1")
+        .eventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}")
+        .claimTargetAggregate("entity:entity-9")
+        .currentOriginRuntimeRegionId("region-origin-current")
+        .currentOriginRuntimeRegionEpoch(13L)
+        .currentTargetRuntimeRegionId("region-target-current")
+        .currentTargetRuntimeRegionEpoch(14L)
+        .queueSourceKind("REMOTE_FOLLOWUP")
+        .queueSourceState("TARGET_REGION_CLAIMED")
+        .queueSourceOrdinal(2L)
+        .queueSourceDueTickId(55L)
+        .queueSourceDueAtMs(1700L)
+        .currentOriginRuntimeGameInstanceId(7L)
+        .currentTargetRuntimeGameInstanceId(9L)
+        .currentOriginRuntimePlayableStateScope("PLAYABLE_STATE_SCOPE_SHARED")
+        .currentOriginRuntimeWorldSlug("world-7")
+        .currentOriginRuntimeRealmSlug("realm-7")
+        .currentOriginRuntimePointerVersion(107L)
+        .currentTargetRuntimePlayableStateScope("PLAYABLE_STATE_SCOPE_SHARED")
+        .currentTargetRuntimeWorldSlug("world-9")
+        .currentTargetRuntimeRealmSlug("realm-9")
+        .currentTargetRuntimePointerVersion(109L)
+        .originRoutingBundleStale(true)
+        .targetRoutingBundleStale(true)
+        .build();
   }
 }

@@ -20,22 +20,18 @@ import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupDto;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupListRequest;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
+@ExtendWith(MockitoExtension.class)
 class RemoteFollowupServiceImplTest {
   @Mock private GameSessionControlPlaneClient gameSessionControlPlaneClient;
 
   @InjectMocks private RemoteFollowupServiceImpl service;
-
-  @BeforeEach
-  void setup() {
-    MockitoAnnotations.openMocks(this);
-  }
 
   @AfterEach
   void clear() {
@@ -94,6 +90,7 @@ class RemoteFollowupServiceImplTest {
     request.setQueueSourceDueAtMs(1700L);
     request.setCurrentOriginRuntimeGameInstanceId("7");
     request.setCurrentTargetRuntimeGameInstanceId("9");
+    request.setFailureCode("NONE");
 
     when(gameSessionControlPlaneClient.listRemoteFollowups(
             argThat(
@@ -149,7 +146,8 @@ class RemoteFollowupServiceImplTest {
                         && grpcRequest.getQueueSourceDueTickId() == 55L
                         && grpcRequest.getQueueSourceDueAtMs() == 1700L
                         && "7".equals(grpcRequest.getCurrentOriginRuntimeGameInstanceId())
-                        && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId()))))
+                        && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId())
+                        && "NONE".equals(grpcRequest.getFailureCode()))))
         .thenReturn(
             ListRemoteFollowupsResponse.newBuilder().addFollowups(remoteFollowup("2")).build());
 

@@ -42,6 +42,7 @@ class GatewayRoutesConfigurationProdTest {
           "admin-logs",
           "admin-moderation",
           "admin-reports",
+          "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
           "design",
@@ -92,6 +93,8 @@ class GatewayRoutesConfigurationProdTest {
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/admin/ping");
+    assertThat(route("admin-remote-followups").getPredicates().get(0).getArgs().values())
+        .containsExactly("/api/admin/remote-followups/**");
     assertThat(route("design").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/design/**");
     assertThat(route("account-auth").getPredicates().get(0).getArgs().values())
@@ -102,6 +105,7 @@ class GatewayRoutesConfigurationProdTest {
         .containsExactly("/assets/**");
 
     assertHasStripPrefixTwo("admin-ping");
+    assertHasStripPrefixTwo("admin-remote-followups");
     assertHasStripPrefixTwo("design");
     assertHasStripPrefixTwo("account-auth");
     assertHasStripPrefixTwo("social-chat");

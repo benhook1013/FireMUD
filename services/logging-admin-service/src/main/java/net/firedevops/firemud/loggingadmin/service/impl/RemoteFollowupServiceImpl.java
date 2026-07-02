@@ -207,109 +207,122 @@ public class RemoteFollowupServiceImpl implements RemoteFollowupService {
   }
 
   private RemoteFollowupDto toDto(RemoteFollowupEntry followup) {
-    return new RemoteFollowupDto(
-        followup.getFollowupId(),
-        parseLong(followup.getTenantId(), "tenant_id"),
-        parseLong(followup.getOriginGameInstanceId(), "origin_game_instance_id"),
-        blankToNull(followup.getOriginRegionId()),
-        followup.getOriginRegionEpoch(),
-        parseLong(followup.getTargetGameInstanceId(), "target_game_instance_id"),
-        blankToNull(followup.getTargetRegionId()),
-        followup.getTargetRegionEpoch(),
-        optionalLong(followup.getDueTickId()),
-        blankToNull(followup.getEffectKey()),
-        blankToNull(followup.getTargetEntityId()),
-        blankToNull(followup.getStatus()),
-        blankToNull(followup.getClaimedTickBatchId()),
-        blankToNull(followup.getPayloadJson()),
-        blankToNull(followup.getFailureCode()),
-        blankToNull(followup.getFailureMessage()),
-        toInstant(followup.getCreatedAtMs()),
-        toInstant(followup.getUpdatedAtMs()),
-        optionalLong(followup.getClaimOrdinal()),
-        blankToNull(followup.getScriptPatchVersion()),
-        blankToNull(followup.getPluginId()),
-        blankToNull(followup.getPluginVersionId()),
-        toDto(followup.getPublication()),
-        followup.getPlayableStateScope().name(),
-        blankToNull(followup.getWorldSlug()),
-        blankToNull(followup.getRealmSlug()),
-        optionalLong(followup.getPointerVersion()),
-        blankToNull(followup.getCommandId()),
-        blankToNull(followup.getAutomationDispatchId()),
-        blankToNull(followup.getAutomationWorkItemId()),
-        blankToNull(followup.getScriptId()),
-        blankToNull(followup.getPayloadKind()),
-        blankToNull(followup.getRequestedCommand()),
-        blankToNull(followup.getTargetCommandId()),
-        blankToNull(followup.getTargetCommandExecutionOutcome()),
-        blankToNull(followup.getTargetCommandGameplayResult()),
-        toDto(followup.getPluginPublication()),
-        followup.getRequiresSoloTick(),
-        blankToNull(followup.getOriginSourceKind()),
-        blankToNull(followup.getOriginSourceState()),
-        optionalLong(followup.getOriginSourceOrdinal()),
-        optionalLong(followup.getOriginSourceDueTickId()),
-        optionalLong(followup.getOriginSourceDueAtMs()),
-        optionalLong(followup.getOriginDeadlineRegionEpoch()),
-        optionalLong(followup.getOriginDeadlineTickId()),
-        blankToNull(followup.getLateResultPolicy()),
-        blankToNull(followup.getEventType()),
-        blankToNull(followup.getEventSchemaVersion()),
-        blankToNull(followup.getScriptEventId()),
-        blankToNull(followup.getTriggerMode()),
-        blankToNull(followup.getReadSnapshotToken()),
-        blankToNull(followup.getEventPayloadJson()),
-        blankToNull(followup.getClaimTargetAggregate()),
-        blankToNull(followup.getCurrentOriginRuntimeRegionId()),
-        optionalLong(followup.getCurrentOriginRuntimeRegionEpoch()),
-        blankToNull(followup.getCurrentTargetRuntimeRegionId()),
-        optionalLong(followup.getCurrentTargetRuntimeRegionEpoch()),
-        blankToNull(followup.getQueueSourceKind()),
-        blankToNull(followup.getQueueSourceState()),
-        optionalLong(followup.getQueueSourceOrdinal()),
-        optionalLong(followup.getQueueSourceDueTickId()),
-        optionalLong(followup.getQueueSourceDueAtMs()),
-        parseOptionalLong(
-            followup.getCurrentOriginRuntimeGameInstanceId(),
-            "current_origin_runtime_game_instance_id"),
-        parseOptionalLong(
-            followup.getCurrentTargetRuntimeGameInstanceId(),
-            "current_target_runtime_game_instance_id"),
-        followup.getCurrentOriginRuntimePlayableStateScope().name(),
-        blankToNull(followup.getCurrentOriginRuntimeWorldSlug()),
-        blankToNull(followup.getCurrentOriginRuntimeRealmSlug()),
-        optionalLong(followup.getCurrentOriginRuntimePointerVersion()),
-        followup.getCurrentTargetRuntimePlayableStateScope().name(),
-        blankToNull(followup.getCurrentTargetRuntimeWorldSlug()),
-        blankToNull(followup.getCurrentTargetRuntimeRealmSlug()),
-        optionalLong(followup.getCurrentTargetRuntimePointerVersion()),
-        followup.getIsOriginRoutingBundleStale(),
-        followup.getIsTargetRoutingBundleStale());
+    return RemoteFollowupDto.builder()
+        .followupId(followup.getFollowupId())
+        .tenantId(parseLong(followup.getTenantId(), "tenant_id"))
+        .originGameInstanceId(
+            parseLong(followup.getOriginGameInstanceId(), "origin_game_instance_id"))
+        .originRegionId(blankToNull(followup.getOriginRegionId()))
+        .originRegionEpoch(followup.getOriginRegionEpoch())
+        .targetGameInstanceId(
+            parseLong(followup.getTargetGameInstanceId(), "target_game_instance_id"))
+        .targetRegionId(blankToNull(followup.getTargetRegionId()))
+        .targetRegionEpoch(followup.getTargetRegionEpoch())
+        .dueTickId(optionalLong(followup.getDueTickId()))
+        .effectKey(blankToNull(followup.getEffectKey()))
+        .targetEntityId(blankToNull(followup.getTargetEntityId()))
+        .status(blankToNull(followup.getStatus()))
+        .claimedTickBatchId(blankToNull(followup.getClaimedTickBatchId()))
+        .payloadJson(blankToNull(followup.getPayloadJson()))
+        .failureCode(blankToNull(followup.getFailureCode()))
+        .failureMessage(blankToNull(followup.getFailureMessage()))
+        .createdAt(toInstant(followup.getCreatedAtMs()))
+        .updatedAt(toInstant(followup.getUpdatedAtMs()))
+        .claimOrdinal(optionalLong(followup.getClaimOrdinal()))
+        .scriptPatchVersion(blankToNull(followup.getScriptPatchVersion()))
+        .pluginId(blankToNull(followup.getPluginId()))
+        .pluginVersionId(blankToNull(followup.getPluginVersionId()))
+        .publication(toDto(followup.getPublication()))
+        .playableStateScope(followup.getPlayableStateScope().name())
+        .worldSlug(blankToNull(followup.getWorldSlug()))
+        .realmSlug(blankToNull(followup.getRealmSlug()))
+        .pointerVersion(optionalLong(followup.getPointerVersion()))
+        .commandId(blankToNull(followup.getCommandId()))
+        .automationDispatchId(blankToNull(followup.getAutomationDispatchId()))
+        .automationWorkItemId(blankToNull(followup.getAutomationWorkItemId()))
+        .scriptId(blankToNull(followup.getScriptId()))
+        .payloadKind(blankToNull(followup.getPayloadKind()))
+        .requestedCommand(blankToNull(followup.getRequestedCommand()))
+        .targetCommandId(blankToNull(followup.getTargetCommandId()))
+        .targetCommandExecutionOutcome(blankToNull(followup.getTargetCommandExecutionOutcome()))
+        .targetCommandGameplayResult(blankToNull(followup.getTargetCommandGameplayResult()))
+        .pluginPublication(toDto(followup.getPluginPublication()))
+        .requiresSoloTick(followup.getRequiresSoloTick())
+        .originSourceKind(blankToNull(followup.getOriginSourceKind()))
+        .originSourceState(blankToNull(followup.getOriginSourceState()))
+        .originSourceOrdinal(optionalLong(followup.getOriginSourceOrdinal()))
+        .originSourceDueTickId(optionalLong(followup.getOriginSourceDueTickId()))
+        .originSourceDueAtMs(optionalLong(followup.getOriginSourceDueAtMs()))
+        .originDeadlineRegionEpoch(optionalLong(followup.getOriginDeadlineRegionEpoch()))
+        .originDeadlineTickId(optionalLong(followup.getOriginDeadlineTickId()))
+        .lateResultPolicy(blankToNull(followup.getLateResultPolicy()))
+        .eventType(blankToNull(followup.getEventType()))
+        .eventSchemaVersion(blankToNull(followup.getEventSchemaVersion()))
+        .scriptEventId(blankToNull(followup.getScriptEventId()))
+        .triggerMode(blankToNull(followup.getTriggerMode()))
+        .readSnapshotToken(blankToNull(followup.getReadSnapshotToken()))
+        .eventPayloadJson(blankToNull(followup.getEventPayloadJson()))
+        .claimTargetAggregate(blankToNull(followup.getClaimTargetAggregate()))
+        .currentOriginRuntimeRegionId(blankToNull(followup.getCurrentOriginRuntimeRegionId()))
+        .currentOriginRuntimeRegionEpoch(
+            optionalLong(followup.getCurrentOriginRuntimeRegionEpoch()))
+        .currentTargetRuntimeRegionId(blankToNull(followup.getCurrentTargetRuntimeRegionId()))
+        .currentTargetRuntimeRegionEpoch(
+            optionalLong(followup.getCurrentTargetRuntimeRegionEpoch()))
+        .queueSourceKind(blankToNull(followup.getQueueSourceKind()))
+        .queueSourceState(blankToNull(followup.getQueueSourceState()))
+        .queueSourceOrdinal(optionalLong(followup.getQueueSourceOrdinal()))
+        .queueSourceDueTickId(optionalLong(followup.getQueueSourceDueTickId()))
+        .queueSourceDueAtMs(optionalLong(followup.getQueueSourceDueAtMs()))
+        .currentOriginRuntimeGameInstanceId(
+            parseOptionalLong(
+                followup.getCurrentOriginRuntimeGameInstanceId(),
+                "current_origin_runtime_game_instance_id"))
+        .currentTargetRuntimeGameInstanceId(
+            parseOptionalLong(
+                followup.getCurrentTargetRuntimeGameInstanceId(),
+                "current_target_runtime_game_instance_id"))
+        .currentOriginRuntimePlayableStateScope(
+            followup.getCurrentOriginRuntimePlayableStateScope().name())
+        .currentOriginRuntimeWorldSlug(blankToNull(followup.getCurrentOriginRuntimeWorldSlug()))
+        .currentOriginRuntimeRealmSlug(blankToNull(followup.getCurrentOriginRuntimeRealmSlug()))
+        .currentOriginRuntimePointerVersion(
+            optionalLong(followup.getCurrentOriginRuntimePointerVersion()))
+        .currentTargetRuntimePlayableStateScope(
+            followup.getCurrentTargetRuntimePlayableStateScope().name())
+        .currentTargetRuntimeWorldSlug(blankToNull(followup.getCurrentTargetRuntimeWorldSlug()))
+        .currentTargetRuntimeRealmSlug(blankToNull(followup.getCurrentTargetRuntimeRealmSlug()))
+        .currentTargetRuntimePointerVersion(
+            optionalLong(followup.getCurrentTargetRuntimePointerVersion()))
+        .originRoutingBundleStale(followup.getIsOriginRoutingBundleStale())
+        .targetRoutingBundleStale(followup.getIsTargetRoutingBundleStale())
+        .build();
   }
 
   private RemoteFollowupDto.ScriptPatchPublicationLinkDto toDto(
       net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink publication) {
-    return new RemoteFollowupDto.ScriptPatchPublicationLinkDto(
-        blankToNull(publication.getScriptPatchVersion()),
-        optionalLong(publication.getVersionId()),
-        optionalLong(publication.getBaseVersionId()),
-        publication.getPublicationState().name(),
-        toInstant(publication.getLastChangedAtMs()),
-        blankToNull(publication.getLookupErrorCode()),
-        blankToNull(publication.getLookupErrorMessage()));
+    return RemoteFollowupDto.ScriptPatchPublicationLinkDto.builder()
+        .scriptPatchVersion(blankToNull(publication.getScriptPatchVersion()))
+        .versionId(optionalLong(publication.getVersionId()))
+        .baseVersionId(optionalLong(publication.getBaseVersionId()))
+        .publicationState(publication.getPublicationState().name())
+        .lastChangedAt(toInstant(publication.getLastChangedAtMs()))
+        .lookupErrorCode(blankToNull(publication.getLookupErrorCode()))
+        .lookupErrorMessage(blankToNull(publication.getLookupErrorMessage()))
+        .build();
   }
 
   private RemoteFollowupDto.PluginPublicationLinkDto toDto(
       net.firedevops.firemud.gamesession.v1.PluginPublicationLink publication) {
-    return new RemoteFollowupDto.PluginPublicationLinkDto(
-        blankToNull(publication.getPluginVersionId()),
-        optionalLong(publication.getPublicationId()),
-        publication.getPublicationState().name(),
-        blankToNull(publication.getStatusReason()),
-        toInstant(publication.getLastChangedAtMs()),
-        blankToNull(publication.getLookupErrorCode()),
-        blankToNull(publication.getLookupErrorMessage()));
+    return RemoteFollowupDto.PluginPublicationLinkDto.builder()
+        .pluginVersionId(blankToNull(publication.getPluginVersionId()))
+        .publicationId(optionalLong(publication.getPublicationId()))
+        .publicationState(publication.getPublicationState().name())
+        .statusReason(blankToNull(publication.getStatusReason()))
+        .lastChangedAt(toInstant(publication.getLastChangedAtMs()))
+        .lookupErrorCode(blankToNull(publication.getLookupErrorCode()))
+        .lookupErrorMessage(blankToNull(publication.getLookupErrorMessage()))
+        .build();
   }
 
   private PlayableStateScope parsePlayableStateScope(String value) {
