@@ -2265,6 +2265,36 @@ paths:
                       $ref: '#/components/schemas/RemoteCommandCoordinatorDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+  /remote-followups/{tenantId}/{followupId}:
+    get:
+      summary: Read canonical remote followup by tenant-qualified followup id
+      operationId: getRemoteFollowup
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: followupId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Canonical remote followup state and current runtime context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/RemoteFollowupDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
   /remote-followups/{tenantId}:
     get:
       summary: List canonical remote followups with durable control-plane filters
@@ -2535,6 +2565,36 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/RemoteFollowupDto'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+  /remote-followup-results/{tenantId}/{resultId}:
+    get:
+      summary: Read canonical remote followup result by tenant-qualified result id
+      operationId: getRemoteFollowupResult
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: resultId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Canonical remote followup result state and current runtime context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/RemoteFollowupResultDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /remote-followup-results/{tenantId}:

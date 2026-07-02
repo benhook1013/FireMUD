@@ -22,6 +22,17 @@ public class RemoteFollowupController {
     this.remoteFollowupService = remoteFollowupService;
   }
 
+  @GetMapping("/{tenantId}/{followupId}")
+  @Timed(
+      value = "getRemoteFollowup",
+      description = "Read canonical remote followup by tenant-qualified followup id")
+  public ResponseEntity<ApiResponse<RemoteFollowupDto>> getRemoteFollowup(
+      @PathVariable long tenantId, @PathVariable String followupId) {
+    SessionContext.requireTenantAccess(tenantId);
+    return ResponseEntity.ok(
+        ApiResponse.success(remoteFollowupService.getRemoteFollowup(tenantId, followupId)));
+  }
+
   @GetMapping("/{tenantId}")
   @Timed(
       value = "listRemoteFollowups",
