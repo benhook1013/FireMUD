@@ -31,6 +31,8 @@ import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
@@ -154,6 +156,11 @@ public class GameSessionControlPlaneClient
 
   public ListRemoteFollowupsResponse listRemoteFollowups(ListRemoteFollowupsRequest request) {
     return stub().listRemoteFollowups(request);
+  }
+
+  public ListRemoteFollowupResultsResponse listRemoteFollowupResults(
+      ListRemoteFollowupResultsRequest request) {
+    return stub().listRemoteFollowupResults(request);
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
