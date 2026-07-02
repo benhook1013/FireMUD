@@ -561,11 +561,17 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return defaultValue;
     }
     JsonNode node = root.path(fieldName);
-    if (!node.isNumber()) {
+    if (node.isMissingNode() || node.isNull()) {
       return defaultValue;
     }
-    long value = node.asLong();
-    return value > 0 ? Long.valueOf(value) : defaultValue;
+    if (!node.isIntegralNumber()) {
+      throw new IllegalArgumentException(fieldName + " must be a positive integer");
+    }
+    long value = node.longValue();
+    if (value <= 0L) {
+      throw new IllegalArgumentException(fieldName + " must be a positive integer");
+    }
+    return value;
   }
 
   @SuppressFBWarnings(
