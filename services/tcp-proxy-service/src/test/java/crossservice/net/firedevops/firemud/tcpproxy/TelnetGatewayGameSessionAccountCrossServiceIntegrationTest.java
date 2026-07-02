@@ -3,6 +3,7 @@ package net.firedevops.firemud.tcpproxy;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -317,6 +319,83 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         ChatTestFixtures.PLAYER_EMBERLINE,
         "iron-boots",
         null);
+  }
+
+  @Test
+  void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
+    ensureTestServicesStarted();
+
+    try (GameplayWebSocketDriver webSocketClient = openReadyWebSocketClient(1L)) {
+      webSocketClient.send("INV HERE");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response ->
+                      response.contains("Room Inventory:")
+                          && response.contains("Torch")
+                          && response.contains("Backpack"),
+                  "room inventory before pickup"))
+          .contains("Room Inventory:");
+      webSocketClient.send("GET Torch");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response -> response.contains("You pick up Torch."), "pickup response"))
+          .contains("You pick up Torch.");
+      webSocketClient.send("CONTAINER Backpack");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response ->
+                      response.contains("Container: Backpack [backpack#1]")
+                          && response.contains("Ration"),
+                  "container view"))
+          .contains("Container: Backpack [backpack#1]");
+      webSocketClient.send("PUT Torch INTO Backpack");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response -> response.contains("You put Torch into Backpack."), "put response"))
+          .contains("You put Torch into Backpack.");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response ->
+                      response.contains("Container: Backpack [backpack#1]")
+                          && response.contains("Torch"),
+                  "container view after put"))
+          .contains("Container: Backpack [backpack#1]");
+      webSocketClient.send("TAKE Torch FROM Backpack");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response -> response.contains("You take Torch from Backpack."), "take response"))
+          .contains("You take Torch from Backpack.");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response ->
+                      response.contains("Container: Backpack [backpack#1]")
+                          && response.contains("Ration"),
+                  "container view after take"))
+          .contains("Container: Backpack [backpack#1]");
+      webSocketClient.send("DROP Torch");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response -> response.contains("You drop Torch."), "drop response"))
+          .contains("You drop Torch.");
+      webSocketClient.send("LOGOUT");
+      assertThat(
+              webSocketClient.awaitResponseMatching(
+                  response -> response.contains("OK LOGOUT") && response.contains("Logged out."),
+                  "logout response"))
+          .contains("OK LOGOUT");
+    }
+
+    try (GameplayTelnetDriver telnetClient = openReadyTelnetClient()) {
+      telnetClient.sendLine("GET Torch");
+      assertThat(telnetClient.readBlockContaining("You pick up Torch."))
+          .contains("You pick up Torch.");
+      telnetClient.sendLine("PUT Torch INTO Backpack");
+      assertThat(telnetClient.readBlockContaining("You put Torch into Backpack."))
+          .contains("You put Torch into Backpack.");
+      telnetClient.sendLine("TAKE Torch FROM Backpack");
+      assertThat(telnetClient.readBlockContaining("You take Torch from Backpack."))
+          .contains("You take Torch from Backpack.");
+    }
   }
 
   @Test
@@ -619,6 +698,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         this::openTelnetClient,
         GameplayTelnetScenarios.Admission.unnamed(
             "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
+  }
+
+  private GameplayWebSocketDriver openReadyWebSocketClient(long sessionId) throws Exception {
+    GameplayWebSocketDriver client =
+        GameplayWebSocketDriver.connectGameplaySession(
+            URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
+            COMMAND_WAIT,
+            TENANT_ID,
+            sessionId);
+    try {
+      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+      return client;
+    } catch (Exception ex) {
+      client.close();
+      throw ex;
+    }
   }
 
   private static AccountRuntimeStubServer accountStub() {
