@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class AuthoredActionCommandHandlerTest {
 
   @Test
-  void authoredActionUsesConfiguredNoticeAndReturnsSuccess() {
+  void authoredActionReturnsSuccessWithoutSyntheticOutput() {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setActionId("wave-salute");
@@ -34,8 +34,7 @@ class AuthoredActionCommandHandlerTest {
                     "wave-salute", java.util.List.of("captain"))));
 
     assertTrue(result.commandResult().accepted());
-    assertEquals(PlayerOutputKind.NOTICE, result.outputs().getFirst().kind());
-    assertEquals("You salute smartly.", result.outputs().getFirst().text());
+    assertEquals(0, result.outputs().size());
   }
 
   @Test

@@ -42,7 +42,9 @@ public class TextCommandParser {
     String[] tokens = trimmed.split("\\s+");
     String aliasUsed = tokens[0];
     TextCommandDefinition resolvedDefinition =
-        registry.findDefinitionByAlias(aliasUsed).orElse(null);
+        registry
+            .findDefinitionByAlias(aliasUsed)
+            .orElseGet(() -> registry.findDefinition(aliasUsed).orElse(null));
     TextCommandType type =
         resolvedDefinition == null ? TextCommandType.UNKNOWN : resolvedDefinition.type();
     String commandId =

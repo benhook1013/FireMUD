@@ -5,7 +5,6 @@ import java.util.List;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @Component
 final class AuthoredActionCommandHandler implements AuthoredActionRuntimeHandler {
@@ -23,14 +22,8 @@ final class AuthoredActionCommandHandler implements AuthoredActionRuntimeHandler
     return catalog
         .find(invocation.commandId())
         .map(
-            action -> {
-              String notice =
-                  StringUtils.hasText(action.noticeText())
-                      ? action.noticeText()
-                      : "Authored action executed: " + action.commandId();
-              return new TextCommandInterpretationResult(
-                  CommandEnqueueResult.success(), List.of(PlayerOutput.notice(notice)));
-            })
+            action ->
+                new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of()))
         .orElseGet(
             () ->
                 new TextCommandInterpretationResult(

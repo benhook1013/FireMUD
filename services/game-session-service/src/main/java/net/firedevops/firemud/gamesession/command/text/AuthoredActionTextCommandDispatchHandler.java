@@ -7,17 +7,22 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispatchHandler {
   private static final Logger LOG =
       LoggerFactory.getLogger(AuthoredActionTextCommandDispatchHandler.class);
   private final AuthoredActionCommandHandler handler;
+  private final ConfiguredAuthoredActionCatalog catalog;
   private final ScriptEventPublisher scriptEventPublisher;
 
   AuthoredActionTextCommandDispatchHandler(
-      AuthoredActionCommandHandler handler, ScriptEventPublisher scriptEventPublisher) {
+      AuthoredActionCommandHandler handler,
+      ConfiguredAuthoredActionCatalog catalog,
+      ScriptEventPublisher scriptEventPublisher) {
     this.handler = handler;
+    this.catalog = catalog;
     this.scriptEventPublisher = scriptEventPublisher;
   }
 
@@ -40,7 +45,13 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
   private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
       GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("authored-" + UUID.randomUUID());
+      String executionHook =
+          catalog
+              .find(command.commandId())
+              .map(ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction::executionHook)
+              .orElse(null);
+      gameplayCommand.setCommandId(
+          StringUtils.hasText(executionHook) ? executionHook : "authored-" + UUID.randomUUID());
       gameplayCommand.setCommandName(command.commandId());
       scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
     } catch (RuntimeException ex) {

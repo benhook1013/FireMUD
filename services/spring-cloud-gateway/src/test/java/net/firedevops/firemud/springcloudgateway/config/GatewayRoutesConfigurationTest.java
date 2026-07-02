@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
 import java.util.Set;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -78,6 +79,19 @@ class GatewayRoutesConfigurationTest {
   void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void publicSessionAndSocialRouteFamiliesHaveNoCoarseCatchallFallback() {
+    Set<String> coarsePaths =
+        Set.of("/api/session/**", "/api/admin/**", "/api/account/**", "/api/social/**");
+    assertThat(
+            gatewayProperties.getRoutes().stream()
+                .flatMap(route -> route.getPredicates().stream())
+                .filter(route -> "Path".equalsIgnoreCase(route.getName()))
+                .flatMap(predicate -> predicate.getArgs().values().stream())
+                .collect(Collectors.toSet()))
+        .noneMatch(coarsePaths::contains);
   }
 
   @Test

@@ -42,6 +42,7 @@ public class TextCommandInterpreter {
       WhoCommandHandler whoHandler,
       FriendsCommandHandler friendsHandler,
       AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
@@ -70,6 +71,7 @@ public class TextCommandInterpreter {
             whoHandler,
             friendsHandler,
             authoredActionHandler,
+            authoredActionCatalog,
             new ItemCommandHandler(
                 inventoryHandler,
                 equipmentHandler,
@@ -248,6 +250,7 @@ public class TextCommandInterpreter {
       WhoCommandHandler whoHandler,
       FriendsCommandHandler friendsHandler,
       AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
       ItemCommandHandler itemHandler,
       ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
@@ -262,7 +265,7 @@ public class TextCommandInterpreter {
             new WhoTextCommandDispatchHandler(whoHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(
-                authoredActionHandler, scriptEventPublisher),
+                authoredActionHandler, authoredActionCatalog, scriptEventPublisher),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),
