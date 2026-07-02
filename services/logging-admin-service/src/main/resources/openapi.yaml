@@ -1091,10 +1091,10 @@ components:
           type: string
           nullable: true
         originGameInstanceId:
-          type: integer
+          type: string
           nullable: true
         targetGameInstanceId:
-          type: integer
+          type: string
           nullable: true
         targetEntityId:
           type: string
@@ -1177,10 +1177,10 @@ components:
           type: integer
           nullable: true
         currentOriginRuntimeGameInstanceId:
-          type: integer
+          type: string
           nullable: true
         currentTargetRuntimeGameInstanceId:
-          type: integer
+          type: string
           nullable: true
         currentOriginRuntimePlayableStateScope:
           type: string

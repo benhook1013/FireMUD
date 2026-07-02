@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupResultDto;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupResultListRequest;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -164,8 +165,8 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals(2L, result.getFirst().tenantId()),
         () -> assertEquals("coord-1", result.getFirst().coordinatorId()),
         () -> assertEquals("rf-1", result.getFirst().followupId()),
-        () -> assertEquals(7L, result.getFirst().originGameInstanceId()),
-        () -> assertEquals(9L, result.getFirst().targetGameInstanceId()),
+        () -> assertEquals("7", result.getFirst().originGameInstanceId()),
+        () -> assertEquals("9", result.getFirst().targetGameInstanceId()),
         () -> assertEquals("REMOTE_APPLIED", result.getFirst().outcome()),
         () -> assertEquals("dispatch-1", result.getFirst().automationDispatchId()),
         () -> assertEquals("auto-1", result.getFirst().resultCommandId()),
@@ -174,13 +175,36 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals("entity:npc-7", result.getFirst().claimTargetAggregate()),
         () ->
             assertEquals("region-origin-current", result.getFirst().currentOriginRuntimeRegionId()),
-        () -> assertEquals(7L, result.getFirst().currentOriginRuntimeGameInstanceId()),
-        () -> assertEquals(9L, result.getFirst().currentTargetRuntimeGameInstanceId()),
+        () -> assertEquals("7", result.getFirst().currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals("9", result.getFirst().currentTargetRuntimeGameInstanceId()),
         () ->
             assertEquals(
                 "PLAYABLE_STATE_SCOPE_SHARED",
                 result.getFirst().currentTargetRuntimePlayableStateScope()),
         () -> assertEquals(31L, result.getFirst().pluginPublication().publicationId()));
+  }
+
+  @Test
+  void listRemoteFollowupResultsMapsInvalidArgumentControlPlaneError() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.listRemoteFollowupResults(
+            argThat(grpcRequest -> "2".equals(grpcRequest.getTenantId()))))
+        .thenReturn(
+            ListRemoteFollowupResultsResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_ARGUMENT")
+                        .setMessage("bad remote followup result filter")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.listRemoteFollowupResults(2L, new RemoteFollowupResultListRequest()));
+
+    assertEquals(400, ex.getStatusCode().value());
+    assertEquals("bad remote followup result filter", ex.getReason());
   }
 
   @Test

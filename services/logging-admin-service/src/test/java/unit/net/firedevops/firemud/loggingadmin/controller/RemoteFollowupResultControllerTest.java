@@ -61,7 +61,7 @@ class RemoteFollowupResultControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].resultId").value("rr-1"))
         .andExpect(jsonPath("$.data[0].resultCommandId").value("auto-1"))
-        .andExpect(jsonPath("$.data[0].currentTargetRuntimeGameInstanceId").value(9))
+        .andExpect(jsonPath("$.data[0].currentTargetRuntimeGameInstanceId").value("9"))
         .andExpect(jsonPath("$.data[0].targetRoutingBundleStale").value(true));
   }
 
@@ -125,8 +125,8 @@ class RemoteFollowupResultControllerTest {
         3L,
         88L,
         "late_result_safe_to_ignore",
-        7L,
-        9L,
+        "7",
+        "9",
         "npc-7",
         "remote-followup:dispatch-1",
         "trigger_script_event",
@@ -154,8 +154,8 @@ class RemoteFollowupResultControllerTest {
         3L,
         55L,
         1700L,
-        7L,
-        9L,
+        "7",
+        "9",
         "PLAYABLE_STATE_SCOPE_SHARED",
         "world-7",
         "realm-7",
