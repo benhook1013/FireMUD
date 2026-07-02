@@ -15,16 +15,22 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
+import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersResponse;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
+import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
@@ -121,6 +127,27 @@ public class GameSessionControlPlaneClient
     return stub()
         .validateBuiltInCommandAlias(
             ValidateBuiltInCommandAliasRequest.newBuilder().setAlias(alias).build());
+  }
+
+  public GetGameplayCommandStatusResponse getGameplayCommandStatus(String commandId) {
+    return stub()
+        .getGameplayCommandStatus(
+            GetGameplayCommandStatusRequest.newBuilder().setCommandId(commandId).build());
+  }
+
+  public GetRemoteCommandCoordinatorResponse getRemoteCommandCoordinator(
+      long tenantId, String coordinatorId) {
+    return stub()
+        .getRemoteCommandCoordinator(
+            GetRemoteCommandCoordinatorRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setCoordinatorId(coordinatorId)
+                .build());
+  }
+
+  public ListRemoteCommandCoordinatorsResponse listRemoteCommandCoordinators(
+      ListRemoteCommandCoordinatorsRequest request) {
+    return stub().listRemoteCommandCoordinators(request);
   }
 
   public GetGameInstanceRuntimeStateResponse getGameInstanceRuntimeState(
