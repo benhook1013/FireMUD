@@ -14,6 +14,7 @@ COMPOSE_FILES=(
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_CHECK_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
+ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
@@ -72,6 +73,7 @@ EOF
 
 docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
+bash "$ENSURE_CERTS_SCRIPT"
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 

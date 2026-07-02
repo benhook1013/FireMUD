@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.security;
 
+import io.grpc.ForwardingServerCall;
 import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.ServerCall;
@@ -41,14 +42,19 @@ public class AuthTokenInterceptor implements ServerInterceptor {
     String token = authHeader.substring(7);
     try {
       SessionClaims.fromJwt(jwtUtil.parseToken(token)).applyToSession();
-      ServerCall.Listener<ReqT> listener = next.startCall(call, headers);
+      ServerCall<ReqT, RespT> clearingCall =
+          new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+            @Override
+            public void close(Status status, Metadata trailers) {
+              try {
+                super.close(status, trailers);
+              } finally {
+                SessionContext.clear();
+              }
+            }
+          };
+      ServerCall.Listener<ReqT> listener = next.startCall(clearingCall, headers);
       return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(listener) {
-        @Override
-        public void onComplete() {
-          SessionContext.clear();
-          super.onComplete();
-        }
-
         @Override
         public void onCancel() {
           SessionContext.clear();
