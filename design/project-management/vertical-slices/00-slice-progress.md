@@ -10,9 +10,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [10.1 Script Event Ingress and Handler Resolution](./10.1-task-list-script-event-ingress-and-handler-resolution-vertical-slice.md)
-   Remaining: build on the now-live event-scope admission, ingress audit, durable bindings, pending-work materialization, tenant-readiness `onLoad`, current Game Session `onCommand` including direct communication commands, direct gameplay read handlers (`INVENTORY` / `EQUIPMENT` / `CONTAINER`, `WHO`, `FRIENDS`), gameplay-scoped `HELP`, gameplay-scoped world browse (`WORLDS` / `REALMS` / `CHARS`), gameplay-scoped authored actions, successful direct `PLAY` / `LOGOUT`, staged-command authority-preserving durable `onCommand` fallback for queued player commands, plus Automation/remote durable execution, fresh-PLAY `onSpawn`, movement plus forced/disconnect-backed `onLeaveRegion` producers, gameplay plus current scheduler and staged-command/status routing-bundle carry-through, fail-closed runtime region-scope fencing on gameplay-originated ingress, explicit remote target-scope handoff for emitted commands, and first durable evaluator by broadening producer coverage and moving beyond the current command-template execution boundary.
-2. [02.15.8 Environment Preflight and Secret-Binding Convergence](./02.15.8-task-list-environment-preflight-and-secret-binding-convergence-vertical-slice.md)
+1. [02.15.8 Environment Preflight and Secret-Binding Convergence](./02.15.8-task-list-environment-preflight-and-secret-binding-convergence-vertical-slice.md)
    Remaining: build on the now-live JWT secret-path startup, mounted JWKS serving, base Kubernetes JWT/JWKS mounts, preview-unique JWT/JWKS rendering, expected-binding manifest schema expansion, `expectedBindingsRef` report output, full required preflight policy-ID emission, executable production/hobby traffic-open backup gates, report contract tests, and now cross-manifest external-binding isolation proof by tightening the expected-binding validation further against real environment evidence as it becomes available. The next bounded child follow-through is [`02.15.8.2`](./02.15.8.2-task-list-service-discovery-override-preflight-enforcement-vertical-slice.md) for exact `allowedOverrides` enforcement on rendered service-discovery overrides.
 
 ### 2. Active architecture follow-through
@@ -29,58 +27,54 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: built-in and first-pass authored actions now carry bounded optional tags/facets too; the next follow-through is real scripting/policy consumers of those tags rather than metadata-only attachment.
 5. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
    Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, authored `HELP` discovery, and fail-fast unsupported-metadata validation by adding richer targeting/cost/cooldown/effect semantics.
-6. [10.1 Script Event Ingress and Handler Resolution](./10.1-task-list-script-event-ingress-and-handler-resolution-vertical-slice.md)
-   Remaining: build on the now-live event-scope `TriggerScriptEvent` admission, ingress audit, built-in registry enforcement/read APIs, snapshot-token validation, plugin runtime-state fencing for plugin-trigger ingress, durable script event bindings, first `script_work_items` outbox materialization, handler-scoped `script_event_audit` rows, real pending-work cancellation, current Game Session `onCommand` coverage for queued gameplay, direct communication, direct gameplay reads, fresh-PLAY `onSpawn`, canonical gameplay disconnect `onLeaveRegion`, and staged-command authority-preserving live durable fallback for queued player commands, pending-work claiming, first durable evaluator/handoff path, and dry-run pre-resolution quota guard by broadening producer coverage and moving beyond the current command-template execution boundary.
-7. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+6. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: the bounded gameplay-presence, AFK/activity, recent-presence disposition, and first current-game-instance `WHO` substrate are now live; only later activity consumers and richer visibility-policy follow-through remain when that work becomes active.
-8. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
+7. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam, now consumed by REST, gRPC, gameplay `FRIENDS`, first-party-web structured friend roster/detail/summary/policy plus structured mutation-result payloads with fail-closed gameplay grammar, the now-canonical gameplay plus REST/gRPC Social Groups visibility-policy read/write seam, and one shared Account-profile JSON helper for that visibility-policy substrate across live clients plus shared runtime proof, into later social consumers and later privacy refinement without reopening `WHO`.
-9. [09.3.1 Playable-State Family Namespace Follow-Through](./09.3.1-task-list-playable-state-family-namespace-follow-through-vertical-slice.md)
+8. [09.3.1 Playable-State Family Namespace Follow-Through](./09.3.1-task-list-playable-state-family-namespace-follow-through-vertical-slice.md)
    Remaining: carry the `09.3` namespace contract into the next real gameplay-state family set and keep shared-state/isolated semantics aligned on `{tenantId, gameInstanceId, playableStateScope}`.
-10. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+9. [02.1.4.1 Account Versus Character Social Scope](./02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
    Remaining: harden mixed scope behavior beyond the first public-facing friend presence seam and keep later social consumers aligned with the same scope model.
-11. [02.1.4.2 Social Privacy Policy Propagation and Consumer Hardening](./02.1.4.2-task-list-social-privacy-policy-propagation-and-consumer-hardening-vertical-slice.md)
+10. [02.1.4.2 Social Privacy Policy Propagation and Consumer Hardening](./02.1.4.2-task-list-social-privacy-policy-propagation-and-consumer-hardening-vertical-slice.md)
    Remaining: propagate visibility-policy enforcement from Social Groups into next social consumers without introducing local ad hoc suppression paths.
-12. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+11. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
    Remaining: the cross-service proto naming guard is in place; broader runtime timing/scheduling adoption remains ongoing as timed systems land.
-13. [02.15.7 Gateway Edge Allowlist and Management Contract Convergence](./02.15.7-task-list-gateway-edge-allowlist-and-management-contract-convergence-vertical-slice.md)
+12. [02.15.7 Gateway Edge Allowlist and Management Contract Convergence](./02.15.7-task-list-gateway-edge-allowlist-and-management-contract-convergence-vertical-slice.md)
    Remaining: keep explicit public-route inventory and owning-service enforcement synchronized as later public routes are added.
-14. [02.1.7 Auth, Session, and Routing Guardrail Follow-Through](./02.1.7-task-list-auth-session-and-routing-guardrail-follow-through-vertical-slice.md)
+13. [02.1.7 Auth, Session, and Routing Guardrail Follow-Through](./02.1.7-task-list-auth-session-and-routing-guardrail-follow-through-vertical-slice.md)
    Remaining: use this as the single growing queue for bounded auth/session/routing hardening seams where the architecture is already decided and only fail-closed follow-through remains, especially malformed token/claim rejection, non-positive or blank routing identity rejection, replay payload mismatch guards, and application-level gRPC error normalization with focused proof. `02.1.7.1` is complete; the next bounded child follow-through docs are [`02.1.7.2`](./02.1.7.2-task-list-malformed-jwt-and-claim-shape-parity-vertical-slice.md) for malformed JWT and claim-shape parity and [`02.1.7.3`](./02.1.7.3-task-list-positive-identity-and-routing-bundle-guardrails-vertical-slice.md) for non-positive identity and partial routing-bundle fail-closed parity.
-15. [02.18.10.1 Authored-Action and Resource Effect Replay Guards](./02.18.10.1-task-list-authored-action-and-resource-effect-replay-guards-vertical-slice.md)
+14. [02.18.10.1 Authored-Action and Resource Effect Replay Guards](./02.18.10.1-task-list-authored-action-and-resource-effect-replay-guards-vertical-slice.md)
    Remaining: the first richer actor-state follow-through is now live through replay-guarded `ApplyActorCondition`; the honest remaining tail is future authored-action or broader actor/resource families once they own real downstream mutations instead of command-local stubs.
-16. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
+15. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item plus actor-condition mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next honest gap is later domain-specific effect guards as new owning mutation families land, not another forced proving-ground batch in the current built-in command set.
-17. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
+16. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, Game Session -> Game Logic -> Entity Management item command routing, game-configured equipment slot/body-layout validation, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live; the main remaining work is the `06.3` follow-through and later authored stackability depth.
-18. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+17. [06.3.1 Stable Item Instance Visible Ref Allocation](./06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: build on the now-live stable visible-ref substrate across inventory/equipment/container/room-ground and `HERE`-style targeting views for non-player items and entities; players remain the special case and are still identified by character name rather than a generated visible ref.
-19. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+18. [06.3.2 Authored Stackability and Fungibility](./06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: build on the now-live authored `stackVariantKey` plus runtime `stackFamilyKey` substrate with richer authored family sources; explicit stack-family selector UX for ambiguous holder-local families is now live.
-20. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+19. [02.18 Service Boundary and Audit Hardening](./02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: continue any later hardening only if real-load evidence justifies it; the original audit-family scheduler-pressure/operator-proof tail in `02.18.6` is now closed at the current boundary.
-21. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+20. [02.18.1 Audit Log and Moderation Separation](./02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 
 These are not broad audit topics anymore; they are real future slices with known direction.
 
-1. [10 Scripting, Automation, and Runtime Orchestration](./10-task-list-scripting-automation-and-runtime-orchestration-vertical-slice.md)
-   Remaining: the scripting domain now has a canonical family instead of fragmented indirect coverage; `10.1` through `10.5` are the bounded runtime/control-plane cuts, with explicit freshness now live across rollout, plugin-policy status, plugin-policy convergence, Automation pin-convergence, Game Session pin-convergence, drain-status, and scheduler-materialization reads, while plugin activation preflight, policy-convergence reads, and schedule materialization now also fail closed against stale same-instance plugin runtime rows by respecting the current observed runtime region, and design-time publication boundaries remain intentionally anchored in `08.4`.
-2. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
-3. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-4. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-5. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+1. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
+2. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
+3. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+4. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
    Remaining: the hot reconnect buffer now stores structured `PlayerOutput` replay metadata alongside classic rendered protocol text for new entries and keeps text-only legacy entries readable; the narrower storage-model follow-through is now locked at the design boundary, so the remaining work is bounded durable transcript history on top of that explicit transcript-entry and retention-class contract.
-6. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-7. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+5. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+6. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
    Remaining: Entity Management now has the first gameplay-attested actor-state read substrate for baseline resources plus persisted resource/condition rows; authored definitions, shared effect evaluation, mutation/expiry, equipment/action contributions, and damage/mitigation remain future work.
-8. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+7. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
    Remaining: the first typed in-process effect evaluation seam now exists for additive/multiplicative/clamp modifiers, granted flags/conditions, scopes, and provenance, and active condition payloads are wired through it for actor-state reads; authored definitions plus equipment/action-state producer wiring remain future work.
-9. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+8. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
    Remaining: equipped item templates can now contribute effect payload modifiers through actor-state reads, and an internal condition/action-state apply/expire seam exists; player command wiring, scheduled expiry execution, and richer scoped combat-facing consumption remain future work.
-10. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+9. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Lower-priority platform/settings expansion
 
