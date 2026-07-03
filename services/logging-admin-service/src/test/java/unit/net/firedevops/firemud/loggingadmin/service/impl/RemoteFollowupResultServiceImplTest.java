@@ -60,8 +60,8 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals("rf-1", result.followupId()),
         () -> assertEquals("REMOTE_APPLIED", result.outcome()),
         () -> assertEquals("auto-1", result.resultCommandId()),
-        () -> assertEquals(7L, result.currentOriginRuntimeGameInstanceId()),
-        () -> assertEquals(9L, result.currentTargetRuntimeGameInstanceId()),
+        () -> assertEquals("7", result.currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals("9", result.currentTargetRuntimeGameInstanceId()),
         () -> assertEquals(31L, result.pluginPublication().publicationId()));
   }
 
