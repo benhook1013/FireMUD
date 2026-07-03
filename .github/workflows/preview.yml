@@ -70,6 +70,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Derive preview identifiers
         id: derive
@@ -113,19 +115,24 @@ jobs:
         id: target-metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
-            if [ "${{ github.event.action }}" = "closed" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_AUTHOR="$PR_USER_LOGIN"
+            BASE_REF="$PR_BASE_REF"
+            if [ "$EVENT_ACTION" = "closed" ]; then
               PR_STATE="closed"
             else
               PR_STATE="open"
             fi
           else
-            PR_AUTHOR="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ steps.derive.outputs.pr_number }}" --jq '.user.login')"
-            BASE_REF="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ steps.derive.outputs.pr_number }}" --jq '.base.ref')"
-            PR_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ steps.derive.outputs.pr_number }}" --jq '.state')"
+            PR_AUTHOR="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.user.login')"
+            BASE_REF="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.base.ref')"
+            PR_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.state')"
           fi
           {
             echo "author=${PR_AUTHOR}"
@@ -135,12 +142,17 @@ jobs:
 
       - name: Resolve preview eligibility
         id: eligibility
+        env:
+          DERIVED_ACTION: ${{ steps.derive.outputs.action }}
+          TARGET_STATE: ${{ steps.target-metadata.outputs.state }}
+          TARGET_BASE_REF: ${{ steps.target-metadata.outputs.base_ref }}
+          TARGET_AUTHOR: ${{ steps.target-metadata.outputs.author }}
         run: |
           python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --operation "${{ steps.derive.outputs.action }}" \
-            --state "${{ steps.target-metadata.outputs.state }}" \
-            --base-ref "${{ steps.target-metadata.outputs.base_ref }}" \
-            --author "${{ steps.target-metadata.outputs.author }}" >> "$GITHUB_OUTPUT"
+            --operation "$DERIVED_ACTION" \
+            --state "$TARGET_STATE" \
+            --base-ref "$TARGET_BASE_REF" \
+            --author "$TARGET_AUTHOR" >> "$GITHUB_OUTPUT"
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}

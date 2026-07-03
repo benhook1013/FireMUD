@@ -110,10 +110,12 @@ class AuthTokenInterceptorTest {
 
     Listener<Empty> listener = interceptor.interceptCall(call, headers, next);
 
-    assertThat(SessionContext.isInternalService()).isFalse();
+    seedThreadLocalInternalServiceState();
+    assertThat(SessionContext.isInternalService()).isTrue();
     listener.onComplete();
     assertThat(internalServiceVisibleDuringCompletion).isTrue();
     assertThat(SessionContext.isInternalService()).isFalse();
+    assertThat(SessionContext.getServiceName()).isNull();
 
     forwardedCall.get().close(Status.OK, new Metadata());
     assertThat(SessionContext.isInternalService()).isFalse();
@@ -145,10 +147,12 @@ class AuthTokenInterceptorTest {
 
     Listener<Empty> listener = interceptor.interceptCall(call, headers, next);
 
-    assertThat(SessionContext.isInternalService()).isFalse();
+    seedThreadLocalInternalServiceState();
+    assertThat(SessionContext.isInternalService()).isTrue();
     listener.onCancel();
     assertThat(internalServiceVisibleDuringCancel).isTrue();
     assertThat(SessionContext.isInternalService()).isFalse();
+    assertThat(SessionContext.getServiceName()).isNull();
   }
 
   @Test
@@ -180,14 +184,21 @@ class AuthTokenInterceptorTest {
 
     Listener<Empty> listener = interceptor.interceptCall(call, headers, next);
 
-    assertThat(SessionContext.isInternalService()).isFalse();
+    seedThreadLocalInternalServiceState();
+    assertThat(SessionContext.isInternalService()).isTrue();
     listener.onHalfClose();
     assertThat(internalServiceVisibleDuringHalfClose).isTrue();
     assertThat(SessionContext.isInternalService()).isFalse();
+    assertThat(SessionContext.getServiceName()).isNull();
     Mockito.verify(call)
         .close(
             Mockito.argThat(status -> status.getCode() == Status.Code.INTERNAL),
             Mockito.any(Metadata.class));
+  }
+
+  private void seedThreadLocalInternalServiceState() {
+    SessionContext.setContext(
+        "", java.util.List.of(), Map.of(), true, "seeded-service", "seeded-instance");
   }
 
   private Metadata internalServiceHeaders() {

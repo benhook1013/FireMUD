@@ -9,6 +9,9 @@ required_files=(
   "$CERT_DIR/ca.crt"
   "$CERT_DIR/client.crt"
   "$CERT_DIR/client.key"
+  "$CERT_DIR/dev-ca.pem"
+  "$CERT_DIR/dev-cert.pem"
+  "$CERT_DIR/dev-key.pem"
   "$CERT_DIR/server.crt"
   "$CERT_DIR/server.key"
 )

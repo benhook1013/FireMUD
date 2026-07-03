@@ -24,4 +24,12 @@ destroy_closed="$(python3 "$SCRIPT" --operation destroy --state closed --base-re
 grep -q '^eligible=true$' <<<"$destroy_closed"
 grep -q '^reason=eligible$' <<<"$destroy_closed"
 
+destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-vip --author benhook1013)"
+grep -q '^eligible=false$' <<<"$destroy_unsupported_base"
+grep -q '^reason=unsupported-base-branch$' <<<"$destroy_unsupported_base"
+
+destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author renovate[bot])"
+grep -q '^eligible=false$' <<<"$destroy_dependency_bot"
+grep -q '^reason=dependency-bot$' <<<"$destroy_dependency_bot"
+
 echo "preview eligibility contract checks passed"
