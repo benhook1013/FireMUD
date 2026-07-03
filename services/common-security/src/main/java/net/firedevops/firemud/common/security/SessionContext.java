@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.security;
 
+import io.grpc.Context;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ public final class SessionContext {
   private SessionContext() {}
 
   private static final ThreadLocal<ClaimsData> HOLDER = new ThreadLocal<>();
+  private static final Context.Key<ClaimsData> GRPC_CONTEXT = Context.key("firemud-session");
 
   public static void setContext(
       String accountId, List<String> globalRoles, Map<String, List<String>> scopedRoles) {
@@ -25,22 +27,9 @@ public final class SessionContext {
       boolean internalService,
       String serviceName,
       String serviceInstanceId) {
-    List<String> immutableGlobals = globalRoles == null ? List.of() : List.copyOf(globalRoles);
-    Map<String, List<String>> immutableScoped =
-        scopedRoles == null
-            ? Map.of()
-            : scopedRoles.entrySet().stream()
-                .collect(
-                    Collectors.toUnmodifiableMap(
-                        Map.Entry::getKey, e -> List.copyOf(e.getValue())));
     HOLDER.set(
-        new ClaimsData(
-            accountId,
-            immutableGlobals,
-            immutableScoped,
-            internalService,
-            serviceName,
-            serviceInstanceId));
+        toClaimsData(
+            accountId, globalRoles, scopedRoles, internalService, serviceName, serviceInstanceId));
   }
 
   public static void clear() {
@@ -49,19 +38,19 @@ public final class SessionContext {
 
   /** Returns the accountId claim or {@code null} if not present. */
   public static String getAccountId() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data == null ? null : data.accountId;
   }
 
   /** Returns the globalRoles claim or an empty list if not present. */
   public static List<String> getGlobalRoles() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data == null ? List.of() : data.globalRoles;
   }
 
   /** Returns the scoped roles for the provided tenantId or an empty list. */
   public static List<String> getScopedRoles(String tenantId) {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     if (data == null || data.scopedRoles == null) {
       return List.of();
     }
@@ -70,25 +59,25 @@ public final class SessionContext {
 
   /** Returns the full scoped-role map or an empty map if not present. */
   public static Map<String, List<String>> getScopedRolesMap() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data == null || data.scopedRoles == null ? Map.of() : data.scopedRoles;
   }
 
   /** Returns whether the current caller is a shared internal service identity. */
   public static boolean isInternalService() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data != null && data.internalService;
   }
 
   /** Returns the current internal service name when present. */
   public static String getServiceName() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data == null ? null : data.serviceName;
   }
 
   /** Returns the current internal service instance id when present. */
   public static String getServiceInstanceId() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     return data == null ? null : data.serviceInstanceId;
   }
 
@@ -119,7 +108,7 @@ public final class SessionContext {
     if (accountId == null) {
       return false;
     }
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     if (data == null || data.accountId == null || data.accountId.isBlank()) {
       return false;
     }
@@ -155,11 +144,56 @@ public final class SessionContext {
   }
 
   private static boolean hasGlobalTenantAccess() {
-    ClaimsData data = HOLDER.get();
+    ClaimsData data = currentData();
     if (data == null || data.globalRoles == null) {
       return false;
     }
     return data.globalRoles.contains("platformAdmin") || data.globalRoles.contains("moderator");
+  }
+
+  static Context grpcContextWith(SessionClaims claims) {
+    return Context.current()
+        .withValue(
+            GRPC_CONTEXT,
+            toClaimsData(
+                claims.accountId(),
+                claims.globalRoles(),
+                claims.scopedRoles(),
+                claims.internalService(),
+                claims.serviceName(),
+                claims.serviceInstanceId()));
+  }
+
+  private static ClaimsData currentData() {
+    ClaimsData threadLocalData = HOLDER.get();
+    if (threadLocalData != null) {
+      return threadLocalData;
+    }
+    return GRPC_CONTEXT.get();
+  }
+
+  private static ClaimsData toClaimsData(
+      String accountId,
+      List<String> globalRoles,
+      Map<String, List<String>> scopedRoles,
+      boolean internalService,
+      String serviceName,
+      String serviceInstanceId) {
+    List<String> immutableGlobals = globalRoles == null ? List.of() : List.copyOf(globalRoles);
+    Map<String, List<String>> immutableScoped =
+        scopedRoles == null
+            ? Map.of()
+            : scopedRoles.entrySet().stream()
+                .collect(
+                    Collectors.toUnmodifiableMap(
+                        Map.Entry::getKey, entry -> List.copyOf(entry.getValue())));
+    return new ClaimsData(
+        accountId,
+        immutableGlobals,
+        immutableScoped,
+        internalService,
+        serviceName,
+        serviceInstanceId);
   }
 
   private record ClaimsData(

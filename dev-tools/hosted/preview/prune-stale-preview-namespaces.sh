@@ -24,6 +24,9 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
   exit 1
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eligibility_script="${script_dir}/preview-eligibility.py"
+
 mapfile -t namespace_rows < <(
   kubectl get namespaces -l firemud.dev/preview=true \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.firemud\.dev/pr-number}{"\n"}{end}' \
@@ -45,19 +48,37 @@ for row in "${namespace_rows[@]}"; do
     continue
   fi
 
-  pr_state=""
-  if pr_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.state' 2>/dev/null)"; then
-    :
+  pr_metadata=""
+  if pr_metadata="$(
+    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+      --jq '[.state, .base.ref, .user.login] | @tsv' 2>/dev/null
+  )"; then
+    IFS=$'\t' read -r pr_state pr_base_ref pr_author <<<"$pr_metadata"
   else
     pr_state="missing"
   fi
 
-  if [[ "$pr_state" == "open" ]]; then
-    echo "Keeping ${namespace}: PR #${pr_number} is open"
+  if [[ "$pr_state" != "missing" ]]; then
+    eligibility_output="$(
+      python3 "$eligibility_script" \
+        --operation retain \
+        --state "$pr_state" \
+        --base-ref "$pr_base_ref" \
+        --author "$pr_author"
+    )"
+    eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
+    reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
+  else
+    eligible="false"
+    reason="missing"
+  fi
+
+  if [[ "$eligible" == "true" ]]; then
+    echo "Keeping ${namespace}: PR #${pr_number} remains preview-eligible"
     continue
   fi
 
-  echo "Pruning ${namespace}: PR #${pr_number} state is ${pr_state}"
+  echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
     bash "$(dirname "$0")/../shared/delete-hosted-namespace.sh" "$namespace" "$release_name"
   fi
