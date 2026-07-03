@@ -12,7 +12,7 @@ deploy_stacked="$(python3 "$SCRIPT" --operation deploy --state open --base-ref f
 grep -q '^eligible=false$' <<<"$deploy_stacked"
 grep -q '^reason=unsupported-base-branch$' <<<"$deploy_stacked"
 
-deploy_dependency_bot="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author renovate[bot])"
+deploy_dependency_bot="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author 'renovate[bot]')"
 grep -q '^eligible=false$' <<<"$deploy_dependency_bot"
 grep -q '^reason=dependency-bot$' <<<"$deploy_dependency_bot"
 
@@ -28,7 +28,7 @@ destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed
 grep -q '^eligible=false$' <<<"$destroy_unsupported_base"
 grep -q '^reason=unsupported-base-branch$' <<<"$destroy_unsupported_base"
 
-destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author renovate[bot])"
+destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author 'renovate[bot]')"
 grep -q '^eligible=false$' <<<"$destroy_dependency_bot"
 grep -q '^reason=dependency-bot$' <<<"$destroy_dependency_bot"
 
