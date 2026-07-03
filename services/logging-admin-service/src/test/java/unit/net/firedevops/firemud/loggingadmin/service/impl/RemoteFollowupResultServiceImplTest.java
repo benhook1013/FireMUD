@@ -103,6 +103,26 @@ class RemoteFollowupResultServiceImplTest {
   }
 
   @Test
+  void getRemoteFollowupResultPropagatesNotFoundErrorAs404() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowupResult(2L, "rr-404"))
+        .thenReturn(
+            GetRemoteFollowupResultResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("NOT_FOUND")
+                        .setMessage("Remote followup result not found")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getRemoteFollowupResult(2L, "rr-404"));
+
+    assertEquals(404, ex.getStatusCode().value());
+  }
+
+  @Test
   void listRemoteFollowupResultsBuildsCanonicalFilterRequestAndMapsRows() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     RemoteFollowupResultListRequest request = new RemoteFollowupResultListRequest();

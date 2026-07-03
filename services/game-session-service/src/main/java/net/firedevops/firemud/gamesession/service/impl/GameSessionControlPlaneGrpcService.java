@@ -145,6 +145,10 @@ public final class GameSessionControlPlaneGrpcService
         meterRegistry, logger, operation, "INVALID_ARGUMENT", ex.getMessage());
   }
 
+  private ErrorDetail notFoundError(String operation, RuntimeException ex) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "NOT_FOUND", ex.getMessage());
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointers")
   public void listAdmissionPointers(
@@ -339,6 +343,12 @@ public final class GameSessionControlPlaneGrpcService
               .setError(authorizationError("GetRemoteFollowup", ex))
               .build());
       responseObserver.onCompleted();
+    } catch (GameSessionRemoteControlPlaneService.NotFoundException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResponse.newBuilder()
+              .setError(notFoundError("GetRemoteFollowup", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetRemoteFollowupResponse.newBuilder()
@@ -370,6 +380,12 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(
           GetRemoteFollowupResultResponse.newBuilder()
               .setError(authorizationError("GetRemoteFollowupResult", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (GameSessionRemoteControlPlaneService.NotFoundException ex) {
+      responseObserver.onNext(
+          GetRemoteFollowupResultResponse.newBuilder()
+              .setError(notFoundError("GetRemoteFollowupResult", ex))
               .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

@@ -3575,6 +3575,49 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getRemoteFollowupRejectsNonAdminCaller() {
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    SessionContext.setContext("1", List.of(), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(repository, null, null, null, null, null, gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowup(
+        GetRemoteFollowupRequest.newBuilder().setTenantId("1").setFollowupId("rf-1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void getRemoteFollowupReturnsNotFoundForMissingRow() {
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    Mockito.when(repository.findByTenantIdAndFollowupId(1L, "rf-404")).thenReturn(Optional.empty());
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(repository, null, null, null, null, null, gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowup(
+        GetRemoteFollowupRequest.newBuilder().setTenantId("1").setFollowupId("rf-404").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("NOT_FOUND", responseRef.get().getError().getCode());
+    assertEquals("Remote followup not found", responseRef.get().getError().getMessage());
+  }
+
+  @Test
   void getRemoteFollowupResultReturnsCanonicalRowForAdminCaller() {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setResultId("rr-1");
@@ -3683,6 +3726,49 @@ class GameSessionControlPlaneGrpcServiceTest {
         "region-target-current", responseRef.get().getResult().getCurrentTargetRuntimeRegionId());
     assertEquals("9", responseRef.get().getResult().getCurrentTargetRuntimeGameInstanceId());
     assertTrue(responseRef.get().getResult().getIsTargetRoutingBundleStale());
+  }
+
+  @Test
+  void getRemoteFollowupResultRejectsNonAdminCaller() {
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    SessionContext.setContext("1", List.of(), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(null, null, repository, null, null, null, gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResultResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowupResult(
+        GetRemoteFollowupResultRequest.newBuilder().setTenantId("1").setResultId("rr-1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResultResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void getRemoteFollowupResultReturnsNotFoundForMissingRow() {
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    Mockito.when(repository.findByTenantIdAndResultId(1L, "rr-404")).thenReturn(Optional.empty());
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(null, null, repository, null, null, null, gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResultResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowupResult(
+        GetRemoteFollowupResultRequest.newBuilder().setTenantId("1").setResultId("rr-404").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResultResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("NOT_FOUND", responseRef.get().getError().getCode());
+    assertEquals("Remote followup result not found", responseRef.get().getError().getMessage());
   }
 
   @Test

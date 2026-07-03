@@ -54,6 +54,12 @@ import org.springframework.stereotype.Service;
 final class GameSessionRemoteControlPlaneService {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+  static final class NotFoundException extends RuntimeException {
+    NotFoundException(String message) {
+      super(message);
+    }
+  }
+
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
@@ -113,7 +119,7 @@ final class GameSessionRemoteControlPlaneService {
     RemoteFollowup followup =
         remoteFollowupRepository
             .findByTenantIdAndFollowupId(tenantId, followupId)
-            .orElseThrow(() -> new IllegalArgumentException("Remote followup not found"));
+            .orElseThrow(() -> new NotFoundException("Remote followup not found"));
     RemoteCommandCoordinator coordinator =
         remoteCommandCoordinatorRepository
             .findByTenantIdAndFollowupId(tenantId, followupId)
@@ -133,7 +139,7 @@ final class GameSessionRemoteControlPlaneService {
     RemoteFollowupResult result =
         remoteFollowupResultRepository
             .findByTenantIdAndResultId(tenantId, resultId)
-            .orElseThrow(() -> new IllegalArgumentException("Remote followup result not found"));
+            .orElseThrow(() -> new NotFoundException("Remote followup result not found"));
     RemoteCommandCoordinator coordinator =
         result.getCoordinatorId() == null || result.getCoordinatorId().isBlank()
             ? null

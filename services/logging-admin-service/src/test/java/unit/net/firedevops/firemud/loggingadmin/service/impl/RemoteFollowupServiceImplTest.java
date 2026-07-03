@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupDto;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupListRequest;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -94,6 +95,25 @@ class RemoteFollowupServiceImplTest {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 
     assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-1"));
+  }
+
+  @Test
+  void getRemoteFollowupPropagatesNotFoundErrorAs404() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowup(2L, "rf-404"))
+        .thenReturn(
+            GetRemoteFollowupResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("NOT_FOUND")
+                        .setMessage("Remote followup not found")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-404"));
+
+    assertEquals(404, ex.getStatusCode().value());
   }
 
   @Test

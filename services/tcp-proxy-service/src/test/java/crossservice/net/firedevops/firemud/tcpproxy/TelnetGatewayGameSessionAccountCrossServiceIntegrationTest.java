@@ -703,7 +703,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private GameplayWebSocketDriver openReadyWebSocketClient(long sessionId) throws Exception {
     GameplayWebSocketDriver client =
         GameplayWebSocketDriver.connectGameplaySession(
-            URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
+            URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
             COMMAND_WAIT,
             TENANT_ID,
             sessionId);
