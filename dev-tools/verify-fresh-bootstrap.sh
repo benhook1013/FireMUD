@@ -7,6 +7,7 @@ TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.s
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
+ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 
 # Prefer noninteractive compose output for AI/automation callers. PTY-backed runs
 # under Docker Desktop/WSL can hang in compose teardown even when the same command
@@ -54,6 +55,7 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
 fi
 
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
+bash "$ENSURE_CERTS_SCRIPT"
 bash "$BUILD_JARS_SCRIPT"
 if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
   for service in "${COMPOSE_SERVICES[@]}"; do

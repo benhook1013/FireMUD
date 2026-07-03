@@ -53,8 +53,6 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     outputs:
-      eligible: ${{ steps.eligibility.outputs.eligible }}
-      eligibility_reason: ${{ steps.eligibility.outputs.reason }}
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
       namespace: ${{ steps.derive.outputs.namespace }}
@@ -63,57 +61,17 @@ jobs:
       image_tag: ${{ steps.derive.outputs.image_tag }}
       head_sha: ${{ steps.derive.outputs.head_sha }}
       base_sha: ${{ steps.derive.outputs.base_sha }}
+      eligible: ${{ steps.eligibility.outputs.eligible }}
+      eligibility_reason: ${{ steps.eligibility.outputs.reason }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
-      - name: Resolve preview eligibility
-        id: eligibility
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          script: |
-            let prAuthor;
-            let baseRef = "";
-            if (context.eventName === "pull_request") {
-              prAuthor = context.payload.pull_request.user.login;
-              baseRef = context.payload.pull_request.base.ref;
-            } else {
-              const prNumber = Number("${{ inputs.pr_number }}");
-              const { data: pull } = await github.rest.pulls.get({
-                ...context.repo,
-                pull_number: prNumber,
-              });
-              prAuthor = pull.user.login;
-              baseRef = pull.base.ref;
-            }
-
-            const ineligibleAuthors = new Set([
-              "app/dependabot",
-              "dependabot[bot]",
-              "app/renovate",
-              "renovate[bot]",
-            ]);
-            const previewSupportedBases = new Set(["main", "develop"]);
-            let reason = "eligible";
-            if (ineligibleAuthors.has(prAuthor)) {
-              reason = "dependency-bot";
-            } else if (
-              context.eventName === "pull_request" &&
-              !previewSupportedBases.has(baseRef)
-            ) {
-              reason = "unsupported-base-branch";
-            }
-
-            const eligible = reason === "eligible";
-            core.setOutput("eligible", eligible ? "true" : "false");
-            core.setOutput("reason", reason);
-            core.info(
-              eligible
-                ? `Preview target is eligible (author=${prAuthor}, base=${baseRef || "<none>"}).`
-                : `Skipping preview orchestration (reason=${reason}, author=${prAuthor}, base=${baseRef || "<none>"}).`
-            );
+          persist-credentials: false
 
       - name: Derive preview identifiers
         id: derive
@@ -153,6 +111,49 @@ jobs:
             echo "base_sha=${BASE_SHA}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve preview target metadata
+        id: target-metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_AUTHOR="$PR_USER_LOGIN"
+            BASE_REF="$PR_BASE_REF"
+            if [ "$EVENT_ACTION" = "closed" ]; then
+              PR_STATE="closed"
+            else
+              PR_STATE="open"
+            fi
+          else
+            PR_AUTHOR="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.user.login')"
+            BASE_REF="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.base.ref')"
+            PR_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.state')"
+          fi
+          {
+            echo "author=${PR_AUTHOR}"
+            echo "base_ref=${BASE_REF}"
+            echo "state=${PR_STATE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve preview eligibility
+        id: eligibility
+        env:
+          DERIVED_ACTION: ${{ steps.derive.outputs.action }}
+          TARGET_STATE: ${{ steps.target-metadata.outputs.state }}
+          TARGET_BASE_REF: ${{ steps.target-metadata.outputs.base_ref }}
+          TARGET_AUTHOR: ${{ steps.target-metadata.outputs.author }}
+        run: |
+          python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+            --operation "$DERIVED_ACTION" \
+            --state "$TARGET_STATE" \
+            --base-ref "$TARGET_BASE_REF" \
+            --author "$TARGET_AUTHOR" >> "$GITHUB_OUTPUT"
+
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
         run: |
@@ -173,6 +174,12 @@ jobs:
                 'The runtime image and smoke workflows only publish PR image tags' \
                 'for PRs targeting main or develop, so hosted preview deploys' \
                 'cannot succeed for other PR base branches.'
+              ;;
+            pr-not-open)
+              printf '%s\n' \
+                'Preview orchestration is skipped because the PR is not open.' \
+                '' \
+                'Deploy and retain operations only run for open preview-eligible PRs.'
               ;;
             *)
               echo "Preview orchestration is skipped for this target."

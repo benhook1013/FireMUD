@@ -1,5 +1,7 @@
 package net.firedevops.firemud.common.security;
 
+import io.grpc.Contexts;
+import io.grpc.ForwardingServerCall;
 import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.ServerCall;
@@ -40,22 +42,42 @@ public class AuthTokenInterceptor implements ServerInterceptor {
     }
     String token = authHeader.substring(7);
     try {
-      SessionClaims.fromJwt(jwtUtil.parseToken(token)).applyToSession();
-      ServerCall.Listener<ReqT> listener = next.startCall(call, headers);
+      SessionClaims sessionClaims = SessionClaims.fromJwt(jwtUtil.parseToken(token));
+      ServerCall<ReqT, RespT> clearingCall =
+          new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+            @Override
+            public void close(Status status, Metadata trailers) {
+              try {
+                super.close(status, trailers);
+              } finally {
+                SessionContext.clear();
+              }
+            }
+          };
+      ServerCall.Listener<ReqT> listener =
+          Contexts.interceptCall(
+              SessionContext.grpcContextWith(sessionClaims), clearingCall, headers, next);
       return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(listener) {
         @Override
         public void onComplete() {
-          SessionContext.clear();
-          super.onComplete();
+          try {
+            super.onComplete();
+          } finally {
+            SessionContext.clear();
+          }
         }
 
         @Override
         public void onCancel() {
-          SessionContext.clear();
-          super.onCancel();
+          try {
+            super.onCancel();
+          } finally {
+            SessionContext.clear();
+          }
         }
       };
     } catch (JwtException | IllegalArgumentException ex) {
+      SessionContext.clear();
       call.close(Status.UNAUTHENTICATED.withDescription("Invalid token"), new Metadata());
       return new ServerCall.Listener<>() {};
     }

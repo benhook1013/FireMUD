@@ -20,6 +20,7 @@
 /dev-tools/certs/*
 !/dev-tools/certs/README.md
 !/dev-tools/certs/clean-dev-certs.sh
+!/dev-tools/certs/ensure-dev-certs.sh
 !/dev-tools/certs/generate-dev-certs.sh
 docker/backups/
 
