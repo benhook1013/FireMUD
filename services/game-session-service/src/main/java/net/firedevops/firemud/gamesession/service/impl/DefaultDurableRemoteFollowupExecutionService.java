@@ -152,15 +152,16 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     String payloadKind;
     boolean requiresSoloTick;
+    String requestedCommand;
     try {
       payloadKind = authoritativeText(followup.getPayloadKind(), root, "kind");
       requiresSoloTick =
           authoritativeBoolean(followup.isRequiresSoloTick(), root, "requiresSoloTick");
+      requestedCommand =
+          firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_FOLLOWUP_PAYLOAD_INVALID", ex.getMessage());
     }
-    String requestedCommand =
-        firstNonBlank(followup.getRequestedCommand(), optionalText(root, "command"));
     if ((payloadJson == null || payloadJson.isBlank())
         && (payloadKind == null || payloadKind.isBlank())
         && (requestedCommand == null || requestedCommand.isBlank())) {
@@ -509,7 +510,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
     if (root == null) {
       return null;
     }
-    String value = root.path(fieldName).asText("").trim();
+    JsonNode node = root.path(fieldName);
+    if (node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (!node.isTextual()) {
+      throw new IllegalArgumentException(fieldName + " must be text");
+    }
+    String value = node.textValue().trim();
     return value.isBlank() ? null : value;
   }
 
