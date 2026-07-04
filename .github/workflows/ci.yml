@@ -260,6 +260,7 @@ jobs:
 
       - name: 🧪 Validate dev tool contracts
         run: |
+          bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
