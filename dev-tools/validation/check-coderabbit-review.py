@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 
+GH_TIMEOUT_SECONDS = 30
+
 REVIEW_COMMANDS = {
     "@coderabbitai review",
     "@coderabbitai full review",
@@ -58,9 +60,38 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_repo(repo: str) -> tuple[str, str]:
+    owner, _, name = repo.strip().partition("/")
+    if not owner or not name:
+        raise ValueError("repo must be in owner/name form")
+    return owner, name
+
+
+def run_gh_query(query: str, variables: dict[str, str | int]) -> dict[str, Any]:
+    args = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for key, value in variables.items():
+        args.extend(["-F", f"{key}={value}"])
+    try:
+        completed = subprocess.run(
+            args,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as ex:
+        raise RuntimeError(
+            f"gh api graphql timed out after {GH_TIMEOUT_SECONDS} seconds"
+        ) from ex
+    except subprocess.CalledProcessError as ex:
+        stderr = ex.stderr.strip() if ex.stderr else "gh api graphql failed"
+        raise RuntimeError(stderr) from ex
+    return json.loads(completed.stdout)
+
+
 def run_gh_graphql(repo: str, pr_number: int) -> dict[str, Any]:
-    owner, name = repo.split("/", 1)
-    query = """
+    owner, name = parse_repo(repo)
+    base_query = """
 query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$number) {
@@ -88,38 +119,119 @@ query($owner:String!, $repo:String!, $number:Int!) {
             }
           }
         }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
-      comments(last:100) {
+      comments(first:100) {
         nodes {
           author { login }
           body
           createdAt
           url
         }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
     }
   }
 }
 """.strip()
-    completed = subprocess.run(
-        [
-            "gh",
-            "api",
-            "graphql",
-            "-f",
-            f"query={query}",
-            "-F",
-            f"owner={owner}",
-            "-F",
-            f"repo={name}",
-            "-F",
-            f"number={pr_number}",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    review_threads_query = """
+query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$number) {
+      reviewThreads(first:100, after:$after) {
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first:20) {
+            nodes {
+              author { login }
+              body
+              url
+              createdAt
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+""".strip()
+    comments_query = """
+query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$number) {
+      comments(first:100, after:$after) {
+        nodes {
+          author { login }
+          body
+          createdAt
+          url
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+""".strip()
+
+    payload = run_gh_query(
+        base_query,
+        {"owner": owner, "repo": name, "number": pr_number},
     )
-    return json.loads(completed.stdout)
+    pr = payload["data"]["repository"]["pullRequest"]
+    review_threads = list(pr["reviewThreads"]["nodes"])
+    comments = list(pr["comments"]["nodes"])
+
+    review_threads_page = pr["reviewThreads"].get("pageInfo", {})
+    while review_threads_page.get("hasNextPage"):
+        review_threads_payload = run_gh_query(
+            review_threads_query,
+            {
+                "owner": owner,
+                "repo": name,
+                "number": pr_number,
+                "after": review_threads_page["endCursor"],
+            },
+        )
+        review_threads_connection = review_threads_payload["data"]["repository"]["pullRequest"][
+            "reviewThreads"
+        ]
+        review_threads.extend(review_threads_connection["nodes"])
+        review_threads_page = review_threads_connection.get("pageInfo", {})
+
+    comments_page = pr["comments"].get("pageInfo", {})
+    while comments_page.get("hasNextPage"):
+        comments_payload = run_gh_query(
+            comments_query,
+            {
+                "owner": owner,
+                "repo": name,
+                "number": pr_number,
+                "after": comments_page["endCursor"],
+            },
+        )
+        comments_connection = comments_payload["data"]["repository"]["pullRequest"]["comments"]
+        comments.extend(comments_connection["nodes"])
+        comments_page = comments_connection.get("pageInfo", {})
+
+    pr["reviewThreads"] = {"nodes": review_threads}
+    pr["comments"] = {"nodes": comments}
+    return payload
 
 
 def load_payload(input_path: str | None, repo: str, pr_number: int) -> dict[str, Any]:
@@ -255,8 +367,12 @@ def emit_text(summary: ReviewSummary) -> None:
 
 def main() -> int:
     args = parse_args()
-    payload = load_payload(args.input, args.repo, args.pr)
-    summary = summarize(args.repo, args.pr, payload)
+    try:
+        payload = load_payload(args.input, args.repo, args.pr)
+        summary = summarize(args.repo, args.pr, payload)
+    except (KeyError, RuntimeError, ValueError, json.JSONDecodeError) as ex:
+        print(f"error={ex}", file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
