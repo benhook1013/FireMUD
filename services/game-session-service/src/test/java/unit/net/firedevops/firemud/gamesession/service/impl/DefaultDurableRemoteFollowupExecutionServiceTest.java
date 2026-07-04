@@ -383,6 +383,98 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
+  void executeRejectsNonBooleanRequiresSoloTickPayloadValue() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(
+        """
+        {"kind":"enqueue_gameplay_command","command":"LOOK","requiresSoloTick":"sometimes"}
+        """);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_FOLLOWUP_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("requiresSoloTick must be boolean", result.failureMessage());
+    verifyNoInteractions(
+        gameplayCommandRepository, gameInstanceRepository, runtimeRegionStatusRepository);
+    verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void executeRejectsNonIntegralPointerVersionPayloadValue() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(
+        """
+        {"kind":"enqueue_gameplay_command","command":"LOOK","pointerVersion":1.5}
+        """);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_GAMEPLAY_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("pointerVersion must be a positive integer", result.failureMessage());
+    verifyNoInteractions(
+        gameplayCommandRepository, gameInstanceRepository, runtimeRegionStatusRepository);
+    verifyNoInteractions(tickService);
+  }
+
+  @Test
   void executeTriggersScriptEventForSupportedPayloadKind() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");

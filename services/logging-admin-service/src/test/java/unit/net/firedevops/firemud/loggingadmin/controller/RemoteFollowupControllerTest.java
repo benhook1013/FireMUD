@@ -41,6 +41,22 @@ class RemoteFollowupControllerTest {
   }
 
   @Test
+  void getRemoteFollowupReturnsCanonicalRow() throws Exception {
+    when(remoteFollowupService.getRemoteFollowup(2L, "rf-1")).thenReturn(remoteFollowupDto());
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-followups/2/rf-1").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.followupId").value("rf-1"))
+        .andExpect(jsonPath("$.data.targetCommandId").value("target-cmd-1"))
+        .andExpect(jsonPath("$.data.currentTargetRuntimeGameInstanceId").value(9))
+        .andExpect(jsonPath("$.data.targetRoutingBundleStale").value(true));
+  }
+
+  @Test
   void listRemoteFollowupsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupService.listRemoteFollowups(
             org.mockito.ArgumentMatchers.eq(2L),

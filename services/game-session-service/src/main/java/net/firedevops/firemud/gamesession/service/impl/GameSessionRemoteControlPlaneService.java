@@ -32,6 +32,8 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
+import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
@@ -51,6 +53,12 @@ import org.springframework.stereotype.Service;
 @Service
 final class GameSessionRemoteControlPlaneService {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+  static final class NotFoundException extends RuntimeException {
+    NotFoundException(String message) {
+      super(message);
+    }
+  }
 
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
@@ -101,6 +109,55 @@ final class GameSessionRemoteControlPlaneService {
                 coordinator,
                 followup,
                 latestRemoteResult(tenantId, coordinator.getCoordinatorId()),
+                followup == null ? null : linkedTargetCommand(tenantId, followup.getFollowupId()),
+                new HashMap<>()))
+        .build();
+  }
+
+  GetRemoteFollowupResponse getRemoteFollowup(long tenantId, String followupId) {
+    requireText(followupId, "followup_id is required");
+    RemoteFollowup followup =
+        remoteFollowupRepository
+            .findByTenantIdAndFollowupId(tenantId, followupId)
+            .orElseThrow(() -> new NotFoundException("Remote followup not found"));
+    RemoteCommandCoordinator coordinator =
+        remoteCommandCoordinatorRepository
+            .findByTenantIdAndFollowupId(tenantId, followupId)
+            .orElse(null);
+    return GetRemoteFollowupResponse.newBuilder()
+        .setFollowup(
+            toRemoteFollowupEntry(
+                followup,
+                linkedTargetCommand(tenantId, followup.getFollowupId()),
+                coordinator,
+                new HashMap<>()))
+        .build();
+  }
+
+  GetRemoteFollowupResultResponse getRemoteFollowupResult(long tenantId, String resultId) {
+    requireText(resultId, "result_id is required");
+    RemoteFollowupResult result =
+        remoteFollowupResultRepository
+            .findByTenantIdAndResultId(tenantId, resultId)
+            .orElseThrow(() -> new NotFoundException("Remote followup result not found"));
+    RemoteCommandCoordinator coordinator =
+        result.getCoordinatorId() == null || result.getCoordinatorId().isBlank()
+            ? null
+            : remoteCommandCoordinatorRepository
+                .findByTenantIdAndCoordinatorId(tenantId, result.getCoordinatorId())
+                .orElse(null);
+    RemoteFollowup followup =
+        result.getFollowupId() == null || result.getFollowupId().isBlank()
+            ? null
+            : remoteFollowupRepository
+                .findByTenantIdAndFollowupId(tenantId, result.getFollowupId())
+                .orElse(null);
+    return GetRemoteFollowupResultResponse.newBuilder()
+        .setResult(
+            toRemoteFollowupResultEntry(
+                result,
+                coordinator,
+                followup,
                 followup == null ? null : linkedTargetCommand(tenantId, followup.getFollowupId()),
                 new HashMap<>()))
         .build();
