@@ -55,7 +55,6 @@ class SessionContextTest {
             null,
             null);
 
-    assertFalse(context.isFirstPartyLogin());
     assertFalse(context.hasPartialPersistedFirstPartyConnectContext());
   }
 }

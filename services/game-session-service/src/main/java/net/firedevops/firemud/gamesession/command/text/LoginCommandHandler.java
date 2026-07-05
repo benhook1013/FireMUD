@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
@@ -164,14 +165,21 @@ public final class LoginCommandHandler {
     }
     SessionContext existingSession =
         sessionRoutingNormalizationService.resolveProjectedSessionContext(sessionId).orElse(null);
+    FirstPartyConnectContextResolution connectContextResolution =
+        FirstPartyConnectContextResolution.resolve(
+            numericSessionId, existingSession, firstPartyConnectContextRegistry);
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
-        firstPartyConnectContextRegistry
-            .find(numericSessionId)
-            .or(
-                () ->
-                    existingSession == null
-                        ? Optional.empty()
-                        : existingSession.persistedFirstPartyConnectContext());
+        connectContextResolution.connectContext();
+    if (connectContextResolution.invalid()) {
+      clearFailedLoginSessionState(
+          numericSessionId,
+          existingSession != null ? existingSession.tenantId() : 0L,
+          existingSession != null ? existingSession.bootstrapGameInstanceId() : 0L,
+          existingSession != null ? existingSession.worldSlug() : null,
+          existingSession != null ? existingSession.realmSlug() : null,
+          existingSession != null ? existingSession.pointerVersion() : 0L);
+      return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
+    }
     if (maybeContext.isEmpty()) {
       clearFailedLoginSessionState(numericSessionId, 0L, 0L, null, null, 0L);
       return failure(
@@ -488,6 +496,7 @@ public final class LoginCommandHandler {
     return switch (code) {
       case "SESSION_NOT_FOUND" -> "error.login.session-not-found";
       case "INVALID_ARGUMENT" -> "error.login.invalid-session-id";
+      case "CONNECT_CONTEXT_INVALID" -> "error.login.connect-context-invalid";
       case LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE -> "error.login.prompt-unsupported";
       case LoginCommandConstants.ACCOUNT_MISMATCH_CODE -> "error.login.account-mismatch";
       case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";

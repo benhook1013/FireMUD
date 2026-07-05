@@ -280,10 +280,6 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
-  public boolean isFirstPartyLogin() {
-    return loginName != null && loginName.startsWith("first-party:");
-  }
-
   public boolean sameGameplayIdentity(SessionContext that) {
     if (that == null) {
       return false;
@@ -317,15 +313,10 @@ public record SessionContext(
   }
 
   public boolean hasPartialPersistedFirstPartyConnectContext() {
-    if (!isFirstPartyLogin() || accountId <= 0 || tenantId <= 0) {
+    if (accountId <= 0 || tenantId <= 0) {
       return false;
     }
-    boolean hasAnyPersistedSelectorField =
-        bootstrapGameInstanceId > 0L
-            || GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(this)
-            || GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(this)
-            || connectScopeId != null
-            || connectRequestId != null;
+    boolean hasAnyPersistedSelectorField = connectScopeId != null || connectRequestId != null;
     return hasAnyPersistedSelectorField && persistedFirstPartyConnectContext().isEmpty();
   }
 }

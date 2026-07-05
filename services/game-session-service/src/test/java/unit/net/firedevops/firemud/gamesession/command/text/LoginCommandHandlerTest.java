@@ -333,6 +333,42 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void bareLoginRejectsIncompletePersistedFirstPartyContextWhenRegistryEntryIsMissing() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext persisted =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-persisted",
+            null);
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(persisted));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(Optional.of(persisted));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR CONNECT_CONTEXT_INVALID Connect context invalid",
+        joinedOutputText(result.outputs()));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
   void bareLoginDoesNotFallBackToRawPersistedFirstPartyContextWhenTenantScopedSessionIsMissing() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -389,7 +425,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
   }
 
   @Test
@@ -416,7 +452,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
   }
 
   @Test
@@ -441,7 +477,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
   }
 
   @Test
@@ -457,7 +493,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
   }
 
   @Test
@@ -484,7 +520,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());

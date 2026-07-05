@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -179,7 +180,8 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
       FirstPartyConnectContextResolution connectContextResolution =
-          resolveFirstPartyConnectContext(context);
+          FirstPartyConnectContextResolution.resolve(
+              context.sessionId(), context, firstPartyConnectContextRegistry);
       if (connectContextResolution.invalid()) {
         return connectContextInvalidFailure(
             tenantTag,
@@ -1001,25 +1003,6 @@ public class PlayCommandHandler {
 
   private record ResolvedPlaySelection(
       String worldSelector, String explicitRealmSelector, String characterSelector) {}
-
-  private FirstPartyConnectContextResolution resolveFirstPartyConnectContext(
-      SessionContext context) {
-    Optional<FirstPartyConnectContext> registryContext =
-        firstPartyConnectContextRegistry.find(context.sessionId());
-    if (registryContext.isPresent()) {
-      FirstPartyConnectContext connectContext = registryContext.orElseThrow();
-      return new FirstPartyConnectContextResolution(
-          connectContext.hasCompleteRoutingScope() ? Optional.of(connectContext) : Optional.empty(),
-          !connectContext.hasCompleteRoutingScope());
-    }
-    Optional<FirstPartyConnectContext> persistedContext =
-        context.persistedFirstPartyConnectContext();
-    return new FirstPartyConnectContextResolution(
-        persistedContext, context.hasPartialPersistedFirstPartyConnectContext());
-  }
-
-  private record FirstPartyConnectContextResolution(
-      Optional<FirstPartyConnectContext> connectContext, boolean invalid) {}
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
