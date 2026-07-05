@@ -120,9 +120,10 @@ class SessionResumptionFlowTest {
           accountRecentPresenceService,
           sessionRoutingNormalizationService(),
           scriptEventPublisher);
+  private final ConfiguredAuthoredActionCatalog authoredActionCatalog =
+      new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties());
   private final AuthoredActionCommandHandler authoredActionHandler =
-      new AuthoredActionCommandHandler(
-          new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+      new AuthoredActionCommandHandler(authoredActionCatalog);
   private final TextCommandRegistry registry =
       new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
   private final TextCommandParser parser = new TextCommandParser();
@@ -288,6 +289,7 @@ class SessionResumptionFlowTest {
                 entityManagementClient,
                 scriptEventPublisher),
             authoredActionHandler,
+            authoredActionCatalog,
             new InventoryCommandHandler(gameLogicClient),
             new EquipmentCommandHandler(gameLogicClient),
             new ContainerCommandHandler(gameLogicClient),

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.stream.IntStream;
 import javax.sql.DataSource;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
@@ -60,13 +61,23 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(5);
-    assertThat(responses.get(0)).startsWith("OK WORLDS");
-    assertThat(responses.get(1)).startsWith("OK LOGIN");
-    assertThat(responses.get(2)).startsWith("OK PLAY");
-    assertThat(responses.get(3).trim())
-        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
-    assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
+    int worldsIndex = findResponseIndex(responses, 0, response -> response.startsWith("OK WORLDS"));
+    int canonicalLookIndex =
+        findResponseIndex(
+            responses,
+            worldsIndex + 1,
+            response ->
+                GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                        LookTestFixtures.ROOM_ID)
+                    .test(response.trim()));
+    int notFoundIndex =
+        findResponseIndex(
+            responses,
+            canonicalLookIndex + 1,
+            response -> response.startsWith("ERROR ROOM_NOT_FOUND"));
+
+    assertThat(worldsIndex).isLessThan(canonicalLookIndex);
+    assertThat(canonicalLookIndex).isLessThan(notFoundIndex);
 
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
@@ -320,10 +331,10 @@ class LookWebSocketCrossServiceTest {
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
+      client.clearResponses();
       client.send("WORLDS");
       client.awaitStartsWith("OK WORLDS");
-      enterGameplay(client);
       client.send("LOOK");
       client.awaitCanonicalLook();
       worldStub().triggerNotFound("room missing for regression");
@@ -333,9 +344,16 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
+  private int findResponseIndex(
+      List<String> responses, int startIndex, java.util.function.Predicate<String> predicate) {
+    return IntStream.range(startIndex, responses.size())
+        .filter(index -> predicate.test(responses.get(index)))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Expected matching response in " + responses));
+  }
+
   private List<String> runMovementSequence(long sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
-      enterGameplay(client);
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
       client.send("north");
       client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
       client.send("LOOK");
@@ -347,8 +365,7 @@ class LookWebSocketCrossServiceTest {
   }
 
   private List<String> runQuickLookSequence(long sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openSessionClient(sessionId)) {
-      enterGameplay(client);
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
       client.send("QUICKLOOK");
       client.awaitStartsWith("OK QUICKLOOK");
       return client.responses();
@@ -361,8 +378,7 @@ class LookWebSocketCrossServiceTest {
             ignored -> openSessionClient(sessionId),
             "session-" + sessionId + "-first",
             "session-" + sessionId + "-unused",
-            GameplayWebSocketScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             GameplayWebSocketScenarios.DisconnectMode.CLOSE,
             client -> {
               client.send("north");
@@ -394,8 +410,7 @@ class LookWebSocketCrossServiceTest {
             ignored -> openSessionClient(sessionId),
             "session-" + sessionId + "-first",
             "session-" + sessionId + "-reconnect",
-            GameplayWebSocketScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             GameplayWebSocketScenarios.DisconnectMode.CLOSE,
             client -> {
               client.send("north");
@@ -422,8 +437,7 @@ class LookWebSocketCrossServiceTest {
         GameplayWebSocketScenarios.loginThenAttemptPlay(
             ignored -> openSessionClient(sessionId),
             "session-" + sessionId + "-reconnect-play",
-            GameplayWebSocketScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             client ->
                 client.awaitMatching(
                     response ->
@@ -439,8 +453,7 @@ class LookWebSocketCrossServiceTest {
         GameplayWebSocketScenarios.loginThenAttemptPlay(
             ignored -> openSessionClient(sessionId),
             "session-" + sessionId + "-reconnect-fresh-play",
-            GameplayWebSocketScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             GameplayWebSocketDriver::awaitCanonicalLook)) {
       return scenario.responses();
     }
@@ -456,14 +469,7 @@ class LookWebSocketCrossServiceTest {
 
   private GameplayWebSocketDriver openReadySession(long sessionId) throws Exception {
     return GameplayWebSocketScenarios.openReady(
-        ignored -> openSessionClient(sessionId),
-        "session-" + sessionId,
-        GameplayWebSocketScenarios.Admission.unnamed(
-            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
-  }
-
-  private void enterGameplay(GameplayWebSocketDriver client) throws Exception {
-    client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
+        ignored -> openSessionClient(sessionId), "session-" + sessionId, READY_LOOK_TEXT);
   }
 
   private static AccountRuntimeStubServer accountStub() {

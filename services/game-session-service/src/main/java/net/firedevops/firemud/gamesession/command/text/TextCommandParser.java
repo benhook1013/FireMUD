@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -41,8 +42,20 @@ public class TextCommandParser {
 
     String[] tokens = trimmed.split("\\s+");
     String aliasUsed = tokens[0];
+    String normalizedCommandId = aliasUsed.toLowerCase(Locale.ROOT);
     TextCommandDefinition resolvedDefinition =
-        registry.findDefinitionByAlias(aliasUsed).orElse(null);
+        registry
+            .findDefinitionByAlias(aliasUsed)
+            .orElseGet(
+                () ->
+                    registry
+                        .findDefinition(aliasUsed)
+                        .or(
+                            () ->
+                                normalizedCommandId.equals(aliasUsed)
+                                    ? java.util.Optional.empty()
+                                    : registry.findDefinition(normalizedCommandId))
+                        .orElse(null));
     TextCommandType type =
         resolvedDefinition == null ? TextCommandType.UNKNOWN : resolvedDefinition.type();
     String commandId =

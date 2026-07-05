@@ -17,7 +17,8 @@ record TextCommandDefinition(
     String cooldownKey,
     long cooldownMs,
     String costKey,
-    long costAmount) {
+    long costAmount,
+    String executionHook) {
   TextCommandDefinition {
     Objects.requireNonNull(commandId, "commandId must not be null");
     Objects.requireNonNull(type, "type must not be null");
@@ -31,6 +32,9 @@ record TextCommandDefinition(
     aliases = List.copyOf(aliases);
     actionTags = List.copyOf(actionTags);
     targetingMode = targetingMode == null || targetingMode.isBlank() ? "NONE" : targetingMode;
+    if (executionHook != null && executionHook.isBlank()) {
+      executionHook = null;
+    }
   }
 
   static TextCommandDefinition extensionDefinition(TextCommandType type, String commandId) {
@@ -48,7 +52,35 @@ record TextCommandDefinition(
         null,
         0L,
         null,
-        0L);
+        0L,
+        null);
+  }
+
+  TextCommandDefinition(
+      String commandId,
+      TextCommandType type,
+      List<String> aliases,
+      TextCommandDispatchGroup dispatchGroup,
+      TextCommandStageRequirement stageRequirement,
+      TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory,
+      TextCommandSource source) {
+    this(
+        commandId,
+        type,
+        aliases,
+        dispatchGroup,
+        stageRequirement,
+        promptPolicy,
+        actionCategory,
+        List.of(),
+        source,
+        "NONE",
+        null,
+        0L,
+        null,
+        0L,
+        null);
   }
 
   TextCommandDefinition(
@@ -75,7 +107,8 @@ record TextCommandDefinition(
         null,
         0L,
         null,
-        0L);
+        0L,
+        null);
   }
 
   TextCommandDefinition(
@@ -101,7 +134,8 @@ record TextCommandDefinition(
         null,
         0L,
         null,
-        0L);
+        0L,
+        null);
   }
 
   TextCommandDefinition(
@@ -126,6 +160,7 @@ record TextCommandDefinition(
         null,
         0L,
         null,
-        0L);
+        0L,
+        null);
   }
 }

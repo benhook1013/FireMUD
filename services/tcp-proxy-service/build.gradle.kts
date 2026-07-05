@@ -32,6 +32,8 @@ dependencies {
     testImplementation(project(":world-management-service"))
     testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.2")
     testRuntimeOnly(libs.postgresql)
+
+    testFixturesImplementation(testFixtures(project(":common-test-support")))
 }
 
 tasks.named<BootRun>("bootRun") {

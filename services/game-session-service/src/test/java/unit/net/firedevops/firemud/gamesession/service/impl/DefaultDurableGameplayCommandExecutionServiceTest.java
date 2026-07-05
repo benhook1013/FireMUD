@@ -472,7 +472,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             "wave",
             new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
                 .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
-    PlayerOutput output = PlayerOutput.notice("Authored action executed: wave-salute");
     when(parser.parse("wave captain")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
@@ -480,7 +479,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     when(authoredActionCommandHandler.handle(parsed))
         .thenReturn(
             new TextCommandInterpretationResult(
-                CommandEnqueueResult.success(), java.util.List.of(output)));
+                CommandEnqueueResult.success(), java.util.List.of()));
 
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
@@ -488,8 +487,9 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
     assertThat(result.gameplayResult()).isEqualTo("APPLIED");
     verify(durableGameplayReplayService)
-        .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of(output));
-    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+        .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of());
+    verify(playerOutputDeliveryService, never())
+        .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
     verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
@@ -523,6 +523,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
     service.execute(effect, command).orElseThrow();
 
+    verify(playerOutputDeliveryService, never())
+        .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
     verify(scriptEventPublisher).publishCommandEvent(context, command);
   }
 
@@ -541,7 +543,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             "wave",
             new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
                 .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
-    PlayerOutput output = PlayerOutput.notice("Authored action executed: wave-salute");
     when(parser.parse("wave captain")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
@@ -549,7 +550,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         .thenReturn(
             Optional.of(
                 new DurableGameplayReplayService.ReplayRecord(
-                    true, null, null, java.util.List.of(output))));
+                    true, null, null, java.util.List.of())));
 
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
@@ -557,7 +558,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
     assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
     verify(authoredActionCommandHandler, never()).handle(Mockito.any());
-    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(playerOutputDeliveryService, never())
+        .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
     verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 

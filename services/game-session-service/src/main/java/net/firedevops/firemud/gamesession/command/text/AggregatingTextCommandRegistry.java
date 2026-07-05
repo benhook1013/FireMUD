@@ -22,7 +22,8 @@ final class AggregatingTextCommandRegistry implements TextCommandRegistry {
     for (TextCommandDefinitionProvider provider : providers) {
       for (TextCommandDefinition definition : provider.definitions()) {
         TextCommandDefinition existingByCommandId =
-            definitionByCommandIdMap.putIfAbsent(definition.commandId(), definition);
+            definitionByCommandIdMap.putIfAbsent(
+                normalizeCommandId(definition.commandId()), definition);
         if (existingByCommandId != null) {
           throw new IllegalStateException(
               "Duplicate text command definition for "
@@ -69,7 +70,7 @@ final class AggregatingTextCommandRegistry implements TextCommandRegistry {
     if (commandId == null || commandId.isBlank()) {
       return Optional.empty();
     }
-    return Optional.ofNullable(definitionsByCommandId.get(commandId));
+    return Optional.ofNullable(definitionsByCommandId.get(normalizeCommandId(commandId)));
   }
 
   @Override
@@ -86,9 +87,17 @@ final class AggregatingTextCommandRegistry implements TextCommandRegistry {
   }
 
   private static String normalizeAlias(String alias) {
-    if (alias == null || alias.isBlank()) {
-      throw new IllegalArgumentException("alias must not be blank");
+    return normalizeToken(alias, "alias");
+  }
+
+  private static String normalizeCommandId(String commandId) {
+    return normalizeToken(commandId, "commandId");
+  }
+
+  private static String normalizeToken(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must not be blank");
     }
-    return alias.trim().toLowerCase(Locale.ROOT);
+    return value.trim().toLowerCase(Locale.ROOT);
   }
 }

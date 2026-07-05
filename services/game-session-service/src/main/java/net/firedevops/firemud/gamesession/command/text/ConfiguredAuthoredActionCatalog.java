@@ -36,7 +36,7 @@ final class ConfiguredAuthoredActionCatalog {
               action.getCooldownMs(),
               action.getCostKey(),
               action.getCostAmount(),
-              action.getNoticeText(),
+              action.getExecutionHook(),
               action.getHelpSummary(),
               action.getHelpDetails());
       ConfiguredAuthoredAction previous = actions.putIfAbsent(normalized.commandId(), normalized);
@@ -96,7 +96,7 @@ final class ConfiguredAuthoredActionCatalog {
       long cooldownMs,
       String costKey,
       long costAmount,
-      String noticeText,
+      String executionHook,
       String helpSummary,
       String helpDetails) {
     ConfiguredAuthoredAction {
@@ -114,20 +114,27 @@ final class ConfiguredAuthoredActionCatalog {
 
   private static void validateSupportedFirstPass(AuthoredActionProperties.Action action) {
     String commandId = action.getCommandId().trim();
-    if (StringUtils.hasText(action.getTargetingMode())
-        && !"NONE".equalsIgnoreCase(action.getTargetingMode().trim())) {
-      throw new IllegalStateException(
-          "Unsupported authored action targetingMode for "
-              + commandId
-              + ": "
-              + action.getTargetingMode());
+    if (action.getCooldownMs() < 0) {
+      throw new IllegalStateException("Invalid authored action cooldownMs for " + commandId);
     }
-    if (StringUtils.hasText(action.getCooldownKey()) || action.getCooldownMs() > 0) {
-      throw new IllegalStateException(
-          "Unsupported authored action cooldown metadata for " + commandId);
+    if (action.getCostAmount() < 0) {
+      throw new IllegalStateException("Invalid authored action costAmount for " + commandId);
     }
-    if (StringUtils.hasText(action.getCostKey()) || action.getCostAmount() > 0) {
-      throw new IllegalStateException("Unsupported authored action cost metadata for " + commandId);
+    if (action.getCooldownMs() > 0 && !StringUtils.hasText(action.getCooldownKey())) {
+      throw new IllegalStateException(
+          "authored action cooldown metadata requires cooldownKey for " + commandId);
+    }
+    if (action.getCooldownMs() == 0 && StringUtils.hasText(action.getCooldownKey())) {
+      throw new IllegalStateException(
+          "authored action cooldownKey requires positive cooldownMs for " + commandId);
+    }
+    if (action.getCostAmount() > 0 && !StringUtils.hasText(action.getCostKey())) {
+      throw new IllegalStateException(
+          "authored action cost metadata requires costKey for " + commandId);
+    }
+    if (action.getCostAmount() == 0 && StringUtils.hasText(action.getCostKey())) {
+      throw new IllegalStateException(
+          "authored action costKey requires positive costAmount for " + commandId);
     }
   }
 }

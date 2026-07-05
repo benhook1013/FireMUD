@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +15,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 @SuppressWarnings("unchecked")
 class ScriptReadinessCapacityServiceImplTest {
+  private SimpleMeterRegistry meterRegistry;
   private RedisTemplate<String, Object> redisTemplate;
   private ScriptReadinessCapacityServiceImpl service;
 
@@ -31,9 +33,8 @@ class ScriptReadinessCapacityServiceImplTest {
             });
     ScriptReadinessCapacityProperties properties = new ScriptReadinessCapacityProperties();
     properties.setMaxConcurrency(1L);
-    service =
-        new ScriptReadinessCapacityServiceImpl(
-            redisTemplate, new SimpleMeterRegistry(), properties);
+    meterRegistry = new SimpleMeterRegistry();
+    service = new ScriptReadinessCapacityServiceImpl(redisTemplate, meterRegistry, properties);
   }
 
   @Test
@@ -69,5 +70,20 @@ class ScriptReadinessCapacityServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyList(),
             org.mockito.ArgumentMatchers.eq("cluster-token-1"));
+  }
+
+  @Test
+  void readinessCapacityMetricsUseBoundedScopeInsteadOfRawTenantId() {
+    service.tryReserve("tenant-1", 99L);
+
+    Counter counter =
+        meterRegistry
+            .find("automation_script_readiness_capacity_reserved_total")
+            .tags("scope", "both")
+            .counter();
+
+    assertThat(counter).isNotNull();
+    assertThat(counter.getId().getTag("scope")).isEqualTo("both");
+    assertThat(counter.getId().getTags()).hasSize(1);
   }
 }

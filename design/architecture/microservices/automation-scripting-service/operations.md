@@ -42,7 +42,7 @@ The authoritative observability contract lives in [Scripting Observability Contr
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
 - `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
-- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` for per-scope automation budgets.
+- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
 - `automation_script_sandbox_failures_total{scope, script_category, reason}`, `automation_script_errors_total{scope, script_category, reason}`, and `automation_script_runtime_seconds{scope, script_category, eventType}` for sandbox and runtime health.
 

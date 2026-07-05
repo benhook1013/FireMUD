@@ -198,6 +198,12 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             .append("\",\"commandName\":\"")
             .append(escape(command.getCommandName()))
             .append("\"");
+    if (command.getExecutionHook() != null && !command.getExecutionHook().isBlank()) {
+      payload
+          .append(",\"executionHook\":\"")
+          .append(escape(command.getExecutionHook()))
+          .append("\"");
+    }
     resolveBuiltInCommandAlias(command)
         .ifPresent(
             alias -> payload.append(",\"commandAlias\":\"").append(escape(alias)).append("\""));

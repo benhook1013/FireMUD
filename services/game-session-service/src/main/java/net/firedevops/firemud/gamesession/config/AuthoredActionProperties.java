@@ -31,7 +31,7 @@ public class AuthoredActionProperties {
     private long cooldownMs;
     private String costKey;
     private long costAmount;
-    private String noticeText;
+    private String executionHook;
     private String helpSummary;
     private String helpDetails;
   }

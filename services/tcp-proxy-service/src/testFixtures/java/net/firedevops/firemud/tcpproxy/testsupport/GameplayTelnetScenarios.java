@@ -1,9 +1,26 @@
 package net.firedevops.firemud.tcpproxy.testsupport;
 
 import java.util.List;
+import net.firedevops.firemud.test.GameplayDemoCredentials;
 
 /** Shared chained-gameplay telnet scenario helpers for multi-actor proof. */
 public final class GameplayTelnetScenarios {
+  public static Admission demoAdmission(String readyText) {
+    return Admission.unnamed(
+        GameplayDemoCredentials.USERNAME,
+        GameplayDemoCredentials.PASSWORD,
+        GameplayDemoCredentials.WORLD,
+        readyText);
+  }
+
+  public static Admission demoAdmission(String characterName, String readyText) {
+    return Admission.named(
+        GameplayDemoCredentials.USERNAME,
+        GameplayDemoCredentials.PASSWORD,
+        GameplayDemoCredentials.WORLD,
+        characterName,
+        readyText);
+  }
 
   @FunctionalInterface
   public interface DriverFactory {
@@ -169,6 +186,11 @@ public final class GameplayTelnetScenarios {
     }
   }
 
+  public static GameplayTelnetDriver openAdmitted(DriverFactory factory, String readyText)
+      throws Exception {
+    return openAdmitted(factory, demoAdmission(readyText));
+  }
+
   public static GameplayTelnetDriver openReady(DriverFactory factory, Admission admission)
       throws Exception {
     GameplayTelnetDriver driver = factory.open();
@@ -179,6 +201,11 @@ public final class GameplayTelnetScenarios {
       closeQuietly(driver, ex);
       throw ex;
     }
+  }
+
+  public static GameplayTelnetDriver openReady(DriverFactory factory, String readyText)
+      throws Exception {
+    return openReady(factory, demoAdmission(readyText));
   }
 
   public static TwoPlayerScenario openReadyPair(
@@ -231,6 +258,12 @@ public final class GameplayTelnetScenarios {
     }
   }
 
+  public static ReconnectScenario reconnectAfterReady(
+      DriverFactory factory, String readyText, DriverExercise firstSessionExercise)
+      throws Exception {
+    return reconnectAfterReady(factory, demoAdmission(readyText), firstSessionExercise);
+  }
+
   public static TakeoverScenario takeoverAfterAdmitted(
       DriverFactory factory, Admission admission, DriverExercise firstSessionExercise)
       throws Exception {
@@ -244,6 +277,12 @@ public final class GameplayTelnetScenarios {
       closeQuietly(first, ex);
       throw ex;
     }
+  }
+
+  public static TakeoverScenario takeoverAfterAdmitted(
+      DriverFactory factory, String readyText, DriverExercise firstSessionExercise)
+      throws Exception {
+    return takeoverAfterAdmitted(factory, demoAdmission(readyText), firstSessionExercise);
   }
 
   public static LoginThenPlayScenario loginThenAttemptPlay(
@@ -260,6 +299,12 @@ public final class GameplayTelnetScenarios {
       closeQuietly(driver, ex);
       throw ex;
     }
+  }
+
+  public static LoginThenPlayScenario loginThenAttemptPlay(
+      DriverFactory factory, String readyText, DriverExercise playOutcomeAssertion)
+      throws Exception {
+    return loginThenAttemptPlay(factory, demoAdmission(readyText), playOutcomeAssertion);
   }
 
   private static void enterReady(GameplayTelnetDriver driver, Admission admission)

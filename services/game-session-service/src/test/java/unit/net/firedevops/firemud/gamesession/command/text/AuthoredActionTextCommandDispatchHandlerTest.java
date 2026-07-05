@@ -13,11 +13,11 @@ import org.mockito.Mockito;
 class AuthoredActionTextCommandDispatchHandlerTest {
   private final ScriptEventPublisher scriptEventPublisher =
       Mockito.mock(ScriptEventPublisher.class);
+  private final ConfiguredAuthoredActionCatalog catalog =
+      new ConfiguredAuthoredActionCatalog(configuredAuthoredActions());
   private final AuthoredActionTextCommandDispatchHandler handler =
       new AuthoredActionTextCommandDispatchHandler(
-          new AuthoredActionCommandHandler(
-              new ConfiguredAuthoredActionCatalog(configuredAuthoredActions())),
-          scriptEventPublisher);
+          new AuthoredActionCommandHandler(catalog), catalog, scriptEventPublisher);
 
   @Test
   void publishesCommandEventForGameplayScopedAuthoredAction() {
@@ -42,6 +42,43 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                     "wave-salute".equals(gameplayCommand.getCommandName())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("authored-")));
+  }
+
+  @Test
+  void publishesExecutionHookForConfiguredAuthoredActionWhenPresent() {
+    ScriptEventPublisher dedicatedPublisher = Mockito.mock(ScriptEventPublisher.class);
+    AuthoredActionProperties properties = configuredAuthoredActions();
+    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
+    action.setActionId("hooked-wave");
+    action.setCommandId("hooked-wave");
+    action.setAliases(List.of("hook"));
+    action.setExecutionHook("runtime.workflow.wave");
+    properties.setActions(List.of(action));
+    ConfiguredAuthoredActionCatalog hookCatalog = new ConfiguredAuthoredActionCatalog(properties);
+    AuthoredActionTextCommandDispatchHandler hookHandler =
+        new AuthoredActionTextCommandDispatchHandler(
+            new AuthoredActionCommandHandler(hookCatalog), hookCatalog, dedicatedPublisher);
+
+    SessionContext context =
+        new SessionContext(
+            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "room-1", "jwt");
+
+    hookHandler.handle(
+        new TextCommandDispatchRequest(
+            "session-1",
+            authoredAction("hooked-wave", "hooked-wave", List.of("hook")),
+            false,
+            Optional.of(context)));
+
+    Mockito.verify(dedicatedPublisher)
+        .publishCommandEvent(
+            Mockito.eq(context),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "hooked-wave".equals(gameplayCommand.getCommandName())
+                        && gameplayCommand.getCommandId() != null
+                        && gameplayCommand.getCommandId().startsWith("authored-")
+                        && "runtime.workflow.wave".equals(gameplayCommand.getExecutionHook())));
   }
 
   @Test
@@ -74,7 +111,6 @@ class AuthoredActionTextCommandDispatchHandlerTest {
     action.setActionId("wave-salute");
     action.setCommandId("wave-salute");
     action.setAliases(List.of("salute"));
-    action.setNoticeText("You salute smartly.");
     properties.setActions(List.of(action));
     return properties;
   }
