@@ -214,7 +214,7 @@ public final class GameplayWebSocketScenarios {
       URI websocketUrl, Duration commandWait, long tenantId, long sessionId, Admission admission)
       throws Exception {
     return openReady(
-        ignored -> openGameplaySession(websocketUrl, commandWait, tenantId, sessionId),
+        proxyGatewayDriverFactory(websocketUrl, commandWait, tenantId, sessionId),
         "gateway-" + sessionId,
         admission);
   }
@@ -240,7 +240,7 @@ public final class GameplayWebSocketScenarios {
       String connectionId)
       throws Exception {
     return openReady(
-        ignored -> openGameplaySession(websocketUrl, commandWait, tenantId, sessionId),
+        proxyGatewayDriverFactory(websocketUrl, commandWait, tenantId, sessionId),
         connectionId,
         admission);
   }
@@ -255,8 +255,7 @@ public final class GameplayWebSocketScenarios {
       Map<String, String> extraHeaders)
       throws Exception {
     return openReady(
-        ignored ->
-            openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+        gameplayDriverFactory(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
         connectionId,
         demoAdmission(readyText));
   }
@@ -271,8 +270,7 @@ public final class GameplayWebSocketScenarios {
       Map<String, String> extraHeaders)
       throws Exception {
     return openReady(
-        ignored ->
-            openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+        gameplayDriverFactory(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
         connectionId,
         admission);
   }
@@ -302,6 +300,16 @@ public final class GameplayWebSocketScenarios {
             tenantId,
             sessionId,
             Map.of("X-Proxy-Connection-Id", connectionId));
+  }
+
+  private static DriverFactory gameplayDriverFactory(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      Map<String, String> extraHeaders) {
+    return ignored ->
+        openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders);
   }
 
   public static GameplayWebSocketDriver openReady(
