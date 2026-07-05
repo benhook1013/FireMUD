@@ -263,6 +263,74 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupDropsPartialRoutingBundleWhenOnlyPointerVersionIsProvided() {
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.empty());
+    when(followupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            1L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(
+            new RemoteFollowupRuntimeService.ScheduleRequest(
+                1L,
+                "cmd-1",
+                "coord-1",
+                7L,
+                "region-a",
+                4L,
+                8L,
+                "region-b",
+                8L,
+                22L,
+                4L,
+                25L,
+                "late_result_safe_to_ignore",
+                "followup-1",
+                "effect-1",
+                "entity-9",
+                "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+                "enqueue_automation_command",
+                "LOOK",
+                false,
+                "SHARED",
+                null,
+                null,
+                17L,
+                "patch-1",
+                "plugin-1",
+                "plugin-v1",
+                "dispatch-1",
+                "work-1",
+                "script-1",
+                "REMOTE_FOLLOWUP",
+                "TARGET_REGION_EXECUTED",
+                44L,
+                22L,
+                1700L));
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(coordinatorRepository)
+        .save(
+            argThat(
+                coordinator ->
+                    coordinator.getPlayableStateScope() == null
+                        && coordinator.getWorldSlug() == null
+                        && coordinator.getRealmSlug() == null
+                        && coordinator.getPointerVersion() == null));
+    verify(followupRepository)
+        .save(
+            argThat(
+                followup ->
+                    followup.getPlayableStateScope() == null
+                        && followup.getWorldSlug() == null
+                        && followup.getRealmSlug() == null
+                        && followup.getPointerVersion() == null));
+  }
+
+  @Test
   void scheduleFollowupAllowsRetryWhenPartialRequestCollapsedToStoredAbsentRoutingBundle() {
     AtomicReference<RemoteCommandCoordinator> storedCoordinator = new AtomicReference<>();
     AtomicReference<RemoteFollowup> storedFollowup = new AtomicReference<>();

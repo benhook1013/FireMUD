@@ -42,6 +42,32 @@ class EntityManagementClientTest {
         .hasMessageContaining("Incomplete admitted routing bundle");
   }
 
+  @Test
+  void listRoomEntitiesFailsClosedWhenSessionContextDropsEntireAdmittedRoutingBundle() {
+    EntityManagementClient client = newClient();
+    SessionContext missingRouting =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            SESSION_CONTEXT.roomInstanceId(),
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            null,
+            null,
+            0L,
+            SESSION_CONTEXT.playableStateScope());
+
+    assertThatThrownBy(() -> client.listRoomEntities(missingRouting, "1021"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Missing admitted routing bundle");
+  }
+
   private static EntityManagementClient newClient() {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);

@@ -69,7 +69,7 @@ public final class RedisMovementEffectIdempotencyService
                       watchedKeys.addAll(additionalWatchKeys);
                       continue;
                     }
-                    if (!sameGameplaySession(current, expectedContext)
+                    if (!current.sameGameplayIdentity(expectedContext)
                         || !roomMatches(
                             current.roomInstanceId(), expectedContext.roomInstanceId())) {
                       operations.unwatch();
@@ -114,14 +114,6 @@ public final class RedisMovementEffectIdempotencyService
         current.connectRequestId());
   }
 
-  private boolean sameGameplaySession(SessionContext current, SessionContext expected) {
-    return current.sessionId() == expected.sessionId()
-        && current.tenantId() == expected.tenantId()
-        && current.accountId() == expected.accountId()
-        && current.characterId() == expected.characterId()
-        && current.gameInstanceId() == expected.gameInstanceId();
-  }
-
   private boolean roomMatches(String currentRoomId, String expectedRoomId) {
     return java.util.Objects.equals(normalizeRoom(currentRoomId), normalizeRoom(expectedRoomId));
   }
@@ -141,7 +133,7 @@ public final class RedisMovementEffectIdempotencyService
     }
     watchKeys.add(SessionContextRedisKeys.contextKey(context.tenantId(), context.sessionId()));
     watchKeys.add(SessionContextRedisKeys.sessionKey(context.sessionId()));
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       watchKeys.add(
           SessionContextRedisKeys.identityKey(
               context.tenantId(), context.gameInstanceId(), context.characterId()));
@@ -161,7 +153,7 @@ public final class RedisMovementEffectIdempotencyService
     }
     operations.delete(SessionContextRedisKeys.contextKey(context.tenantId(), context.sessionId()));
     operations.delete(SessionContextRedisKeys.sessionKey(context.sessionId()));
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       operations.delete(
           SessionContextRedisKeys.identityKey(
               context.tenantId(), context.gameInstanceId(), context.characterId()));
@@ -182,7 +174,7 @@ public final class RedisMovementEffectIdempotencyService
         context,
         sessionTtl);
     ops.set(SessionContextRedisKeys.sessionKey(context.sessionId()), context, sessionTtl);
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       ops.set(
           SessionContextRedisKeys.identityKey(
               context.tenantId(), context.gameInstanceId(), context.characterId()),
@@ -196,10 +188,6 @@ public final class RedisMovementEffectIdempotencyService
             sessionTtl);
       }
     }
-  }
-
-  private boolean hasGameplayIdentity(SessionContext context) {
-    return context.gameInstanceId() > 0 && context.characterId() > 0;
   }
 
   private boolean hasGameplayName(SessionContext context) {

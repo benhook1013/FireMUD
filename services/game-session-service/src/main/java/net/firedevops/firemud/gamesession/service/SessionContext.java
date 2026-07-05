@@ -276,6 +276,21 @@ public record SessionContext(
     return text.trim();
   }
 
+  public boolean hasGameplayIdentity() {
+    return gameInstanceId > 0 && characterId > 0;
+  }
+
+  public boolean sameGameplayIdentity(SessionContext that) {
+    if (that == null) {
+      return false;
+    }
+    return sessionId == that.sessionId()
+        && tenantId == that.tenantId()
+        && accountId == that.accountId()
+        && characterId == that.characterId()
+        && gameInstanceId == that.gameInstanceId();
+  }
+
   public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
     if (accountId <= 0
         || tenantId <= 0

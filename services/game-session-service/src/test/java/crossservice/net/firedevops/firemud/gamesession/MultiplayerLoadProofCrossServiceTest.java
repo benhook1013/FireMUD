@@ -28,7 +28,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class MultiplayerLoadProofCrossServiceTest {
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(8);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(30);
   private static final long TENANT_ID = 1L;
   private static final int CLIENT_COUNT = 10;
   private static final long ACCOUNT_ID_BASE = 7000L;

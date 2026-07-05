@@ -48,7 +48,7 @@ public final class RedisSessionContextService implements SessionContextService {
                         readContext(
                             operations, contextKey(context.tenantId(), context.sessionId()));
                     SessionContext existingIdentityContext =
-                        hasGameplayIdentity(context)
+                        context.hasGameplayIdentity()
                             ? readContext(
                                 operations,
                                 identityKey(
@@ -57,7 +57,8 @@ public final class RedisSessionContextService implements SessionContextService {
                                     context.characterId()))
                             : null;
                     SessionContext existingNameContext =
-                        hasGameplayIdentity(context) && StringUtils.hasText(context.characterName())
+                        context.hasGameplayIdentity()
+                                && StringUtils.hasText(context.characterName())
                             ? readContext(
                                 operations,
                                 nameKey(
@@ -175,15 +176,11 @@ public final class RedisSessionContextService implements SessionContextService {
     return SessionContextRedisKeys.nameKey(tenantId, gameInstanceId, characterName);
   }
 
-  private boolean hasGameplayIdentity(SessionContext context) {
-    return context.gameInstanceId() > 0 && context.characterId() > 0;
-  }
-
   private List<String> watchKeys(SessionContext context) {
     List<String> keys = new ArrayList<>();
     keys.add(contextKey(context.tenantId(), context.sessionId()));
     keys.add(sessionKey(context.sessionId()));
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       keys.add(identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
       if (StringUtils.hasText(context.characterName())) {
         keys.add(nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
@@ -203,7 +200,7 @@ public final class RedisSessionContextService implements SessionContextService {
     }
     watchKeys.add(contextKey(context.tenantId(), context.sessionId()));
     watchKeys.add(sessionKey(context.sessionId()));
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       watchKeys.add(
           identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
       if (StringUtils.hasText(context.characterName())) {
@@ -221,7 +218,7 @@ public final class RedisSessionContextService implements SessionContextService {
     }
     operations.delete(contextKey(context.tenantId(), context.sessionId()));
     operations.delete(sessionKey(context.sessionId()));
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       operations.delete(
           identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
       if (StringUtils.hasText(context.characterName())) {
@@ -237,7 +234,7 @@ public final class RedisSessionContextService implements SessionContextService {
     var ops = operations.opsForValue();
     ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
     ops.set(sessionKey(context.sessionId()), context, sessionTtl);
-    if (hasGameplayIdentity(context)) {
+    if (context.hasGameplayIdentity()) {
       ops.set(
           identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
           context,

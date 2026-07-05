@@ -38,10 +38,13 @@ class ReviewSummary:
     latest_commit_at: str
     unresolved_non_outdated: int
     unresolved_outdated: int
+    unresolved_total: int
     latest_explicit_review_request_at: str | None
     latest_coderabbit_review_finished_at: str | None
     explicit_review_after_latest_commit: bool
     review_finished_after_latest_request: bool
+    retrigger_review_allowed: bool
+    must_resolve_outdated_threads: bool
     ok: bool
     reasons: list[str]
 
@@ -301,6 +304,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and latest_coderabbit_review_finished_dt is not None
         and latest_coderabbit_review_finished_dt >= latest_explicit_review_request_dt
     )
+    unresolved_total = unresolved_non_outdated + unresolved_outdated
+    retrigger_review_allowed = unresolved_total == 0
+    must_resolve_outdated_threads = unresolved_outdated > 0
 
     reasons: list[str] = []
     if unresolved_non_outdated:
@@ -309,7 +315,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         )
     if unresolved_outdated:
         reasons.append(
-            f"{unresolved_outdated} unresolved outdated CodeRabbit thread(s) remain"
+            f"{unresolved_outdated} unresolved outdated CodeRabbit thread(s) remain; "
+            "resolve them before retriggering @coderabbitai review"
         )
     if not explicit_review_after_latest_commit:
         reasons.append(
@@ -327,10 +334,13 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_commit_at=latest_commit_at,
         unresolved_non_outdated=unresolved_non_outdated,
         unresolved_outdated=unresolved_outdated,
+        unresolved_total=unresolved_total,
         latest_explicit_review_request_at=latest_explicit_review_request_at,
         latest_coderabbit_review_finished_at=latest_coderabbit_review_finished_at,
         explicit_review_after_latest_commit=explicit_review_after_latest_commit,
         review_finished_after_latest_request=review_finished_after_latest_request,
+        retrigger_review_allowed=retrigger_review_allowed,
+        must_resolve_outdated_threads=must_resolve_outdated_threads,
         ok=not reasons,
         reasons=reasons,
     )
@@ -343,6 +353,7 @@ def emit_text(summary: ReviewSummary) -> None:
     print(f"latest_commit_at={summary.latest_commit_at}")
     print(f"unresolved_non_outdated={summary.unresolved_non_outdated}")
     print(f"unresolved_outdated={summary.unresolved_outdated}")
+    print(f"unresolved_total={summary.unresolved_total}")
     print(
         "latest_explicit_review_request_at="
         f"{summary.latest_explicit_review_request_at or 'none'}"
@@ -359,7 +370,26 @@ def emit_text(summary: ReviewSummary) -> None:
         "review_finished_after_latest_request="
         f"{str(summary.review_finished_after_latest_request).lower()}"
     )
+    print(
+        "retrigger_review_allowed="
+        f"{str(summary.retrigger_review_allowed).lower()}"
+    )
+    print(
+        "must_resolve_outdated_threads="
+        f"{str(summary.must_resolve_outdated_threads).lower()}"
+    )
     print(f"ok={str(summary.ok).lower()}")
+    if summary.unresolved_outdated:
+        print(
+            "warning=UNRESOLVED OUTDATED CODERABBIT THREADS MUST BE VERIFIED AND "
+            "RESOLVED BEFORE RETRIGGERING @coderabbitai review OR CALLING THE PR "
+            "REVIEW-CLEAN"
+        )
+    if summary.unresolved_non_outdated or summary.unresolved_outdated:
+        print(
+            "warning=DO NOT RETRIGGER @coderabbitai review WHILE ANY UNRESOLVED "
+            "CODERABBIT THREADS REMAIN"
+        )
     if summary.reasons:
         for reason in summary.reasons:
             print(f"reason={reason}")

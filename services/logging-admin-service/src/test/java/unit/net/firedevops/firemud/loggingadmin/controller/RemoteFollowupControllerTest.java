@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -57,6 +58,20 @@ class RemoteFollowupControllerTest {
   }
 
   @Test
+  void getRemoteFollowupRejectsCrossTenantScopedAdmin() throws Exception {
+    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/remote-followups/2/rf-1").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(remoteFollowupService);
+  }
+
+  @Test
   void listRemoteFollowupsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupService.listRemoteFollowups(
             org.mockito.ArgumentMatchers.eq(2L),
@@ -98,6 +113,8 @@ class RemoteFollowupControllerTest {
     mockMvc
         .perform(get("/remote-followups/2").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+
+    verifyNoInteractions(remoteFollowupService);
   }
 
   private RemoteFollowupDto remoteFollowupDto() {

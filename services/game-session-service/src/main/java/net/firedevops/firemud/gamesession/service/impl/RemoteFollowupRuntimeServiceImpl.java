@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -1173,8 +1174,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private static RoutingMetadata routingMetadata(
       String playableStateScope, String worldSlug, String realmSlug, Long pointerVersion) {
     String normalizedPlayableStateScope = blankToNull(playableStateScope);
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
-    if (normalizedPlayableStateScope == null || routingBundle == RoutingBundle.EMPTY) {
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
+    if (normalizedPlayableStateScope == null || routingBundle == null) {
       return RoutingMetadata.EMPTY;
     }
     return new RoutingMetadata(
@@ -1182,19 +1185,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         routingBundle.worldSlug(),
         routingBundle.realmSlug(),
         routingBundle.pointerVersion());
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    String normalizedWorld = blankToNull(worldSlug);
-    String normalizedRealm = blankToNull(realmSlug);
-    boolean hasWorld = normalizedWorld != null;
-    boolean hasRealm = normalizedRealm != null;
-    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
-    if (hasWorld && hasRealm && hasPointer) {
-      return new RoutingBundle(normalizedWorld, normalizedRealm, pointerVersion);
-    }
-    return RoutingBundle.EMPTY;
   }
 
   private static void applyTerminalResult(
@@ -1299,10 +1289,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       return value;
     }
     return value.substring(0, 500);
-  }
-
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
   }
 
   private record RoutingMetadata(

@@ -247,6 +247,10 @@ class GameSessionWebSocketHandlerTest {
                 context ->
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
+                        && context.characterId() == 0L
+                        && context.characterName() == null
+                        && context.gameInstanceId() == 0L
+                        && context.roomInstanceId() == null
                         && context.bootstrapGameInstanceId() == 7L
                         && context.worldSlug() == null
                         && context.realmSlug() == null
@@ -291,6 +295,125 @@ class GameSessionWebSocketHandlerTest {
                         && context.worldSlug() == null
                         && context.realmSlug() == null
                         && context.pointerVersion() == 0L));
+  }
+
+  @Test
+  void afterConnectionEstablishedSkipsGenericBootstrapWhenTenantIdIsMalformed() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "bogus",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(activeTransportSessionRegistry).register(41L, session);
+  }
+
+  @Test
+  void afterConnectionEstablishedSkipsGenericBootstrapWhenBootstrapGameInstanceIsNonPositive() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "0"));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(activeTransportSessionRegistry).register(41L, session);
+  }
+
+  @Test
+  void
+      afterConnectionEstablishedDropsGenericBootstrapWhenRuntimeBundleIsInconsistentWithAuthority() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "wrong",
+                GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+                "production",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
+  }
+
+  @Test
+  void afterConnectionEstablishedPreservesGenericBootstrapRoutingWhenRuntimeAuthorityIsAbsent() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+                "production",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(List.of());
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && "demo".equals(context.worldSlug())
+                        && "production".equals(context.realmSlug())
+                        && context.pointerVersion() == 3L));
   }
 
   @Test
@@ -534,6 +657,122 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("LOOK"));
 
     verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext(22L, 41L);
-    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext("41");
+    verify(sessionAuthenticationService, atLeastOnce()).resolveUnverifiedSessionContext("41");
+  }
+
+  @Test
+  void handleMessageBootstrapsGenericSessionContextBeforeInterpretingWhenMissing()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+                "production",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(List.of());
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(null), eq(List.of()), eq(true)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq(null),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOGIN");
+
+    handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && "demo".equals(context.worldSlug())
+                        && "production".equals(context.realmSlug())
+                        && context.pointerVersion() == 3L));
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
+    inOrder.verify(sessionContextService).save(any(SessionContext.class));
+    inOrder.verify(interpreter).interpret("41", command, false);
+  }
+
+  @Test
+  void handleMessageRebootsGenericSessionContextWhenSessionIndexLookupIsMissing() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+                "production",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    SessionContext tenantScoped =
+        new SessionContext(
+            41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, "demo", "production", 3L, null);
+    when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.of(tenantScoped));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(List.of());
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(tenantScoped), eq(List.of()), eq(true)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq(null),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOGIN");
+
+    handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
+
+    verify(sessionContextService).save(tenantScoped);
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
+    inOrder.verify(sessionContextService).save(tenantScoped);
+    inOrder.verify(interpreter).interpret("41", command, false);
   }
 }

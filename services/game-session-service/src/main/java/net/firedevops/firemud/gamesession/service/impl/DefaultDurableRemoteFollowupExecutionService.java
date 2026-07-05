@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRep
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.springframework.context.annotation.Lazy;
@@ -359,7 +360,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
       String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
       Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
-      RoutingBundle routingBundle = resolveRoutingBundle(worldSlug, realmSlug, pointerVersion);
+      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+          worldSlug,
+          realmSlug,
+          pointerVersion,
+          "worldSlug, realmSlug, and pointerVersion must be provided together");
+      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+          GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+              worldSlug, realmSlug, pointerVersion);
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequestFactory.builder(
               new TriggerScriptEventRequestFactory.CommonFields(
@@ -608,23 +616,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return primary != null ? primary : fallback;
   }
 
-  private static RoutingBundle resolveRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
-    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
-    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
-    if (!hasWorld && !hasRealm && !hasPointer) {
-      return null;
-    }
-    if (hasWorld && hasRealm && hasPointer) {
-      return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
-    }
-    throw new IllegalArgumentException(
-        "worldSlug, realmSlug, and pointerVersion must be provided together");
-  }
-
   private static TriggerScriptEventRequestFactory.RoutingBundle toRequestRoutingBundle(
-      RoutingBundle routingBundle) {
+      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle) {
     if (routingBundle == null) {
       return null;
     }
@@ -659,6 +652,4 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String resultCommandId,
       String resultErrorCode,
       String resultMessage) {}
-
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
 }

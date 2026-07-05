@@ -27,6 +27,9 @@ public final class GameplayLoadScenarios {
     }
     stack.freshGameplayBaseline(
         tenantId, gameplayInstanceId, firstAccountId, gameTemplateId, characterIds);
+    // Cross-service test bootstraps reserve runtime target 2 for the built-in sandbox pointer.
+    // Skip that id so demo-player bootstrap instances do not inherit unrelated sandbox authority.
+    stack.insertRunningGameInstance(tenantId, firstAccountId, gameTemplateId, false);
 
     List<PlayerSeed> players = new ArrayList<>();
     for (int i = 0; i < count; i++) {

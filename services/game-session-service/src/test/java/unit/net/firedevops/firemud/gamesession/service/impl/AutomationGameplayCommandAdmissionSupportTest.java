@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,54 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.Test;
 
 class AutomationGameplayCommandAdmissionSupportTest {
+  @Test
+  void rejectsAutomationCommandWhenRoutingBundleIsIncomplete() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+                    new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+                        1L,
+                        2L,
+                        "region-alpha",
+                        7L,
+                        "AUTOMATION",
+                        "dispatch-1",
+                        "work-item-1",
+                        "script-1",
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "SHARED",
+                        "demo",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "character-1",
+                        null,
+                        null,
+                        "say hello",
+                        false,
+                        null),
+                    gameInstanceRepository,
+                    gameplayCommandRepository,
+                    runtimeRegionStatusRepository,
+                    tickService));
+    assertEquals(
+        "world_slug, realm_slug, and pointer_version must be provided together", ex.getMessage());
+  }
+
   @Test
   void rejectsAutomationCommandWhenRegionOwnershipBelongsToDifferentGameInstance() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);

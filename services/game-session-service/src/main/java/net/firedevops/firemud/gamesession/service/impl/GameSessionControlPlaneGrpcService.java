@@ -110,25 +110,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private long parseTenantId(String tenantId) {
-    if (tenantId == null || tenantId.isBlank()) {
-      throw new IllegalArgumentException("tenant_id is required");
-    }
-    try {
-      return Long.parseLong(tenantId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("tenant_id must be a number");
-    }
+    return ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_id");
   }
 
   private long parseGameInstanceId(String gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId.isBlank()) {
-      throw new IllegalArgumentException("game_instance_id is required");
-    }
-    try {
-      return Long.parseLong(gameInstanceId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("game_instance_id must be a number");
-    }
+    return ControlPlaneRequestParser.parsePositiveLong(gameInstanceId, "game_instance_id");
   }
 
   private void requireAdminRole() {

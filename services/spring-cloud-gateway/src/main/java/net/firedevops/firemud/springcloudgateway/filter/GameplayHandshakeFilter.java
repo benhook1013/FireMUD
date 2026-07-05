@@ -48,6 +48,11 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String WORLD_SLUG_HEADER = "X-World-Slug";
   static final String REALM_SLUG_HEADER = "X-Realm-Slug";
   static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
+  static final String GAME_INSTANCE_ID_HEADER = "X-Game-Instance-Id";
+  static final String TENANT_ID_HEADER = "X-Tenant-Id";
+  static final String PROXY_GAME_INSTANCE_ID_HEADER = "X-Proxy-Game-Instance-Id";
+  static final String PROXY_TENANT_ID_HEADER = "X-Proxy-Tenant-Id";
+  static final String PROXY_CONNECTION_ID_HEADER = "X-Proxy-Connection-Id";
   static final String CONNECTION_MODE_FIRST_PARTY_WEB = "first_party_web";
   static final String CONNECTION_MODE_TRUSTED_TCP_PROXY = "trusted_tcp_proxy";
   static final String CONNECT_TOKEN_REJECTED = "CONNECT_TOKEN_REJECTED";
@@ -131,16 +136,12 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
         throw new IllegalArgumentException("Invalid audience");
       }
       String accountId = JwtClaims.requireText(payload.get("accountId"), "accountId");
+      RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(payload);
       String tenantId =
           Long.toString(JwtClaims.requireLong(payload.get("tenantId"), "tenantId", false));
-      String worldSlug = JwtClaims.requireText(payload.get("worldSlug"), "worldSlug");
-      String realmSlug = JwtClaims.requireText(payload.get("realmSlug"), "realmSlug");
       String gameInstanceId =
           Long.toString(
               JwtClaims.requireLong(payload.get("gameInstanceId"), "gameInstanceId", false));
-      String pointerVersion =
-          Long.toString(
-              JwtClaims.requireLong(payload.get("pointerVersion"), "pointerVersion", false));
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -150,9 +151,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                   () -> {
                     if (mismatched(exchange, "X-Tenant-Id", tenantId)
                         || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)
-                        || mismatched(exchange, WORLD_SLUG_HEADER, worldSlug)
-                        || mismatched(exchange, REALM_SLUG_HEADER, realmSlug)
-                        || mismatched(exchange, POINTER_VERSION_HEADER, pointerVersion)) {
+                        || mismatchedRoutingBundle(exchange, routingBundle)) {
                       return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
                     }
 
@@ -163,10 +162,10 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                             Map.ofEntries(
                                 Map.entry("accountId", accountId),
                                 Map.entry("tenantId", tenantId),
-                                Map.entry("worldSlug", worldSlug),
-                                Map.entry("realmSlug", realmSlug),
+                                Map.entry("worldSlug", routingBundle.worldSlug()),
+                                Map.entry("realmSlug", routingBundle.realmSlug()),
                                 Map.entry("gameInstanceId", gameInstanceId),
-                                Map.entry("pointerVersion", pointerVersion),
+                                Map.entry("pointerVersion", routingBundle.pointerVersion()),
                                 Map.entry("connectScopeId", connectScopeId),
                                 Map.entry("connectTokenJti", jti),
                                 Map.entry("connectRequestId", requestId),
@@ -187,9 +186,9 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                                       stablePositiveLong(exchange.getRequest().getId())));
                               headers.set("X-Tenant-Id", tenantId);
                               headers.set("X-Game-Instance-Id", gameInstanceId);
-                              headers.set(WORLD_SLUG_HEADER, worldSlug);
-                              headers.set(REALM_SLUG_HEADER, realmSlug);
-                              headers.set(POINTER_VERSION_HEADER, pointerVersion);
+                              headers.set(WORLD_SLUG_HEADER, routingBundle.worldSlug());
+                              headers.set(REALM_SLUG_HEADER, routingBundle.realmSlug());
+                              headers.set(POINTER_VERSION_HEADER, routingBundle.pointerVersion());
                             }));
                   }))
           .onErrorResume(
@@ -237,7 +236,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   private boolean isTrustedTcpProxy(ServerWebExchange exchange) {
     return StringUtils.hasText(
-        exchange.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"));
+        exchange.getRequest().getHeaders().getFirst(PROXY_CONNECTION_ID_HEADER));
   }
 
   private static boolean mismatched(
@@ -246,21 +245,84 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     return StringUtils.hasText(actual) && !Objects.equals(actual, expected);
   }
 
+  private static boolean mismatchedRoutingBundle(
+      ServerWebExchange exchange, RoutingBundle routingBundle) {
+    return mismatched(exchange, WORLD_SLUG_HEADER, routingBundle.worldSlug())
+        || mismatched(exchange, REALM_SLUG_HEADER, routingBundle.realmSlug())
+        || mismatched(exchange, POINTER_VERSION_HEADER, routingBundle.pointerVersion());
+  }
+
   private boolean trustedProxyRoutingBundleIsCoherent(ServerWebExchange exchange) {
-    String worldSlug = exchange.getRequest().getHeaders().getFirst(WORLD_SLUG_HEADER);
-    String realmSlug = exchange.getRequest().getHeaders().getFirst(REALM_SLUG_HEADER);
-    String pointerVersion = exchange.getRequest().getHeaders().getFirst(POINTER_VERSION_HEADER);
+    try {
+      parseRuntimeRoutingBundleFromHeaders(exchange);
+      parseTrustedTcpProxyIdentityFromHeaders(exchange);
+      return true;
+    } catch (RuntimeException ex) {
+      return false;
+    }
+  }
+
+  private static RoutingBundle parseRuntimeRoutingBundleFromClaims(Claims payload) {
+    return parseRuntimeRoutingBundle(
+        JwtClaims.claimText(payload.get("worldSlug")),
+        JwtClaims.claimText(payload.get("realmSlug")),
+        JwtClaims.claimText(payload.get("pointerVersion")),
+        false);
+  }
+
+  private static RoutingBundle parseRuntimeRoutingBundleFromHeaders(ServerWebExchange exchange) {
+    return parseRuntimeRoutingBundle(
+        exchange.getRequest().getHeaders().getFirst(WORLD_SLUG_HEADER),
+        exchange.getRequest().getHeaders().getFirst(REALM_SLUG_HEADER),
+        exchange.getRequest().getHeaders().getFirst(POINTER_VERSION_HEADER),
+        true);
+  }
+
+  private static void parseTrustedTcpProxyIdentityFromHeaders(ServerWebExchange exchange) {
+    TrustedTcpProxyIdentity.validateIncoming(
+        exchange.getRequest().getHeaders().getFirst(TENANT_ID_HEADER),
+        exchange.getRequest().getHeaders().getFirst(GAME_INSTANCE_ID_HEADER));
+  }
+
+  private static RoutingBundle parseRuntimeRoutingBundle(
+      String worldSlug, String realmSlug, String pointerVersion, boolean allowMissing) {
     boolean hasWorld = StringUtils.hasText(worldSlug);
     boolean hasRealm = StringUtils.hasText(realmSlug);
     boolean hasPointer = StringUtils.hasText(pointerVersion);
-    if (hasPointer) {
-      try {
-        JwtClaims.requireLong(pointerVersion, POINTER_VERSION_HEADER, false);
-      } catch (RuntimeException ex) {
-        return false;
+    boolean hasFullBundle = hasWorld && hasRealm && hasPointer;
+    if (!hasFullBundle) {
+      if (allowMissing && !hasWorld && !hasRealm && !hasPointer) {
+        return null;
       }
+      throw new IllegalArgumentException("Malformed gameplay routing bundle");
     }
-    return (hasWorld == hasRealm) && (hasRealm == hasPointer);
+    long normalizedPointerVersion =
+        JwtClaims.requireLong(pointerVersion, POINTER_VERSION_HEADER, false);
+    return new RoutingBundle(worldSlug, realmSlug, Long.toString(normalizedPointerVersion));
+  }
+
+  private static final class RoutingBundle {
+    private final String worldSlug;
+    private final String realmSlug;
+    private final String pointerVersion;
+
+    private RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
+      this.worldSlug = worldSlug;
+      this.realmSlug = realmSlug;
+      this.pointerVersion = pointerVersion;
+    }
+
+    private String worldSlug() {
+      return worldSlug;
+    }
+
+    private String realmSlug() {
+      return realmSlug;
+    }
+
+    private String pointerVersion() {
+      return pointerVersion;
+    }
   }
 
   private ServerWebExchange mutate(

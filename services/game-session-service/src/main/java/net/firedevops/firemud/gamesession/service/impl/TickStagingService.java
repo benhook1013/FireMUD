@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -602,45 +603,15 @@ final class TickStagingService {
 
   private static void appendRoutingBundleFields(
       StringBuilder builder, String worldSlug, String realmSlug, Long pointerVersion) {
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
-    if (!routingBundle.isPresent()) {
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
+    if (routingBundle == null) {
       return;
     }
     appendJsonStringField(builder, "worldSlug", routingBundle.worldSlug());
     appendJsonStringField(builder, "realmSlug", routingBundle.realmSlug());
     appendJsonNumberField(builder, "pointerVersion", routingBundle.pointerVersion());
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    String normalizedWorldSlug = blankToNull(worldSlug);
-    String normalizedRealmSlug = blankToNull(realmSlug);
-    Long normalizedPointerVersion =
-        pointerVersion != null && pointerVersion > 0L ? pointerVersion : null;
-    boolean hasAny =
-        normalizedWorldSlug != null
-            || normalizedRealmSlug != null
-            || normalizedPointerVersion != null;
-    boolean hasAll =
-        normalizedWorldSlug != null
-            && normalizedRealmSlug != null
-            && normalizedPointerVersion != null;
-    if (!hasAny || !hasAll) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
-  }
-
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
-  }
-
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    private boolean isPresent() {
-      return worldSlug != null && realmSlug != null && pointerVersion != null;
-    }
   }
 
   private String remoteFollowupQueueSourceState(

@@ -11,8 +11,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +44,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplayStructuredCommandAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
@@ -116,8 +115,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
-
-  private static final ObjectMapper JSON = new ObjectMapper();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -1648,30 +1645,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   private static JsonNode json(String payload) {
-    try {
-      return JSON.readTree(payload);
-    } catch (IOException ex) {
-      throw new AssertionError("Expected JSON payload but got: " + payload, ex);
-    }
+    return GameplayStructuredCommandAssertions.parseStructuredResponse(payload);
   }
 
   private static boolean isStructuredCommand(String payload, String commandType) {
-    try {
-      JsonNode json = JSON.readTree(payload);
-      return "command_result".equals(json.path("eventType").asText())
-          && commandType.equals(json.path("commandType").asText());
-    } catch (IOException ex) {
-      return false;
-    }
+    return GameplayStructuredCommandAssertions.isStructuredCommand(payload, commandType);
   }
 
   private static boolean containsKind(JsonNode envelope, String kind) {
-    for (JsonNode output : envelope.path("outputs")) {
-      if (kind.equals(output.path("kind").asText())) {
-        return true;
-      }
-    }
-    return false;
+    return GameplayStructuredCommandAssertions.containsKind(envelope, kind);
   }
 
   private static boolean matchesContext(

@@ -51,7 +51,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointerAuditResponse listAdmissionPointerAudit(
       ListAdmissionPointerAuditRequest request) {
-    long tenantId = parseRequiredLong(request.getTenantId(), "tenant_id");
+    long tenantId = ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenant_id");
     requireText(request.getWorldSlug(), "world_slug is required");
     requireText(request.getRealmSlug(), "realm_slug is required");
     java.util.List<GameplayAdmissionPointerAuditEntry> audit =
@@ -291,15 +291,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
   private void requireText(String value, String message) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(message);
-    }
-  }
-
-  private long parseRequiredLong(String value, String fieldName) {
-    requireText(value, fieldName + " is required");
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException(fieldName + " must be a number");
     }
   }
 }

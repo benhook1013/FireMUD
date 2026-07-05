@@ -12,9 +12,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -206,6 +211,24 @@ public final class CrossServiceAppHarness {
               net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                   .setAllowed(true)
                   .build());
+      return client;
+    }
+
+    @Bean
+    @Primary
+    SharedSettingsAuthorityReader sharedSettingsAuthorityReader() {
+      return (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty();
+    }
+
+    @Bean
+    @Primary
+    AutomationScriptingClient automationScriptingClient() {
+      AutomationScriptingClient client = org.mockito.Mockito.mock(AutomationScriptingClient.class);
+      org.mockito.Mockito.when(client.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+          .thenReturn(TriggerScriptEventResponse.newBuilder().build());
+      org.mockito.Mockito.when(
+              client.observeRuntimeTickProgress(org.mockito.ArgumentMatchers.any()))
+          .thenReturn(ObserveRuntimeTickProgressResponse.newBuilder().build());
       return client;
     }
 

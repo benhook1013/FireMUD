@@ -1,26 +1,23 @@
 package net.firedevops.firemud.gamesession.testsupport;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.net.URI;
+import java.time.Duration;
 import java.util.List;
-import net.firedevops.firemud.test.GameplayDemoCredentials;
+import java.util.Map;
 
 /** Shared chained-gameplay websocket scenario helpers for multi-actor proof. */
 public final class GameplayWebSocketScenarios {
+  public static final String DEMO_USERNAME = "demo@example.com";
+  public static final String DEMO_PASSWORD = "swordfish";
+  public static final String DEMO_WORLD = "demo";
+
   public static Admission demoAdmission(String readyText) {
-    return Admission.unnamed(
-        GameplayDemoCredentials.USERNAME,
-        GameplayDemoCredentials.PASSWORD,
-        GameplayDemoCredentials.WORLD,
-        readyText);
+    return Admission.unnamed(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, readyText);
   }
 
   public static Admission demoAdmission(String characterName, String readyText) {
-    return Admission.named(
-        GameplayDemoCredentials.USERNAME,
-        GameplayDemoCredentials.PASSWORD,
-        GameplayDemoCredentials.WORLD,
-        characterName,
-        readyText);
+    return Admission.named(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
   }
 
   @FunctionalInterface
@@ -208,6 +205,114 @@ public final class GameplayWebSocketScenarios {
   }
 
   public static GameplayWebSocketDriver openReady(
+      URI websocketUrl, Duration commandWait, long tenantId, long sessionId, String readyText)
+      throws Exception {
+    return openReady(websocketUrl, commandWait, tenantId, sessionId, demoAdmission(readyText));
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      URI websocketUrl, Duration commandWait, long tenantId, long sessionId, Admission admission)
+      throws Exception {
+    return openReady(
+        proxyGatewayDriverFactory(websocketUrl, commandWait, tenantId, sessionId),
+        "gateway-" + sessionId,
+        admission);
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      String readyText,
+      String connectionId)
+      throws Exception {
+    return openReady(
+        websocketUrl, commandWait, tenantId, sessionId, demoAdmission(readyText), connectionId);
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      Admission admission,
+      String connectionId)
+      throws Exception {
+    return openReady(
+        proxyGatewayDriverFactory(websocketUrl, commandWait, tenantId, sessionId),
+        connectionId,
+        admission);
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      String readyText,
+      String connectionId,
+      Map<String, String> extraHeaders)
+      throws Exception {
+    return openReady(
+        gameplayDriverFactory(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+        connectionId,
+        demoAdmission(readyText));
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      Admission admission,
+      String connectionId,
+      Map<String, String> extraHeaders)
+      throws Exception {
+    return openReady(
+        gameplayDriverFactory(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+        connectionId,
+        admission);
+  }
+
+  public static GameplayWebSocketDriver openGameplaySession(
+      URI websocketUrl, Duration commandWait, long tenantId, long sessionId) {
+    return GameplayWebSocketDriver.connectGameplaySession(
+        websocketUrl, commandWait, tenantId, sessionId);
+  }
+
+  public static GameplayWebSocketDriver openGameplaySession(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      Map<String, String> extraHeaders) {
+    return GameplayWebSocketDriver.connectGameplaySession(
+        websocketUrl, commandWait, tenantId, sessionId, extraHeaders);
+  }
+
+  public static DriverFactory proxyGatewayDriverFactory(
+      URI websocketUrl, Duration commandWait, long tenantId, long sessionId) {
+    return connectionId ->
+        openGameplaySession(
+            websocketUrl,
+            commandWait,
+            tenantId,
+            sessionId,
+            Map.of("X-Proxy-Connection-Id", connectionId));
+  }
+
+  private static DriverFactory gameplayDriverFactory(
+      URI websocketUrl,
+      Duration commandWait,
+      long tenantId,
+      long sessionId,
+      Map<String, String> extraHeaders) {
+    return ignored ->
+        openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders);
+  }
+
+  public static GameplayWebSocketDriver openReady(
       DriverFactory factory, String connectionId, String characterName, String readyText)
       throws Exception {
     return openReady(factory, connectionId, demoAdmission(characterName, readyText));
@@ -288,6 +393,7 @@ public final class GameplayWebSocketScenarios {
         first.abort();
       } else {
         first.close();
+        first.awaitClosed();
       }
       GameplayWebSocketDriver reconnecting = openReady(factory, reconnectConnectionId, admission);
       return new ReconnectScenario(firstResponses, reconnecting);

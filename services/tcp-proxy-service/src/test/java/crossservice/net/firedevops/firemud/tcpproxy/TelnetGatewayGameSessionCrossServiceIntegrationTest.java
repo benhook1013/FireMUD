@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
+import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.ReactiveTestApplicationSupport;
@@ -103,22 +104,19 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
 
-    try (GameplayTelnetDriver client =
-        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
-      client.awaitInitialGuidance();
-      String worldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
+    try (GameplayTelnetScenarios.GatewayProxySession session =
+        GameplayTelnetScenarios.openDemoGatewayProxySession(this::openTelnetClient)) {
+      String worldsResponse = session.worldsResponse();
       assertThat(worldsResponse).isEqualTo("processed:WORLDS");
 
-      String loginResponse =
-          client.sendAndExpectExactLine(
-              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
+      String loginResponse = session.loginResponse();
       assertThat(loginResponse).isEqualTo("processed:LOGIN demo@example.com swordfish");
 
-      String playResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
+      String playResponse = session.playResponse();
       assertThat(playResponse).isEqualTo("processed:PLAY demo");
 
-      client.sendLine("look");
-      String response = client.readMultiLineResponse();
+      session.client().sendLine("look");
+      String response = session.client().readMultiLineResponse();
       assertThat(response.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     }
 
@@ -138,19 +136,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     String telnetLoginResponse;
     String telnetPlayResponse;
     String telnetLookResponse;
-    try (GameplayTelnetDriver client =
-        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
-      client.awaitInitialGuidance();
-      telnetWorldsResponse = client.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
+    try (GameplayTelnetScenarios.GatewayProxySession session =
+        GameplayTelnetScenarios.openDemoGatewayProxySession(this::openTelnetClient)) {
+      telnetWorldsResponse = session.worldsResponse();
       assertThat(telnetWorldsResponse).isNotNull();
-      telnetLoginResponse =
-          client.sendAndExpectExactLine(
-              "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish");
+      telnetLoginResponse = session.loginResponse();
       assertThat(telnetLoginResponse).isNotNull();
-      telnetPlayResponse = client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo");
+      telnetPlayResponse = session.playResponse();
       assertThat(telnetPlayResponse).isNotNull();
-      client.sendLine("LOOK");
-      telnetLookResponse = client.readMultiLineResponse();
+      session.client().sendLine("LOOK");
+      telnetLookResponse = session.client().readMultiLineResponse();
     }
 
     assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(4);
@@ -165,24 +160,24 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   void telnetPreservesGatewayRestartLogoutOnCleanBridgeClose() throws Exception {
     ensureTestServicesStarted();
 
-    try (GameplayTelnetDriver client =
-        GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT)) {
-      client.awaitInitialGuidance();
-      assertThat(client.sendAndExpectExactLine("WORLDS", "processed:WORLDS"))
-          .isEqualTo("processed:WORLDS");
+    try (GameplayTelnetScenarios.GatewayProxySession session =
+        GameplayTelnetScenarios.openDemoGatewayProxySession(this::openTelnetClient)) {
+      assertThat(session.worldsResponse()).isEqualTo("processed:WORLDS");
+      assertThat(session.loginResponse()).isEqualTo("processed:LOGIN demo@example.com swordfish");
+      assertThat(session.playResponse()).isEqualTo("processed:PLAY demo");
       assertThat(
-              client.sendAndExpectExactLine(
-                  "LOGIN demo@example.com swordfish", "processed:LOGIN demo@example.com swordfish"))
-          .isEqualTo("processed:LOGIN demo@example.com swordfish");
-      assertThat(client.sendAndExpectExactLine("PLAY demo", "processed:PLAY demo"))
-          .isEqualTo("processed:PLAY demo");
-      assertThat(
-              client.sendAndExpectExactLine(
-                  "FORCE_CLOSE_GATEWAY_RESTART",
-                  "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect"))
+              session
+                  .client()
+                  .sendAndExpectExactLine(
+                      "FORCE_CLOSE_GATEWAY_RESTART",
+                      "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect"))
           .isEqualTo(
               "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect");
     }
+  }
+
+  private GameplayTelnetDriver openTelnetClient() throws Exception {
+    return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
   }
 
   private static void awaitCommand(String expected) {

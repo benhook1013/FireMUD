@@ -2,6 +2,9 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -77,5 +80,94 @@ class RedisMovementEffectIdempotencyServiceTest {
     verify(valueOperations).set("sessionctx:22:identity:1:7001:context", updated, TTL);
     verify(valueOperations).set("sessionctx:22:identity:1:name:demo:context", updated, TTL);
     verify(valueOperations).set("sessionctx:22:41:movement-effect:tfx-1", updated, TTL);
+  }
+
+  @Test
+  void applyReturnsConflictWhenGameplayIdentityMismatch() {
+    SessionContext current = baselineContext();
+    when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
+    when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(null);
+    MoveEffectApplyResult result = service.apply("tfx-1", withAccountId(current, 999L), "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
+    assertEquals(current, result.context());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void applyReturnsReplayedContextWhenReplayAlreadyStored() {
+    SessionContext current = baselineContext();
+    SessionContext replayed = withRoom(current, "R-2045");
+    when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
+    when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(replayed);
+
+    MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.REPLAYED, result.status());
+    assertEquals(replayed, result.context());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  private SessionContext baselineContext() {
+    return new SessionContext(
+        41L,
+        22L,
+        123L,
+        "demo@example.com",
+        7001L,
+        "demo",
+        1L,
+        "R-1021",
+        "jwt-token",
+        "en-NZ",
+        1L,
+        "demo",
+        "production",
+        7L,
+        "SHARED");
+  }
+
+  private SessionContext withAccountId(SessionContext context, long accountId) {
+    return new SessionContext(
+        context.sessionId(),
+        context.tenantId(),
+        accountId,
+        context.loginName(),
+        context.characterId(),
+        context.characterName(),
+        context.gameInstanceId(),
+        context.roomInstanceId(),
+        context.jwt(),
+        context.localeTag(),
+        context.bootstrapGameInstanceId(),
+        context.worldSlug(),
+        context.realmSlug(),
+        context.pointerVersion(),
+        context.playableStateScope(),
+        context.connectScopeId(),
+        context.connectRequestId());
+  }
+
+  private SessionContext withRoom(SessionContext context, String roomInstanceId) {
+    return new SessionContext(
+        context.sessionId(),
+        context.tenantId(),
+        context.accountId(),
+        context.loginName(),
+        context.characterId(),
+        context.characterName(),
+        context.gameInstanceId(),
+        roomInstanceId,
+        context.jwt(),
+        context.localeTag(),
+        context.bootstrapGameInstanceId(),
+        context.worldSlug(),
+        context.realmSlug(),
+        context.pointerVersion(),
+        context.playableStateScope(),
+        context.connectScopeId(),
+        context.connectRequestId());
   }
 }

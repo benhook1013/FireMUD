@@ -188,6 +188,32 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void createBatchDropsPartialRoutingBundleFromGameplayManifestWhenOnlyPointerVersionIsProvided() {
+    GameplayCommand command = gameplayCommand("cmd-1");
+    command.setWorldSlug(null);
+    command.setRealmSlug(null);
+    command.setPointerVersion(17L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    TickBatch batch =
+        service.createBatch(
+            "FRESH_STAGE",
+            1L,
+            2L,
+            false,
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "say hello")));
+
+    org.junit.jupiter.api.Assertions.assertFalse(
+        batch.getSelectedWorkManifestJson().contains("\"worldSlug\""));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        batch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        batch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
+  }
+
+  @Test
   void resolveReplayBatchRestoresSealedManifestAndRequeuesRedisOnlyEntries() {
     List<Object> pendingRawEntries = List.of("N|cmd-1|look", "N|cmd-2|wave");
     TickBatch existingBatch = new TickBatch();

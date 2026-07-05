@@ -102,25 +102,11 @@ public final class GameSessionCommandControlPlaneService {
   }
 
   private long parseTenantId(String tenantId) {
-    if (tenantId == null || tenantId.isBlank()) {
-      throw new IllegalArgumentException("tenant_id is required");
-    }
-    try {
-      return Long.parseLong(tenantId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("tenant_id must be a number");
-    }
+    return ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_id");
   }
 
   private long parseGameInstanceId(String gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId.isBlank()) {
-      throw new IllegalArgumentException("game_instance_id is required");
-    }
-    try {
-      return Long.parseLong(gameInstanceId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("game_instance_id must be a number");
-    }
+    return ControlPlaneRequestParser.parsePositiveLong(gameInstanceId, "game_instance_id");
   }
 
   private Long parseOptionalGameInstanceId(String gameInstanceId) {
@@ -822,8 +808,8 @@ public final class GameSessionCommandControlPlaneService {
               GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
               CurrentRoutingAuthority authority = resolveCurrentRoutingAuthority(instance);
               GameplayRoutingBundle routingBundle = authority.routingBundle();
-              RoutingBundle normalizedRoutingBundle =
-                  normalizeRoutingBundle(
+              GameplayAdmissionPointerSnapshots.RoutingBundle normalizedRoutingBundle =
+                  GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
                       routingBundle.worldSlug(),
                       routingBundle.realmSlug(),
                       routingBundle.pointerVersion());
@@ -884,7 +870,8 @@ public final class GameSessionCommandControlPlaneService {
     if (persistedPlayableStateScope != null && !persistedPlayableStateScope.isBlank()) {
       return true;
     }
-    return normalizeRoutingBundle(persistedWorldSlug, persistedRealmSlug, persistedPointerVersion)
+    return GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            persistedWorldSlug, persistedRealmSlug, persistedPointerVersion)
         != null;
   }
 
@@ -894,10 +881,11 @@ public final class GameSessionCommandControlPlaneService {
       String persistedRealmSlug,
       Long persistedPointerVersion,
       CurrentRuntimeBoundary currentBoundary) {
-    RoutingBundle persistedRoutingBundle =
-        normalizeRoutingBundle(persistedWorldSlug, persistedRealmSlug, persistedPointerVersion);
-    RoutingBundle currentRoutingBundle =
-        normalizeRoutingBundle(
+    GameplayAdmissionPointerSnapshots.RoutingBundle persistedRoutingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            persistedWorldSlug, persistedRealmSlug, persistedPointerVersion);
+    GameplayAdmissionPointerSnapshots.RoutingBundle currentRoutingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             currentBoundary.worldSlug(),
             currentBoundary.realmSlug(),
             currentBoundary.pointerVersion());
@@ -1100,7 +1088,9 @@ public final class GameSessionCommandControlPlaneService {
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
     if (routingBundle != null) {
       builder.setWorldSlug(routingBundle.worldSlug());
       builder.setRealmSlug(routingBundle.realmSlug());
@@ -1197,7 +1187,9 @@ public final class GameSessionCommandControlPlaneService {
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
     if (routingBundle != null) {
       builder.setWorldSlug(routingBundle.worldSlug());
       builder.setRealmSlug(routingBundle.realmSlug());
@@ -1284,23 +1276,14 @@ public final class GameSessionCommandControlPlaneService {
     if (playableStateScope != null && !playableStateScope.isBlank()) {
       builder.setPlayableStateScope(toPlayableStateScopeStatus(playableStateScope));
     }
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
     if (routingBundle != null) {
       builder.setWorldSlug(routingBundle.worldSlug());
       builder.setRealmSlug(routingBundle.realmSlug());
       builder.setPointerVersion(routingBundle.pointerVersion());
     }
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    boolean hasWorld = worldSlug != null && !worldSlug.isBlank();
-    boolean hasRealm = realmSlug != null && !realmSlug.isBlank();
-    boolean hasPointer = pointerVersion != null && pointerVersion > 0;
-    if (hasWorld && hasRealm && hasPointer) {
-      return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
-    }
-    return null;
   }
 
   private static void applyTargetCommandStatus(
@@ -1694,8 +1677,8 @@ public final class GameSessionCommandControlPlaneService {
     if (command.getEnqueueSeq() != null) {
       builder.setEnqueueSeq(command.getEnqueueSeq());
     }
-    RoutingBundle routingBundle =
-        normalizeRoutingBundle(
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             command.getWorldSlug(), command.getRealmSlug(), command.getPointerVersion());
     if (routingBundle != null) {
       builder.setWorldSlug(routingBundle.worldSlug());
@@ -2110,6 +2093,4 @@ public final class GameSessionCommandControlPlaneService {
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}
-
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
 }
