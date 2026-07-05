@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Dependencies are injected and not exposed")
 public class ScriptTenantBudgetServiceImpl implements ScriptTenantBudgetService {
+  private static final String SCOPE_TENANT_RUNTIME = "tenant_runtime";
   private static final String TIER_HIGH = "high";
   private static final String TIER_BACKGROUND = "background";
   private static final String TIER_NORMAL = "normal";
@@ -39,8 +40,8 @@ public class ScriptTenantBudgetServiceImpl implements ScriptTenantBudgetService 
             allowed
                 ? "automation_script_tenant_budget_allowed_total"
                 : "automation_script_tenant_budget_denied_total",
-            "tenantId",
-            tenantId,
+            "scope",
+            SCOPE_TENANT_RUNTIME,
             "tier",
             tier)
         .increment();

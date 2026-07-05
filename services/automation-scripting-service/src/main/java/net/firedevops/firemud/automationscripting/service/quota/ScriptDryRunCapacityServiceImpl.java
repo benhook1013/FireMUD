@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Dependencies are injected and not exposed")
 public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityService {
+  private static final String SCOPE_BOTH = "both";
   private static final Duration RESERVATION_TTL = Duration.ofMinutes(10);
   private static final RedisScript<Long> RELEASE_SCRIPT = releaseScript();
 
@@ -44,7 +45,7 @@ public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityServ
             RESERVATION_TTL,
             clusterToken);
     if (!clusterReserved) {
-      recordReservation(false, tenantId, "cluster");
+      recordReservation(false, "cluster");
       return Optional.empty();
     }
 
@@ -59,10 +60,10 @@ public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityServ
             tenantToken);
     if (!tenantReserved) {
       releaseCluster(tenantId, workItemKey, clusterToken);
-      recordReservation(false, tenantId, "tenant");
+      recordReservation(false, "tenant");
       return Optional.empty();
     }
-    recordReservation(true, tenantId, "both");
+    recordReservation(true, SCOPE_BOTH);
     return Optional.of(new Reservation(tenantId, workItemId, tenantToken, clusterToken));
   }
 
@@ -78,8 +79,7 @@ public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityServ
         reservation.tenantToken());
     releaseCluster(reservation.tenantId(), workItemKey, reservation.clusterToken());
     meterRegistry
-        .counter(
-            "automation_script_test_capacity_released_total", "tenantId", reservation.tenantId())
+        .counter("automation_script_test_capacity_released_total", "scope", SCOPE_BOTH)
         .increment();
   }
 
@@ -92,14 +92,12 @@ public class ScriptDryRunCapacityServiceImpl implements ScriptDryRunCapacityServ
         clusterToken);
   }
 
-  private void recordReservation(boolean reserved, String tenantId, String scope) {
+  private void recordReservation(boolean reserved, String scope) {
     meterRegistry
         .counter(
             reserved
                 ? "automation_script_test_capacity_reserved_total"
                 : "automation_script_test_capacity_denied_total",
-            "tenantId",
-            tenantId,
             "scope",
             scope)
         .increment();

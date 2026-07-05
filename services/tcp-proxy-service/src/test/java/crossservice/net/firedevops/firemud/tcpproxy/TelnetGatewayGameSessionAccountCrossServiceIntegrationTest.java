@@ -170,8 +170,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
                 assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
                     .contains("ERROR WORLD_ACCESS_DENIED")
@@ -404,8 +403,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.ReconnectScenario scenario =
         GameplayTelnetScenarios.reconnectAfterReady(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             firstClient -> {
               firstClient.sendLine("MOVE north");
               assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
@@ -420,8 +418,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             client ->
                 assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
                     .contains("ERROR WORLD_ACCESS_DENIED"))) {
@@ -453,8 +450,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             client ->
                 assertThat(client.readLineContaining("OK PLAY Entered world: demo"))
                     .isNotBlank())) {
@@ -479,8 +475,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.TakeoverScenario scenario =
         GameplayTelnetScenarios.takeoverAfterAdmitted(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            READY_LOOK_TEXT,
             firstClient -> {
               firstClient.sendLine("LOOK");
               assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK").trim())
@@ -536,12 +531,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT))) {
+            GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
+            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.demoAdmission("Nyx", READY_LOOK_TEXT))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -586,10 +578,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
-            GameplayTelnetScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT))) {
+            GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -687,17 +677,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {
-    return GameplayTelnetScenarios.openAdmitted(
-        this::openTelnetClient,
-        GameplayTelnetScenarios.Admission.unnamed(
-            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
+    return GameplayTelnetScenarios.openAdmitted(this::openTelnetClient, READY_LOOK_TEXT);
   }
 
   private GameplayTelnetDriver openReadyTelnetClient() throws Exception {
-    return GameplayTelnetScenarios.openReady(
-        this::openTelnetClient,
-        GameplayTelnetScenarios.Admission.unnamed(
-            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
+    return GameplayTelnetScenarios.openReady(this::openTelnetClient, READY_LOOK_TEXT);
   }
 
   private GameplayWebSocketDriver openReadyWebSocketClient(long sessionId) throws Exception {

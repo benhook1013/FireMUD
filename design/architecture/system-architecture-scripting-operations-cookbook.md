@@ -12,7 +12,7 @@ Use the following patterns to answer common operational questions:
 
 - **"Is a tenant being throttled by its own automation budget?"**
   - Check `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` and audit rows with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`.
-  - Use `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` to see which tiers are consuming or exhausting budget.
+  - Use `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` to see which priority tiers are consuming or exhausting bounded runtime budget. Use audit rows, Redis counters, and control-plane reads for tenant-specific drilldown instead of raw metric labels.
 
 - **"Are cluster-wide ceilings causing drops?"**
   - Monitor `automation_script_triggers_dropped_total{reason="cluster_limit_reached"}` alongside `automation_tick_events_enqueued_total` and infrastructure-level CPU/time metrics. This combination indicates pressure at the cluster layer rather than within a single script or tenant.

@@ -531,14 +531,11 @@ class CommunicationWebSocketCrossServiceTest {
         GameplayWebSocketScenarios.openReadyTrio(
             connectionId -> openSessionClient(sessionId, connectionId),
             "actor-conn",
-            GameplayWebSocketScenarios.Admission.unnamed(
-                "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
             "target-conn",
-            GameplayWebSocketScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT),
             "observer-conn",
-            GameplayWebSocketScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Nyx", READY_LOOK_TEXT))) {
+            GameplayWebSocketScenarios.demoAdmission("Nyx", READY_LOOK_TEXT))) {
       scenario.actor().send("WHISPER Sora Keep quiet");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalWhisperText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
@@ -555,11 +552,9 @@ class CommunicationWebSocketCrossServiceTest {
         GameplayWebSocketScenarios.openReadyPair(
             connectionId -> openSessionClient(sessionId, connectionId),
             "actor-tell-conn",
-            GameplayWebSocketScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Emberline", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-tell-conn",
-            GameplayWebSocketScenarios.Admission.named(
-                "demo@example.com", "swordfish", "demo", "Sora", READY_LOOK_TEXT))) {
+            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
       scenario.actor().send("TELL Sora Meet me at the forge");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalTellText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalTellTargetText());
@@ -753,8 +748,7 @@ class CommunicationWebSocketCrossServiceTest {
     return GameplayWebSocketScenarios.openReady(
         connectionId -> openSessionClient(sessionId, connectionId),
         proxyConnectionId,
-        GameplayWebSocketScenarios.Admission.unnamed(
-            "demo@example.com", "swordfish", "demo", READY_LOOK_TEXT));
+        READY_LOOK_TEXT);
   }
 
   private GameplayWebSocketDriver openFirstPartyGameplayClient(String transportSessionId)

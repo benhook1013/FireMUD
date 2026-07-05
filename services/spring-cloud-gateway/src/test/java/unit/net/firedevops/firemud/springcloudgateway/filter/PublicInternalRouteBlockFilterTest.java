@@ -106,9 +106,10 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
-  void blocksActuatorSubtreeUnderPublicAdminFamily() {
+  void blocksNestedActuatorSubtreeUnderPublicAdminFamily() {
     MockServerWebExchange exchange =
-        MockServerWebExchange.from(MockServerHttpRequest.get("/api/admin/actuator/health").build());
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/admin/actuator/health/liveness").build());
     AtomicBoolean chainCalled = new AtomicBoolean(false);
 
     filter.filter(exchange, chain(chainCalled)).block();

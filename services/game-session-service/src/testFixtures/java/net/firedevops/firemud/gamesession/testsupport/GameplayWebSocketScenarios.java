@@ -1,9 +1,21 @@
 package net.firedevops.firemud.gamesession.testsupport;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 
 /** Shared chained-gameplay websocket scenario helpers for multi-actor proof. */
 public final class GameplayWebSocketScenarios {
+  public static final String DEMO_USERNAME = "demo@example.com";
+  public static final String DEMO_PASSWORD = "swordfish";
+  public static final String DEMO_WORLD = "demo";
+
+  public static Admission demoAdmission(String readyText) {
+    return Admission.unnamed(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, readyText);
+  }
+
+  public static Admission demoAdmission(String characterName, String readyText) {
+    return Admission.named(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
+  }
 
   @FunctionalInterface
   public interface DriverFactory {
@@ -33,6 +45,9 @@ public final class GameplayWebSocketScenarios {
     ABORT
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Cross-service scenario helpers intentionally expose live test drivers.")
   public record ReconnectScenario(List<String> firstResponses, GameplayWebSocketDriver reconnecting)
       implements AutoCloseable {
     public ReconnectScenario {
@@ -50,6 +65,9 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Cross-service scenario helpers intentionally expose live test drivers.")
   public record LoginThenPlayScenario(GameplayWebSocketDriver driver) implements AutoCloseable {
     public List<String> responses() {
       return driver.responses();
@@ -61,6 +79,9 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Cross-service scenario helpers intentionally expose live test drivers.")
   public record TakeoverScenario(
       List<String> firstResponses, GameplayWebSocketDriver first, GameplayWebSocketDriver takeover)
       implements AutoCloseable {
@@ -95,6 +116,9 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Cross-service scenario helpers intentionally expose live test drivers.")
   public record TwoPlayerScenario(GameplayWebSocketDriver actor, GameplayWebSocketDriver target)
       implements AutoCloseable {
     @Override
@@ -119,6 +143,9 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Cross-service scenario helpers intentionally expose live test drivers.")
   public record ThreePlayerScenario(
       GameplayWebSocketDriver actor,
       GameplayWebSocketDriver target,
@@ -169,6 +196,17 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public static GameplayWebSocketDriver openReady(
+      DriverFactory factory, String connectionId, String readyText) throws Exception {
+    return openReady(factory, connectionId, demoAdmission(readyText));
+  }
+
+  public static GameplayWebSocketDriver openReady(
+      DriverFactory factory, String connectionId, String characterName, String readyText)
+      throws Exception {
+    return openReady(factory, connectionId, demoAdmission(characterName, readyText));
+  }
+
   public static GameplayWebSocketDriver openAdmitted(
       DriverFactory factory, String connectionId, Admission admission) throws Exception {
     GameplayWebSocketDriver driver = factory.open(connectionId);
@@ -179,6 +217,11 @@ public final class GameplayWebSocketScenarios {
       closeQuietly(driver, ex);
       throw ex;
     }
+  }
+
+  public static GameplayWebSocketDriver openAdmitted(
+      DriverFactory factory, String connectionId, String readyText) throws Exception {
+    return openAdmitted(factory, connectionId, demoAdmission(readyText));
   }
 
   public static TwoPlayerScenario openReadyPair(
@@ -248,6 +291,23 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public static ReconnectScenario reconnectAfterReady(
+      DriverFactory factory,
+      String firstConnectionId,
+      String reconnectConnectionId,
+      String readyText,
+      DisconnectMode disconnectMode,
+      DriverExercise firstSessionExercise)
+      throws Exception {
+    return reconnectAfterReady(
+        factory,
+        firstConnectionId,
+        reconnectConnectionId,
+        demoAdmission(readyText),
+        disconnectMode,
+        firstSessionExercise);
+  }
+
   public static TakeoverScenario takeoverAfterReady(
       DriverFactory factory,
       String firstConnectionId,
@@ -267,6 +327,21 @@ public final class GameplayWebSocketScenarios {
     }
   }
 
+  public static TakeoverScenario takeoverAfterReady(
+      DriverFactory factory,
+      String firstConnectionId,
+      String takeoverConnectionId,
+      String readyText,
+      DriverExercise firstSessionExercise)
+      throws Exception {
+    return takeoverAfterReady(
+        factory,
+        firstConnectionId,
+        takeoverConnectionId,
+        demoAdmission(readyText),
+        firstSessionExercise);
+  }
+
   public static LoginThenPlayScenario loginThenAttemptPlay(
       DriverFactory factory,
       String connectionId,
@@ -283,6 +358,16 @@ public final class GameplayWebSocketScenarios {
       closeQuietly(driver, ex);
       throw ex;
     }
+  }
+
+  public static LoginThenPlayScenario loginThenAttemptPlay(
+      DriverFactory factory,
+      String connectionId,
+      String readyText,
+      DriverExercise playOutcomeAssertion)
+      throws Exception {
+    return loginThenAttemptPlay(
+        factory, connectionId, demoAdmission(readyText), playOutcomeAssertion);
   }
 
   private static void enterAdmitted(GameplayWebSocketDriver driver, Admission admission)
