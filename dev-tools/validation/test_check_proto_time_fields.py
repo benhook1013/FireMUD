@@ -1,6 +1,8 @@
 import io
+import tempfile
 import unittest
-from contextlib import redirect_stderr
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 import importlib.util
 
@@ -78,19 +80,10 @@ message Session {
             self.assertIn("time-related proto field 'timeout'", output)
 
 
-def tempfile_path() -> "TemporaryDirectoryPath":
-    return TemporaryDirectoryPath()
-
-
-class TemporaryDirectoryPath:
-    def __enter__(self) -> Path:
-        import tempfile
-
-        self._tempdir = tempfile.TemporaryDirectory()
-        return Path(self._tempdir.name)
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self._tempdir.cleanup()
+@contextmanager
+def tempfile_path() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield Path(tmp_dir)
 
 
 if __name__ == "__main__":
