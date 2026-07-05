@@ -188,7 +188,7 @@ Budgets operate at three main levels:
   - Concurrency and queue policies cap how many runs may be active or buffered at a time.
 
 - **Per-tenant**:
-  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and bounded metrics such as `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`.
+  - Budgets per tenant and priority tier are tracked through the live reservation counters `automation:tenant-budget:<tenantId>:tier:<tier>` and bounded metrics such as `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`.
   - When a tenant exhausts its budget for a tier, lower-priority work for that tenant is skipped (`automation_script_skips_total{reason="tenant_budget_exceeded"}`) while other tenants continue to make progress.
 
 - **Cluster-wide**:
@@ -302,7 +302,7 @@ For scripting and automation, these metrics follow shared naming and labeling co
 - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
 - `automation_script_errors_total{scope, script_category, plugin_family, reason}` – higher-level error classification, including downstream failures.
 - `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
-- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` – per-scope, per-priority-tier live execution reservation decisions.
+- `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}` – per-tenant, per-priority-tier live execution reservation decisions.
 - `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}` – distribution of sandbox runtime per script/plugin and event type.
 - `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
 - `automation_script_timer_catchup_truncated_total{scope, script_category, eventType, reason}` – counts timer catch-up firings intentionally truncated by resume-window limits.

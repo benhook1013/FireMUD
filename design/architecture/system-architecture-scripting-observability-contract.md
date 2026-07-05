@@ -237,7 +237,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
 - Quotas and budgets
   - `script_quota_allowed_total{scope, script_category}`
   - `script_quota_denied_total{scope, script_category, reason}`
-  - `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`
+  - `automation_script_tenant_budget_allowed_total{tenantId, tier}` / `automation_script_tenant_budget_denied_total{tenantId, tier}`
 - Tick integration and queueing
   - `automation_tick_events_enqueued_total{scope}`
   - `automation_tick_version_fence_dropped_total{scope, script_category, reason}`

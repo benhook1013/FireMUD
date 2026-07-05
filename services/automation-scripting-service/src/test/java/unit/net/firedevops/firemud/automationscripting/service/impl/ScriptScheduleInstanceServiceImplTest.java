@@ -29,6 +29,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptScheduleInsta
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -517,6 +518,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
+    assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
     verify(automationQueueService).enqueueWorkItem(workItem);
@@ -624,6 +626,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getWorldSlug()).isEqualTo("demo");
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("normal");
     assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
     assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");

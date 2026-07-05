@@ -32,6 +32,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
+import net.firedevops.firemud.automationscripting.service.ScriptQuotaClasses;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -822,6 +823,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
+    item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
     item.setScriptEventId(scriptEventId);
     item.setDryRun(false);

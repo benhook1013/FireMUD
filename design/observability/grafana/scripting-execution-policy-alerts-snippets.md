@@ -7,7 +7,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 ```yaml
 - alert: ScriptTenantBudgetDeniedSpike
   expr: |
-    sum by (scope, tier) (rate(automation_script_tenant_budget_denied_total[5m])) > 0.5
+    sum by (tenantId, tier) (rate(automation_script_tenant_budget_denied_total[5m])) > 0.5
   for: 10m
   labels:
     service: automation-scripting-service
