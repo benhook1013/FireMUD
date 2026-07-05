@@ -156,31 +156,25 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
           GrpcAppErrors.error(
               meterRegistry, "INVALID_ARGUMENT", "gameInstanceId and tenantId are required"));
     }
-    long gameInstanceId;
-    long tenantId;
     try {
-      gameInstanceId = Long.parseLong(gameInstanceIdText);
-    } catch (NumberFormatException ex) {
+      long gameInstanceId =
+          ControlPlaneRequestParser.parsePositiveLong(gameInstanceIdText, "gameInstanceId");
+      long tenantId = ControlPlaneRequestParser.parsePositiveLong(tenantIdText, "tenantId");
+      Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
+      if (maybeInstance.isEmpty()) {
+        return SessionValidationResult.failed(
+            GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Game instance not found"));
+      }
+      GameInstance instance = maybeInstance.get();
+      if (!instance.getTenantId().equals(tenantId)) {
+        return SessionValidationResult.failed(
+            GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
+      }
+      return new SessionValidationResult(gameInstanceId, tenantId, instance, null);
+    } catch (IllegalArgumentException ex) {
       return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "gameInstanceId must be numeric"));
+          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()));
     }
-    try {
-      tenantId = Long.parseLong(tenantIdText);
-    } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "tenantId must be numeric"));
-    }
-    Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
-    if (maybeInstance.isEmpty()) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Game instance not found"));
-    }
-    GameInstance instance = maybeInstance.get();
-    if (!instance.getTenantId().equals(tenantId)) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
-    }
-    return new SessionValidationResult(gameInstanceId, tenantId, instance, null);
   }
 
   private record SessionValidationResult(
