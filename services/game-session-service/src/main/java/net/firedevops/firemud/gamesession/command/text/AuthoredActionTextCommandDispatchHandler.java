@@ -50,9 +50,11 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
               .find(command.commandId())
               .map(ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction::executionHook)
               .orElse(null);
-      gameplayCommand.setCommandId(
-          StringUtils.hasText(executionHook) ? executionHook : "authored-" + UUID.randomUUID());
+      gameplayCommand.setCommandId("authored-" + UUID.randomUUID());
       gameplayCommand.setCommandName(command.commandId());
+      if (StringUtils.hasText(executionHook)) {
+        gameplayCommand.setExecutionHook(executionHook);
+      }
       scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
     } catch (RuntimeException ex) {
       LOG.warn(

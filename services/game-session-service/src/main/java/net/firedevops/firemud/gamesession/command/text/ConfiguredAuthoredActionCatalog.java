@@ -37,7 +37,6 @@ final class ConfiguredAuthoredActionCatalog {
               action.getCostKey(),
               action.getCostAmount(),
               action.getExecutionHook(),
-              action.getNoticeText(),
               action.getHelpSummary(),
               action.getHelpDetails());
       ConfiguredAuthoredAction previous = actions.putIfAbsent(normalized.commandId(), normalized);
@@ -98,7 +97,6 @@ final class ConfiguredAuthoredActionCatalog {
       String costKey,
       long costAmount,
       String executionHook,
-      String noticeText,
       String helpSummary,
       String helpDetails) {
     ConfiguredAuthoredAction {

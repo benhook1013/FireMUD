@@ -87,16 +87,17 @@ final class AggregatingTextCommandRegistry implements TextCommandRegistry {
   }
 
   private static String normalizeAlias(String alias) {
-    if (alias == null || alias.isBlank()) {
-      throw new IllegalArgumentException("alias must not be blank");
-    }
-    return alias.trim().toLowerCase(Locale.ROOT);
+    return normalizeToken(alias, "alias");
   }
 
   private static String normalizeCommandId(String commandId) {
-    if (commandId == null || commandId.isBlank()) {
-      throw new IllegalArgumentException("commandId must not be blank");
+    return normalizeToken(commandId, "commandId");
+  }
+
+  private static String normalizeToken(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must not be blank");
     }
-    return commandId.trim().toLowerCase(Locale.ROOT);
+    return value.trim().toLowerCase(Locale.ROOT);
   }
 }

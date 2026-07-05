@@ -106,10 +106,9 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
-  void blocksNestedActuatorSubtreeUnderPublicAdminFamily() {
+  void blocksActuatorSubtreeUnderPublicAdminFamily() {
     MockServerWebExchange exchange =
-        MockServerWebExchange.from(
-            MockServerHttpRequest.get("/api/admin/actuator/health/liveness").build());
+        MockServerWebExchange.from(MockServerHttpRequest.get("/api/admin/actuator/health").build());
     AtomicBoolean chainCalled = new AtomicBoolean(false);
 
     filter.filter(exchange, chain(chainCalled)).block();
@@ -132,7 +131,7 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
-  void blocksActuatorSubtreeUnderPublicApiFamily() {
+  void blocksActuatorSubtreeUnderPublicSessionFamily() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/api/session/actuator/settings/effective").build());

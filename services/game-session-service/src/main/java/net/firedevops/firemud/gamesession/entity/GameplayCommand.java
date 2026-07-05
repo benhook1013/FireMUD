@@ -30,6 +30,7 @@ public class GameplayCommand {
   private String automationDispatchId;
   private String automationWorkItemId;
   private String scriptId;
+  private String executionHook;
   private String scriptPatchVersion;
   private String pluginId;
   private String pluginVersionId;

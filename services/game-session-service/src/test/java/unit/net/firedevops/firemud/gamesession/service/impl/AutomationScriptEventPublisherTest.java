@@ -341,6 +341,7 @@ class AutomationScriptEventPublisherTest {
 
     GameplayCommand command = command("authored-1", "wave");
     command.setCommandText("wave");
+    command.setExecutionHook("runtime.workflow.wave");
     publisher.publishCommandEvent(sharedGameplayContext("room"), command);
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
@@ -348,6 +349,8 @@ class AutomationScriptEventPublisherTest {
     verify(client).triggerScriptEvent(captor.capture());
     assertThat(captor.getValue().getPayloadJson()).contains("\"actionCategory\":\"SOCIAL\"");
     assertThat(captor.getValue().getPayloadJson()).contains("\"actionTags\":[\"COMMUNICATION\"]");
+    assertThat(captor.getValue().getPayloadJson())
+        .contains("\"executionHook\":\"runtime.workflow.wave\"");
   }
 
   private static SessionContext sharedGameplayContext(String roomId) {

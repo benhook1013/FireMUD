@@ -16,7 +16,6 @@ class AuthoredActionCommandHandlerTest {
     action.setActionId("wave-salute");
     action.setCommandId("wave-salute");
     action.setAliases(java.util.List.of("salute"));
-    action.setNoticeText("You salute smartly.");
     properties.setActions(java.util.List.of(action));
 
     AuthoredActionCommandHandler handler =
