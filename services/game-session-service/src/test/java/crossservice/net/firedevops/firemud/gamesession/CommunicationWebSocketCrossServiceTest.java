@@ -770,10 +770,6 @@ class CommunicationWebSocketCrossServiceTest {
     return GameplayStructuredCommandAssertions.requirePayload(envelope, payloadType);
   }
 
-  private boolean isStructuredCommand(String payload, String commandType) {
-    return GameplayStructuredCommandAssertions.isStructuredCommand(payload, commandType);
-  }
-
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
     return STACK.gameSession();
   }

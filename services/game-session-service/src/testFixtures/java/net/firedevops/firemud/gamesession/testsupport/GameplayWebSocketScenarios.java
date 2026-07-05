@@ -214,9 +214,7 @@ public final class GameplayWebSocketScenarios {
       URI websocketUrl, Duration commandWait, long tenantId, long sessionId, Admission admission)
       throws Exception {
     return openReady(
-        ignored ->
-            GameplayWebSocketDriver.connectGameplaySession(
-                websocketUrl, commandWait, tenantId, sessionId),
+        ignored -> openGameplaySession(websocketUrl, commandWait, tenantId, sessionId),
         "gateway-" + sessionId,
         admission);
   }
@@ -242,9 +240,7 @@ public final class GameplayWebSocketScenarios {
       String connectionId)
       throws Exception {
     return openReady(
-        ignored ->
-            GameplayWebSocketDriver.connectGameplaySession(
-                websocketUrl, commandWait, tenantId, sessionId),
+        ignored -> openGameplaySession(websocketUrl, commandWait, tenantId, sessionId),
         connectionId,
         admission);
   }
@@ -260,8 +256,7 @@ public final class GameplayWebSocketScenarios {
       throws Exception {
     return openReady(
         ignored ->
-            GameplayWebSocketDriver.connectGameplaySession(
-                websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+            openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
         connectionId,
         demoAdmission(readyText));
   }
@@ -277,8 +272,7 @@ public final class GameplayWebSocketScenarios {
       throws Exception {
     return openReady(
         ignored ->
-            GameplayWebSocketDriver.connectGameplaySession(
-                websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
+            openGameplaySession(websocketUrl, commandWait, tenantId, sessionId, extraHeaders),
         connectionId,
         admission);
   }
