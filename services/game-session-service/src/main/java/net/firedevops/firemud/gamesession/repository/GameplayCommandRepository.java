@@ -222,6 +222,7 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID, entity.getAutomationDispatchId())
             .set(GAMEPLAY_COMMAND.AUTOMATION_WORK_ITEM_ID, entity.getAutomationWorkItemId())
             .set(GAMEPLAY_COMMAND.SCRIPT_ID, entity.getScriptId())
+            .set(GAMEPLAY_COMMAND.EXECUTION_HOOK, entity.getExecutionHook())
             .set(GAMEPLAY_COMMAND.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(GAMEPLAY_COMMAND.PLUGIN_ID, entity.getPluginId())
             .set(GAMEPLAY_COMMAND.PLUGIN_VERSION_ID, entity.getPluginVersionId())
@@ -283,6 +284,7 @@ public class GameplayCommandRepository {
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
     record.setAutomationWorkItemId(entity.getAutomationWorkItemId());
     record.setScriptId(entity.getScriptId());
+    record.setExecutionHook(entity.getExecutionHook());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
@@ -336,6 +338,7 @@ public class GameplayCommandRepository {
     entity.setAutomationDispatchId(record.get(GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID));
     entity.setAutomationWorkItemId(record.get(GAMEPLAY_COMMAND.AUTOMATION_WORK_ITEM_ID));
     entity.setScriptId(record.get(GAMEPLAY_COMMAND.SCRIPT_ID));
+    entity.setExecutionHook(record.get(GAMEPLAY_COMMAND.EXECUTION_HOOK));
     entity.setScriptPatchVersion(record.get(GAMEPLAY_COMMAND.SCRIPT_PATCH_VERSION));
     entity.setPluginId(record.get(GAMEPLAY_COMMAND.PLUGIN_ID));
     entity.setPluginVersionId(record.get(GAMEPLAY_COMMAND.PLUGIN_VERSION_ID));
