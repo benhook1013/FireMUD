@@ -11,24 +11,24 @@ patchesStrategicMerge:
 
 images:
   - name: ghcr.io/benhook1013/account-service
-    digest: sha256:bf30d25da06d499b5c13f54c39974623f91f44e541df821063fe86b7746bd523
+    digest: sha256:d437308fc9a21f4070d150c93757ef368d3e46e470fce6448e6bc10f3f34feec
   - name: ghcr.io/benhook1013/automation-scripting-service
-    digest: sha256:99f3e596da3e7bc184e4adae96d995b075d2aba4fd1dc03a2d85b0d29757b409
+    digest: sha256:3047d387e92ab9ccba9abe9e7e2eff7b01f2b0322a5049d478d8104ba270c552
   - name: ghcr.io/benhook1013/entity-management-service
-    digest: sha256:6504d8cde167addfad7b134033a7248872b1b0439a41238f073e542f463a97dd
+    digest: sha256:79f8032a92cac08bc912029752e3ac66a2bb531a69d18a457d10491bfeda472b
   - name: ghcr.io/benhook1013/game-design-service
-    digest: sha256:9256fb8b348471a1f2ecd4f0cb9a07bf7838860f163db7c34a2d769c2e4b21c1
+    digest: sha256:663ff9a2438b75b37a8957e04b11a6e00a957ab42bb7fb3e91fee0b71af32bf8
   - name: ghcr.io/benhook1013/game-logic-service
-    digest: sha256:adc3547114bdb6c57aefbfa1cc3028b68ee55f23e644cb51ea4168c95cf0d840
+    digest: sha256:09df49dda8a2509d2b712169c715040177bab4242db885f771f5f0fc6e5105a6
   - name: ghcr.io/benhook1013/game-session-service
-    digest: sha256:5c06e4f83074582f44ff85bd8e851fca683dc4cc601cce25ad0eae5a8e9bf3bf
+    digest: sha256:113aaee3fac9ba83ba01cbc1eabf53b9f280ec16dbab7d8a2a6c776525835ae8
   - name: ghcr.io/benhook1013/logging-admin-service
-    digest: sha256:13897cf5b08bca76dda36e27f3a7406032ad4e26729e38a5b0e1b1f13847338b
+    digest: sha256:f58a5b3b944162962ddf7a4d0ab5ee3957075bef6fcf8df72788151c4f1c3c96
   - name: ghcr.io/benhook1013/social-groups-service
-    digest: sha256:2079d340e202a8df0eafcca64e8d1d4b4ed2d577337c7e4b259b101120ce8b9d
+    digest: sha256:8a0f03e918218c6d66f7465b4704a9776a3a6f7fb6f77d74b0d1ab60bd97c4bc
   - name: ghcr.io/benhook1013/spring-cloud-gateway
-    digest: sha256:14726025f81eb5e31cc9c51ebdeeb588dbb33c3d479e4f57f805136c1acfbd5e
+    digest: sha256:4250697f25571f618af1a786bf2749c17dfcbdc570d9109fb248ae0efe59caa0
   - name: ghcr.io/benhook1013/tcp-proxy-service
-    digest: sha256:f92c3ee797e74afcf68c5de13fe8770faefab05f0c57f8405d84fcdd625fd0dd
+    digest: sha256:cdde9a4e7894368776c2893ffb7a9c8fa977f7ba83c39cb4284c45de2c126170
   - name: ghcr.io/benhook1013/world-management-service
-    digest: sha256:1e00b976e1a6cf28cbdcaeb36dff9dbf7406a8353baed0c874bffeec97e4831f
+    digest: sha256:dd0c9144e7c4d5bf3b7cf99a963ead4adf3ce5937e024a8a846c1fea7210def5
