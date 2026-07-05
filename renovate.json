@@ -20,6 +20,9 @@
     "kustomize",
     "npm"
   ],
+  "vulnerabilityAlerts": {
+    "enabled": true
+  },
   "prHourlyLimit": 2,
   "prConcurrentLimit": 10,
   "packageRules": [
