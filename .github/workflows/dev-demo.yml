@@ -359,6 +359,70 @@ jobs:
               f"Dev-demo smoke session bootstrap failed with status {last_status}: {last_body}"
             )
 
+          def ensure_demo_account(timeout_seconds=120):
+            deadline = time.time() + timeout_seconds
+            attempt = 1
+            last_status = None
+            last_body = None
+            while time.time() < deadline:
+              status, body = post_json(
+                "http://account-service:8080/accounts",
+                {
+                  "tenantId": tenant_id,
+                  "username": "demo",
+                  "email": email,
+                  "password": password,
+                },
+              )
+              print(f"Demo account creation attempt {attempt} returned {status}: {body}")
+              if status < 400:
+                return
+              last_status = status
+              last_body = body
+              if status < 500:
+                time.sleep(2)
+              else:
+                time.sleep(4)
+              attempt += 1
+            raise SystemExit(
+              f"Dev-demo account creation failed with status {last_status}: {last_body}"
+            )
+
+          def issue_player_bootstrap(timeout_seconds=120):
+            deadline = time.time() + timeout_seconds
+            attempt = 1
+            last_status = None
+            last_body = None
+            account_create_attempted = False
+            while time.time() < deadline:
+              status, bootstrap_body = post_json(
+                "http://account-service:8080/auth/player-bootstrap",
+                {
+                  "tenantId": tenant_id,
+                  "username": email,
+                  "password": password,
+                },
+              )
+              print(f"Player bootstrap attempt {attempt} returned {status}: {bootstrap_body}")
+              if status < 400:
+                return status, bootstrap_body
+              last_status = status
+              last_body = bootstrap_body
+              if status == 401 and not account_create_attempted:
+                ensure_demo_account()
+                account_create_attempted = True
+                attempt += 1
+                time.sleep(2)
+                continue
+              if status >= 500:
+                attempt += 1
+                time.sleep(2)
+                continue
+              break
+            raise SystemExit(
+              f"Player bootstrap failed with status {last_status}: {last_body}"
+            )
+
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
           wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
           wait_for_ready("game-design-service", "http://game-design-service:8080/actuator/health/readiness")
@@ -366,14 +430,7 @@ jobs:
           wait_for_ready("world-management-service", "http://world-management-service:8080/actuator/health/readiness")
           wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
 
-          status, bootstrap_body = post_json(
-            "http://account-service:8080/auth/player-bootstrap",
-            {
-              "tenantId": tenant_id,
-              "username": email,
-              "password": password,
-            },
-          )
+          status, bootstrap_body = issue_player_bootstrap()
           print(bootstrap_body)
           if status >= 400:
             raise SystemExit(
