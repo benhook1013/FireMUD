@@ -164,6 +164,29 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
+  void matchesCurrentRuntimeTargetAcceptsCaseInsensitiveWorldAndRealmIdentity() {
+    GameplayAdmissionPointerSnapshot pointer =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo",
+            "production",
+            "Production",
+            1L,
+            11L,
+            7L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW");
+
+    assertThat(
+            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                List.of(pointer), 1L, 11L, "DEMO", "PRODUCTION", 7L))
+        .isTrue();
+  }
+
+  @Test
   void matchesCurrentRuntimeTargetRejectsWhenPlayableStateScopeDoesNotMatch() {
     GameplayAdmissionPointerSnapshot pointer =
         new GameplayAdmissionPointerSnapshot(

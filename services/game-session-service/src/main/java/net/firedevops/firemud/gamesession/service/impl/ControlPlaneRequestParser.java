@@ -14,7 +14,7 @@ final class ControlPlaneRequestParser {
       }
       return value;
     } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException(fieldName + " must be a number");
+      throw new IllegalArgumentException(fieldName + " must be a number", ex);
     }
   }
 }

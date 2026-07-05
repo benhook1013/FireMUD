@@ -219,6 +219,10 @@ public final class EntityManagementClient
       throw new IllegalStateException(
           "Incomplete admitted routing bundle on session context for Entity Management request");
     }
+    if (!routingBundle.isPresent()) {
+      throw new IllegalStateException(
+          "Missing admitted routing bundle on session context for Entity Management request");
+    }
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),

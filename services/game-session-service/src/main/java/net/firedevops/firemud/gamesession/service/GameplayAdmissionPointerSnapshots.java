@@ -73,10 +73,8 @@ public final class GameplayAdmissionPointerSnapshots {
     if (!incomingHasBundle) {
       return true;
     }
-    if (!incoming.worldSlug().equalsIgnoreCase(existing.worldSlug())) {
-      return false;
-    }
-    if (!incoming.realmSlug().equalsIgnoreCase(existing.realmSlug())) {
+    if (!sameRoutingIdentity(
+        existing.worldSlug(), existing.realmSlug(), incoming.worldSlug(), incoming.realmSlug())) {
       return false;
     }
     return existing.pointerVersion() == incoming.pointerVersion();
@@ -126,8 +124,9 @@ public final class GameplayAdmissionPointerSnapshots {
     return singularCompletePointer(pointers)
         .filter(pointer -> pointer.tenantId() == tenantId)
         .filter(pointer -> pointer.gameInstanceId() == gameInstanceId)
-        .filter(pointer -> pointer.worldSlug().equals(worldSlug))
-        .filter(pointer -> pointer.realmSlug().equals(realmSlug))
+        .filter(
+            pointer ->
+                sameRoutingIdentity(pointer.worldSlug(), pointer.realmSlug(), worldSlug, realmSlug))
         .filter(pointer -> pointer.pointerVersion() == pointerVersion)
         .filter(
             pointer ->
@@ -166,6 +165,15 @@ public final class GameplayAdmissionPointerSnapshots {
 
   private static String blankToNull(String value) {
     return StringUtils.hasText(value) ? value : null;
+  }
+
+  private static boolean sameRoutingIdentity(
+      String existingWorldSlug,
+      String existingRealmSlug,
+      String incomingWorldSlug,
+      String incomingRealmSlug) {
+    return existingWorldSlug.equalsIgnoreCase(incomingWorldSlug)
+        && existingRealmSlug.equalsIgnoreCase(incomingRealmSlug);
   }
 
   private static boolean hasAnyRoutingValue(

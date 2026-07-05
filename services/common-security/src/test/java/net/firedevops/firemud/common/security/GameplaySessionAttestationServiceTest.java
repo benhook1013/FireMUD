@@ -249,8 +249,20 @@ class GameplaySessionAttestationServiceTest {
   void requireAdmittedRoutingBundleRejectsGameplayAttestationMissingPointerVersion() {
     GameplaySessionAttestationClaims claims =
         service.requireValid(
-            service.issueGameplaySessionAttestation(
-                "22", "41", "7", "123", "1", "1021", "demo", "production", null, "SHARED"));
+            jwtUtil.generateToken(
+                "gameplay-session:41",
+                Map.ofEntries(
+                    Map.entry("attestationType", "GAMEPLAY_SESSION"),
+                    Map.entry("tenantId", "22"),
+                    Map.entry("sessionId", "41"),
+                    Map.entry("accountId", "7"),
+                    Map.entry("characterId", "123"),
+                    Map.entry("gameInstanceId", "1"),
+                    Map.entry("roomInstanceId", "1021"),
+                    Map.entry("worldSlug", "demo"),
+                    Map.entry("realmSlug", "production"),
+                    Map.entry("pointerVersion", ""),
+                    Map.entry("playableStateScope", "SHARED"))));
 
     GameplaySessionAttestationException ex =
         assertThrows(
@@ -259,6 +271,18 @@ class GameplaySessionAttestationServiceTest {
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Gameplay session attestation is missing pointerVersion", ex.getMessage());
+  }
+
+  @Test
+  void issueGameplaySessionAttestationRejectsMissingRoutingBundleClaims() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.issueGameplaySessionAttestation(
+                    "22", "41", "7", "123", "1", "1021", null, "production", null, "SHARED"));
+
+    assertEquals("worldSlug must not be blank", ex.getMessage());
   }
 
   @Test

@@ -31,6 +31,9 @@ public class GameplaySessionAttestationService {
     requireText(accountId, "accountId");
     requireText(characterId, "characterId");
     requireText(gameInstanceId, "gameInstanceId");
+    requireText(worldSlug, "worldSlug");
+    requireText(realmSlug, "realmSlug");
+    requireText(pointerVersion, "pointerVersion");
     return jwtUtil.generateToken(
         "gameplay-session:" + sessionId,
         Map.ofEntries(

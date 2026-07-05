@@ -29,6 +29,7 @@ class LookWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(8);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final long CHARACTER_ID = 123L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
   @Container
@@ -309,7 +310,7 @@ class LookWebSocketCrossServiceTest {
 
   private long insertGameInstance(boolean clearExisting) {
     if (clearExisting) {
-      return STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+      return STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, CHARACTER_ID);
     }
     DataSource dataSource = gameSession().bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);

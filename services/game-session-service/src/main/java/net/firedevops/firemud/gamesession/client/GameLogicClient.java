@@ -683,6 +683,10 @@ public class GameLogicClient
       throw new IllegalStateException(
           "Incomplete admitted routing bundle on session context for Game Logic request");
     }
+    if (!routingBundle.isPresent()) {
+      throw new IllegalStateException(
+          "Missing admitted routing bundle on session context for Game Logic request");
+    }
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),

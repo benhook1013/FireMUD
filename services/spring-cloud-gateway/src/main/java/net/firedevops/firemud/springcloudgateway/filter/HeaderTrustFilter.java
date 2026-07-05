@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -32,6 +34,7 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public final class HeaderTrustFilter implements WebFilter, Ordered {
+  private static final Logger LOG = LoggerFactory.getLogger(HeaderTrustFilter.class);
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
@@ -103,6 +106,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         TrustedTcpProxyIdentity.validateIncoming(
             incomingProxyTenantId, incomingProxyGameInstanceId);
       } catch (RuntimeException ex) {
+        LOG.debug("Rejecting session route: invalid trusted proxy identity", ex);
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         return exchange.getResponse().setComplete();
       }

@@ -385,6 +385,7 @@ public final class GameplayWebSocketScenarios {
         first.abort();
       } else {
         first.close();
+        first.awaitClosed();
       }
       GameplayWebSocketDriver reconnecting = openReady(factory, reconnectConnectionId, admission);
       return new ReconnectScenario(firstResponses, reconnecting);
