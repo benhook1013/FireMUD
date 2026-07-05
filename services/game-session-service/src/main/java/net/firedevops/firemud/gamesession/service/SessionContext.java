@@ -280,6 +280,10 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  public boolean isFirstPartyLogin() {
+    return loginName != null && loginName.startsWith("first-party:");
+  }
+
   public boolean sameGameplayIdentity(SessionContext that) {
     if (that == null) {
       return false;
@@ -292,15 +296,10 @@ public record SessionContext(
   }
 
   public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
-    if (accountId <= 0
-        || tenantId <= 0
-        || bootstrapGameInstanceId <= 0
-        || !hasRoutingBundle()
-        || connectScopeId == null
-        || connectRequestId == null) {
+    if (accountId <= 0 || tenantId <= 0) {
       return Optional.empty();
     }
-    return Optional.of(
+    FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
             accountId,
             tenantId,
@@ -311,10 +310,22 @@ public record SessionContext(
             connectScopeId,
             null,
             connectRequestId,
-            null));
+            null);
+    return connectContext.hasCompleteRoutingScope()
+        ? Optional.of(connectContext)
+        : Optional.empty();
   }
 
-  private boolean hasRoutingBundle() {
-    return worldSlug != null && realmSlug != null && pointerVersion > 0;
+  public boolean hasPartialPersistedFirstPartyConnectContext() {
+    if (!isFirstPartyLogin() || accountId <= 0 || tenantId <= 0) {
+      return false;
+    }
+    boolean hasAnyPersistedSelectorField =
+        bootstrapGameInstanceId > 0L
+            || GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(this)
+            || GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(this)
+            || connectScopeId != null
+            || connectRequestId != null;
+    return hasAnyPersistedSelectorField && persistedFirstPartyConnectContext().isEmpty();
   }
 }

@@ -131,6 +131,7 @@ class PlayCommandHandlerTest {
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(firstPartyConnectContextRegistry.find(Mockito.anyLong())).thenReturn(Optional.empty());
   }
 
   @Test
@@ -745,6 +746,47 @@ class PlayCommandHandlerTest {
             new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+  }
+
+  @Test
+  void firstPartyPlayRejectsIncompletePersistedSelectorWhenRegistryEntryIsMissing() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .get(1)
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "first-party:123",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L,
+            "sandbox",
+            "preview",
+            1L,
+            null,
+            "scope-persisted",
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    Mockito.verify(entityManagementClient, never())
+        .findCharacterByName(
+            Mockito.any(), Mockito.any(PlayableStateScope.class), Mockito.anyString());
   }
 
   @Test
