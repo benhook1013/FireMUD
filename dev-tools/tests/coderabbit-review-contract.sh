@@ -268,14 +268,20 @@ expect_failure_output() {
 pass_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/pass.json")"
 grep -q "unresolved_non_outdated=0" <<<"$pass_output"
 grep -q "unresolved_outdated=0" <<<"$pass_output"
+grep -q "unresolved_total=0" <<<"$pass_output"
 grep -q "explicit_review_after_latest_commit=true" <<<"$pass_output"
 grep -q "review_finished_after_latest_request=true" <<<"$pass_output"
+grep -q "retrigger_review_allowed=true" <<<"$pass_output"
+grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
 
 expect_failure_output "$TMP_DIR/unresolved-outdated.json" "$TMP_DIR/unresolved-outdated.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "unresolved_outdated=1" "$TMP_DIR/unresolved-outdated.out"
-grep -q "reason=1 unresolved outdated CodeRabbit thread(s) remain" "$TMP_DIR/unresolved-outdated.out"
+grep -q "unresolved_total=1" "$TMP_DIR/unresolved-outdated.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/unresolved-outdated.out"
+grep -q "must_resolve_outdated_threads=true" "$TMP_DIR/unresolved-outdated.out"
+grep -q "reason=1 unresolved outdated CodeRabbit thread(s) remain; resolve them before retriggering @coderabbitai review" "$TMP_DIR/unresolved-outdated.out"
 
 expect_failure_output "$TMP_DIR/stale-review.json" "$TMP_DIR/stale-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
@@ -285,6 +291,9 @@ grep -q "reason=no explicit CodeRabbit review request found after the latest PR 
 expect_failure_output "$TMP_DIR/unresolved-non-outdated.json" "$TMP_DIR/unresolved-non-outdated.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "unresolved_non_outdated=1" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "unresolved_total=1" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "must_resolve_outdated_threads=false" "$TMP_DIR/unresolved-non-outdated.out"
 grep -q "reason=1 unresolved non-outdated CodeRabbit thread(s) remain" "$TMP_DIR/unresolved-non-outdated.out"
 
 expect_failure_output "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-not-finished.out"
