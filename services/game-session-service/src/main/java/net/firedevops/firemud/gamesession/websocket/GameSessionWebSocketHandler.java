@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -148,6 +149,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (command.type() == TextCommandType.NOOP) {
         return;
       }
+      ensureBootstrapSessionContextIfMissing(session, sessionId);
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       recordGameplayActivity(sessionId, interpretation);
@@ -522,6 +524,24 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             });
   }
 
+  private void ensureBootstrapSessionContextIfMissing(
+      WebSocketSession session, String transportSessionId) {
+    if (!StringUtils.hasText(transportSessionId)) {
+      return;
+    }
+    Optional<SessionContext> tenantScopedContext =
+        resolveNormalizedSessionContext(session, transportSessionId);
+    if (tenantScopedContext.isPresent()
+        && resolveNormalizedSessionContext(transportSessionId).isPresent()) {
+      return;
+    }
+    if (tenantScopedContext.isPresent()) {
+      sessionContextService.save(tenantScopedContext.orElseThrow());
+      return;
+    }
+    bootstrapSessionContext(session);
+  }
+
   private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
     String correlationId = resolveTransportSessionId(session);
     if (!StringUtils.hasText(correlationId)) {
@@ -773,10 +793,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private SessionContext repairGenericBootstrapShell(SessionContext shell) {
-    var runtimePointers =
+    List<GameplayAdmissionPointerSnapshot> runtimePointers =
         gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
             shell.tenantId(), shell.bootstrapGameInstanceId());
     if (GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(shell)) {
+      if (runtimePointers.stream().filter(pointer -> pointer != null).findAny().isEmpty()) {
+        return shell;
+      }
       if (GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
           runtimePointers,
           shell.tenantId(),
@@ -791,10 +814,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           shell.tenantId(),
           shell.accountId(),
           shell.loginName(),
-          shell.gameInstanceId(),
-          shell.roomInstanceId(),
           shell.characterId(),
           shell.characterName(),
+          shell.gameInstanceId(),
+          shell.roomInstanceId(),
           shell.jwt(),
           shell.localeTag(),
           shell.bootstrapGameInstanceId(),
