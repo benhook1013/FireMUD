@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
+import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -155,8 +156,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(accountStub().capturedAuthenticateRequests())
         .anyMatch(
             request ->
-                request.getUsername().equals("demo@example.com")
-                    && request.getPassword().equals("swordfish")
+                request.getUsername().equals(GameplayTelnetScenarios.DEMO_USERNAME)
+                    && request.getPassword().equals(GameplayTelnetScenarios.DEMO_PASSWORD)
                     && request.getTenantId().equals(String.valueOf(TENANT_ID)));
   }
 
@@ -324,7 +325,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
     ensureTestServicesStarted();
 
-    try (GameplayWebSocketDriver webSocketClient = openReadyWebSocketClient(1L)) {
+    try (GameplayWebSocketDriver webSocketClient =
+        GameplayWebSocketScenarios.openReady(
+            URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
+            COMMAND_WAIT,
+            TENANT_ID,
+            1L,
+            READY_LOOK_TEXT,
+            "gateway-1")) {
       webSocketClient.send("INV HERE");
       assertThat(
               webSocketClient.awaitResponseMatching(
@@ -682,22 +690,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private GameplayTelnetDriver openReadyTelnetClient() throws Exception {
     return GameplayTelnetScenarios.openReady(this::openTelnetClient, READY_LOOK_TEXT);
-  }
-
-  private GameplayWebSocketDriver openReadyWebSocketClient(long sessionId) throws Exception {
-    GameplayWebSocketDriver client =
-        GameplayWebSocketDriver.connectGameplaySession(
-            URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
-            COMMAND_WAIT,
-            TENANT_ID,
-            sessionId);
-    try {
-      client.enterGameplayAndWaitReady("demo@example.com", "swordfish", "demo", READY_LOOK_TEXT);
-      return client;
-    } catch (Exception ex) {
-      client.close();
-      throw ex;
-    }
   }
 
   private static AccountRuntimeStubServer accountStub() {

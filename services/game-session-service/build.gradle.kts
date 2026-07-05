@@ -60,6 +60,8 @@ dependencies {
     testFixturesImplementation(testFixtures(project(":common-test-support")))
     testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))
+    testFixturesImplementation(platform(libs.spring.boot.dependencies))
+    testFixturesImplementation("com.fasterxml.jackson.core:jackson-databind")
     testFixturesImplementation(libs.spring.boot.starter.actuator)
     testFixturesImplementation(libs.spring.boot.starter.data.redis)
     testFixturesImplementation(libs.spring.boot.starter.test)

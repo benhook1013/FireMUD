@@ -1,25 +1,19 @@
 package net.firedevops.firemud.tcpproxy.testsupport;
 
 import java.util.List;
-import net.firedevops.firemud.test.GameplayDemoCredentials;
 
 /** Shared chained-gameplay telnet scenario helpers for multi-actor proof. */
 public final class GameplayTelnetScenarios {
+  public static final String DEMO_USERNAME = "demo@example.com";
+  public static final String DEMO_PASSWORD = "swordfish";
+  public static final String DEMO_WORLD = "demo";
+
   public static Admission demoAdmission(String readyText) {
-    return Admission.unnamed(
-        GameplayDemoCredentials.USERNAME,
-        GameplayDemoCredentials.PASSWORD,
-        GameplayDemoCredentials.WORLD,
-        readyText);
+    return Admission.unnamed(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, readyText);
   }
 
   public static Admission demoAdmission(String characterName, String readyText) {
-    return Admission.named(
-        GameplayDemoCredentials.USERNAME,
-        GameplayDemoCredentials.PASSWORD,
-        GameplayDemoCredentials.WORLD,
-        characterName,
-        readyText);
+    return Admission.named(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
   }
 
   @FunctionalInterface
@@ -70,6 +64,15 @@ public final class GameplayTelnetScenarios {
     @Override
     public void close() throws Exception {
       driver.close();
+    }
+  }
+
+  public record GatewayProxySession(
+      GameplayTelnetDriver client, String worldsResponse, String loginResponse, String playResponse)
+      implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+      client.close();
     }
   }
 
@@ -206,6 +209,38 @@ public final class GameplayTelnetScenarios {
   public static GameplayTelnetDriver openReady(DriverFactory factory, String readyText)
       throws Exception {
     return openReady(factory, demoAdmission(readyText));
+  }
+
+  public static GatewayProxySession openDemoGatewayProxySession(DriverFactory factory)
+      throws Exception {
+    return openGatewayProxySession(factory, DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, null);
+  }
+
+  public static GatewayProxySession openGatewayProxySession(
+      DriverFactory factory, String email, String password, String world) throws Exception {
+    return openGatewayProxySession(factory, email, password, world, null);
+  }
+
+  public static GatewayProxySession openGatewayProxySession(
+      DriverFactory factory, String email, String password, String world, String characterName)
+      throws Exception {
+    GameplayTelnetDriver driver = factory.open();
+    try {
+      driver.awaitInitialGuidance();
+      String worldsResponse = driver.sendAndExpectExactLine("WORLDS", "processed:WORLDS");
+      String loginCommand = "LOGIN " + email + " " + password;
+      String loginResponse =
+          driver.sendAndExpectExactLine(loginCommand, "processed:" + loginCommand);
+      String playCommand =
+          (characterName == null || characterName.isBlank())
+              ? "PLAY " + world
+              : "PLAY " + world + " " + characterName;
+      String playResponse = driver.sendAndExpectExactLine(playCommand, "processed:" + playCommand);
+      return new GatewayProxySession(driver, worldsResponse, loginResponse, playResponse);
+    } catch (Exception ex) {
+      closeQuietly(driver, ex);
+      throw ex;
+    }
   }
 
   public static TwoPlayerScenario openReadyPair(

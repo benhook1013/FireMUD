@@ -227,6 +227,10 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     responses.clear();
   }
 
+  public Duration waitTimeout() {
+    return waitTimeout;
+  }
+
   public CloseEvent awaitClosed() throws Exception {
     try {
       return closeFuture.get(waitTimeout.toMillis(), TimeUnit.MILLISECONDS);
