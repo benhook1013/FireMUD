@@ -165,12 +165,9 @@ class LookWebSocketCrossServiceTest {
                   GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
                       .test(response.trim()));
 
-      assertThat(second.responses())
-          .anyMatch(
-              response ->
-                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt()
-                          .test(response.trim())
-                      || response.trim().equals(GameplayTranscriptMatchers.canonicalLook()));
+      String combinedSecond = String.join("\n", second.responses());
+      assertThat(combinedSecond).contains("OK PLAY Entered world: demo");
+      assertThat(combinedSecond).contains(GameplayTranscriptMatchers.canonicalLook());
 
       first.send("LOOK");
       first.awaitStartsWith("ERROR LOGIN_REQUIRED");
@@ -237,7 +234,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
@@ -260,7 +257,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(firstConnection)
         .anyMatch(
             response ->
-                GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 

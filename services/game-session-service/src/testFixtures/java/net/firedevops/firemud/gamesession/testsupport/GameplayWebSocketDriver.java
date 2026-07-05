@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
@@ -22,20 +23,48 @@ import net.firedevops.firemud.common.security.JwtUtil;
 public final class GameplayWebSocketDriver implements AutoCloseable {
   public record CloseEvent(int statusCode, String reason) {}
 
+  private static final class TextFrameAccumulator {
+    private final Object lock = new Object();
+    private final StringBuilder buffer = new StringBuilder();
+
+    void append(CharSequence data) {
+      synchronized (lock) {
+        buffer.append(data);
+      }
+    }
+
+    String completeMessage() {
+      synchronized (lock) {
+        String text = buffer.toString();
+        buffer.setLength(0);
+        return text;
+      }
+    }
+
+    String snapshot() {
+      synchronized (lock) {
+        return buffer.toString();
+      }
+    }
+  }
+
   private final Duration waitTimeout;
   private final CopyOnWriteArrayList<String> responses;
   private final WebSocket webSocket;
   private final CompletableFuture<CloseEvent> closeFuture;
+  private final TextFrameAccumulator textFrames;
 
   private GameplayWebSocketDriver(
       WebSocket webSocket,
       Duration waitTimeout,
       CopyOnWriteArrayList<String> responses,
-      CompletableFuture<CloseEvent> closeFuture) {
+      CompletableFuture<CloseEvent> closeFuture,
+      TextFrameAccumulator textFrames) {
     this.webSocket = webSocket;
     this.waitTimeout = waitTimeout;
     this.responses = responses;
     this.closeFuture = closeFuture;
+    this.textFrames = textFrames;
   }
 
   public static GameplayWebSocketDriver connect(
@@ -45,6 +74,7 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     headers.forEach(builder::header);
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
     CompletableFuture<CloseEvent> closeFuture = new CompletableFuture<>();
+    TextFrameAccumulator textFrames = new TextFrameAccumulator();
     WebSocket webSocket =
         builder
             .buildAsync(
@@ -58,7 +88,10 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
                   @Override
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
+                    textFrames.append(data);
+                    if (last) {
+                      responses.add(textFrames.completeMessage());
+                    }
                     webSocket.request(1);
                     return Listener.super.onText(webSocket, data, last);
                   }
@@ -77,7 +110,7 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
                   }
                 })
             .join();
-    return new GameplayWebSocketDriver(webSocket, waitTimeout, responses, closeFuture);
+    return new GameplayWebSocketDriver(webSocket, waitTimeout, responses, closeFuture, textFrames);
   }
 
   public static GameplayWebSocketDriver connectGameplaySession(
@@ -190,6 +223,10 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
           return response;
         }
       }
+      String partial = textFrames.snapshot();
+      if (!partial.isEmpty() && predicate.test(partial)) {
+        return partial;
+      }
       Thread.sleep(50);
     }
     throw new AssertionError("Expected " + description + ", got " + responses);
@@ -254,6 +291,16 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       if (!(ex.getCause() instanceof IOException)) {
         throw ex;
       }
+    }
+    try {
+      closeFuture.get(waitTimeout.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while awaiting websocket close", ex);
+    } catch (ExecutionException ex) {
+      throw new AssertionError("Websocket close failed", ex.getCause());
+    } catch (TimeoutException ex) {
+      throw new AssertionError("Timed out awaiting websocket close", ex);
     }
   }
 }
