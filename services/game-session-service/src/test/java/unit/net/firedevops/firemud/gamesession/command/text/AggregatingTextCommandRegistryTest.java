@@ -144,6 +144,30 @@ class AggregatingTextCommandRegistryTest {
     assertEquals(TextCommandType.LOGOUT, definition.type());
   }
 
+  @Test
+  void registryFindsDefinitionsByCommandIdCaseInsensitively() {
+    AggregatingTextCommandRegistry registry =
+        new AggregatingTextCommandRegistry(
+            List.of(
+                () ->
+                    List.of(
+                        new TextCommandDefinition(
+                            "wave-salute",
+                            TextCommandType.AUTHORED,
+                            List.of(),
+                            TextCommandDispatchGroup.AUTHORED,
+                            TextCommandStageRequirement.GAMEPLAY,
+                            TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                            TextCommandActionCategory.GAMEPLAY,
+                            List.of(),
+                            TextCommandSource.GAME_AUTHORED))));
+
+    TextCommandDefinition definition = registry.findDefinition("WAVE-SALUTE").orElseThrow();
+
+    assertEquals("wave-salute", definition.commandId());
+    assertEquals(TextCommandType.AUTHORED, definition.type());
+  }
+
   private void assertDefinition(
       TextCommandType type,
       TextCommandDispatchGroup expectedGroup,

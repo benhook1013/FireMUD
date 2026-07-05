@@ -331,6 +331,25 @@ jobs:
             except urllib.error.URLError as exc:
               return 503, str(exc)
 
+          def sanitize_error_body(body):
+            if not body:
+              return "redacted response body"
+            try:
+              payload = json.loads(body)
+            except json.JSONDecodeError:
+              return "redacted non-json response body"
+            error = payload.get("error")
+            if isinstance(error, dict):
+              code = error.get("code")
+              message = error.get("message")
+              if code and message:
+                return f"{code}: {message}"
+              if code:
+                return str(code)
+              if message:
+                return str(message)
+            return "redacted response body"
+
           def bootstrap_session(account_id, timeout_seconds=120):
             deadline = time.time() + timeout_seconds
             attempt = 1
@@ -346,7 +365,7 @@ jobs:
                   "ownerAccountId": account_id,
                 },
               )
-              print(f"Session bootstrap attempt {attempt} returned {status}: {session_body}")
+              print(f"Session bootstrap attempt {attempt} returned {status}")
               if status < 400:
                 return status, session_body
               last_status = status
@@ -356,36 +375,32 @@ jobs:
               attempt += 1
               time.sleep(2)
             raise SystemExit(
-              f"Dev-demo smoke session bootstrap failed with status {last_status}: {last_body}"
+              "Dev-demo smoke session bootstrap failed with status "
+              f"{last_status}: {sanitize_error_body(last_body)}"
             )
 
-          def ensure_demo_account(timeout_seconds=120):
-            deadline = time.time() + timeout_seconds
-            attempt = 1
-            last_status = None
-            last_body = None
-            while time.time() < deadline:
-              status, body = post_json(
-                "http://account-service:8080/accounts",
-                {
-                  "tenantId": tenant_id,
-                  "username": "demo",
-                  "email": email,
-                  "password": password,
-                },
+          def ensure_demo_account():
+            status, body = post_json(
+              "http://account-service:8080/accounts",
+              {
+                "tenantId": tenant_id,
+                "username": "demo",
+                "email": email,
+                "password": password,
+              },
+            )
+            print(f"Demo account creation attempt returned {status}")
+            if status < 400 or status == 409:
+              return
+            if status >= 500:
+              print(
+                "Demo account creation returned a transient error; "
+                "retrying player bootstrap without reissuing account creation"
               )
-              print(f"Demo account creation attempt {attempt} returned {status}: {body}")
-              if status < 400:
-                return
-              last_status = status
-              last_body = body
-              if status < 500:
-                time.sleep(2)
-              else:
-                time.sleep(4)
-              attempt += 1
+              return
             raise SystemExit(
-              f"Dev-demo account creation failed with status {last_status}: {last_body}"
+              "Dev-demo account creation failed with status "
+              f"{status}: {sanitize_error_body(body)}"
             )
 
           def issue_player_bootstrap(timeout_seconds=120):
@@ -403,14 +418,15 @@ jobs:
                   "password": password,
                 },
               )
-              print(f"Player bootstrap attempt {attempt} returned {status}: {bootstrap_body}")
+              print(f"Player bootstrap attempt {attempt} returned {status}")
               if status < 400:
                 return status, bootstrap_body
               last_status = status
               last_body = bootstrap_body
-              if status == 401 and not account_create_attempted:
-                ensure_demo_account()
-                account_create_attempted = True
+              if status == 401:
+                if not account_create_attempted:
+                  ensure_demo_account()
+                  account_create_attempted = True
                 attempt += 1
                 time.sleep(2)
                 continue
@@ -420,7 +436,8 @@ jobs:
                 continue
               break
             raise SystemExit(
-              f"Player bootstrap failed with status {last_status}: {last_body}"
+              "Player bootstrap failed with status "
+              f"{last_status}: {sanitize_error_body(last_body)}"
             )
 
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
@@ -431,21 +448,17 @@ jobs:
           wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
 
           status, bootstrap_body = issue_player_bootstrap()
-          print(bootstrap_body)
           if status >= 400:
             raise SystemExit(
-              f"Player bootstrap failed with status {status}: {bootstrap_body}"
+              "Player bootstrap failed with status "
+              f"{status}: {sanitize_error_body(bootstrap_body)}"
             )
           bootstrap_payload = json.loads(bootstrap_body or "{}")
           account_id = (((bootstrap_payload.get("data") or {}).get("accountId")))
           if not account_id:
-            raise SystemExit(
-              "Dev-demo bootstrap response did not include account id: "
-              + bootstrap_body
-            )
+            raise SystemExit("Dev-demo bootstrap response did not include account id")
 
           status, session_body = bootstrap_session(account_id)
-          print(session_body)
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
           trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT

@@ -106,6 +106,18 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksActuatorSubtreeUnderPublicAdminFamily() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.get("/api/admin/actuator/health").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
   void blocksActuatorSubtreeUnderPublicSocialFamily() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(

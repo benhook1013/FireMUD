@@ -143,6 +143,36 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesAuthoredCommandByCommandIdCaseInsensitivelyWhenNoAliasConfigured() {
+    TextCommandParser parser =
+        new TextCommandParser(
+            new AggregatingTextCommandRegistry(
+                List.of(
+                    () ->
+                        List.of(
+                            new TextCommandDefinition(
+                                "wave-salute",
+                                TextCommandType.AUTHORED,
+                                List.of(),
+                                TextCommandDispatchGroup.AUTHORED,
+                                TextCommandStageRequirement.GAMEPLAY,
+                                TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                                TextCommandActionCategory.GAMEPLAY,
+                                List.of(),
+                                TextCommandSource.GAME_AUTHORED)))));
+
+    TextCommand command = parser.parse("WAVE-SALUTE captain");
+
+    assertEquals(TextCommandType.AUTHORED, command.type());
+    assertEquals("wave-salute", command.commandId());
+    assertEquals("WAVE-SALUTE", command.aliasUsed());
+    assertEquals(List.of("captain"), command.args());
+    assertTrue(command.authoredActionPayload().isPresent());
+    assertEquals("wave-salute", command.authoredActionPayload().orElseThrow().commandId());
+    assertEquals(List.of("captain"), command.authoredActionPayload().orElseThrow().args());
+  }
+
+  @Test
   void parsesWorldsAsPublicBrowseCommand() {
     TextCommand command = parser.parse("WORLDS");
 
