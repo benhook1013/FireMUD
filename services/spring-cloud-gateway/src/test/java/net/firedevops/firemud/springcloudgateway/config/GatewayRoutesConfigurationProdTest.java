@@ -97,7 +97,7 @@ class GatewayRoutesConfigurationProdTest {
     assertThat(
             gatewayProperties.getRoutes().stream()
                 .flatMap(route -> route.getPredicates().stream())
-                .filter(route -> "Path".equalsIgnoreCase(route.getName()))
+                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
                 .flatMap(predicate -> predicate.getArgs().values().stream())
                 .collect(Collectors.toSet()))
         .noneMatch(coarsePaths::contains);

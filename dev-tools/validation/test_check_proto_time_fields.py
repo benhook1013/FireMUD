@@ -8,7 +8,7 @@ import importlib.util
 SCRIPT_PATH = Path(__file__).resolve().parent / "check-proto-time-fields.py"
 
 
-def _load_checker_module():
+def _load_checker_module() -> object:
     spec = importlib.util.spec_from_file_location(
         "check_proto_time_fields_test_helper", SCRIPT_PATH
     )
@@ -18,7 +18,7 @@ def _load_checker_module():
     return module
 
 
-def _with_test_roots(module, tmp_path: Path):
+def _with_test_roots(module: object, tmp_path: Path) -> tuple[Path, Path, Path]:
     proto_root = tmp_path / "protos"
     proto_root.mkdir()
     old_repo_root = module.REPO_ROOT
@@ -68,10 +68,9 @@ message Session {
                 encoding="utf-8",
             )
             try:
-                with io.StringIO() as stderr:
-                    with redirect_stderr(stderr):
-                        exit_code = module.main()
-                        output = stderr.getvalue()
+                with io.StringIO() as stderr, redirect_stderr(stderr):
+                    exit_code = module.main()
+                    output = stderr.getvalue()
             finally:
                 module.REPO_ROOT = old_repo_root
                 module.PROTO_ROOT = old_proto_root
@@ -79,20 +78,19 @@ message Session {
             self.assertIn("time-related proto field 'timeout'", output)
 
 
-def tempfile_path():
+def tempfile_path() -> "TemporaryDirectoryPath":
     return TemporaryDirectoryPath()
 
 
 class TemporaryDirectoryPath:
-    def __enter__(self):
+    def __enter__(self) -> Path:
         import tempfile
 
         self._tempdir = tempfile.TemporaryDirectory()
         return Path(self._tempdir.name)
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc, tb) -> None:
         self._tempdir.cleanup()
-        return None
 
 
 if __name__ == "__main__":

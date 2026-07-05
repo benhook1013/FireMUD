@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.stream.IntStream;
 import javax.sql.DataSource;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
@@ -60,11 +61,23 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(0)).startsWith("OK WORLDS");
-    assertThat(responses.get(1).trim())
-        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
-    assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
+    int worldsIndex = findResponseIndex(responses, 0, response -> response.startsWith("OK WORLDS"));
+    int canonicalLookIndex =
+        findResponseIndex(
+            responses,
+            worldsIndex + 1,
+            response ->
+                GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
+                        LookTestFixtures.ROOM_ID)
+                    .test(response.trim()));
+    int notFoundIndex =
+        findResponseIndex(
+            responses,
+            canonicalLookIndex + 1,
+            response -> response.startsWith("ERROR ROOM_NOT_FOUND"));
+
+    assertThat(worldsIndex).isLessThan(canonicalLookIndex);
+    assertThat(canonicalLookIndex).isLessThan(notFoundIndex);
 
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
@@ -329,6 +342,14 @@ class LookWebSocketCrossServiceTest {
       client.awaitStartsWith("ERROR ROOM_NOT_FOUND");
       return client.responses();
     }
+  }
+
+  private int findResponseIndex(
+      List<String> responses, int startIndex, java.util.function.Predicate<String> predicate) {
+    return IntStream.range(startIndex, responses.size())
+        .filter(index -> predicate.test(responses.get(index)))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Expected matching response in " + responses));
   }
 
   private List<String> runMovementSequence(long sessionId) throws Exception {

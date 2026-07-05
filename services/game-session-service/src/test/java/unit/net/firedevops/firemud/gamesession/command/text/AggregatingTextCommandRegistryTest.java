@@ -146,7 +146,7 @@ class AggregatingTextCommandRegistryTest {
 
   @Test
   void registryFindsDefinitionsByCommandIdCaseInsensitively() {
-    AggregatingTextCommandRegistry registry =
+    AggregatingTextCommandRegistry commandIdRegistry =
         new AggregatingTextCommandRegistry(
             List.of(
                 () ->
@@ -162,7 +162,8 @@ class AggregatingTextCommandRegistryTest {
                             List.of(),
                             TextCommandSource.GAME_AUTHORED))));
 
-    TextCommandDefinition definition = registry.findDefinition("WAVE-SALUTE").orElseThrow();
+    TextCommandDefinition definition =
+        commandIdRegistry.findDefinition("WAVE-SALUTE").orElseThrow();
 
     assertEquals("wave-salute", definition.commandId());
     assertEquals(TextCommandType.AUTHORED, definition.type());
