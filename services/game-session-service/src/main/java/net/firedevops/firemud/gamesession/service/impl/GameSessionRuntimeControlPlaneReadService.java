@@ -274,14 +274,7 @@ final class GameSessionRuntimeControlPlaneReadService {
   }
 
   private static long parseGameInstanceId(String gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId.isBlank()) {
-      throw new IllegalArgumentException("game_instance_id is required");
-    }
-    try {
-      return Long.parseLong(gameInstanceId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("game_instance_id must be a number");
-    }
+    return ControlPlaneRequestParser.parsePositiveLong(gameInstanceId, "game_instance_id");
   }
 
   private static String normalizeBlank(String value) {

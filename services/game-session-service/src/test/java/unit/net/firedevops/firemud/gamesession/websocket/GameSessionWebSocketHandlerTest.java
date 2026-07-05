@@ -294,6 +294,91 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void afterConnectionEstablishedSkipsGenericBootstrapWhenTenantIdIsMalformed() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "bogus",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(activeTransportSessionRegistry).register(41L, session);
+  }
+
+  @Test
+  void afterConnectionEstablishedSkipsGenericBootstrapWhenBootstrapGameInstanceIsNonPositive() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "0"));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(activeTransportSessionRegistry).register(41L, session);
+  }
+
+  @Test
+  void
+      afterConnectionEstablishedDropsGenericBootstrapWhenRuntimeBundleIsInconsistentWithAuthority() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "wrong",
+                GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+                "production",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
+  }
+
+  @Test
   void
       afterConnectionEstablishedClearsExistingGameplayBindingWhenGenericBootstrapRouteRepairsToNewPointer() {
     SessionContext existing =

@@ -98,6 +98,16 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
             ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_TENANT_ID)
             : null;
 
+    if (trustedTcpProxy && isSessionRoute) {
+      try {
+        TrustedTcpProxyIdentity.validateIncoming(
+            incomingProxyTenantId, incomingProxyGameInstanceId);
+      } catch (RuntimeException ex) {
+        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+        return exchange.getResponse().setComplete();
+      }
+    }
+
     ServerWebExchange mutated =
         exchange
             .mutate()

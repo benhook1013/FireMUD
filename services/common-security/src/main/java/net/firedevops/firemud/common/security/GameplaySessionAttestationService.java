@@ -155,28 +155,46 @@ public class GameplaySessionAttestationService {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation type is unsupported");
     }
-    requireEquals(claims.tenantId(), tenantId, "tenantId");
-    requireOptionalEquals(claims.sessionId(), sessionId, "sessionId");
-    requireOptionalEquals(claims.accountId(), accountId, "accountId");
-    requireOptionalEquals(claims.characterId(), characterId, "characterId");
-    requireOptionalEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
+    requirePositiveId(claims.tenantId(), "tenantId");
+    requirePositiveId(claims.sessionId(), "sessionId");
+    requirePositiveId(claims.accountId(), "accountId");
+    requirePositiveId(claims.characterId(), "characterId");
+    requirePositiveId(claims.gameInstanceId(), "gameInstanceId");
+    requirePositiveId(claims.pointerVersion(), "pointerVersion");
+    requirePositiveEquals(claims.tenantId(), tenantId, "tenantId");
+    requireOptionalPositiveEquals(claims.sessionId(), sessionId, "sessionId");
+    requireOptionalPositiveEquals(claims.accountId(), accountId, "accountId");
+    requireOptionalPositiveEquals(claims.characterId(), characterId, "characterId");
+    requireOptionalPositiveEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
+    // roomInstanceId remains a routed room identifier string; keep text equality here.
     requireOptionalEquals(claims.roomInstanceId(), roomInstanceId, "roomInstanceId");
     requireOptionalEquals(claims.worldSlug(), worldSlug, "worldSlug");
     requireOptionalEquals(claims.realmSlug(), realmSlug, "realmSlug");
-    requireOptionalEquals(claims.pointerVersion(), pointerVersion, "pointerVersion");
+    requireOptionalPositiveEquals(claims.pointerVersion(), pointerVersion, "pointerVersion");
     requireOptionalEquals(claims.playableStateScope(), playableStateScope, "playableStateScope");
   }
 
   public void requireGameplayOrProbeMatch(
       String token, String tenantId, String gameInstanceId, String roomInstanceId) {
     GameplaySessionAttestationClaims claims = requireValid(token);
-    requireEquals(claims.tenantId(), tenantId, "tenantId");
-    requireEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
+    requirePositiveEquals(claims.tenantId(), tenantId, "tenantId");
+    requirePositiveEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
+    // roomInstanceId remains a routed room identifier string; keep text equality for probe tokens.
     requireOptionalEquals(claims.roomInstanceId(), roomInstanceId, "roomInstanceId");
   }
 
   private void requireEquals(String actual, String expected, String fieldName) {
-    if (!blankToEmpty(actual).equals(blankToEmpty(expected))) {
+    if (!actual.equals(expected)) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_MISMATCH",
+          "Gameplay session attestation does not match " + fieldName);
+    }
+  }
+
+  private void requirePositiveEquals(String actual, String expected, String fieldName) {
+    long actualValue = requirePositiveId(actual, fieldName);
+    long expectedValue = requirePositiveId(expected, fieldName);
+    if (actualValue != expectedValue) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_MISMATCH",
           "Gameplay session attestation does not match " + fieldName);
@@ -186,6 +204,12 @@ public class GameplaySessionAttestationService {
   private void requireOptionalEquals(String actual, String expected, String fieldName) {
     if (StringUtils.hasText(expected)) {
       requireEquals(actual, expected, fieldName);
+    }
+  }
+
+  private void requireOptionalPositiveEquals(String actual, String expected, String fieldName) {
+    if (StringUtils.hasText(expected)) {
+      requirePositiveEquals(actual, expected, fieldName);
     }
   }
 
@@ -200,6 +224,15 @@ public class GameplaySessionAttestationService {
     if (!StringUtils.hasText(value)) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + fieldName);
+    }
+  }
+
+  private long requirePositiveId(String value, String fieldName) {
+    try {
+      return JwtClaims.requireLong(value, fieldName, false);
+    } catch (IllegalArgumentException ex) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);
     }
   }
 

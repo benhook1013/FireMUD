@@ -319,20 +319,14 @@ public final class LoginCommandHandler {
 
   private boolean currentAdmissionPointerMatches(
       net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedContext) {
-    if (verifiedContext.tenantId() <= 0
-        || verifiedContext.gameInstanceId() <= 0
-        || !StringUtils.hasText(verifiedContext.worldSlug())
-        || !StringUtils.hasText(verifiedContext.realmSlug())
-        || verifiedContext.pointerVersion() <= 0) {
-      return false;
-    }
-    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
-            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-                verifiedContext.tenantId(), verifiedContext.gameInstanceId()))
-        .filter(pointer -> pointer.worldSlug().equals(verifiedContext.worldSlug()))
-        .filter(pointer -> pointer.realmSlug().equals(verifiedContext.realmSlug()))
-        .filter(pointer -> pointer.pointerVersion() == verifiedContext.pointerVersion())
-        .isPresent();
+    return GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            verifiedContext.tenantId(), verifiedContext.gameInstanceId()),
+        verifiedContext.tenantId(),
+        verifiedContext.gameInstanceId(),
+        verifiedContext.worldSlug(),
+        verifiedContext.realmSlug(),
+        verifiedContext.pointerVersion());
   }
 
   private void clearFailedLoginSessionState(

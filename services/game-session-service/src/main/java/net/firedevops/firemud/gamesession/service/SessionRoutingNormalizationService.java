@@ -69,20 +69,14 @@ public final class SessionRoutingNormalizationService {
   }
 
   private boolean currentAdmissionPointerMatches(SessionContext context) {
-    if (context.tenantId() <= 0
-        || context.gameInstanceId() <= 0
-        || !StringUtils.hasText(context.worldSlug())
-        || !StringUtils.hasText(context.realmSlug())
-        || context.pointerVersion() <= 0) {
-      return false;
-    }
-    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
-            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-                context.tenantId(), context.gameInstanceId()))
-        .filter(pointer -> pointer.worldSlug().equals(context.worldSlug()))
-        .filter(pointer -> pointer.realmSlug().equals(context.realmSlug()))
-        .filter(pointer -> pointer.pointerVersion() == context.pointerVersion())
-        .isPresent();
+    return GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            context.tenantId(), context.gameInstanceId()),
+        context.tenantId(),
+        context.gameInstanceId(),
+        context.worldSlug(),
+        context.realmSlug(),
+        context.pointerVersion());
   }
 
   private Optional<Long> parseSessionId(String text) {

@@ -134,8 +134,9 @@ public final class GameSessionGrpcService
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
       String clientIp = request.getClientIp();
-      long tenantId = Long.parseLong(request.getTenantId());
+      long tenantId = parsePositiveLong(request.getTenantId(), "tenantId");
       long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
+      long gameTemplateId = parsePositiveLong(request.getGameTemplateId(), "gameTemplateId");
       requireTenantAndOwnerAccess(tenantId, ownerAccountId);
       GameInstance existingRunningSession =
           gameInstanceRepository
@@ -157,10 +158,7 @@ public final class GameSessionGrpcService
       }
       StartSessionRequest dto =
           new StartSessionRequest(
-              tenantId,
-              Long.parseLong(request.getGameTemplateId()),
-              request.getControlPlaneRequestId(),
-              ownerAccountId);
+              tenantId, gameTemplateId, request.getControlPlaneRequestId(), ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto, false);
       boolean transferredRegistration = false;
       if (clientIp != null && !clientIp.isBlank()) {
@@ -224,14 +222,23 @@ public final class GameSessionGrpcService
   }
 
   private long parseOwnerAccountId(String ownerAccountIdText) {
-    if (ownerAccountIdText == null || ownerAccountIdText.isBlank()) {
-      throw new IllegalArgumentException("ownerAccountId is required");
+    return parsePositiveLong(ownerAccountIdText, "ownerAccountId");
+  }
+
+  private long parsePositiveLong(String text, String fieldName) {
+    if (text == null || text.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
     }
-    long ownerAccountId = Long.parseLong(ownerAccountIdText);
-    if (ownerAccountId <= 0) {
-      throw new IllegalArgumentException("ownerAccountId must be positive");
+    long value;
+    try {
+      value = Long.parseLong(text);
+    } catch (RuntimeException ex) {
+      throw new IllegalArgumentException(fieldName + " must be a number");
     }
-    return ownerAccountId;
+    if (value <= 0) {
+      throw new IllegalArgumentException(fieldName + " must be positive");
+    }
+    return value;
   }
 
   private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
@@ -247,7 +254,7 @@ public final class GameSessionGrpcService
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
-      long sessionId = Long.parseLong(request.getSessionId());
+      long sessionId = parsePositiveLong(request.getSessionId(), "sessionId");
       requireInstanceAccess(sessionId);
       gameInstanceService.stopSession(sessionId);
       ipConnectionLimiter.release(sessionId);
@@ -286,7 +293,7 @@ public final class GameSessionGrpcService
   public void restartSession(
       RestartSessionRequest request, StreamObserver<RestartSessionResponse> responseObserver) {
     try {
-      long sessionId = Long.parseLong(request.getSessionId());
+      long sessionId = parsePositiveLong(request.getSessionId(), "sessionId");
       requireInstanceAccess(sessionId);
       gameInstanceService.restartSession(sessionId);
       RestartSessionResponse response =
@@ -325,7 +332,7 @@ public final class GameSessionGrpcService
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
-      long sessionId = Long.parseLong(request.getSessionId());
+      long sessionId = parsePositiveLong(request.getSessionId(), "sessionId");
       requireInstanceAccess(sessionId);
       TextCommandInterpretationResult interpretation =
           textCommandInterpreter.interpret(
@@ -375,7 +382,7 @@ public final class GameSessionGrpcService
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
     try {
-      long sessionId = Long.parseLong(request.getSessionId());
+      long sessionId = parsePositiveLong(request.getSessionId(), "sessionId");
       requireInstanceAccess(sessionId);
       String state = tickService.queryState(sessionId);
       QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
@@ -411,7 +418,7 @@ public final class GameSessionGrpcService
       QueryAccountPresenceRequest request,
       StreamObserver<QueryAccountPresenceResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
+      long tenantId = parsePositiveLong(request.getTenantId(), "tenantId");
       long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
       List<Long> accountIds =
@@ -547,7 +554,7 @@ public final class GameSessionGrpcService
       GetAdmissionPointerRequest request,
       StreamObserver<GetAdmissionPointerResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
+      long tenantId = parsePositiveLong(request.getTenantId(), "tenantId");
       GameplayAdmissionPointerSnapshot realm =
           gameplayAdmissionPointerAuthorityService
               .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
@@ -595,7 +602,7 @@ public final class GameSessionGrpcService
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
     try {
-      requireTenantAccess(Long.parseLong(request.getTenantId()));
+      requireTenantAccess(parsePositiveLong(request.getTenantId(), "tenantId"));
       featureFlagService.toggleFlag(
           new net.firedevops.firemud.gamesession.dto.ToggleFeatureFlagRequest(
               Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));

@@ -53,14 +53,6 @@ public class CommandServiceImpl implements CommandService {
   private record RoutingMetadata(
       String playableStateScope, String worldSlug, String realmSlug, Long pointerVersion) {}
 
-  private record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    private boolean isPresent() {
-      return worldSlug != null && realmSlug != null && pointerVersion != null;
-    }
-  }
-
   public CommandServiceImpl(
       TickService tickService,
       SessionRateLimiter sessionRateLimiter,
@@ -308,11 +300,21 @@ public class CommandServiceImpl implements CommandService {
       return unspecifiedRoutingMetadata();
     }
     SessionContext context = sessionContext.orElseThrow();
-    RoutingBundle contextRoutingBundle =
-        normalizeRoutingBundle(context.worldSlug(), context.realmSlug(), context.pointerVersion());
+    GameplayAdmissionPointerSnapshots.RoutingBundle contextRoutingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            context.worldSlug(), context.realmSlug(), context.pointerVersion());
     if (context.playableStateScope() != null && !context.playableStateScope().isBlank()) {
-      if (contextRoutingBundle.isPresent()
-          && currentAdmissionPointerMatches(context, queueTarget, contextRoutingBundle)) {
+      long runtimeTarget = expectedRuntimeTarget(context, queueTarget);
+      if (contextRoutingBundle != null
+          && GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+              gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                  context.tenantId(), runtimeTarget),
+              context.tenantId(),
+              runtimeTarget,
+              contextRoutingBundle.worldSlug(),
+              contextRoutingBundle.realmSlug(),
+              contextRoutingBundle.pointerVersion(),
+              context.playableStateScope())) {
         return new RoutingMetadata(
             context.playableStateScope(),
             contextRoutingBundle.worldSlug(),
@@ -326,20 +328,20 @@ public class CommandServiceImpl implements CommandService {
         resolveRoutingPointer(context, queueTarget);
     if (pointer.isPresent()) {
       GameplayAdmissionPointerSnapshot snapshot = pointer.orElseThrow();
-      RoutingBundle pointerRoutingBundle =
-          normalizeRoutingBundle(
+      GameplayAdmissionPointerSnapshots.RoutingBundle pointerRoutingBundle =
+          GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
               snapshot.worldSlug(), snapshot.realmSlug(), snapshot.pointerVersion());
       return new RoutingMetadata(
           blankToNull(snapshot.stateScope()),
-          pointerRoutingBundle.worldSlug(),
-          pointerRoutingBundle.realmSlug(),
-          pointerRoutingBundle.pointerVersion());
+          pointerRoutingBundle == null ? null : pointerRoutingBundle.worldSlug(),
+          pointerRoutingBundle == null ? null : pointerRoutingBundle.realmSlug(),
+          pointerRoutingBundle == null ? null : pointerRoutingBundle.pointerVersion());
     }
     return new RoutingMetadata(
         "UNSPECIFIED",
-        contextRoutingBundle.worldSlug(),
-        contextRoutingBundle.realmSlug(),
-        contextRoutingBundle.pointerVersion());
+        contextRoutingBundle == null ? null : contextRoutingBundle.worldSlug(),
+        contextRoutingBundle == null ? null : contextRoutingBundle.realmSlug(),
+        contextRoutingBundle == null ? null : contextRoutingBundle.pointerVersion());
   }
 
   private Optional<GameplayAdmissionPointerSnapshot> resolveRoutingPointer(
@@ -349,17 +351,6 @@ public class CommandServiceImpl implements CommandService {
       return resolveUnambiguousRuntimePointer(context.tenantId(), runtimeTarget);
     }
     return resolveUnambiguousRuntimePointer(queueTarget.tenantId(), queueTarget.queueTargetId());
-  }
-
-  private boolean currentAdmissionPointerMatches(
-      SessionContext context, QueueTarget queueTarget, RoutingBundle expectedBundle) {
-    return resolveUnambiguousRuntimePointer(
-            context.tenantId(), expectedRuntimeTarget(context, queueTarget))
-        .filter(pointer -> context.playableStateScope().equals(blankToNull(pointer.stateScope())))
-        .filter(pointer -> pointer.pointerVersion() == expectedBundle.pointerVersion())
-        .filter(pointer -> expectedBundle.worldSlug().equals(pointer.worldSlug()))
-        .filter(pointer -> expectedBundle.realmSlug().equals(pointer.realmSlug()))
-        .isPresent();
   }
 
   private long expectedRuntimeTarget(SessionContext context, QueueTarget queueTarget) {
@@ -374,9 +365,9 @@ public class CommandServiceImpl implements CommandService {
 
   private boolean hasBootstrapRoutingAuthority(SessionContext context) {
     return context.bootstrapGameInstanceId() > 0
-        && normalizeRoutingBundle(
+        && GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
                 context.worldSlug(), context.realmSlug(), context.pointerVersion())
-            .isPresent();
+            != null;
   }
 
   private Optional<GameplayAdmissionPointerSnapshot> resolveUnambiguousRuntimePointer(
@@ -394,10 +385,10 @@ public class CommandServiceImpl implements CommandService {
   private static Optional<RoutingMetadata> authoritativeRoutingMetadata(
       GameplayAdmissionPointerSnapshot snapshot) {
     String playableStateScope = blankToNull(snapshot.stateScope());
-    RoutingBundle routingBundle =
-        normalizeRoutingBundle(
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             snapshot.worldSlug(), snapshot.realmSlug(), snapshot.pointerVersion());
-    if (playableStateScope == null || !routingBundle.isPresent()) {
+    if (playableStateScope == null || routingBundle == null) {
       return Optional.empty();
     }
     return Optional.of(
@@ -421,25 +412,5 @@ public class CommandServiceImpl implements CommandService {
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, Long pointerVersion) {
-    String normalizedWorldSlug = blankToNull(worldSlug);
-    String normalizedRealmSlug = blankToNull(realmSlug);
-    Long normalizedPointerVersion =
-        pointerVersion != null && pointerVersion > 0L ? pointerVersion : null;
-    boolean hasAny =
-        normalizedWorldSlug != null
-            || normalizedRealmSlug != null
-            || normalizedPointerVersion != null;
-    boolean hasAll =
-        normalizedWorldSlug != null
-            && normalizedRealmSlug != null
-            && normalizedPointerVersion != null;
-    if (!hasAny || !hasAll) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
   }
 }

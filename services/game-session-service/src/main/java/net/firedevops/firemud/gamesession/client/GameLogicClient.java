@@ -45,6 +45,7 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -61,14 +62,6 @@ public class GameLogicClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
-
-  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    private boolean isPresent() {
-      return worldSlug != null && realmSlug != null && pointerVersion != null;
-    }
-  }
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
@@ -684,7 +677,12 @@ public class GameLogicClient
   }
 
   private String sessionAttestation(SessionContext context, String roomId) {
-    RoutingBundle routingBundle = routingBundle(context);
+    GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.admittedRoutingBundle(context);
+    if (GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(context)) {
+      throw new IllegalStateException(
+          "Incomplete admitted routing bundle on session context for Game Logic request");
+    }
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
@@ -696,41 +694,6 @@ public class GameLogicClient
         routingBundle.realmSlug(),
         routingBundle.pointerVersion(),
         context.playableStateScope());
-  }
-
-  private RoutingBundle routingBundle(SessionContext context) {
-    RoutingBundle routingBundle =
-        normalizeRoutingBundle(
-            context.worldSlug(),
-            context.realmSlug(),
-            context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null);
-    if (!routingBundle.isPresent()
-        && (StringUtils.hasText(context.worldSlug())
-            || StringUtils.hasText(context.realmSlug())
-            || context.pointerVersion() > 0)) {
-      throw new IllegalStateException(
-          "Incomplete admitted routing bundle on session context for Game Logic request");
-    }
-    return routingBundle;
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, String pointerVersion) {
-    String normalizedWorldSlug = StringUtils.hasText(worldSlug) ? worldSlug : null;
-    String normalizedRealmSlug = StringUtils.hasText(realmSlug) ? realmSlug : null;
-    String normalizedPointerVersion = StringUtils.hasText(pointerVersion) ? pointerVersion : null;
-    boolean hasAny =
-        normalizedWorldSlug != null
-            || normalizedRealmSlug != null
-            || normalizedPointerVersion != null;
-    boolean hasAll =
-        normalizedWorldSlug != null
-            && normalizedRealmSlug != null
-            && normalizedPointerVersion != null;
-    if (!hasAny || !hasAll) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
   }
 
   private ErrorDetail error(String code, String message) {

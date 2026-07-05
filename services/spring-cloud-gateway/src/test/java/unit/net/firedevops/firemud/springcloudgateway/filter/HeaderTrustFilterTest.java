@@ -126,6 +126,70 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void rejectsSessionRouteWhenTrustedProxyTenantIdIsMalformed() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(props);
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "42")
+            .header("X-Proxy-Tenant-Id", "bad-id")
+            .build();
+
+    ServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isNull();
+  }
+
+  @Test
+  void rejectsSessionRouteWhenTrustedProxyGameInstanceIdIsNonPositive() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(props);
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "0")
+            .header("X-Proxy-Tenant-Id", "1")
+            .build();
+
+    ServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isNull();
+  }
+
+  @Test
+  void rejectsSessionRouteWhenTrustedProxyIdentityIsPartial() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(props);
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Tenant-Id", "1")
+            .build();
+
+    ServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  @Test
   void rejectsSessionRouteWhenProxyHeadersPresentButUpstreamNotTrusted() {
     HeaderTrustFilter filter = new HeaderTrustFilter(new GatewayHeaderTrustProperties());
 

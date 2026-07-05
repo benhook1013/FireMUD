@@ -158,7 +158,9 @@ final class GameSessionOperatorControlPlaneService {
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }
-    long gameInstanceId = parseRequiredGameInstanceId(request.getGameInstanceId());
+    long gameInstanceId =
+        ControlPlaneRequestParser.parsePositiveLong(
+            request.getGameInstanceId(), "game_instance_id");
     getOwnedInstance(tenantId, gameInstanceId);
     tickService.pauseTicksForGameInstance(gameInstanceId, request.getReason());
     return PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
@@ -169,7 +171,9 @@ final class GameSessionOperatorControlPlaneService {
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }
-    long gameInstanceId = parseRequiredGameInstanceId(request.getGameInstanceId());
+    long gameInstanceId =
+        ControlPlaneRequestParser.parsePositiveLong(
+            request.getGameInstanceId(), "game_instance_id");
     getOwnedInstance(tenantId, gameInstanceId);
     tickService.resumeTicksForGameInstance(gameInstanceId, request.getReason());
     return ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
@@ -238,17 +242,6 @@ final class GameSessionOperatorControlPlaneService {
     }
     long ageMs = Instant.now().toEpochMilli() - pinnedAt.toEpochMilli();
     return ageMs > gameSessionProperties.getPinConvergenceStaleThresholdMs();
-  }
-
-  private long parseRequiredGameInstanceId(String gameInstanceId) {
-    if (gameInstanceId == null || gameInstanceId.isBlank()) {
-      throw new IllegalArgumentException("game_instance_id is required");
-    }
-    try {
-      return Long.parseLong(gameInstanceId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("game_instance_id must be a number");
-    }
   }
 
   private String normalizeBlank(String value) {

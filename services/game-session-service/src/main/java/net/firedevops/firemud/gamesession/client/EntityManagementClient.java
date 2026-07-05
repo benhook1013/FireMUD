@@ -25,6 +25,7 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -42,14 +43,6 @@ public final class EntityManagementClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
-
-  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    private boolean isPresent() {
-      return worldSlug != null && realmSlug != null && pointerVersion != null;
-    }
-  }
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
@@ -220,7 +213,12 @@ public final class EntityManagementClient
 
   private String sessionAttestation(
       SessionContext context, String gameInstanceId, String roomInstanceId) {
-    RoutingBundle routingBundle = routingBundle(context);
+    GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
+        GameplayAdmissionPointerSnapshots.admittedRoutingBundle(context);
+    if (GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(context)) {
+      throw new IllegalStateException(
+          "Incomplete admitted routing bundle on session context for Entity Management request");
+    }
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
@@ -232,40 +230,5 @@ public final class EntityManagementClient
         routingBundle.realmSlug(),
         routingBundle.pointerVersion(),
         context.playableStateScope());
-  }
-
-  private RoutingBundle routingBundle(SessionContext context) {
-    RoutingBundle routingBundle =
-        normalizeRoutingBundle(
-            context.worldSlug(),
-            context.realmSlug(),
-            context.pointerVersion() > 0 ? Long.toString(context.pointerVersion()) : null);
-    if (!routingBundle.isPresent()
-        && (StringUtils.hasText(context.worldSlug())
-            || StringUtils.hasText(context.realmSlug())
-            || context.pointerVersion() > 0)) {
-      throw new IllegalStateException(
-          "Incomplete admitted routing bundle on session context for Entity Management request");
-    }
-    return routingBundle;
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, String pointerVersion) {
-    String normalizedWorldSlug = StringUtils.hasText(worldSlug) ? worldSlug : null;
-    String normalizedRealmSlug = StringUtils.hasText(realmSlug) ? realmSlug : null;
-    String normalizedPointerVersion = StringUtils.hasText(pointerVersion) ? pointerVersion : null;
-    boolean hasAny =
-        normalizedWorldSlug != null
-            || normalizedRealmSlug != null
-            || normalizedPointerVersion != null;
-    boolean hasAll =
-        normalizedWorldSlug != null
-            && normalizedRealmSlug != null
-            && normalizedPointerVersion != null;
-    if (!hasAny || !hasAll) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
   }
 }

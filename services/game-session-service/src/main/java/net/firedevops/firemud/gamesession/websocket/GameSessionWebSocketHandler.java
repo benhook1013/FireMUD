@@ -6,6 +6,7 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
@@ -112,7 +113,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           "WebSocket session {} established with sessionId={} tenantId={}",
           session.getId(),
           resolveTransportSessionId(session),
-          resolveTenantId(session));
+          resolveTenantIdText(session));
       bootstrapSessionContext(session);
       parseNumericSessionId(resolveTransportSessionId(session))
           .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
@@ -190,7 +191,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return cached instanceof String text ? text : null;
   }
 
-  private String resolveBootstrapGameInstanceId(WebSocketSession session) {
+  private String resolveBootstrapGameInstanceIdText(WebSocketSession session) {
     Object cached =
         session
             .getAttributes()
@@ -198,10 +199,19 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return cached instanceof String text ? text : null;
   }
 
-  private String resolveTenantId(WebSocketSession session) {
+  private String resolveTenantIdText(WebSocketSession session) {
     Object cached =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR);
     return cached instanceof String text ? text : null;
+  }
+
+  private Optional<Long> resolveBootstrapGameInstanceId(WebSocketSession session) {
+    return parsePositiveLong(
+        resolveBootstrapGameInstanceIdText(session), "bootstrapGameInstanceId");
+  }
+
+  private Optional<Long> resolveTenantId(WebSocketSession session) {
+    return parsePositiveLong(resolveTenantIdText(session), "tenantId");
   }
 
   private String resolveWorldSlug(WebSocketSession session) {
@@ -222,12 +232,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!(cached instanceof String text) || !StringUtils.hasText(text)) {
       return 0L;
     }
-    try {
-      return Long.parseLong(text);
-    } catch (NumberFormatException ex) {
-      logger.debug("Ignoring non-numeric pointerVersion header {}", text, ex);
-      return 0L;
-    }
+    return parsePositiveLong(text, "pointerVersion").orElse(0L);
   }
 
   private String resolveConnectionMode(WebSocketSession session) {
@@ -261,21 +266,20 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private Optional<SessionContext> resolveNormalizedSessionContext(
       WebSocketSession session, String sessionId) {
-    String tenantIdText = resolveTenantId(session);
+    String tenantIdText = resolveTenantIdText(session);
     if (!StringUtils.hasText(tenantIdText)) {
       return resolveNormalizedSessionContext(sessionId);
+    }
+    Optional<Long> maybeTenantId = resolveTenantId(session);
+    if (maybeTenantId.isEmpty()) {
+      return Optional.empty();
     }
     Optional<Long> maybeSessionId = parseNumericSessionId(sessionId);
     if (maybeSessionId.isEmpty()) {
       return Optional.empty();
     }
-    try {
-      return sessionAuthenticationService.resolveUnverifiedSessionContext(
-          Long.parseLong(tenantIdText), maybeSessionId.get());
-    } catch (NumberFormatException ex) {
-      logger.debug("Ignoring malformed tenantId attribute {}", tenantIdText, ex);
-      return resolveNormalizedSessionContext(sessionId);
-    }
+    return sessionAuthenticationService.resolveUnverifiedSessionContext(
+        maybeTenantId.get(), maybeSessionId.get());
   }
 
   private String formatResponse(
@@ -507,17 +511,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!StringUtils.hasText(transportSessionId)) {
       return;
     }
-    try {
-      long sessionId = Long.parseLong(transportSessionId);
-      if ("first_party_web".equals(resolveConnectionMode(session))) {
-        bootstrapFirstPartySessionContext(session, sessionId);
-        return;
-      }
-      bootstrapGenericSessionContext(session, sessionId);
-    } catch (NumberFormatException ex) {
-      logger.debug(
-          "Skipping bootstrap session context for transportSessionId={}", transportSessionId, ex);
-    }
+    parseNumericSessionId(transportSessionId)
+        .ifPresent(
+            sessionId -> {
+              if ("first_party_web".equals(resolveConnectionMode(session))) {
+                bootstrapFirstPartySessionContext(session, sessionId);
+                return;
+              }
+              bootstrapGenericSessionContext(session, sessionId);
+            });
   }
 
   private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
@@ -586,41 +588,30 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
-    String tenantId = resolveTenantId(session);
-    String bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
-    if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(bootstrapGameInstanceId)) {
+    Optional<Long> tenantId = resolveTenantId(session);
+    Optional<Long> bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
+    if (tenantId.isEmpty() || bootstrapGameInstanceId.isEmpty()) {
       return;
     }
-    try {
-      long tenant = Long.parseLong(tenantId);
-      long bootstrapGameInstance = Long.parseLong(bootstrapGameInstanceId);
-      Optional<SessionContext> existing =
-          sessionAuthenticationService.resolveUnverifiedSessionContext(tenant, sessionId);
-      SessionContext incomingShell =
-          repairGenericBootstrapShell(
-              bootstrapShell(
-                  sessionId,
-                  tenant,
-                  bootstrapGameInstance,
-                  resolveWorldSlug(session),
-                  resolveRealmSlug(session),
-                  resolvePointerVersion(session),
-                  null,
-                  null,
-                  resolveLocaleTag(session)));
-      if (existing.isPresent()) {
-        maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
-        return;
-      }
-      sessionContextService.save(incomingShell);
-    } catch (NumberFormatException ex) {
-      logger.debug(
-          "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
-          sessionId,
-          tenantId,
-          bootstrapGameInstanceId,
-          ex);
+    Optional<SessionContext> existing =
+        sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
+    SessionContext incomingShell =
+        repairGenericBootstrapShell(
+            bootstrapShell(
+                sessionId,
+                tenantId.get(),
+                bootstrapGameInstanceId.get(),
+                resolveWorldSlug(session),
+                resolveRealmSlug(session),
+                resolvePointerVersion(session),
+                null,
+                null,
+                resolveLocaleTag(session)));
+    if (existing.isPresent()) {
+      maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
+      return;
     }
+    sessionContextService.save(incomingShell);
   }
 
   private void bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {
@@ -664,7 +655,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private void maybeRefreshBootstrapShell(SessionContext existing, SessionContext incomingShell) {
-    if (sameBootstrapRoute(existing, incomingShell)) {
+    if (GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incomingShell)) {
       boolean localeChanged =
           StringUtils.hasText(incomingShell.localeTag())
               && !incomingShell.localeTag().equals(existing.localeTag());
@@ -751,30 +742,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         || StringUtils.hasText(context.jwt());
   }
 
-  private boolean sameBootstrapRoute(SessionContext existing, SessionContext incomingShell) {
-    if (existing.tenantId() != incomingShell.tenantId()) {
-      return false;
-    }
-    if (existing.bootstrapGameInstanceId() != incomingShell.bootstrapGameInstanceId()) {
-      return false;
-    }
-    boolean existingHasBundle = hasCompleteRoutingBundle(existing);
-    boolean incomingHasBundle = hasCompleteRoutingBundle(incomingShell);
-    if (existingHasBundle != incomingHasBundle) {
-      return false;
-    }
-    if (!incomingHasBundle) {
-      return true;
-    }
-    if (!incomingShell.worldSlug().equalsIgnoreCase(existing.worldSlug())) {
-      return false;
-    }
-    if (!incomingShell.realmSlug().equalsIgnoreCase(existing.realmSlug())) {
-      return false;
-    }
-    return existing.pointerVersion() == incomingShell.pointerVersion();
-  }
-
   private SessionContext bootstrapShell(
       long sessionId,
       long tenantId,
@@ -806,11 +773,40 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private SessionContext repairGenericBootstrapShell(SessionContext shell) {
-    if (hasCompleteRoutingBundle(shell)) {
-      return shell;
+    var runtimePointers =
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+            shell.tenantId(), shell.bootstrapGameInstanceId());
+    if (GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(shell)) {
+      if (GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+          runtimePointers,
+          shell.tenantId(),
+          shell.bootstrapGameInstanceId(),
+          shell.worldSlug(),
+          shell.realmSlug(),
+          shell.pointerVersion())) {
+        return shell;
+      }
+      return new SessionContext(
+          shell.sessionId(),
+          shell.tenantId(),
+          shell.accountId(),
+          shell.loginName(),
+          shell.gameInstanceId(),
+          shell.roomInstanceId(),
+          shell.characterId(),
+          shell.characterName(),
+          shell.jwt(),
+          shell.localeTag(),
+          shell.bootstrapGameInstanceId(),
+          null,
+          null,
+          0L,
+          shell.playableStateScope(),
+          shell.connectScopeId(),
+          shell.connectRequestId());
     }
     Optional<GameplayAdmissionPointerSnapshot> pointer =
-        singularRuntimePointer(shell.tenantId(), shell.bootstrapGameInstanceId());
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(runtimePointers);
     return pointer
         .map(
             snapshot ->
@@ -853,18 +849,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 shell.connectRequestId()));
   }
 
-  private Optional<GameplayAdmissionPointerSnapshot> singularRuntimePointer(
-      long tenantId, long gameInstanceId) {
-    return GameplayAdmissionPointerSnapshots.singularCompletePointer(
-        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId));
-  }
-
-  private boolean hasCompleteRoutingBundle(SessionContext shell) {
-    return StringUtils.hasText(shell.worldSlug())
-        && StringUtils.hasText(shell.realmSlug())
-        && shell.pointerVersion() > 0;
-  }
-
   private void closeInvalidFirstPartyContext(WebSocketSession session) {
     try {
       session.close(
@@ -875,12 +859,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private Optional<Long> parseNumericSessionId(String text) {
+    try {
+      return Optional.of(JwtClaims.requireLong(text, "sessionId", false));
+    } catch (RuntimeException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private Optional<Long> parsePositiveLong(String text, String fieldName) {
     if (!StringUtils.hasText(text)) {
       return Optional.empty();
     }
     try {
-      return Optional.of(Long.parseLong(text));
-    } catch (NumberFormatException ex) {
+      return Optional.of(JwtClaims.requireLong(text, fieldName, false));
+    } catch (RuntimeException ex) {
+      logger.debug("Ignoring malformed {} header {}", fieldName, text, ex);
       return Optional.empty();
     }
   }
