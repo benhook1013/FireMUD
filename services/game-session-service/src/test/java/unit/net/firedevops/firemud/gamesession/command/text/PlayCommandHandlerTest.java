@@ -428,6 +428,67 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playIgnoresExistingBindingWithoutRoomRegion() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    SessionContext existingWithoutRoom =
+        new SessionContext(
+            9L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "demo",
+            1L,
+            null,
+            "old-jwt",
+            null,
+            0L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName(
+            context, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "demo"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("demo")
+                    .build()));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.of(existingWithoutRoom));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
+    Mockito.verify(sessionContextService)
+        .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                0L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .recordDisconnected(Mockito.eq(9L), Mockito.any());
+    Mockito.verify(sessionContextService, never()).deleteBySessionId(22L, 9L);
+  }
+
+  @Test
   void firstPartyPlayRejectsMismatchedConnectScope() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);

@@ -136,7 +136,7 @@ public class CommandServiceImpl implements CommandService {
         markStaged(gameplayCommand);
         triggerImmediateTick(queueTarget.get());
         sessionContext
-            .filter(this::hasGameplayBinding)
+            .filter(SessionContext::hasGameplayRegionBinding)
             .ifPresent(context -> publishScriptEvent(context, gameplayCommand));
         return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
@@ -262,13 +262,6 @@ public class CommandServiceImpl implements CommandService {
 
   private Optional<SessionContext> resolveSessionContext(String sessionIdText) {
     return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionIdText);
-  }
-
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        && context.characterId() > 0
-        && context.roomInstanceId() != null
-        && !context.roomInstanceId().isBlank();
   }
 
   private Optional<QueueTarget> resolveQueueTarget(Optional<SessionContext> sessionContext) {

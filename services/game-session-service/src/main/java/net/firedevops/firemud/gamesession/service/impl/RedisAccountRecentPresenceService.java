@@ -167,7 +167,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
       return null;
     }
-    GameplayPresence effectivePresence = context.hasGameplayRegionBinding() ? presence : null;
+    GameplayPresence effectivePresence =
+        SessionContext.hasGameplayRegionBindingOrFalse(context) ? presence : null;
     long gameInstanceId =
         effectivePresence != null && effectivePresence.gameInstanceId() > 0
             ? effectivePresence.gameInstanceId()
@@ -196,7 +197,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   private GameplayPresenceRole effectivePresenceRole(
       SessionContext context, GameplayPresence presence) {
-    return context != null && context.hasGameplayRegionBinding() && presence != null
+    return SessionContext.hasGameplayRegionBindingOrFalse(context) && presence != null
         ? presence.role()
         : null;
   }

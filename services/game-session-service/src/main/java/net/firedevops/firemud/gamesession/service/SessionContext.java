@@ -293,6 +293,10 @@ public record SessionContext(
         && !roomInstanceId.isBlank();
   }
 
+  public static boolean hasGameplayRegionBindingOrFalse(SessionContext context) {
+    return context != null && context.hasGameplayRegionBinding();
+  }
+
   public boolean sameGameplayIdentity(SessionContext that) {
     if (that == null) {
       return false;

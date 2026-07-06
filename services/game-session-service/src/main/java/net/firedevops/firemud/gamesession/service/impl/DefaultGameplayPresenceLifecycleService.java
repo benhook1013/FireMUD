@@ -53,7 +53,7 @@ public final class DefaultGameplayPresenceLifecycleService
     if (context == null) {
       return;
     }
-    if (hasGameplayRegionBinding(context)) {
+    if (context.hasGameplayRegionBinding()) {
       scriptEventPublisher.publishRegionExitEvent(
           context, clearedBindingEventId(context, clearReason), clearReason);
     }
@@ -64,17 +64,13 @@ public final class DefaultGameplayPresenceLifecycleService
   public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
-        .filter(this::hasGameplayRegionBinding)
+        .filter(SessionContext::hasGameplayRegionBindingOrFalse)
         .ifPresent(
             context ->
                 scriptEventPublisher.publishRegionExitEvent(
                     context, disconnectEventId(context, disposition), disposition.name()));
     accountRecentPresenceService.recordDisconnect(sessionId, disposition);
     gameplayPresenceService.removeBySessionId(sessionId);
-  }
-
-  private boolean hasGameplayRegionBinding(SessionContext context) {
-    return context != null && context.hasGameplayRegionBinding();
   }
 
   private static String disconnectEventId(
