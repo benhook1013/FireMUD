@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.loggingadmin.dto.ReportDto;
 import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
@@ -37,11 +38,11 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
       ReportDto dto =
           reportService.createReport(
               new net.firedevops.firemud.loggingadmin.dto.CreateReportRequest(
-                  Long.valueOf(request.getTenantId()),
-                  Long.valueOf(request.getReporterAccountId()),
-                  request.getTargetAccountId().isEmpty()
-                      ? null
-                      : Long.valueOf(request.getTargetAccountId()),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getReporterAccountId(), "reporterAccountId"),
+                  RequestIdValidation.parseOptionalPositiveLong(
+                      request.getTargetAccountId(), "targetAccountId"),
                   request.getType(),
                   request.getDescription()));
       CreateReportResponse response =

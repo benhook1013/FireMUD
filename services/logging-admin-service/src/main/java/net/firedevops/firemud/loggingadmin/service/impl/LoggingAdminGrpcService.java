@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
@@ -61,7 +62,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       AdminRoleGuard.requireAdminRole();
       featureFlagService.toggleFlag(
           new net.firedevops.firemud.loggingadmin.dto.ToggleFeatureFlagRequest(
-              Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              request.getName(),
+              request.getEnabled()));
       ToggleFeatureFlagResponse response =
           ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
@@ -114,7 +117,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       List<String> entries =
           logQueryService.queryLogs(
               new net.firedevops.firemud.loggingadmin.dto.QueryLogsRequest(
-                  Long.valueOf(request.getTenantId()), request.getFilter()));
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  request.getFilter()));
       QueryLogsResponse response = QueryLogsResponse.newBuilder().addAllEntries(entries).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -155,8 +159,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       var dto =
           logEventService.createLogEvent(
               new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
-                  Long.valueOf(request.getTenantId()),
-                  request.getAccountId().isBlank() ? null : Long.valueOf(request.getAccountId()),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.parseOptionalPositiveLong(
+                      request.getAccountId(), "accountId"),
                   request.getType(),
                   request.getMessage()));
       CreateLogEventResponse response =
@@ -204,9 +209,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       AdminRoleGuard.requireAdminRole();
       moderationService.applyAction(
           new net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
-              Long.valueOf(request.getSessionId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
+              RequestIdValidation.requirePositiveLong(request.getSessionId(), "sessionId"),
               request.getAction(),
               request.getReason()));
       ApplyModerationActionResponse response =
@@ -260,8 +265,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     try {
       var decision =
           moderationService.evaluatePolicy(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getScope());
       EvaluateModerationPolicyResponse.Builder response =
           EvaluateModerationPolicyResponse.newBuilder()
