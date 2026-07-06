@@ -736,15 +736,7 @@ public final class GameSessionGrpcService
   }
 
   private boolean isCurrentAccount(long ownerAccountId) {
-    String accountId = SessionContext.getAccountId();
-    if (accountId == null || accountId.isBlank()) {
-      return false;
-    }
-    try {
-      return Long.parseLong(accountId) == ownerAccountId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
+    return SessionContext.isCurrentAccount(ownerAccountId);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(

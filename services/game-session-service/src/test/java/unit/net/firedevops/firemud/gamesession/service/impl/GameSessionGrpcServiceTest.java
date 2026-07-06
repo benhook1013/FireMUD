@@ -1847,4 +1847,54 @@ class GameSessionGrpcServiceTest {
         });
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
   }
+
+  @Test
+  void stopSessionRejectsMalformedCurrentAccountClaim() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(9L);
+    instance.setOwnerAccountId(42L);
+    instance.setRuntimeVersion("v1");
+    instance.setStatus("RUNNING");
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(instance));
+    SessionContext.setContext("not-a-number", List.of(), Map.of());
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    service.stopSession(
+        net.firedevops.firemud.gamesession.v1.StopSessionRequest.newBuilder()
+            .setSessionId("7")
+            .build(),
+        new StreamObserver<net.firedevops.firemud.gamesession.v1.StopSessionResponse>() {
+          @Override
+          public void onNext(net.firedevops.firemud.gamesession.v1.StopSessionResponse value) {
+            assertEquals("PERMISSION_DENIED", value.getError().getCode());
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
+  }
 }
