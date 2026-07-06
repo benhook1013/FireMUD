@@ -12,9 +12,9 @@ import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @SuppressFBWarnings(
     value = "CT_CONSTRUCTOR_THROW",
@@ -124,8 +124,7 @@ public class TextCommandInterpreter {
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     boolean hasLogin = maybeContext.isPresent();
-    boolean hasPlay =
-        maybeContext.isPresent() && StringUtils.hasText(maybeContext.get().roomInstanceId());
+    boolean hasPlay = maybeContext.filter(SessionContext::hasGameplayRegionBinding).isPresent();
 
     if (definition.stageRequirement() != TextCommandStageRequirement.NONE && !hasLogin) {
       return stageFailure(
@@ -172,7 +171,7 @@ public class TextCommandInterpreter {
               .orElse(result);
       case WHEN_GAMEPLAY ->
           maybeContext
-              .filter(context -> StringUtils.hasText(context.roomInstanceId()))
+              .filter(SessionContext::hasGameplayRegionBinding)
               .map(
                   context ->
                       new TextCommandInterpretationResult(
