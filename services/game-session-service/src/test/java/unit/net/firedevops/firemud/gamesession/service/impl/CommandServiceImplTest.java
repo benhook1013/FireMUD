@@ -68,6 +68,80 @@ class CommandServiceImplTest {
   }
 
   @Test
+  void enqueueRejectsMalformedSessionIdBeforeSessionLookup() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("bad", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("INVALID_ARGUMENT", result.errorCode());
+    assertEquals("sessionId must be a number", result.errorMessage());
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(Mockito.any());
+    verify(rateLimiter, never()).allow(Mockito.anyLong());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+  }
+
+  @Test
+  void enqueueRejectsZeroSessionIdBeforeSessionLookup() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("0", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("INVALID_ARGUMENT", result.errorCode());
+    assertEquals("sessionId must be positive", result.errorMessage());
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(Mockito.any());
+    verify(rateLimiter, never()).allow(Mockito.anyLong());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+  }
+
+  @Test
   void enqueuePassesThroughWhenAllowed() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
