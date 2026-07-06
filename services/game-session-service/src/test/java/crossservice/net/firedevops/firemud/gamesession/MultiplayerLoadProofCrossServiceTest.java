@@ -114,6 +114,38 @@ class MultiplayerLoadProofCrossServiceTest {
     }
   }
 
+  @Test
+  void tenConcurrentPlayersCanMoveNorthAfterConcurrentEntry() throws Exception {
+    ensureTestServicesStarted();
+    List<GameplayLoadScenarios.PlayerSeed> players =
+        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
+    URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
+
+    List<PlayerSessionDriver> connectedPlayers = openReadyPlayersConcurrently(uri, players);
+    try {
+      runConcurrentNorthMovement(connectedPlayers);
+
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
+      for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+        assertThat(sessionContextService.findBySessionId(connectedPlayer.player().sessionId()))
+            .hasValueSatisfying(
+                context ->
+                    assertThat(context.roomInstanceId())
+                        .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+      }
+
+      GameplayAsyncAssertions.assertMetricEventually(
+          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
+          COMMAND_WAIT,
+          "gamesession.command.move.invocations",
+          CLIENT_COUNT);
+    } finally {
+      for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+        connectedPlayer.driver().close();
+      }
+    }
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
       STACK =
@@ -133,7 +165,71 @@ class MultiplayerLoadProofCrossServiceTest {
     }
   }
 
+  private List<PlayerSessionDriver> openReadyPlayersConcurrently(
+      URI uri, List<GameplayLoadScenarios.PlayerSeed> players) throws Exception {
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
+    try {
+      List<Future<PlayerSessionDriver>> futures = new ArrayList<>();
+      for (GameplayLoadScenarios.PlayerSeed player : players) {
+        futures.add(
+            executor.submit(
+                () -> {
+                  assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+                  GameplayWebSocketDriver driver =
+                      GameplayLoadScenarios.openReadyPlayer(
+                          uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber");
+                  return new PlayerSessionDriver(player, driver);
+                }));
+      }
+
+      start.countDown();
+
+      List<PlayerSessionDriver> connectedPlayers = new ArrayList<>();
+      for (Future<PlayerSessionDriver> future : futures) {
+        connectedPlayers.add(future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS));
+      }
+      return connectedPlayers;
+    } finally {
+      executor.shutdownNow();
+      executor.awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  private void runConcurrentNorthMovement(List<PlayerSessionDriver> connectedPlayers)
+      throws Exception {
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
+    try {
+      List<Future<Void>> futures = new ArrayList<>();
+      for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+        futures.add(
+            executor.submit(
+                () -> {
+                  assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+                  connectedPlayer.driver().send("north");
+                  connectedPlayer
+                      .driver()
+                      .awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+                  return null;
+                }));
+      }
+
+      start.countDown();
+
+      for (Future<Void> future : futures) {
+        future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS);
+      }
+    } finally {
+      executor.shutdownNow();
+      executor.awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
   private record PlayerRunResult(GameplayLoadScenarios.PlayerSeed player, List<String> responses) {}
+
+  private record PlayerSessionDriver(
+      GameplayLoadScenarios.PlayerSeed player, GameplayWebSocketDriver driver) {}
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
     return STACK.gameSession();
