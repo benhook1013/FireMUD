@@ -842,6 +842,7 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -858,7 +859,7 @@ public class EntityManagementGrpcService
                         request.getStackCount(),
                         request.getSourceType(),
                         request.getSourceId(),
-                        parseOptionalInstant(request.getExpiresAt()),
+                        expiresAt,
                         request.getEffectPayloadJson());
                 return ApplyActorConditionResponse.newBuilder()
                     .setActiveCondition(toProto(activeCondition))
