@@ -153,8 +153,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       String gameInstanceIdText, String tenantIdText) {
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(tenantIdText)) {
       return SessionValidationResult.failed(
-          GrpcAppErrors.error(
-              meterRegistry, "INVALID_ARGUMENT", "gameInstanceId and tenantId are required"));
+          invalidArgumentError("gameInstanceId and tenantId are required"));
     }
     try {
       long gameInstanceId =
@@ -162,25 +161,30 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       long tenantId = ControlPlaneRequestParser.parsePositiveLong(tenantIdText, "tenantId");
       Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
       if (maybeInstance.isEmpty()) {
-        return SessionValidationResult.failed(
-            GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Game instance not found"));
+        return SessionValidationResult.failed(notFoundError("Game instance not found"));
       }
       GameInstance instance = maybeInstance.get();
       if (!instance.getTenantId().equals(tenantId)) {
-        return SessionValidationResult.failed(
-            GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
+        return SessionValidationResult.failed(invalidArgumentError("Tenant does not own session"));
       }
-      return new SessionValidationResult(gameInstanceId, tenantId, instance, null);
+      return new SessionValidationResult(instance, null);
     } catch (IllegalArgumentException ex) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()));
+      return SessionValidationResult.failed(invalidArgumentError(ex.getMessage()));
     }
   }
 
-  private record SessionValidationResult(
-      long sessionId, long tenantId, GameInstance instance, ErrorDetail errorDetail) {
+  private ErrorDetail invalidArgumentError(String message) {
+    return GrpcAppErrors.error(
+        meterRegistry, logger, "NotifyDisconnect", "INVALID_ARGUMENT", message);
+  }
+
+  private ErrorDetail notFoundError(String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, "NotifyDisconnect", "NOT_FOUND", message);
+  }
+
+  private record SessionValidationResult(GameInstance instance, ErrorDetail errorDetail) {
     static SessionValidationResult failed(ErrorDetail errorDetail) {
-      return new SessionValidationResult(0L, 0L, null, errorDetail);
+      return new SessionValidationResult(null, errorDetail);
     }
 
     boolean hasError() {

@@ -57,4 +57,56 @@ class SessionContextTest {
 
     assertFalse(context.hasPartialPersistedFirstPartyConnectContext());
   }
+
+  @Test
+  void hasPartialPersistedFirstPartyConnectContextDetectsMissingConnectScope() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "first-party:123",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L,
+            "sandbox",
+            "preview",
+            1L,
+            null,
+            null,
+            "request-123");
+
+    assertTrue(context.hasPartialPersistedFirstPartyConnectContext());
+    assertTrue(context.persistedFirstPartyConnectContext().isEmpty());
+  }
+
+  @Test
+  void hasPartialPersistedFirstPartyConnectContextRequiresPositiveAccountIdentity() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            0L,
+            "first-party:123",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L,
+            "sandbox",
+            "preview",
+            1L,
+            null,
+            "scope-persisted",
+            "request-123");
+
+    assertFalse(context.hasPartialPersistedFirstPartyConnectContext());
+    assertTrue(context.persistedFirstPartyConnectContext().isEmpty());
+  }
 }

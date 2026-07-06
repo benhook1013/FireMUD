@@ -18,10 +18,14 @@ import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class TcpProxyServiceImplTest {
   @Test
   void notifyDisconnectSavesSuspendedState() {
@@ -126,7 +130,7 @@ class TcpProxyServiceImplTest {
   }
 
   @Test
-  void notifyDisconnectRejectsInvalidTenant() {
+  void notifyDisconnectRejectsInvalidTenant(CapturedOutput output) {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -173,6 +177,9 @@ class TcpProxyServiceImplTest {
     assertEquals("tenantId must be a number", ref.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+    org.assertj.core.api.Assertions.assertThat(output)
+        .contains(
+            "NotifyDisconnect returned app error INVALID_ARGUMENT: tenantId must be a number");
     Mockito.verifyNoInteractions(sessionStateService);
     Mockito.verifyNoInteractions(repository);
   }
@@ -210,6 +217,8 @@ class TcpProxyServiceImplTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("gameInstanceId must be positive", ref.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(sessionStateService);
     Mockito.verifyNoInteractions(repository);
   }
@@ -247,6 +256,8 @@ class TcpProxyServiceImplTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(sessionStateService);
     Mockito.verifyNoInteractions(repository);
   }

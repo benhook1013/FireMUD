@@ -521,6 +521,8 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    assertThat(joinedOutputText(result.outputs()))
+        .isEqualTo("ERROR CONNECT_CONTEXT_INVALID Connect context invalid");
   }
 
   @Test
