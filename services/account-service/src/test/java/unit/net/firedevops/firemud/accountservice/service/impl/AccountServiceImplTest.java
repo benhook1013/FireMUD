@@ -342,6 +342,41 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapWorldsDoesNotMaskUnexpectedJwtParserRuntimeFailure() {
+    JwtUtil jwtUtil = org.mockito.Mockito.mock(JwtUtil.class);
+    when(jwtUtil.parseToken("boom-token")).thenThrow(new IllegalStateException("boom"));
+    service =
+        new AccountServiceImpl(
+            accountRepository,
+            accountRealmAccessGrantRepository,
+            accountTenantMembershipRepository,
+            Mappers.getMapper(AccountMapper.class),
+            profileRepository,
+            profileMapper,
+            paymentTransactionRepository,
+            subscriptionRepository,
+            externalAccountRepository,
+            passwordResetTokenRepository,
+            emailVerificationTokenRepository,
+            notificationService,
+            emailService,
+            mailProperties,
+            tokenProperties,
+            jwtAuthProperties,
+            loggingAdminClient,
+            gameSessionClient,
+            entityManagementClient,
+            jwtUtil,
+            sessionService,
+            sagaRunner);
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.listBootstrapWorlds("boom-token"));
+
+    assertEquals("boom", ex.getMessage());
+  }
+
+  @Test
   void issueConnectTokenRejectsMalformedConnectScopeId() {
     Account account = new Account();
     account.setId(11L);

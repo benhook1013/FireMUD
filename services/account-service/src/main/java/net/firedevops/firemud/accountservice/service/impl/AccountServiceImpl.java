@@ -5,6 +5,7 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import io.micrometer.core.annotation.Timed;
@@ -777,20 +778,20 @@ public class AccountServiceImpl implements AccountService {
   private RuntimeRealmTarget requireAdmissibleRealm(
       BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
     try {
-      RuntimeRealmTarget realm =
+      Optional<RuntimeRealmTarget> realm =
           readRuntimeRealmTarget(
               gameSessionClient.getAdmissionPointer(
                   bootstrapContext.tenantId(), worldSlug, realmSlug));
-      if (realm == null
-          || realm.tenantId() != bootstrapContext.tenantId()
-          || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-          || !java.util.Objects.equals(realmSlug, realm.realmSlug())
-          || !isRealmAdmissible(bootstrapContext, realm)) {
+      if (realm.isEmpty()
+          || realm.get().tenantId() != bootstrapContext.tenantId()
+          || !java.util.Objects.equals(worldSlug, realm.get().worldSlug())
+          || !java.util.Objects.equals(realmSlug, realm.get().realmSlug())
+          || !isRealmAdmissible(bootstrapContext, realm.get())) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
       }
-      return realm;
+      return realm.orElseThrow();
     } catch (IllegalStateException ex) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
@@ -919,7 +920,7 @@ public class AccountServiceImpl implements AccountService {
     Claims claims;
     try {
       claims = jwtUtil.parseToken(token).getPayload();
-    } catch (RuntimeException ex) {
+    } catch (JwtException | IllegalArgumentException ex) {
       throw new AuthenticationException(errorCode, invalidTokenMessage, ex);
     }
     try {
@@ -1387,7 +1388,7 @@ public class AccountServiceImpl implements AccountService {
 
   private RuntimeRealmTarget requirePublicProductionRealm(
       Long tenantId, String worldSlug, String realmSlug) {
-    RuntimeRealmTarget realm;
+    Optional<RuntimeRealmTarget> realm;
     try {
       realm =
           readRuntimeRealmTarget(
@@ -1396,19 +1397,19 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
     }
-    if (realm == null
-        || realm.tenantId() != tenantId
-        || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-        || !java.util.Objects.equals(realmSlug, realm.realmSlug())) {
+    if (realm.isEmpty()
+        || realm.get().tenantId() != tenantId
+        || !java.util.Objects.equals(worldSlug, realm.get().worldSlug())
+        || !java.util.Objects.equals(realmSlug, realm.get().realmSlug())) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
     }
-    if (!realm.publicProductionRealm()) {
+    if (!realm.get().publicProductionRealm()) {
       throw new AuthenticationException(
           "PUBLIC_PRODUCTION_MEMBERSHIP_NOT_ALLOWED",
           "Public membership creation is not allowed for this realm");
     }
-    return realm;
+    return realm.orElseThrow();
   }
 
   private Optional<RuntimeRealmTarget> readRuntimeRealmTarget(
@@ -1437,7 +1438,7 @@ public class AccountServiceImpl implements AccountService {
             realm.getDisplayName()));
   }
 
-  private RuntimeRealmTarget readRuntimeRealmTarget(
+  private Optional<RuntimeRealmTarget> readRuntimeRealmTarget(
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
     Long tenantId = parseLong(realm.getTenantId());
     Long gameInstanceId = parseLong(realm.getGameInstanceId());
@@ -1446,20 +1447,21 @@ public class AccountServiceImpl implements AccountService {
         || realm.getPointerVersion() <= 0
         || !StringUtils.hasText(realm.getWorldSlug())
         || !StringUtils.hasText(realm.getRealmSlug())) {
-      return null;
+      return Optional.empty();
     }
-    return new RuntimeRealmTarget(
-        tenantId,
-        gameInstanceId,
-        realm.getWorldSlug(),
-        realm.getRealmSlug(),
-        realm.getPointerVersion(),
-        realm.getVisible(),
-        realm.getPublicProductionRealm(),
-        realm.getStateScope(),
-        realm.getCharacterCreationPolicy(),
-        realm.getRequiresCharacterSelection(),
-        realm.getRealmDisplayName());
+    return Optional.of(
+        new RuntimeRealmTarget(
+            tenantId,
+            gameInstanceId,
+            realm.getWorldSlug(),
+            realm.getRealmSlug(),
+            realm.getPointerVersion(),
+            realm.getVisible(),
+            realm.getPublicProductionRealm(),
+            realm.getStateScope(),
+            realm.getCharacterCreationPolicy(),
+            realm.getRequiresCharacterSelection(),
+            realm.getRealmDisplayName()));
   }
 
   private PlayableStateScope toPlayableStateScope(RuntimeRealmTarget realm) {
