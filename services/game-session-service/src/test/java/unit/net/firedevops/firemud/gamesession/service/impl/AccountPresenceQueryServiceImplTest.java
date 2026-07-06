@@ -438,6 +438,126 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(17L, result.get(0).pointerVersion());
   }
 
+  @Test
+  void queryAccountPresenceTreatsCaseInsensitiveLiveRoutingIdentityAsCurrent() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
+        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PresenceProperties properties = new PresenceProperties();
+    GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            resolver,
+            recentPresenceService,
+            visibilityPolicyResolver,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(3L) && ids.size() == 1)))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(3L) && ids.size() == 1)))
+        .thenReturn(
+            Map.of(
+                3L,
+                List.of(
+                    new GameplayPresence(
+                        97L,
+                        1L,
+                        2L,
+                        "SHARED",
+                        "Sandbox",
+                        "Production",
+                        17L,
+                        3L,
+                        99L,
+                        "Ben",
+                        GameplayPresenceRole.PLAYER,
+                        100L,
+                        150L,
+                        180L,
+                        120L))));
+    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
+        .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
+        .thenReturn(
+            List.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
+
+    var result = service.queryAccountPresence(1L, 2L, List.of(3L));
+
+    assertEquals(1, result.size());
+    assertEquals(true, result.get(0).online());
+    assertEquals("sandbox", result.get(0).worldSlug());
+    assertEquals("production", result.get(0).realmSlug());
+    assertEquals("Builder Sandbox", result.get(0).worldDisplayName());
+    assertEquals("Live Realm", result.get(0).realmDisplayName());
+  }
+
+  @Test
+  void queryAccountPresenceTreatsCaseInsensitiveRecentRoutingIdentityAsCurrent() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
+        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PresenceProperties properties = new PresenceProperties();
+    GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            resolver,
+            recentPresenceService,
+            visibilityPolicyResolver,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(4L) && ids.size() == 1)))
+        .thenReturn(
+            Map.of(
+                4L,
+                new AccountRecentPresenceState(
+                    1L,
+                    4L,
+                    2L,
+                    "SHARED",
+                    "Sandbox",
+                    "Production",
+                    17L,
+                    Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+                    AccountPresenceVisibilityPolicy.PRIVATE)));
+    when(presenceService.listConnectedByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            org.mockito.ArgumentMatchers.argThat(
+                ids -> ids != null && ids.contains(4L) && ids.size() == 1)))
+        .thenReturn(Map.of());
+    when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
+        .thenReturn(
+            List.of(
+                pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
+
+    var result = service.queryAccountPresence(1L, 2L, List.of(4L));
+
+    assertEquals(1, result.size());
+    assertEquals(false, result.get(0).online());
+    assertEquals("Sandbox", result.get(0).worldSlug());
+    assertEquals("Production", result.get(0).realmSlug());
+    assertEquals("Builder Sandbox", result.get(0).worldDisplayName());
+    assertEquals("Live Realm", result.get(0).realmDisplayName());
+  }
+
   private static GameplayAdmissionPointerSnapshot pointer(
       String worldSlug,
       String worldDisplayName,
