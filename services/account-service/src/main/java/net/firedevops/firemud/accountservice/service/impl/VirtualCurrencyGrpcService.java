@@ -13,6 +13,7 @@ import net.firedevops.firemud.account.v1.SpendCurrencyResponse;
 import net.firedevops.firemud.account.v1.VirtualCurrencyServiceGrpc;
 import net.firedevops.firemud.accountservice.service.VirtualCurrencyService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,8 +52,8 @@ public class VirtualCurrencyGrpcService
     try {
       long balance =
           currencyService.getBalance(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getCurrencyCode());
       GetBalanceResponse response = GetBalanceResponse.newBuilder().setBalance(balance).build();
       responseObserver.onNext(response);
@@ -83,8 +84,8 @@ public class VirtualCurrencyGrpcService
     try {
       long balance =
           currencyService.addCurrency(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getCurrencyCode(),
               request.getAmount());
       AddCurrencyResponse response = AddCurrencyResponse.newBuilder().setBalance(balance).build();
@@ -116,8 +117,8 @@ public class VirtualCurrencyGrpcService
     try {
       long balance =
           currencyService.spendCurrency(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getCurrencyCode(),
               request.getAmount());
       SpendCurrencyResponse response =
