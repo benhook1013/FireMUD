@@ -3,6 +3,7 @@ package net.firedevops.firemud.socialgroups.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.socialgroups.v1.PingRequest;
 import net.firedevops.firemud.socialgroups.v1.PingResponse;
 import net.firedevops.firemud.socialgroups.v1.RemoveFriendByOrdinalResponse;
 import net.firedevops.firemud.socialgroups.v1.RemoveFriendResponse;
+import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.UpdateFriendPresencePolicyResponse;
 import org.junit.jupiter.api.Test;
@@ -227,6 +229,48 @@ class SocialGroupsGrpcServiceTest {
         .sendMessage(
             new SendMessageRequestDto(
                 1L, 2L, ChatType.SAY, "", null, null, null, "hello", "fx-comm-2"));
+  }
+
+  @Test
+  void sendMessageRejectsZeroRecipientIdBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
+    service.sendMessage(
+        net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderId("2")
+            .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_TELL)
+            .setRecipientId("0")
+            .setContent("hello")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMessageResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("recipientId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(chat);
   }
 
   @Test
@@ -778,6 +822,43 @@ class SocialGroupsGrpcServiceTest {
   }
 
   @Test
+  void getFriendPresencePolicyRejectsMalformedTenantIdBeforeAccessCheck() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<GetFriendPresencePolicyResponse> ref = new AtomicReference<>();
+    service.getFriendPresencePolicy(
+        net.firedevops.firemud.socialgroups.v1.GetFriendPresencePolicyRequest.newBuilder()
+            .setTenantId("abc")
+            .setAccountId("2")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetFriendPresencePolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be numeric", ref.get().getError().getMessage());
+    verifyNoInteractions(accessGuard, friend);
+  }
+
+  @Test
   void updateFriendPresencePolicyMapsCanonicalPolicy() {
     PingService ping = Mockito.mock(PingService.class);
     ChatService chat = Mockito.mock(ChatService.class);
@@ -821,5 +902,47 @@ class SocialGroupsGrpcServiceTest {
         net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
             .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC,
         ref.get().getCurrentPolicy());
+  }
+
+  @Test
+  void sendMailRejectsZeroRecipientAccountIdBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<SendMailResponse> ref = new AtomicReference<>();
+    service.sendMail(
+        net.firedevops.firemud.socialgroups.v1.SendMailRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderAccountId("2")
+            .setRecipientAccountId("0")
+            .setSubject("hi")
+            .setContent("body")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMailResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("recipientAccountId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(mail);
   }
 }
