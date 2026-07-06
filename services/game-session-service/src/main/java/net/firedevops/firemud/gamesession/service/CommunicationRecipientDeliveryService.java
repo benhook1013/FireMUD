@@ -119,16 +119,14 @@ public final class CommunicationRecipientDeliveryService {
 
   private Optional<SessionContext> resolveRecipient(
       SessionContext actorContext, CommunicationRecipientView view) {
-    Optional<Long> maybeRecipientId = parseRecipientId(view.getRecipientId());
-    if (maybeRecipientId.isPresent()) {
-      Optional<SessionContext> byIdentity =
-          sessionAuthenticationService.resolveByGameplayIdentity(
-              actorContext.tenantId(),
-              actorContext.gameInstanceId(),
-              maybeRecipientId.orElseThrow());
-      if (byIdentity.isPresent()) {
-        return byIdentity;
-      }
+    PositiveLongParsing.ParsedPositiveLong parsedRecipientId =
+        PositiveLongParsing.parseOptionalText(view.getRecipientId(), "recipientId");
+    if (parsedRecipientId.invalid()) {
+      return Optional.empty();
+    }
+    if (parsedRecipientId.valid()) {
+      return sessionAuthenticationService.resolveByGameplayIdentity(
+          actorContext.tenantId(), actorContext.gameInstanceId(), parsedRecipientId.value());
     }
     if (!StringUtils.hasText(view.getRecipientName())) {
       return Optional.empty();
@@ -166,17 +164,6 @@ public final class CommunicationRecipientDeliveryService {
             .increment();
         activeTransportSessionRegistry.unregister(recipient.sessionId(), session);
       }
-    }
-  }
-
-  private Optional<Long> parseRecipientId(String recipientId) {
-    if (!StringUtils.hasText(recipientId)) {
-      return Optional.empty();
-    }
-    try {
-      return Optional.of(Long.parseLong(recipientId));
-    } catch (NumberFormatException ex) {
-      return Optional.empty();
     }
   }
 
