@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.service.exception.AuthenticationExc
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -145,8 +146,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var dto =
           accountService.getTenantMembershipForRuntime(
-              Long.valueOf(request.getAccountId()),
-              Long.valueOf(request.getTenantId()),
+              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getRequestId());
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
@@ -155,6 +156,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
               .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      GetTenantMembershipForRuntimeResponse response =
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantMembershipForRuntime", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -176,8 +185,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var dto =
           accountService.getRealmAccessGrantForRuntime(
-              Long.valueOf(request.getAccountId()),
-              Long.valueOf(request.getTenantId()),
+              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getWorldSlug(),
               request.getRealmSlug(),
               request.getRequestId());
@@ -190,6 +199,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setGranted(dto.granted())
               .setGrantVersion(dto.grantVersion())
               .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      GetRealmAccessGrantForRuntimeResponse response =
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetRealmAccessGrantForRuntime", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -211,8 +228,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var dto =
           accountService.ensurePublicProductionPlayerMembership(
-              Long.valueOf(request.getAccountId()),
-              Long.valueOf(request.getTenantId()),
+              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getWorldSlug(),
               request.getRealmSlug(),
               request.getRequestId());
@@ -228,6 +245,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setRequestId(dto.requestId())
               .setEvaluatedAt(dto.evaluatedAt())
               .setReplayed(dto.replayed())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      EnsurePublicProductionPlayerMembershipResponse response =
+          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
+              .setError(
+                  appError(
+                      "EnsurePublicProductionPlayerMembership",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -258,7 +286,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var dto =
           accountService.getTenantEntitlementsForRuntime(
-              Long.valueOf(request.getTenantId()), request.getRequestId());
+              requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getRequestId());
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
@@ -266,6 +294,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setEntitlementVersion(dto.entitlementVersion())
               .setTenantBillingSequence(dto.tenantBillingSequence())
               .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantEntitlementsForRuntime", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -564,5 +600,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
             .setMessage(message)
             .build()
         : GrpcAppErrors.error(meterRegistry, logger, operation, code, message);
+  }
+
+  private long requirePositiveRequestId(String value, String fieldName) {
+    try {
+      return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(ex.getMessage(), ex);
+    }
+  }
+
+  private static final class InvalidRequestException extends RuntimeException {
+    private InvalidRequestException(String message, Throwable cause) {
+      super(message, cause);
+    }
   }
 }

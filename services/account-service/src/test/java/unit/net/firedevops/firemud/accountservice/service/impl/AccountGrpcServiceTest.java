@@ -22,6 +22,8 @@ import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
@@ -260,6 +262,72 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void getTenantMembershipForRuntimeRejectsZeroTenantIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetTenantMembershipForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantMembershipForRuntime(
+        GetTenantMembershipForRuntimeRequest.newBuilder()
+            .setAccountId("2")
+            .setTenantId("0")
+            .setRequestId("req-1")
+            .build(),
+        new StreamObserver<GetTenantMembershipForRuntimeResponse>() {
+          @Override
+          public void onNext(GetTenantMembershipForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeRejectsZeroAccountIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetRealmAccessGrantForRuntimeResponse> ref = new AtomicReference<>();
+    service.getRealmAccessGrantForRuntime(
+        GetRealmAccessGrantForRuntimeRequest.newBuilder()
+            .setAccountId("0")
+            .setTenantId("1")
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setRequestId("req-1")
+            .build(),
+        new StreamObserver<GetRealmAccessGrantForRuntimeResponse>() {
+          @Override
+          public void onNext(GetRealmAccessGrantForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void ensurePublicProductionPlayerMembershipReturnsResponse() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -305,6 +373,40 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void ensurePublicProductionPlayerMembershipRejectsZeroTenantIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
+    service.ensurePublicProductionPlayerMembership(
+        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
+            .setAccountId("2")
+            .setTenantId("0")
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setRequestId("req-1")
+            .build(),
+        new StreamObserver<EnsurePublicProductionPlayerMembershipResponse>() {
+          @Override
+          public void onNext(EnsurePublicProductionPlayerMembershipResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void getTenantEntitlementsForRuntimeReturnsResponse() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -337,6 +439,37 @@ class AccountGrpcServiceTest {
     assertEquals("1", ref.get().getTenantId());
     assertTrue(ref.get().getGameplayAvailable());
     assertEquals(19L, ref.get().getEntitlementVersion());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeRejectsZeroTenantIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantEntitlementsForRuntime(
+        GetTenantEntitlementsForRuntimeRequest.newBuilder()
+            .setTenantId("0")
+            .setRequestId("req-2")
+            .build(),
+        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
+          @Override
+          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
