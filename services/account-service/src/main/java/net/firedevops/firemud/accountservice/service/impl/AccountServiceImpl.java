@@ -752,19 +752,14 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private BootstrapContext requireBootstrapContext(String bootstrapToken) {
-    if (bootstrapToken == null || bootstrapToken.isBlank()) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Missing bootstrap token");
-    }
-    Claims claims;
+    Claims claims =
+        requireSignedTokenClaims(
+            bootstrapToken,
+            "player-bootstrap",
+            "CONNECT_CONTEXT_INVALID",
+            "Missing bootstrap token",
+            "Invalid bootstrap token");
     try {
-      claims = jwtUtil.parseToken(bootstrapToken).getPayload();
-    } catch (RuntimeException ex) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
-    }
-    try {
-      if (!"player-bootstrap".equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
-        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
-      }
       long accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
       long tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
       Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
@@ -894,12 +889,13 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private ConnectScopeContext requireConnectScopeContext(String connectScopeId) {
-    Claims claims;
-    try {
-      claims = jwtUtil.parseToken(connectScopeId).getPayload();
-    } catch (RuntimeException ex) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
-    }
+    Claims claims =
+        requireSignedTokenClaims(
+            connectScopeId,
+            "bootstrap-connect-scope",
+            "CONNECT_SCOPE_INVALID",
+            INVALID_CONNECT_SCOPE_MESSAGE,
+            INVALID_CONNECT_SCOPE_MESSAGE);
     long accountId;
     long tenantId;
     long gameInstanceId;
@@ -907,9 +903,6 @@ public class AccountServiceImpl implements AccountService {
     String worldSlug;
     String realmSlug;
     try {
-      if (!"bootstrap-connect-scope".equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
-        throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
-      }
       accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
       tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
       gameInstanceId = JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false);
@@ -931,6 +924,31 @@ public class AccountServiceImpl implements AccountService {
         gameInstanceId,
         pointerVersion,
         connectScopeExpiresAt);
+  }
+
+  private Claims requireSignedTokenClaims(
+      String token,
+      String expectedAudience,
+      String errorCode,
+      String missingTokenMessage,
+      String invalidTokenMessage) {
+    if (token == null || token.isBlank()) {
+      throw new AuthenticationException(errorCode, missingTokenMessage);
+    }
+    Claims claims;
+    try {
+      claims = jwtUtil.parseToken(token).getPayload();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(errorCode, invalidTokenMessage, ex);
+    }
+    try {
+      if (!expectedAudience.equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
+        throw new AuthenticationException(errorCode, invalidTokenMessage);
+      }
+      return claims;
+    } catch (IllegalArgumentException ex) {
+      throw new AuthenticationException(errorCode, invalidTokenMessage, ex);
+    }
   }
 
   private void validateConnectScopeAgainstBootstrap(
