@@ -109,4 +109,19 @@ class SessionContextTest {
     assertFalse(context.hasPartialPersistedFirstPartyConnectContext());
     assertTrue(context.persistedFirstPartyConnectContext().isEmpty());
   }
+
+  @Test
+  void hasGameplayRegionBindingRequiresGameInstanceCharacterAndRoom() {
+    SessionContext complete =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+    SessionContext missingRoom =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, null, "jwt");
+    SessionContext missingCharacter =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "room-1", "jwt");
+
+    assertTrue(complete.hasGameplayRegionBinding());
+    assertFalse(missingRoom.hasGameplayRegionBinding());
+    assertFalse(missingCharacter.hasGameplayRegionBinding());
+  }
 }

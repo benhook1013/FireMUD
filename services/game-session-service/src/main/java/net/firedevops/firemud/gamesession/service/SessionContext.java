@@ -280,6 +280,13 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  public boolean hasGameplayRegionBinding() {
+    return gameInstanceId > 0
+        && characterId > 0
+        && roomInstanceId != null
+        && !roomInstanceId.isBlank();
+  }
+
   public boolean sameGameplayIdentity(SessionContext that) {
     if (that == null) {
       return false;

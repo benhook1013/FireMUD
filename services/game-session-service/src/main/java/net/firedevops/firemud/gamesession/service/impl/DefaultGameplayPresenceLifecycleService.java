@@ -9,7 +9,6 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 public final class DefaultGameplayPresenceLifecycleService
@@ -75,9 +74,7 @@ public final class DefaultGameplayPresenceLifecycleService
   }
 
   private boolean hasGameplayRegionBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        && context.characterId() > 0
-        && StringUtils.hasText(context.roomInstanceId());
+    return context != null && context.hasGameplayRegionBinding();
   }
 
   private static String disconnectEventId(
