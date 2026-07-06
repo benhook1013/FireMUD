@@ -48,7 +48,7 @@ public class SessionServiceImpl implements SessionService {
   @Timed(value = "session.get")
   public Long getAccountId(Long tenantId, String token) {
     Object value = redisTemplate.opsForValue().get(tenantKey(tenantId, token));
-    return value != null ? Long.valueOf(value.toString()) : null;
+    return parseRequiredLong(value).orElse(null);
   }
 
   @Override
