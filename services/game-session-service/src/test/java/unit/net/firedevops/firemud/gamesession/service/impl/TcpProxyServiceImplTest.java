@@ -427,6 +427,88 @@ class TcpProxyServiceImplTest {
     Mockito.verifyNoInteractions(repository);
   }
 
+  @Test
+  void disconnectWithoutGameInstanceMetadataIgnoresZeroSessionId() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+    GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+        Mockito.mock(GameplayPresenceLifecycleService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            disconnectDeduplicationService,
+            gameplayPresenceLifecycleService);
+
+    AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
+    service.notifyDisconnect(
+        NotifyDisconnectRequest.newBuilder()
+            .setSessionId("0")
+            .setTenantId("7")
+            .setProxyConnectionId("proxy-1")
+            .setDisconnectSequence(1L)
+            .build(),
+        observerFor(ref));
+
+    assertEquals("OK", ref.get().getError().getCode());
+    assertEquals(
+        1.0, meterRegistry.get("gamesession.notifydisconnect.missing_context").counter().count());
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService);
+    Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void disconnectWithoutGameInstanceMetadataIgnoresNegativeSessionId() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+    GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
+        Mockito.mock(GameplayPresenceLifecycleService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            disconnectDeduplicationService,
+            gameplayPresenceLifecycleService);
+
+    AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
+    service.notifyDisconnect(
+        NotifyDisconnectRequest.newBuilder()
+            .setSessionId("-1")
+            .setTenantId("7")
+            .setProxyConnectionId("proxy-1")
+            .setDisconnectSequence(1L)
+            .build(),
+        observerFor(ref));
+
+    assertEquals("OK", ref.get().getError().getCode());
+    assertEquals(
+        1.0, meterRegistry.get("gamesession.notifydisconnect.missing_context").counter().count());
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService);
+    Mockito.verifyNoInteractions(sessionStateService);
+    Mockito.verifyNoInteractions(repository);
+  }
+
   private static StreamObserver<NotifyDisconnectResponse> observerFor(
       AtomicReference<NotifyDisconnectResponse> ref) {
     return new StreamObserver<>() {

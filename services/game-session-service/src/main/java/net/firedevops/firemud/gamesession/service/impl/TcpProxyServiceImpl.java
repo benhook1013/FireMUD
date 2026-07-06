@@ -104,9 +104,9 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     if (StringUtils.hasText(request.getSessionId())) {
       try {
         gameplayPresenceLifecycleService.recordDisconnected(
-            Long.parseLong(request.getSessionId()),
+            ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId"),
             AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-      } catch (NumberFormatException ignored) {
+      } catch (IllegalArgumentException ignored) {
         // best-effort advisory cleanup only
       }
     }
