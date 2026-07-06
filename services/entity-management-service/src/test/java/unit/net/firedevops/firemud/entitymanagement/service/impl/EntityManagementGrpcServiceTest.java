@@ -756,6 +756,82 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void putItemIntoContainerRejectsZeroQuantityBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    PutItemIntoContainerResponse replayed =
+        PutItemIntoContainerResponse.newBuilder()
+            .setContainerItem(
+                net.firedevops.firemud.entitymanagement.v1.ContainerItem.newBuilder()
+                    .setItemId("11")
+                    .setItemName("Replayed Torch")
+                    .setQuantity(1))
+            .build();
+    Mockito.when(
+            replayService.execute(
+                Mockito.anyLong(),
+                Mockito.eq("effect-qty-3"),
+                Mockito.eq("PutItemIntoContainer"),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(replayed);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<PutItemIntoContainerResponse> ref = new AtomicReference<>();
+    service.putItemIntoContainer(
+        PutItemIntoContainerRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setItemId("11")
+            .setQuantity(0)
+            .setEffectId("effect-qty-3")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PutItemIntoContainerResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("quantity must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(containerService);
+    verifyNoInteractions(replayService);
+  }
+
+  @Test
   void takeItemFromContainerReturnsMappedInventoryItem() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -898,6 +974,82 @@ class EntityManagementGrpcServiceTest {
     assertEquals("Torch", ref.get().getInventoryItem().getItemName());
     assertEquals("44", ref.get().getInventoryItem().getItemInstanceId());
     assertEquals("torch44", ref.get().getInventoryItem().getVisibleRef());
+  }
+
+  @Test
+  void takeItemFromContainerRejectsZeroQuantityBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    TakeItemFromContainerResponse replayed =
+        TakeItemFromContainerResponse.newBuilder()
+            .setInventoryItem(
+                net.firedevops.firemud.entitymanagement.v1.InventoryItem.newBuilder()
+                    .setItemId("11")
+                    .setItemName("Replayed Torch")
+                    .setQuantity(1))
+            .build();
+    Mockito.when(
+            replayService.execute(
+                Mockito.anyLong(),
+                Mockito.eq("effect-qty-4"),
+                Mockito.eq("TakeItemFromContainer"),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(replayed);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<TakeItemFromContainerResponse> ref = new AtomicReference<>();
+    service.takeItemFromContainer(
+        TakeItemFromContainerRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setItemId("11")
+            .setQuantity(0)
+            .setEffectId("effect-qty-4")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(TakeItemFromContainerResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("quantity must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(containerService);
+    verifyNoInteractions(replayService);
   }
 
   @Test
@@ -2623,6 +2775,82 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void pickupItemFromRoomRejectsZeroQuantityBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    PickupItemFromRoomResponse replayed =
+        PickupItemFromRoomResponse.newBuilder()
+            .setInventoryItem(
+                net.firedevops.firemud.entitymanagement.v1.InventoryItem.newBuilder()
+                    .setItemId("99")
+                    .setItemName("Replayed Torch")
+                    .setQuantity(1))
+            .build();
+    Mockito.when(
+            replayService.execute(
+                Mockito.anyLong(),
+                Mockito.eq("effect-qty-1"),
+                Mockito.eq("PickupItemFromRoom"),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(replayed);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            Mockito.mock(ContainerService.class),
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<PickupItemFromRoomResponse> ref = new AtomicReference<>();
+    service.pickupItemFromRoom(
+        PickupItemFromRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("R-1")
+            .setItemId("99")
+            .setQuantity(0)
+            .setEffectId("effect-qty-1")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PickupItemFromRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("quantity must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService);
+    verifyNoInteractions(replayService);
+  }
+
+  @Test
   void dropItemToRoomRejectsMalformedItemInstanceIdBeforeReplayLookup() throws Exception {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -2695,6 +2923,82 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("itemInstanceId must be numeric", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService);
+    verifyNoInteractions(replayService);
+  }
+
+  @Test
+  void dropItemToRoomRejectsZeroQuantityBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    DropItemToRoomResponse replayed =
+        DropItemToRoomResponse.newBuilder()
+            .setRoomGroundItem(
+                net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem.newBuilder()
+                    .setItemId("99")
+                    .setItemName("Replayed Torch")
+                    .setQuantity(1))
+            .build();
+    Mockito.when(
+            replayService.execute(
+                Mockito.anyLong(),
+                Mockito.eq("effect-qty-2"),
+                Mockito.eq("DropItemToRoom"),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(replayed);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            Mockito.mock(ContainerService.class),
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<DropItemToRoomResponse> ref = new AtomicReference<>();
+    service.dropItemToRoom(
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("R-1")
+            .setItemId("99")
+            .setQuantity(0)
+            .setEffectId("effect-qty-2")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(DropItemToRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("quantity must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(inventoryService);
     verifyNoInteractions(replayService);
   }

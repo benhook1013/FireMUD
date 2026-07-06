@@ -1224,6 +1224,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      int quantity = requirePositiveQuantity(request.getQuantity());
       PutItemIntoContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1241,7 +1242,7 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity(),
+                        quantity,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return PutItemIntoContainerResponse.newBuilder()
@@ -1313,6 +1314,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      int quantity = requirePositiveQuantity(request.getQuantity());
       TakeItemFromContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1330,7 +1332,7 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity(),
+                        quantity,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return TakeItemFromContainerResponse.newBuilder()
@@ -1472,7 +1474,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
-      int quantity = request.getQuantity();
+      int quantity = requirePositiveQuantity(request.getQuantity());
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1558,7 +1560,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
-      int quantity = request.getQuantity();
+      int quantity = requirePositiveQuantity(request.getQuantity());
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1838,7 +1840,21 @@ public class EntityManagementGrpcService
 
   private Instant parseOptionalInstant(String value) {
     String text = blankToNull(value);
-    return text == null ? null : Instant.parse(text);
+    if (text == null) {
+      return null;
+    }
+    try {
+      return Instant.parse(text);
+    } catch (RuntimeException ex) {
+      throw new IllegalArgumentException("expiresAt must be ISO-8601", ex);
+    }
+  }
+
+  private int requirePositiveQuantity(int quantity) {
+    if (quantity <= 0) {
+      throw new IllegalArgumentException("quantity must be positive");
+    }
+    return quantity;
   }
 
   private String blankToNull(String value) {
