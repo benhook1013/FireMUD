@@ -91,10 +91,11 @@ public final class LoginCommandHandler {
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
 
-    Long numericSessionId = parseSessionId(sessionId);
-    if (numericSessionId == null) {
-      return invalidSessionFailure();
+    ParsedSessionId parsedSessionId = parseSessionId(sessionId);
+    if (!parsedSessionId.valid()) {
+      return invalidSessionFailure(parsedSessionId.errorMessage());
     }
+    long numericSessionId = parsedSessionId.value();
 
     long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
     if (bootstrapGameInstanceId <= 0) {
@@ -159,10 +160,11 @@ public final class LoginCommandHandler {
 
   private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    Long numericSessionId = parseSessionId(sessionId);
-    if (numericSessionId == null) {
-      return invalidSessionFailure();
+    ParsedSessionId parsedSessionId = parseSessionId(sessionId);
+    if (!parsedSessionId.valid()) {
+      return invalidSessionFailure(parsedSessionId.errorMessage());
     }
+    long numericSessionId = parsedSessionId.value();
     SessionContext existingSession =
         sessionRoutingNormalizationService.resolveProjectedSessionContext(sessionId).orElse(null);
     FirstPartyConnectContextResolution connectContextResolution =
@@ -440,11 +442,11 @@ public final class LoginCommandHandler {
     return "UPSTREAM_FAILURE";
   }
 
-  private Long parseSessionId(String sessionIdText) {
+  private ParsedSessionId parseSessionId(String sessionIdText) {
     try {
-      return JwtClaims.requireLong(sessionIdText, "sessionId", false);
+      return new ParsedSessionId(JwtClaims.requireLong(sessionIdText, "sessionId", false), null);
     } catch (RuntimeException ex) {
-      return null;
+      return new ParsedSessionId(null, invalidSessionMessage(ex));
     }
   }
 
@@ -456,8 +458,15 @@ public final class LoginCommandHandler {
     }
   }
 
-  private LoginCommandHandlingResult invalidSessionFailure() {
-    return failure("INVALID_ARGUMENT", "sessionId must be numeric");
+  private LoginCommandHandlingResult invalidSessionFailure(String message) {
+    return failure("INVALID_ARGUMENT", message);
+  }
+
+  private String invalidSessionMessage(RuntimeException ex) {
+    if ("Invalid claim: sessionId".equals(ex.getMessage())) {
+      return "sessionId must be positive";
+    }
+    return "sessionId must be numeric";
   }
 
   private LoginCommandHandlingResult invalidAccountFailure() {
@@ -469,6 +478,12 @@ public final class LoginCommandHandler {
     return failure(
         LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
         LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
+  }
+
+  private record ParsedSessionId(Long value, String errorMessage) {
+    boolean valid() {
+      return value != null;
+    }
   }
 
   private LoginCommandHandlingResult failure(String code, String message) {

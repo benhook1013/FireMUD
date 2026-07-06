@@ -149,7 +149,7 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
     assertEquals(
-        "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
+        "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
@@ -167,8 +167,21 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
     assertEquals(
-        "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
+        "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void bareLoginInvalidZeroSessionIdReturnsInvalidArgument() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+
+    LoginCommandHandlingResult result = handler.handle("0", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_ARGUMENT sessionId must be positive", joinedOutputText(result.outputs()));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
