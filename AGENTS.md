@@ -76,6 +76,9 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Breaking changes are allowed across DB schema, Redis keys, protocol fields, route shapes, and internal APIs.
 - Do not add migration scaffolding unless explicitly requested.
 - When a contract changes, update all call sites, tests, and docs in the same change and remove obsolete paths.
+- Because the product is still pre-v1, AI contributors have standing permission to widen a slice, create a new concrete slice, or complete a broader convergence pass when that is the cheaper or more correct path to the designed target state.
+- Do not artificially keep work narrow when the live invariant clearly spans multiple services or seams and a wider in-scope pass will reduce churn, repeated review cost, or follow-up rework.
+- Do not stop to ask for special approval merely because a change becomes cross-service, breaking, or larger than an initially narrow seam; only stop when design intent is genuinely unclear or competing target states exist.
 
 ## Documentation Rules
 
