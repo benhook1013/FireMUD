@@ -15,8 +15,6 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
-- Keep fast-moving AI-driven PRs in draft while push-looping so CodeRabbit does not auto-review every incremental commit.
-- If a PR must stay non-draft during active iteration, pause CodeRabbit with `@coderabbitai pause` and request a fresh pass only at meaningful checkpoints with `@coderabbitai review` or `@coderabbitai full review`. Do not use `@coderabbit`; use `@coderabbitai` only.
 - Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
