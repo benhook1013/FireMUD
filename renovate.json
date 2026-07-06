@@ -34,7 +34,10 @@
         "minor",
         "patch"
       ],
-      "groupName": "gradle non-major updates"
+      "groupName": "gradle non-major updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
     },
     {
       "matchManagers": [
