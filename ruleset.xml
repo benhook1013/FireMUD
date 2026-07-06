@@ -7,12 +7,13 @@
 
     <description>
         CodeRabbit-only PMD rules for FireMUD. Keep this broader than the minimal fallback config,
-        but still biased toward correctness-oriented categories instead of style and documentation
-        churn that already overlap heavily with Checkstyle and Spotless.
+        but still biased toward correctness- and runtime-behavior-oriented categories instead of
+        style and documentation churn that already overlap heavily with Checkstyle and Spotless.
     </description>
 
     <rule ref="category/java/bestpractices.xml" />
     <rule ref="category/java/errorprone.xml" />
     <rule ref="category/java/multithreading.xml" />
+    <rule ref="category/java/performance.xml" />
     <rule ref="category/java/security.xml" />
 </ruleset>
