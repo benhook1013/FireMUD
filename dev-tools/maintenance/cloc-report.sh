@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TEMP BACKLOG
+# Track near-term script improvements here until we decide which ones to keep.
+# Clean this header up once the next round of cloc-report work is chosen.
+#
+# Candidate improvements:
+# - Add a by-service mode so FireMUD service ownership is visible instead of
+#   only global repo/source/prod/test totals.
+# - Make source/prod/tests accounting additive from one canonical file
+#   inventory so duplicate suppression does not cause split totals to drift.
+# - Add machine-readable output helpers such as JSON or CSV for CI, trending,
+#   and PR/report automation.
+# - Add a changed-files mode to count only files touched relative to a base
+#   ref or commit.
+# - Add more document-focused modes, for example separating architecture docs
+#   under design/ from broader repository Markdown.
+# - Add a short summary output mode for easy paste into PRs, notes, or audit
+#   logs.
+
 usage() {
   cat <<'EOF'
 Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|markdown] [extra cloc args...]
