@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
@@ -1750,15 +1751,7 @@ public class EntityManagementGrpcService
   }
 
   private long requirePositiveLong(String value, String fieldName) {
-    try {
-      long parsed = Long.parseLong(value);
-      if (parsed <= 0L) {
-        throw new IllegalArgumentException(fieldName + " must be positive");
-      }
-      return parsed;
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException(fieldName + " must be numeric", ex);
-    }
+    return RequestIdValidation.requirePositiveLong(value, fieldName);
   }
 
   private Long parseOptionalPositiveLong(String value, String fieldName) {

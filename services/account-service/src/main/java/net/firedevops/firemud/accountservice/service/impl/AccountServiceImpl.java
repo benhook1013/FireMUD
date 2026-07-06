@@ -1414,54 +1414,70 @@ public class AccountServiceImpl implements AccountService {
 
   private Optional<RuntimeRealmTarget> readRuntimeRealmTarget(
       net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
-    Long tenantId = parseLong(realm.getTenantId());
-    Long gameInstanceId = parseLong(realm.getGameInstanceId());
-    if (tenantId == null
-        || gameInstanceId == null
-        || realm.getPointerVersion() <= 0
-        || !StringUtils.hasText(realm.getWorldSlug())
-        || !StringUtils.hasText(realm.getRealmSlug())) {
-      return Optional.empty();
-    }
-    return Optional.of(
-        new RuntimeRealmTarget(
-            tenantId,
-            gameInstanceId,
-            realm.getWorldSlug(),
-            realm.getRealmSlug(),
-            realm.getPointerVersion(),
-            realm.getVisible(),
-            realm.getPublicProductionRealm(),
-            realm.getStateScope(),
-            realm.getCharacterCreationPolicy(),
-            realm.getRequiresCharacterSelection(),
-            realm.getDisplayName()));
+    return buildRuntimeRealmTarget(
+        realm.getTenantId(),
+        realm.getGameInstanceId(),
+        realm.getPointerVersion(),
+        realm.getWorldSlug(),
+        realm.getRealmSlug(),
+        realm.getVisible(),
+        realm.getPublicProductionRealm(),
+        realm.getStateScope(),
+        realm.getCharacterCreationPolicy(),
+        realm.getRequiresCharacterSelection(),
+        realm.getDisplayName());
   }
 
   private Optional<RuntimeRealmTarget> readRuntimeRealmTarget(
       net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
-    Long tenantId = parseLong(realm.getTenantId());
-    Long gameInstanceId = parseLong(realm.getGameInstanceId());
+    return buildRuntimeRealmTarget(
+        realm.getTenantId(),
+        realm.getGameInstanceId(),
+        realm.getPointerVersion(),
+        realm.getWorldSlug(),
+        realm.getRealmSlug(),
+        realm.getVisible(),
+        realm.getPublicProductionRealm(),
+        realm.getStateScope(),
+        realm.getCharacterCreationPolicy(),
+        realm.getRequiresCharacterSelection(),
+        realm.getRealmDisplayName());
+  }
+
+  private Optional<RuntimeRealmTarget> buildRuntimeRealmTarget(
+      String tenantIdText,
+      String gameInstanceIdText,
+      long pointerVersion,
+      String worldSlug,
+      String realmSlug,
+      boolean visible,
+      boolean publicProductionRealm,
+      String stateScope,
+      String characterCreationPolicy,
+      boolean requiresCharacterSelection,
+      String displayName) {
+    Long tenantId = parseLong(tenantIdText);
+    Long gameInstanceId = parseLong(gameInstanceIdText);
     if (tenantId == null
         || gameInstanceId == null
-        || realm.getPointerVersion() <= 0
-        || !StringUtils.hasText(realm.getWorldSlug())
-        || !StringUtils.hasText(realm.getRealmSlug())) {
+        || pointerVersion <= 0
+        || !StringUtils.hasText(worldSlug)
+        || !StringUtils.hasText(realmSlug)) {
       return Optional.empty();
     }
     return Optional.of(
         new RuntimeRealmTarget(
             tenantId,
             gameInstanceId,
-            realm.getWorldSlug(),
-            realm.getRealmSlug(),
-            realm.getPointerVersion(),
-            realm.getVisible(),
-            realm.getPublicProductionRealm(),
-            realm.getStateScope(),
-            realm.getCharacterCreationPolicy(),
-            realm.getRequiresCharacterSelection(),
-            realm.getRealmDisplayName()));
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            visible,
+            publicProductionRealm,
+            stateScope,
+            characterCreationPolicy,
+            requiresCharacterSelection,
+            displayName));
   }
 
   private PlayableStateScope toPlayableStateScope(RuntimeRealmTarget realm) {

@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
@@ -835,15 +836,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   private long requirePositiveLong(String value, String fieldName) {
-    try {
-      long parsed = Long.parseLong(value);
-      if (parsed <= 0L) {
-        throw new IllegalArgumentException(fieldName + " must be positive");
-      }
-      return parsed;
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException(fieldName + " must be numeric", ex);
-    }
+    return RequestIdValidation.requirePositiveLong(value, fieldName);
   }
 
   private Long requireOptionalPositiveLong(String value, String fieldName) {
