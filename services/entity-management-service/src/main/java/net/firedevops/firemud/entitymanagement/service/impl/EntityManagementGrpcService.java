@@ -707,14 +707,13 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       var entries =
           inventoryService
               .listInventory(
-                  tenantId,
-                  characterId,
+                  actorScope.tenantId(),
+                  actorScope.characterId(),
                   resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                   resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                   Pageable.unpaged())
@@ -724,21 +723,21 @@ public class EntityManagementGrpcService
           QueryInventoryResponse.newBuilder().addAllItems(items).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      QueryInventoryResponse response =
-          QueryInventoryResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "QueryInventory", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder()
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "QueryInventory", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryInventory", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -770,13 +769,12 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       var actorState =
           actorStateService.queryActorState(
-              tenantId,
-              characterId,
+              actorScope.tenantId(),
+              actorScope.characterId(),
               resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
               resolvePlayableStateScope(request.getPlayableStateScope(), claims));
       QueryActorStateResponse response =
@@ -787,19 +785,6 @@ public class EntityManagementGrpcService
               .addAllResources(actorState.resources().stream().map(this::toProto).toList())
               .addAllActiveConditions(
                   actorState.activeConditions().stream().map(this::toProto).toList())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      QueryActorStateResponse response =
-          QueryActorStateResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "QueryActorState",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -854,19 +839,18 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getSourceId(),
               "ApplyActorCondition",
               () -> {
                 ActorConditionStateDto activeCondition =
                     actorConditionMutationService.applyCondition(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getConditionKey(),
@@ -881,18 +865,6 @@ public class EntityManagementGrpcService
               },
               ApplyActorConditionResponse::parseFrom);
       responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      responseObserver.onNext(
-          ApplyActorConditionResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ApplyActorCondition",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build());
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
       responseObserver.onNext(
@@ -941,13 +913,12 @@ public class EntityManagementGrpcService
           request.getGameInstanceId(),
           null,
           request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       var items =
           equipmentService.listEquipment(
-              tenantId,
-              characterId,
+              actorScope.tenantId(),
+              actorScope.characterId(),
               request.getGameInstanceId(),
               resolvePlayableStateScope(request.getPlayableStateScope(), null),
               Pageable.unpaged());
@@ -957,21 +928,21 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      ListEquipmentResponse response =
-          ListEquipmentResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "ListEquipment", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
       ListEquipmentResponse response =
           ListEquipmentResponse.newBuilder()
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, logger, "ListEquipment", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ListEquipment", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1881,6 +1852,25 @@ public class EntityManagementGrpcService
     SessionContext.requireTenantAccess(tenantId);
   }
 
+  private GameplayActorScope requireGameplayActorScope(
+      String tenantIdText, String characterIdText) {
+    long tenantId = requirePositiveLong(tenantIdText, "tenantId");
+    requireTenantAccessWhenPresent(tenantId);
+    return new GameplayActorScope(tenantId, requirePositiveLong(characterIdText, "characterId"));
+  }
+
+  private long requirePositiveLong(String value, String fieldName) {
+    try {
+      long parsed = Long.parseLong(value);
+      if (parsed <= 0L) {
+        throw new IllegalArgumentException(fieldName + " must be positive");
+      }
+      return parsed;
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException(fieldName + " must be numeric", ex);
+    }
+  }
+
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
       String operation, ResponseStatusException ex) {
     return GrpcAppErrors.error(meterRegistry, logger, operation, appErrorCode(ex), ex.getReason());
@@ -1889,6 +1879,8 @@ public class EntityManagementGrpcService
   private String appErrorCode(ResponseStatusException ex) {
     return ex.getStatusCode().value() == 403 ? "PERMISSION_DENIED" : "INVALID_ARGUMENT";
   }
+
+  private record GameplayActorScope(long tenantId, long characterId) {}
 
   private PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
     if (playableStateScope == null

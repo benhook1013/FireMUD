@@ -1363,6 +1363,50 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void queryInventoryRejectsZeroCharacterIdBeforeInventoryLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
+    service.queryInventory(
+        QueryInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("0")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("characterId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService);
+  }
+
+  @Test
   void queryActorStateReturnsResourcesAndActiveConditions() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1449,6 +1493,63 @@ class EntityManagementGrpcServiceTest {
     assertEquals(90L, ref.get().getResources(0).getMaxValue());
     assertEquals("poisoned", ref.get().getActiveConditions(0).getConditionKey());
     assertEquals("2026-04-24T00:00:30Z", ref.get().getActiveConditions(0).getExpiresAt());
+  }
+
+  @Test
+  void queryActorStateRejectsMalformedCharacterIdBeforeActorStateLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<QueryActorStateResponse> ref = new AtomicReference<>();
+    service.queryActorState(
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("bad")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryActorStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("characterId must be numeric", ref.get().getError().getMessage());
+    verifyNoInteractions(actorStateService);
   }
 
   @Test
@@ -1663,6 +1764,72 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void applyActorConditionRejectsZeroTenantIdBeforeReplayExecution() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("0")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setStackCount(1)
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(conditionMutationService, effectReplayService);
+  }
+
+  @Test
   void listEquipmentReturnsEquipmentItems() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1723,6 +1890,50 @@ class EntityManagementGrpcServiceTest {
     assertEquals("HEAD", ref.get().getItems(0).getSlot());
     assertEquals("66", ref.get().getItems(0).getContainerInstanceId());
     assertEquals("leathercap4", ref.get().getItems(0).getVisibleRef());
+  }
+
+  @Test
+  void listEquipmentRejectsMalformedCharacterIdBeforeEquipmentLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListEquipmentResponse> ref = new AtomicReference<>();
+    service.listEquipment(
+        ListEquipmentRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("bad")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListEquipmentResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("characterId must be numeric", ref.get().getError().getMessage());
+    verifyNoInteractions(equipmentService);
   }
 
   @Test
