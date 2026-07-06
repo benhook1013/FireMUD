@@ -1,11 +1,14 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -40,6 +43,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 class WorldManagementGrpcServiceTest {
@@ -598,5 +603,39 @@ class WorldManagementGrpcServiceTest {
             .tag("code", "SESSION_ATTESTATION_INVALID")
             .counter()
             .count());
+  }
+
+  @Test
+  void requireTenantAccessWhenPresentRejectsMalformedCurrentAccountClaim() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("not-a-long", List.of(), Map.of());
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            Mockito.mock(WorldDraftDesignDigestService.class),
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            meterRegistry,
+            new ObjectMapper());
+
+    InvocationTargetException thrown =
+        assertThrows(
+            InvocationTargetException.class,
+            () -> {
+              var method =
+                  WorldManagementGrpcService.class.getDeclaredMethod(
+                      "requireTenantAccessWhenPresent", Long.class);
+              method.setAccessible(true);
+              method.invoke(service, 1L);
+            });
+
+    ResponseStatusException responseStatusException =
+        assertInstanceOf(ResponseStatusException.class, thrown.getCause());
+    assertEquals(HttpStatus.FORBIDDEN, responseStatusException.getStatusCode());
   }
 }

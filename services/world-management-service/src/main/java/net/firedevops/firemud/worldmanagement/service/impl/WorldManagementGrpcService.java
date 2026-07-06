@@ -903,9 +903,7 @@ public class WorldManagementGrpcService
     if (SessionContext.isInternalService()) {
       return;
     }
-    if (SessionContext.getAccountId() == null
-        && SessionContext.getGlobalRoles().isEmpty()
-        && SessionContext.getScopedRolesMap().isEmpty()) {
+    if (!SessionContext.hasAuthenticatedCallerContext()) {
       return;
     }
     SessionContext.requireTenantAccess(tenantId);

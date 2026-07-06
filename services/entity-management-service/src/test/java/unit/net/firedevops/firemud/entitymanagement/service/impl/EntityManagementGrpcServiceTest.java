@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -1013,6 +1014,55 @@ class EntityManagementGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void listCharactersRejectsMalformedCurrentAccountClaimWithoutTenantAccess() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    EntityManagementGrpcService service =
+        newServiceWithoutContext(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            meterRegistry);
+    SessionContext.setContext("not-a-long", List.of(), Map.of());
+
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        ref = new AtomicReference<>();
+    service.listCharactersByAccount(
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("44")
+            .setGameInstanceId("44")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(
+              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(characterService);
   }
 
   @Test
