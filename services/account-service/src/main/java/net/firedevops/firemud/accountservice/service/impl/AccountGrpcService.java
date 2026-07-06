@@ -85,7 +85,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       net.firedevops.firemud.accountservice.dto.CreateAccountRequest dto =
           new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
-              Long.valueOf(request.getTenantId()),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getUsername(),
               request.getEmail(),
               request.getPassword());
@@ -93,6 +93,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       CreateAccountResponse response =
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      responseObserver.onNext(
+          CreateAccountResponse.newBuilder()
+              .setError(appError("CreateAccount", "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -110,7 +116,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticate(
-              Long.valueOf(request.getTenantId()),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getUsername(),
               request.getPassword(),
               request.getOtp());
@@ -118,6 +124,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
               .setAccountId(String.valueOf(result.accountId()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -322,10 +335,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var dto =
           accountService.getProfile(
-              Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
+              requirePositiveRequestId(request.getAccountId(), "accountId"));
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
               .setProfileJson(JsonMapper.builder().build().writeValueAsString(dto))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      GetProfileResponse response =
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -350,8 +371,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
       accountService.updateProfile(
           new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
+              requirePositiveRequestId(request.getAccountId(), "accountId"),
               displayName,
               bio,
               ProfilePresenceVisibilityPolicy.valueOf(
@@ -359,6 +380,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                       ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
                       : presenceVisibilityPolicy)));
       UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("UpdateProfile", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -377,11 +406,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void exportAccount(
       ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
     try {
-      var data = accountService.exportAccountData(Long.valueOf(request.getAccountId()));
+      var data =
+          accountService.exportAccountData(
+              requirePositiveRequestId(request.getAccountId(), "accountId"));
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
               .setProfilesJson(JsonMapper.builder().build().writeValueAsString(data.profiles()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setError(appError("ExportAccount", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -402,7 +440,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var data =
           accountService.exportTenantData(
-              Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
+              requirePositiveRequestId(request.getAccountId(), "accountId"));
       ExportTenantDataResponse response =
           ExportTenantDataResponse.newBuilder()
               .setTenantId(String.valueOf(data.tenantId()))
@@ -411,6 +450,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                   data.profile() != null
                       ? JsonMapper.builder().build().writeValueAsString(data.profile())
                       : "")
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setError(appError("ExportTenantData", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -430,8 +476,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      accountService.deleteAccount(Long.valueOf(request.getAccountId()));
+      accountService.deleteAccount(requirePositiveRequestId(request.getAccountId(), "accountId"));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("DeleteAccount", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -521,13 +575,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       accountService.linkExternalAccount(
           new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
+              requirePositiveRequestId(request.getAccountId(), "accountId"),
               request.getProvider(),
               request.getExternalId()));
       var response =
           net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("LinkExternalAccount", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -549,10 +611,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
           responseObserver) {
     try {
-      accountService.requestEmailVerification(Long.valueOf(request.getAccountId()));
+      accountService.requestEmailVerification(
+          requirePositiveRequestId(request.getAccountId(), "accountId"));
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("RequestEmailVerification", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

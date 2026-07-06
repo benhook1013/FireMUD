@@ -20,6 +20,8 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
+import net.firedevops.firemud.account.v1.ExportTenantDataRequest;
+import net.firedevops.firemud.account.v1.ExportTenantDataResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -184,6 +186,39 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void createAccountRejectsZeroTenantIdBeforeCreate() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<CreateAccountResponse> ref = new AtomicReference<>();
+    service.createAccount(
+        CreateAccountRequest.newBuilder()
+            .setTenantId("0")
+            .setUsername("demo")
+            .setEmail("e@example.com")
+            .setPassword("pass")
+            .build(),
+        new StreamObserver<CreateAccountResponse>() {
+          @Override
+          public void onNext(CreateAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void getProfileReturnsProfile() throws Exception {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -223,6 +258,34 @@ class AccountGrpcServiceTest {
             .readTree(ref.get().getProfileJson())
             .path("presenceVisibilityPolicy")
             .asText());
+  }
+
+  @Test
+  void getProfileRejectsZeroAccountIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
+    service.getProfile(
+        GetProfileRequest.newBuilder().setTenantId("1").setAccountId("0").build(),
+        new StreamObserver<GetProfileResponse>() {
+          @Override
+          public void onNext(GetProfileResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
@@ -473,6 +536,39 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void authenticateRejectsZeroTenantIdBeforeAuthentication() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
+    service.authenticate(
+        AuthenticateRequest.newBuilder()
+            .setTenantId("0")
+            .setUsername("demo")
+            .setPassword("bad")
+            .setOtp("")
+            .build(),
+        new StreamObserver<AuthenticateResponse>() {
+          @Override
+          public void onNext(AuthenticateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void updateProfileErrorReturnsDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -506,6 +602,39 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void updateProfileRejectsZeroTenantIdBeforeUpdate() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<UpdateProfileResponse> ref = new AtomicReference<>();
+    service.updateProfile(
+        UpdateProfileRequest.newBuilder()
+            .setTenantId("0")
+            .setAccountId("2")
+            .setProfileJson(
+                "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+            .build(),
+        new StreamObserver<UpdateProfileResponse>() {
+          @Override
+          public void onNext(UpdateProfileResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void exportAccountErrorReturnsDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -534,6 +663,62 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void exportAccountRejectsZeroAccountIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<ExportAccountResponse> ref = new AtomicReference<>();
+    service.exportAccount(
+        ExportAccountRequest.newBuilder().setAccountId("0").build(),
+        new StreamObserver<ExportAccountResponse>() {
+          @Override
+          public void onNext(ExportAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void exportTenantDataRejectsZeroTenantIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<ExportTenantDataResponse> ref = new AtomicReference<>();
+    service.exportTenantData(
+        ExportTenantDataRequest.newBuilder().setTenantId("0").setAccountId("2").build(),
+        new StreamObserver<ExportTenantDataResponse>() {
+          @Override
+          public void onNext(ExportTenantDataResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void deleteAccountSuccess() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -558,6 +743,36 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertTrue(ref.get().getSuccess());
+  }
+
+  @Test
+  void deleteAccountRejectsZeroAccountIdBeforeDelete() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
+    service.deleteAccount(
+        DeleteAccountRequest.newBuilder().setAccountId("0").build(),
+        new StreamObserver<DeleteAccountResponse>() {
+          @Override
+          public void onNext(DeleteAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
@@ -590,6 +805,74 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertTrue(ref.get().getSuccess());
+  }
+
+  @Test
+  void linkExternalAccountRejectsZeroTenantIdBeforeLink() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> ref =
+        new AtomicReference<>();
+    service.linkExternalAccount(
+        net.firedevops.firemud.account.v1.LinkExternalAccountRequest.newBuilder()
+            .setTenantId("0")
+            .setAccountId("2")
+            .setProvider("google")
+            .setExternalId("abc")
+            .build(),
+        new StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>() {
+          @Override
+          public void onNext(net.firedevops.firemud.account.v1.LinkExternalAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void requestEmailVerificationRejectsZeroAccountIdBeforeDispatch() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> ref =
+        new AtomicReference<>();
+    service.requestEmailVerification(
+        net.firedevops.firemud.account.v1.RequestEmailVerificationRequest.newBuilder()
+            .setAccountId("0")
+            .build(),
+        new StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>() {
+          @Override
+          public void onNext(
+              net.firedevops.firemud.account.v1.RequestEmailVerificationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
