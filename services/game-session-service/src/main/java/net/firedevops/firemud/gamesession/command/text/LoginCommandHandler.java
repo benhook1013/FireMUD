@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
@@ -91,7 +92,7 @@ public final class LoginCommandHandler {
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
 
-    ParsedSessionId parsedSessionId = parseSessionId(sessionId);
+    SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
     if (!parsedSessionId.valid()) {
       return invalidSessionFailure(parsedSessionId.errorMessage());
     }
@@ -160,7 +161,7 @@ public final class LoginCommandHandler {
 
   private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    ParsedSessionId parsedSessionId = parseSessionId(sessionId);
+    SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
     if (!parsedSessionId.valid()) {
       return invalidSessionFailure(parsedSessionId.errorMessage());
     }
@@ -442,12 +443,8 @@ public final class LoginCommandHandler {
     return "UPSTREAM_FAILURE";
   }
 
-  private ParsedSessionId parseSessionId(String sessionIdText) {
-    try {
-      return new ParsedSessionId(JwtClaims.requireLong(sessionIdText, "sessionId", false), null);
-    } catch (RuntimeException ex) {
-      return new ParsedSessionId(null, invalidSessionMessage(ex));
-    }
+  private SessionIdParsing.ParsedSessionId parseSessionId(String sessionIdText) {
+    return SessionIdParsing.parse(sessionIdText);
   }
 
   private Long parseAccountId(String accountIdText) {
@@ -462,13 +459,6 @@ public final class LoginCommandHandler {
     return failure("INVALID_ARGUMENT", message);
   }
 
-  private String invalidSessionMessage(RuntimeException ex) {
-    if ("Invalid claim: sessionId".equals(ex.getMessage())) {
-      return "sessionId must be positive";
-    }
-    return "sessionId must be numeric";
-  }
-
   private LoginCommandHandlingResult invalidAccountFailure() {
     return failure(
         LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE);
@@ -478,12 +468,6 @@ public final class LoginCommandHandler {
     return failure(
         LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
         LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
-  }
-
-  private record ParsedSessionId(Long value, String errorMessage) {
-    boolean valid() {
-      return value != null;
-    }
   }
 
   private LoginCommandHandlingResult failure(String code, String message) {

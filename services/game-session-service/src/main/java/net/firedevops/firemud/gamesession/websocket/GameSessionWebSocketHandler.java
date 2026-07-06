@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -882,11 +883,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private Optional<Long> parseNumericSessionId(String text) {
-    try {
-      return Optional.of(JwtClaims.requireLong(text, "sessionId", false));
-    } catch (RuntimeException ex) {
-      return Optional.empty();
-    }
+    return SessionIdParsing.parse(text).optionalValue();
   }
 
   private Optional<Long> parsePositiveLong(String text, String fieldName) {
