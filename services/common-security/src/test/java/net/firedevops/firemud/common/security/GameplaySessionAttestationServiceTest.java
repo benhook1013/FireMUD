@@ -236,6 +236,19 @@ class GameplaySessionAttestationServiceTest {
   }
 
   @Test
+  void requireValidDoesNotMaskUnexpectedJwtParserRuntimeFailure() {
+    JwtUtil jwtUtil = org.mockito.Mockito.mock(JwtUtil.class);
+    GameplaySessionAttestationService service = new GameplaySessionAttestationService(jwtUtil);
+    org.mockito.Mockito.when(jwtUtil.parseToken("boom-token"))
+        .thenThrow(new IllegalStateException("boom"));
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.requireValid("boom-token"));
+
+    assertEquals("boom", ex.getMessage());
+  }
+
+  @Test
   void requireAdmittedRoutingBundleAcceptsGameplayAttestationWithRoutingClaims() {
     GameplaySessionAttestationClaims claims =
         service.requireValid(
