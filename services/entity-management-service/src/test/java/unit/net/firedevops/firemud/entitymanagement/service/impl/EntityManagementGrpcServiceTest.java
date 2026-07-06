@@ -557,6 +557,58 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void listRoomGroundInventoryRejectsBlankRoomInstanceIdBeforeAttestation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListRoomGroundInventoryResponse> ref = new AtomicReference<>();
+    service.listRoomGroundInventory(
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("   ")
+            .setSessionAttestation("probe")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomGroundInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("roomInstanceId must be specified", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService, attestationService);
+  }
+
+  @Test
   void putItemIntoContainerReturnsMappedItem() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1118,6 +1170,62 @@ class EntityManagementGrpcServiceTest {
     assertEquals(false, ref.get().hasError());
     assertEquals(1, ref.get().getEntitiesCount());
     assertEquals("Lantern", ref.get().getEntities(0).getDisplayName());
+  }
+
+  @Test
+  void listRoomEntitiesRejectsMismatchedTenantIdsBeforeAttestationAndLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListRoomEntitiesResponse> ref = new AtomicReference<>();
+    service.listRoomEntities(
+        ListRoomEntitiesRequest.newBuilder()
+            .setTenantId("1")
+            .setRoomInstance(
+                net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
+                    .setTenantId("2")
+                    .setGameInstanceId("3")
+                    .setRoomInstanceId("4")
+                    .build())
+            .setSessionAttestation("probe")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomEntitiesResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must match roomInstance.tenantId", ref.get().getError().getMessage());
+    verifyNoInteractions(roomEntityService, attestationService);
   }
 
   @Test

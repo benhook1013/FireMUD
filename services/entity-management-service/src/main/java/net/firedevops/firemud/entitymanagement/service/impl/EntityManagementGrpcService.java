@@ -1395,18 +1395,19 @@ public class EntityManagementGrpcService
       ListRoomGroundInventoryRequest request,
       StreamObserver<ListRoomGroundInventoryResponse> responseObserver) {
     try {
+      GameplayRoomScope roomScope =
+          requireGameplayRoomScope(
+              request.getTenantId(), request.getGameInstanceId(), request.getRoomInstanceId());
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getGameInstanceId(),
-          request.getRoomInstanceId());
-      long tenantId = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
-      requireTenantAccessWhenPresent(tenantId);
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceId(),
+          roomScope.roomInstanceId());
       var items =
           inventoryService.listRoomGroundItems(
-              tenantId,
-              request.getGameInstanceId(),
-              request.getRoomInstanceId(),
+              roomScope.tenantId(),
+              roomScope.gameInstanceId(),
+              roomScope.roomInstanceId(),
               Pageable.unpaged());
       ListRoomGroundInventoryResponse response =
           ListRoomGroundInventoryResponse.newBuilder()
@@ -1628,24 +1629,25 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
+      GameplayRoomScope roomScope = requireGameplayRoomScope(request);
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getRoomInstance().getTenantId(),
-          request.getRoomInstance().getGameInstanceId(),
-          request.getRoomInstance().getRoomInstanceId());
-      requireTenantAccessWhenPresent(Long.parseLong(resolveTenantId(request)));
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceId(),
+          roomScope.roomInstanceId());
       var entities =
           roomEntityService.listEntities(
-              resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));
-      String tenantId = resolveTenantId(request);
-      String gameInstanceId = resolveGameInstanceId(request);
-      String roomInstanceId = resolveRoomId(request);
+              roomScope.tenantIdText(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
       var builder =
           ListRoomEntitiesResponse.newBuilder()
-              .setTenantId(tenantId)
-              .setGameInstanceId(gameInstanceId)
-              .setRoomInstanceId(roomInstanceId)
-              .setEntitySnapshotId(readFence(tenantId, gameInstanceId, roomInstanceId));
+              .setTenantId(roomScope.tenantIdText())
+              .setGameInstanceId(roomScope.gameInstanceId())
+              .setRoomInstanceId(roomScope.roomInstanceId())
+              .setEntitySnapshotId(
+                  readFence(
+                      roomScope.tenantIdText(),
+                      roomScope.gameInstanceId(),
+                      roomScope.roomInstanceId()));
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
@@ -1727,27 +1729,6 @@ public class EntityManagementGrpcService
     responseObserver.onCompleted();
   }
 
-  private String resolveTenantId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getTenantId();
-    }
-    return request.getRoomInstance().getTenantId();
-  }
-
-  private String resolveRoomId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.room_instance_id is required");
-    }
-    return request.getRoomInstance().getRoomInstanceId();
-  }
-
-  private String resolveGameInstanceId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getGameInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.game_instance_id is required");
-    }
-    return request.getRoomInstance().getGameInstanceId();
-  }
-
   private String readFence(String tenantId, String gameInstanceId, String roomInstanceId) {
     return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
@@ -1770,6 +1751,31 @@ public class EntityManagementGrpcService
         tenantId, RequestIdValidation.requirePositiveLong(characterIdText, "characterId"));
   }
 
+  private GameplayRoomScope requireGameplayRoomScope(
+      String tenantIdText, String gameInstanceId, String roomInstanceId) {
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    requireTenantAccessWhenPresent(tenantId);
+    return new GameplayRoomScope(
+        tenantId,
+        String.valueOf(tenantId),
+        requireText(gameInstanceId, "gameInstanceId"),
+        requireText(roomInstanceId, "roomInstanceId"));
+  }
+
+  private GameplayRoomScope requireGameplayRoomScope(ListRoomEntitiesRequest request) {
+    String topLevelTenantId = blankToNull(request.getTenantId());
+    String roomTenantId = blankToNull(request.getRoomInstance().getTenantId());
+    if (topLevelTenantId != null
+        && roomTenantId != null
+        && !topLevelTenantId.equals(roomTenantId)) {
+      throw new IllegalArgumentException("tenantId must match roomInstance.tenantId");
+    }
+    return requireGameplayRoomScope(
+        roomTenantId != null ? roomTenantId : requireText(topLevelTenantId, "tenantId"),
+        request.getRoomInstance().getGameInstanceId(),
+        request.getRoomInstance().getRoomInstanceId());
+  }
+
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
       String operation, ResponseStatusException ex) {
     return GrpcAppErrors.error(meterRegistry, logger, operation, appErrorCode(ex), ex.getReason());
@@ -1780,6 +1786,9 @@ public class EntityManagementGrpcService
   }
 
   private record GameplayActorScope(long tenantId, long characterId) {}
+
+  private record GameplayRoomScope(
+      long tenantId, String tenantIdText, String gameInstanceId, String roomInstanceId) {}
 
   private PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
     if (playableStateScope == null
