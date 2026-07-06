@@ -381,7 +381,7 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.bootstrapGameInstanceId() > 0
             ? projectedExisting.bootstrapGameInstanceId()
             : fallbackBootstrapGameInstanceId;
-    if (projectedExisting != null && hasGameplayBinding(projectedExisting)) {
+    if (projectedExisting != null && projectedExisting.hasGameplayBinding()) {
       gameplayPresenceLifecycleService.clearGameplayBinding(projectedExisting, "LOGIN_FAILED");
     }
     sessionContextService.save(
@@ -403,12 +403,6 @@ public final class LoginCommandHandler {
             null,
             projectedExisting != null ? projectedExisting.connectScopeId() : null,
             projectedExisting != null ? projectedExisting.connectRequestId() : null));
-  }
-
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || StringUtils.hasText(context.roomInstanceId());
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

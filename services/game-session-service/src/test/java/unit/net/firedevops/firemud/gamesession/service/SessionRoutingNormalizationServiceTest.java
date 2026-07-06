@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.never;
@@ -68,5 +69,37 @@ class SessionRoutingNormalizationServiceTest {
     verify(sessionContextService, never()).findBySessionId(anyLong());
     verify(pointerAuthorityService, never())
         .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void normalizeProjectedContextClearsPartialGameplayShellWhenAdmissionPointerCannotMatch() {
+    SessionContext partial =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            null);
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 0L)).thenReturn(java.util.List.of());
+
+    SessionContext normalized = service.normalizeProjectedContext(partial);
+
+    assertEquals(0L, normalized.characterId());
+    assertEquals(0L, normalized.gameInstanceId());
+    assertEquals(null, normalized.roomInstanceId());
+    assertEquals(null, normalized.worldSlug());
+    assertEquals(null, normalized.realmSlug());
+    assertEquals(0L, normalized.pointerVersion());
+    verify(pointerAuthorityService).listByRuntimeTarget(22L, 0L);
   }
 }

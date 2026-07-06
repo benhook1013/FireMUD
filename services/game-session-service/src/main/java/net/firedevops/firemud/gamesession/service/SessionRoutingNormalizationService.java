@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.service;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @Component
 public final class SessionRoutingNormalizationService {
@@ -38,7 +37,7 @@ public final class SessionRoutingNormalizationService {
 
   public SessionContext normalizeProjectedContext(SessionContext context) {
     Objects.requireNonNull(context, "context must not be null");
-    if (!hasGameplayBinding(context) || currentAdmissionPointerMatches(context)) {
+    if (!context.hasGameplayBinding() || currentAdmissionPointerMatches(context)) {
       return context;
     }
     return new SessionContext(
@@ -59,12 +58,6 @@ public final class SessionRoutingNormalizationService {
         null,
         context.connectScopeId(),
         context.connectRequestId());
-  }
-
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || StringUtils.hasText(context.roomInstanceId());
   }
 
   private boolean currentAdmissionPointerMatches(SessionContext context) {

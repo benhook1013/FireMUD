@@ -13,7 +13,7 @@ public final class PositiveLongParsing {
     }
     try {
       return new ParsedPositiveLong(true, JwtClaims.requireLong(text, fieldName, false));
-    } catch (RuntimeException ex) {
+    } catch (IllegalArgumentException ex) {
       return new ParsedPositiveLong(true, null);
     }
   }

@@ -124,4 +124,21 @@ class SessionContextTest {
     assertFalse(missingRoom.hasGameplayRegionBinding());
     assertFalse(missingCharacter.hasGameplayRegionBinding());
   }
+
+  @Test
+  void hasGameplayBindingTreatsPartialGameplayShellsAsBound() {
+    SessionContext gameOnly =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, null, "jwt");
+    SessionContext characterOnly =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt");
+    SessionContext roomOnly =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "room-1", "jwt");
+    SessionContext blank =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt");
+
+    assertTrue(gameOnly.hasGameplayBinding());
+    assertTrue(characterOnly.hasGameplayBinding());
+    assertTrue(roomOnly.hasGameplayBinding());
+    assertFalse(blank.hasGameplayBinding());
+  }
 }

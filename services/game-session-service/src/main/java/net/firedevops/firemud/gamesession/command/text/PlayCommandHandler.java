@@ -287,7 +287,7 @@ public class PlayCommandHandler {
           Optional<SessionContext> existingBinding =
               sessionAuthenticationService
                   .resolveByGameplayIdentity(selectedRealm.tenantId(), gameInstanceId, characterId)
-                  .filter(PlayCommandHandler::hasGameplayBinding);
+                  .filter(SessionContext::hasGameplayBinding);
           boolean resumedOrTookOver =
               existingBinding
                   .map(
@@ -538,12 +538,6 @@ public class PlayCommandHandler {
 
   private String normalizeName(String value) {
     return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
-  }
-
-  private static boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || StringUtils.hasText(context.roomInstanceId());
   }
 
   private void publishSpawnEvent(SessionContext context) {
