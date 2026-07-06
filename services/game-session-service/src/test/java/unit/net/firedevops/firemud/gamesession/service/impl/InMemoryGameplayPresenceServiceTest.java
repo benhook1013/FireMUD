@@ -48,6 +48,20 @@ class InMemoryGameplayPresenceServiceTest {
   }
 
   @Test
+  void classifiesInvalidJwtAsPlayer() {
+    InMemoryGameplayPresenceService service = new InMemoryGameplayPresenceService(jwtUtil);
+
+    service.registerConnected(
+        new SessionContext(
+            1L, 22L, 1L, "player@example.com", 101L, "Aster", 7L, "R-1", "not-a-jwt"));
+
+    var result = service.listConnectedByGameInstance(22L, 7L);
+
+    assertEquals(1, result.size());
+    assertEquals(GameplayPresenceRole.PLAYER, result.get(0).role());
+  }
+
+  @Test
   void removeBySessionIdDropsPresence() {
     InMemoryGameplayPresenceService service = new InMemoryGameplayPresenceService(jwtUtil);
     service.registerConnected(
