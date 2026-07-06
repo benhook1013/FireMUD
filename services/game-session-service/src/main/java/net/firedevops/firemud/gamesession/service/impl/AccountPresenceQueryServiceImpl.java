@@ -163,11 +163,17 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       return false;
     }
     return currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
-        .filter(pointer -> pointer.pointerVersion() == presence.pointerVersion())
-        .filter(pointer -> pointer.worldSlug().equals(presence.worldSlug()))
-        .filter(pointer -> pointer.realmSlug().equals(presence.realmSlug()))
-        .filter(pointer -> pointer.stateScope().equals(presence.playableStateScope()))
-        .isPresent();
+        .map(
+            pointer ->
+                GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                    List.of(pointer),
+                    tenantId,
+                    presence.gameInstanceId(),
+                    presence.worldSlug(),
+                    presence.realmSlug(),
+                    presence.pointerVersion(),
+                    presence.playableStateScope()))
+        .orElse(false);
   }
 
   private AccountPresenceSnapshot offline(
@@ -227,10 +233,16 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     }
     return currentRuntimePointer(
             recentState.tenantId(), recentState.gameInstanceId(), currentRuntimePointers)
-        .filter(pointer -> pointer.pointerVersion() == recentState.pointerVersion())
-        .filter(pointer -> pointer.worldSlug().equals(recentState.worldSlug()))
-        .filter(pointer -> pointer.realmSlug().equals(recentState.realmSlug()))
-        .filter(pointer -> pointer.stateScope().equals(recentState.playableStateScope()))
+        .filter(
+            pointer ->
+                GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                    List.of(pointer),
+                    recentState.tenantId(),
+                    recentState.gameInstanceId(),
+                    recentState.worldSlug(),
+                    recentState.realmSlug(),
+                    recentState.pointerVersion(),
+                    recentState.playableStateScope()))
         .orElse(null);
   }
 }

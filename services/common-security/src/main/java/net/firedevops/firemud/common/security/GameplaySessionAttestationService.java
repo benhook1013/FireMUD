@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import java.util.Map;
 import org.springframework.util.StringUtils;
 
@@ -79,7 +80,7 @@ public class GameplaySessionAttestationService {
     Claims claims;
     try {
       claims = jwtUtil.parseToken(token).getPayload();
-    } catch (RuntimeException ex) {
+    } catch (IllegalArgumentException | JwtException ex) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is invalid", ex);
     }

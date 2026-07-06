@@ -253,6 +253,59 @@ cat >"$TMP_DIR/review-not-finished.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/outside-diff-actionable.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "**Actionable comments posted: 1**\n\n<details>\n<summary>⚠️ Outside diff range comments (1)</summary>\n</details>",
+              "createdAt": "2026-07-03T02:40:03Z",
+              "url": "https://example.test/actionable"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "Review finished.",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/finished"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -300,5 +353,13 @@ expect_failure_output "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-not-f
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no completed CodeRabbit review found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
+
+expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "outside_diff_actionable_comments=1" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "duplicate_actionable_comments=0" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "latest_actionable_comment_url=https://example.test/actionable" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "warning=TOP-LEVEL CODERABBIT ACTIONABLE COMMENTS CAN EXIST OUTSIDE INLINE REVIEW THREADS; VERIFY THE LATEST CODERABBIT SUMMARY COMMENT BEFORE CALLING THE PR REVIEW-CLEAN" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "reason=1 top-level outside-diff CodeRabbit comment(s) remain from the latest review; verify and fix them before calling the PR review-clean" "$TMP_DIR/outside-diff-actionable.out"
 
 echo "coderabbitai review contract checks passed"

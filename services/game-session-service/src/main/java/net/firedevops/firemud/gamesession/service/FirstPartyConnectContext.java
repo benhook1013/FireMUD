@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.io.Serializable;
+import org.springframework.util.StringUtils;
 
 public record FirstPartyConnectContext(
     long accountId,
@@ -15,4 +16,15 @@ public record FirstPartyConnectContext(
     String gatewayRequestId)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public boolean hasCompleteRoutingScope() {
+    return accountId > 0L
+        && tenantId > 0L
+        && gameInstanceId > 0L
+        && pointerVersion > 0L
+        && StringUtils.hasText(worldSlug)
+        && StringUtils.hasText(realmSlug)
+        && StringUtils.hasText(connectScopeId)
+        && StringUtils.hasText(connectRequestId);
+  }
 }

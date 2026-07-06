@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -28,6 +29,9 @@ REVIEW_COMMANDS = {
 }
 
 REVIEW_FINISHED_MARKER = "Review finished."
+ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
+OUTSIDE_DIFF_MARKER = "Outside diff range comments"
+DUPLICATE_COMMENTS_MARKER = "Duplicate comments"
 
 
 @dataclass
@@ -45,6 +49,9 @@ class ReviewSummary:
     review_finished_after_latest_request: bool
     retrigger_review_allowed: bool
     must_resolve_outdated_threads: bool
+    outside_diff_actionable_comments: int
+    duplicate_actionable_comments: int
+    latest_actionable_comment_url: str | None
     ok: bool
     reasons: list[str]
 
@@ -253,6 +260,11 @@ def normalize_command(body: str) -> str:
     return " ".join(body.strip().split()).lower()
 
 
+def extract_section_count(body: str, marker: str) -> int:
+    match = re.search(rf"{re.escape(marker)} \((\d+)\)", body)
+    return int(match.group(1)) if match else 0
+
+
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:
     pr = payload["data"]["repository"]["pullRequest"]
     latest_commit = pr["commits"]["nodes"][-1]["commit"]
@@ -273,6 +285,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_explicit_review_request_dt: datetime | None = None
     latest_coderabbit_review_finished_at: str | None = None
     latest_coderabbit_review_finished_dt: datetime | None = None
+    latest_actionable_comment_dt: datetime | None = None
+    latest_actionable_comment_url: str | None = None
+    outside_diff_actionable_comments = 0
+    duplicate_actionable_comments = 0
 
     for comment in pr["comments"]["nodes"]:
         author = (comment.get("author") or {}).get("login", "")
@@ -304,8 +320,29 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and latest_coderabbit_review_finished_dt is not None
         and latest_coderabbit_review_finished_dt >= latest_explicit_review_request_dt
     )
+    for comment in pr["comments"]["nodes"]:
+        author = (comment.get("author") or {}).get("login", "")
+        body = comment.get("body", "")
+        created_at = comment.get("createdAt")
+        created_at_dt = parse_timestamp(created_at)
+        if author != "coderabbitai" or ACTIONABLE_COMMENTS_MARKER not in body:
+            continue
+        if latest_explicit_review_request_dt is not None and (
+            created_at_dt is None or created_at_dt < latest_explicit_review_request_dt
+        ):
+            continue
+        if latest_actionable_comment_dt is None or created_at_dt > latest_actionable_comment_dt:
+            latest_actionable_comment_dt = created_at_dt
+            latest_actionable_comment_url = comment.get("url")
+            outside_diff_actionable_comments = extract_section_count(body, OUTSIDE_DIFF_MARKER)
+            duplicate_actionable_comments = extract_section_count(body, DUPLICATE_COMMENTS_MARKER)
+
     unresolved_total = unresolved_non_outdated + unresolved_outdated
-    retrigger_review_allowed = unresolved_total == 0
+    retrigger_review_allowed = (
+        unresolved_total == 0
+        and outside_diff_actionable_comments == 0
+        and duplicate_actionable_comments == 0
+    )
     must_resolve_outdated_threads = unresolved_outdated > 0
 
     reasons: list[str] = []
@@ -317,6 +354,16 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         reasons.append(
             f"{unresolved_outdated} unresolved outdated CodeRabbit thread(s) remain; "
             "resolve them before retriggering @coderabbitai review"
+        )
+    if outside_diff_actionable_comments:
+        reasons.append(
+            f"{outside_diff_actionable_comments} top-level outside-diff CodeRabbit comment(s) "
+            "remain from the latest review; verify and fix them before calling the PR review-clean"
+        )
+    if duplicate_actionable_comments:
+        reasons.append(
+            f"{duplicate_actionable_comments} top-level duplicate CodeRabbit comment(s) remain "
+            "from the latest review; verify and fix them before calling the PR review-clean"
         )
     if not explicit_review_after_latest_commit:
         reasons.append(
@@ -341,6 +388,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         review_finished_after_latest_request=review_finished_after_latest_request,
         retrigger_review_allowed=retrigger_review_allowed,
         must_resolve_outdated_threads=must_resolve_outdated_threads,
+        outside_diff_actionable_comments=outside_diff_actionable_comments,
+        duplicate_actionable_comments=duplicate_actionable_comments,
+        latest_actionable_comment_url=latest_actionable_comment_url,
         ok=not reasons,
         reasons=reasons,
     )
@@ -378,12 +428,30 @@ def emit_text(summary: ReviewSummary) -> None:
         "must_resolve_outdated_threads="
         f"{str(summary.must_resolve_outdated_threads).lower()}"
     )
+    print(
+        "outside_diff_actionable_comments="
+        f"{summary.outside_diff_actionable_comments}"
+    )
+    print(
+        "duplicate_actionable_comments="
+        f"{summary.duplicate_actionable_comments}"
+    )
+    print(
+        "latest_actionable_comment_url="
+        f"{summary.latest_actionable_comment_url or 'none'}"
+    )
     print(f"ok={str(summary.ok).lower()}")
     if summary.unresolved_outdated:
         print(
             "warning=UNRESOLVED OUTDATED CODERABBIT THREADS MUST BE VERIFIED AND "
             "RESOLVED BEFORE RETRIGGERING @coderabbitai review OR CALLING THE PR "
             "REVIEW-CLEAN"
+        )
+    if summary.outside_diff_actionable_comments or summary.duplicate_actionable_comments:
+        print(
+            "warning=TOP-LEVEL CODERABBIT ACTIONABLE COMMENTS CAN EXIST OUTSIDE "
+            "INLINE REVIEW THREADS; VERIFY THE LATEST CODERABBIT SUMMARY COMMENT "
+            "BEFORE CALLING THE PR REVIEW-CLEAN"
         )
     if summary.unresolved_non_outdated or summary.unresolved_outdated:
         print(

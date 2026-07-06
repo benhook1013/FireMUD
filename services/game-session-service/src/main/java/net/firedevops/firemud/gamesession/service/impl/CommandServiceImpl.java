@@ -76,8 +76,19 @@ public class CommandServiceImpl implements CommandService {
   public CommandEnqueueResult enqueue(
       String sessionIdText, String command, boolean requiresSoloTick) {
     String traceId = Span.current().getSpanContext().getTraceId();
+    if (command == null || command.isBlank()) {
+      return CommandEnqueueResult.failure("INVALID_ARGUMENT", "Command cannot be blank");
+    }
+
+    long sessionId;
+    try {
+      sessionId = ControlPlaneRequestParser.parsePositiveLong(sessionIdText, "sessionId");
+    } catch (IllegalArgumentException ex) {
+      return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
+    }
+
     var sessionContext = resolveSessionContext(sessionIdText);
-    Optional<QueueTarget> queueTarget = resolveQueueTarget(sessionIdText, sessionContext);
+    Optional<QueueTarget> queueTarget = resolveQueueTarget(sessionContext);
     String tenantContext =
         queueTarget.map(target -> String.valueOf(target.tenantId())).orElse("unknown");
     GameplayLoggingContext gameplayLoggingContext =
@@ -94,17 +105,6 @@ public class CommandServiceImpl implements CommandService {
           sessionContext.map(SessionContext::characterId).filter(id -> id > 0).orElse(null),
           sessionIdText,
           GameSessionCommandLogSanitizer.sanitize(command));
-
-      if (command == null || command.isBlank()) {
-        return CommandEnqueueResult.failure("INVALID_ARGUMENT", "Command cannot be blank");
-      }
-
-      long sessionId;
-      try {
-        sessionId = Long.parseLong(sessionIdText);
-      } catch (NumberFormatException ex) {
-        return CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric");
-      }
 
       if (!sessionRateLimiter.allow(sessionId)) {
         return CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded");
@@ -136,7 +136,7 @@ public class CommandServiceImpl implements CommandService {
         markStaged(gameplayCommand);
         triggerImmediateTick(queueTarget.get());
         sessionContext
-            .filter(this::hasGameplayBinding)
+            .filter(SessionContext::hasGameplayRegionBinding)
             .ifPresent(context -> publishScriptEvent(context, gameplayCommand));
         return CommandEnqueueResult.success(gameplayCommand.getCommandId());
       } catch (IllegalArgumentException ex) {
@@ -264,20 +264,7 @@ public class CommandServiceImpl implements CommandService {
     return sessionAuthenticationService.resolveUnverifiedSessionContext(sessionIdText);
   }
 
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        && context.characterId() > 0
-        && context.roomInstanceId() != null
-        && !context.roomInstanceId().isBlank();
-  }
-
-  private Optional<QueueTarget> resolveQueueTarget(
-      String sessionIdText, Optional<SessionContext> sessionContext) {
-    try {
-      Long.parseLong(sessionIdText);
-    } catch (NumberFormatException ex) {
-      return Optional.empty();
-    }
+  private Optional<QueueTarget> resolveQueueTarget(Optional<SessionContext> sessionContext) {
     if (sessionContext.isEmpty()) {
       return Optional.empty();
     }

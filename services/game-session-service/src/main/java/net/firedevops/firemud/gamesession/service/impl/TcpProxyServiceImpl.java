@@ -104,9 +104,9 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     if (StringUtils.hasText(request.getSessionId())) {
       try {
         gameplayPresenceLifecycleService.recordDisconnected(
-            Long.parseLong(request.getSessionId()),
+            ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId"),
             AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-      } catch (NumberFormatException ignored) {
+      } catch (IllegalArgumentException ignored) {
         // best-effort advisory cleanup only
       }
     }
@@ -153,40 +153,38 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       String gameInstanceIdText, String tenantIdText) {
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(tenantIdText)) {
       return SessionValidationResult.failed(
-          GrpcAppErrors.error(
-              meterRegistry, "INVALID_ARGUMENT", "gameInstanceId and tenantId are required"));
-    }
-    long gameInstanceId;
-    long tenantId;
-    try {
-      gameInstanceId = Long.parseLong(gameInstanceIdText);
-    } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "gameInstanceId must be numeric"));
+          invalidArgumentError("gameInstanceId and tenantId are required"));
     }
     try {
-      tenantId = Long.parseLong(tenantIdText);
-    } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "tenantId must be numeric"));
+      long gameInstanceId =
+          ControlPlaneRequestParser.parsePositiveLong(gameInstanceIdText, "gameInstanceId");
+      long tenantId = ControlPlaneRequestParser.parsePositiveLong(tenantIdText, "tenantId");
+      Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
+      if (maybeInstance.isEmpty()) {
+        return SessionValidationResult.failed(notFoundError("Game instance not found"));
+      }
+      GameInstance instance = maybeInstance.get();
+      if (!instance.getTenantId().equals(tenantId)) {
+        return SessionValidationResult.failed(invalidArgumentError("Tenant does not own session"));
+      }
+      return new SessionValidationResult(instance, null);
+    } catch (IllegalArgumentException ex) {
+      return SessionValidationResult.failed(invalidArgumentError(ex.getMessage()));
     }
-    Optional<GameInstance> maybeInstance = repository.findById(gameInstanceId);
-    if (maybeInstance.isEmpty()) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Game instance not found"));
-    }
-    GameInstance instance = maybeInstance.get();
-    if (!instance.getTenantId().equals(tenantId)) {
-      return SessionValidationResult.failed(
-          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
-    }
-    return new SessionValidationResult(gameInstanceId, tenantId, instance, null);
   }
 
-  private record SessionValidationResult(
-      long sessionId, long tenantId, GameInstance instance, ErrorDetail errorDetail) {
+  private ErrorDetail invalidArgumentError(String message) {
+    return GrpcAppErrors.error(
+        meterRegistry, logger, "NotifyDisconnect", "INVALID_ARGUMENT", message);
+  }
+
+  private ErrorDetail notFoundError(String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, "NotifyDisconnect", "NOT_FOUND", message);
+  }
+
+  private record SessionValidationResult(GameInstance instance, ErrorDetail errorDetail) {
     static SessionValidationResult failed(ErrorDetail errorDetail) {
-      return new SessionValidationResult(0L, 0L, null, errorDetail);
+      return new SessionValidationResult(null, errorDetail);
     }
 
     boolean hasError() {

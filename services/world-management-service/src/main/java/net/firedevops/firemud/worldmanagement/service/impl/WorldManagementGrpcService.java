@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
@@ -97,24 +98,23 @@ public class WorldManagementGrpcService
       var snapshot =
           worldInstanceActivationService.prepareWorldInstance(
               new PreparedWorldInstanceRequest(
-                  Long.parseLong(request.getTenantId()),
-                  Long.parseLong(request.getGameInstanceId()),
-                  Long.parseLong(request.getGameTemplateId()),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameTemplateId(), "gameTemplateId"),
                   request.getControlPlaneRequestId(),
                   request.getLaunchDescriptorId(),
-                  Long.parseLong(request.getVersionId()),
+                  RequestIdValidation.requirePositiveLong(request.getVersionId(), "versionId"),
                   request.getScriptPatchVersion(),
                   request.getRuntimeFlagsJson(),
                   request.getGenerationConfigRevision(),
-                  Long.parseLong(request.getReleaseBundleId()),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getReleaseBundleId(), "releaseBundleId"),
                   request.getPublishedReleaseBundleRef(),
                   request.getVersionStateEpoch(),
                   request.getRemapSetId().isBlank() ? null : request.getRemapSetId()));
       builder.setWorldInstance(toProto(snapshot));
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry, logger, "PrepareWorldInstance", "INVALID_ARGUMENT", "invalid id"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -136,18 +136,11 @@ public class WorldManagementGrpcService
     try {
       var snapshot =
           worldInstanceActivationService.activatePreparedWorldInstance(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getGameInstanceId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getGameInstanceId(), "gameInstanceId"),
               request.getExpectedLifecycleEpoch());
       builder.setWorldInstance(toProto(snapshot));
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "ActivatePreparedWorldInstance",
-              "INVALID_ARGUMENT",
-              "invalid id"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -174,19 +167,12 @@ public class WorldManagementGrpcService
     try {
       var snapshot =
           worldInstanceActivationService.failPreparedWorldInstance(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getGameInstanceId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getGameInstanceId(), "gameInstanceId"),
               request.getExpectedLifecycleEpoch(),
               request.getReason());
       builder.setWorldInstance(toProto(snapshot));
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "FailPreparedWorldInstance",
-              "INVALID_ARGUMENT",
-              "invalid id"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -214,16 +200,9 @@ public class WorldManagementGrpcService
       builder.setWorldInstance(
           toProto(
               worldInstanceActivationService.getWorldInstanceLifecycle(
-                  Long.parseLong(request.getTenantId()),
-                  Long.parseLong(request.getGameInstanceId()))));
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "GetWorldInstanceLifecycle",
-              "INVALID_ARGUMENT",
-              "invalid id"));
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"))));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -250,15 +229,12 @@ public class WorldManagementGrpcService
       builder.setWorldInstance(
           toProto(
               worldInstanceActivationService.terminateWorldInstance(
-                  Long.parseLong(request.getTenantId()),
-                  Long.parseLong(request.getGameInstanceId()),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"),
                   request.getExpectedLifecycleEpoch(),
                   request.getTerminationRequestId(),
                   request.getReason())));
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry, logger, "TerminateWorldInstance", "INVALID_ARGUMENT", "invalid id"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -333,9 +309,11 @@ public class WorldManagementGrpcService
     try {
       var validation =
           worldUpgradeValidationService.validateWorldUpgradeMappings(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getSourceGameInstanceId()),
-              Long.parseLong(request.getTargetVersionId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getSourceGameInstanceId(), "sourceGameInstanceId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getTargetVersionId(), "targetVersionId"),
               request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
       builder
           .addAllStateClassesChecked(validation.stateClassesChecked())
@@ -347,14 +325,6 @@ public class WorldManagementGrpcService
       if (validation.remapSetId() != null) {
         builder.setRemapSetId(validation.remapSetId());
       }
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "ValidateWorldUpgradeMappings",
-              "INVALID_ARGUMENT",
-              "invalid id"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -903,9 +873,7 @@ public class WorldManagementGrpcService
     if (SessionContext.isInternalService()) {
       return;
     }
-    if (SessionContext.getAccountId() == null
-        && SessionContext.getGlobalRoles().isEmpty()
-        && SessionContext.getScopedRolesMap().isEmpty()) {
+    if (!SessionContext.hasAuthenticatedCallerContext()) {
       return;
     }
     SessionContext.requireTenantAccess(tenantId);

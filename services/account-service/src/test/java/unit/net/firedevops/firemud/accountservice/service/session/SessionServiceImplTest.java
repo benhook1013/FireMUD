@@ -64,6 +64,25 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void getAccountIdReturnsNullForMalformedStoredAccountId() {
+    when(valueOperations.get("session:auth:tenant:7:" + sha256("token-123")))
+        .thenReturn("not-a-number");
+
+    Long accountId = service.getAccountId(7L, "token-123");
+
+    assertThat(accountId).isNull();
+  }
+
+  @Test
+  void getAccountIdReturnsNullForNonPositiveStoredAccountId() {
+    when(valueOperations.get("session:auth:tenant:7:" + sha256("token-123"))).thenReturn("0");
+
+    Long accountId = service.getAccountId(7L, "token-123");
+
+    assertThat(accountId).isNull();
+  }
+
+  @Test
   void storeConnectTokenReplayWritesHashedScopeAndRequestKey() {
     SessionService.ConnectTokenReplay replay =
         new SessionService.ConnectTokenReplay(

@@ -213,7 +213,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                     "connect replay protection unavailable");
               })
           .onErrorResume(
-              RuntimeException.class,
+              IllegalArgumentException.class,
               ex -> {
                 logRejectedHandshake(
                     exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
@@ -227,7 +227,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       logRejectedHandshake(
           exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
       return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
-    } catch (RuntimeException ex) {
+    } catch (IllegalArgumentException ex) {
       logRejectedHandshake(
           exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
       return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");

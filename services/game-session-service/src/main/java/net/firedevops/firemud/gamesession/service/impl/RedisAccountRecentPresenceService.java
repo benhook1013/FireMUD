@@ -167,7 +167,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
       return null;
     }
-    GameplayPresence effectivePresence = hasGameplayBinding(context) ? presence : null;
+    GameplayPresence effectivePresence =
+        SessionContext.hasGameplayRegionBindingOrFalse(context) ? presence : null;
     long gameInstanceId =
         effectivePresence != null && effectivePresence.gameInstanceId() > 0
             ? effectivePresence.gameInstanceId()
@@ -196,13 +197,9 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   private GameplayPresenceRole effectivePresenceRole(
       SessionContext context, GameplayPresence presence) {
-    return hasGameplayBinding(context) && presence != null ? presence.role() : null;
-  }
-
-  private boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || (context.roomInstanceId() != null && !context.roomInstanceId().isBlank());
+    return SessionContext.hasGameplayRegionBindingOrFalse(context) && presence != null
+        ? presence.role()
+        : null;
   }
 
   private String firstNonBlank(String primary, String fallback) {

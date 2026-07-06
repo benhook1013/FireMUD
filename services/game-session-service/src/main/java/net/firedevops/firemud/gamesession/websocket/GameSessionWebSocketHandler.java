@@ -7,7 +7,6 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
-import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
@@ -30,9 +29,11 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -356,7 +357,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     maybeContext
-        .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
+        .filter(SessionContext::hasGameplayIdentity)
         .ifPresent(
             context ->
                 screenBufferService.append(
@@ -382,7 +383,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     maybeContext
-        .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
+        .filter(SessionContext::hasGameplayIdentity)
         .ifPresent(
             context -> {
               try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
@@ -882,22 +883,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private Optional<Long> parseNumericSessionId(String text) {
-    try {
-      return Optional.of(JwtClaims.requireLong(text, "sessionId", false));
-    } catch (RuntimeException ex) {
-      return Optional.empty();
-    }
+    return SessionIdParsing.parse(text).optionalValue();
   }
 
   private Optional<Long> parsePositiveLong(String text, String fieldName) {
-    if (!StringUtils.hasText(text)) {
-      return Optional.empty();
+    PositiveLongParsing.ParsedPositiveLong parsed =
+        PositiveLongParsing.parseOptionalText(text, fieldName);
+    if (parsed.invalid()) {
+      logger.debug("Ignoring malformed {} header {}", fieldName, text);
     }
-    try {
-      return Optional.of(JwtClaims.requireLong(text, fieldName, false));
-    } catch (RuntimeException ex) {
-      logger.debug("Ignoring malformed {} header {}", fieldName, text, ex);
-      return Optional.empty();
-    }
+    return parsed.optionalValue();
   }
 }

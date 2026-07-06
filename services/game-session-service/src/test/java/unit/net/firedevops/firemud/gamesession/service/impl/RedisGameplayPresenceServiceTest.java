@@ -62,6 +62,26 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void registerConnectedClassifiesInvalidJwtAsPlayer() {
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "not-a-jwt");
+
+    service.registerConnected(context);
+
+    verify(valueOperations)
+        .set(
+            org.mockito.Mockito.eq("gameplaypresence:session:1"),
+            argThat(
+                value ->
+                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .role()
+                            == GameplayPresenceRole.PLAYER),
+            org.mockito.Mockito.eq(TTL));
+  }
+
+  @Test
   void listConnectedByGameInstanceSortsGodsFirstAndPrunesMissingSessions() {
     String godJwt =
         jwtUtil.generateToken(

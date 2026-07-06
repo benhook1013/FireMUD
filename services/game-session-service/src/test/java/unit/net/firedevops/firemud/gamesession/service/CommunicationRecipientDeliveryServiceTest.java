@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -110,5 +111,86 @@ class CommunicationRecipientDeliveryServiceTest {
     verify(screenBufferService, never())
         .append(any(Long.class), any(Long.class), any(Long.class), any());
     verify(activeTransportSessionRegistry, never()).find(any(Long.class));
+  }
+
+  @Test
+  void deliverDoesNotFallbackToNameWhenRecipientIdIsMalformed() {
+    SessionContext actor =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+    CommunicationRecipientView view =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("bogus")
+            .setRecipientName("Sora")
+            .build();
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(view)
+            .build();
+
+    service.deliver(actor, response);
+
+    verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(anyLong(), anyLong(), anyLong());
+    verify(sessionAuthenticationService, never()).resolveByGameplayName(22L, 1L, "Sora");
+    verify(screenBufferService, never())
+        .append(any(Long.class), any(Long.class), any(Long.class), any());
+  }
+
+  @Test
+  void deliverDoesNotFallbackToNameWhenRecipientIdIsNonPositive() {
+    SessionContext actor =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+    CommunicationRecipientView view =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("0")
+            .setRecipientName("Sora")
+            .build();
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(view)
+            .build();
+
+    service.deliver(actor, response);
+
+    verify(sessionAuthenticationService, never()).resolveByGameplayName(22L, 1L, "Sora");
+    verify(screenBufferService, never())
+        .append(any(Long.class), any(Long.class), any(Long.class), any());
+  }
+
+  @Test
+  void deliverDoesNotFallbackToNameWhenStructuredRecipientIdDoesNotResolve() {
+    SessionContext actor =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+    CommunicationRecipientView view =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("456")
+            .setRecipientName("Sora")
+            .build();
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(view)
+            .build();
+
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 456L))
+        .thenReturn(Optional.empty());
+
+    service.deliver(actor, response);
+
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 456L);
+    verify(sessionAuthenticationService, never()).resolveByGameplayName(22L, 1L, "Sora");
+    verify(screenBufferService, never())
+        .append(any(Long.class), any(Long.class), any(Long.class), any());
   }
 }

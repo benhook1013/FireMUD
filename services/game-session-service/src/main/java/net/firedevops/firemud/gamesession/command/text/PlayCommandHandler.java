@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -178,10 +179,20 @@ public class PlayCommandHandler {
       }
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
+      FirstPartyConnectContextResolution connectContextResolution =
+          FirstPartyConnectContextResolution.resolve(
+              context.sessionId(), context, firstPartyConnectContextRegistry);
+      if (connectContextResolution.invalid()) {
+        return connectContextInvalidFailure(
+            tenantTag,
+            context.bootstrapGameInstanceId() > 0
+                ? Long.toString(context.bootstrapGameInstanceId())
+                : null);
+      }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
               ? gameplayWorldCatalog.resolveRealm(selectedWorld, selection.explicitRealmSelector())
-              : selectDefaultRealm(context, selectedWorld);
+              : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
       if (maybeRealm.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
@@ -201,7 +212,7 @@ public class PlayCommandHandler {
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), null, null)) {
         Optional<PlayCommandHandlingResult> connectScopeFailure =
             validateFirstPartyConnectScope(
-                context, selectedWorld, selectedRealm, selectedTenantTag);
+                connectContextResolution, selectedWorld, selectedRealm, selectedTenantTag);
         if (connectScopeFailure.isPresent()) {
           return connectScopeFailure.get();
         }
@@ -276,7 +287,7 @@ public class PlayCommandHandler {
           Optional<SessionContext> existingBinding =
               sessionAuthenticationService
                   .resolveByGameplayIdentity(selectedRealm.tenantId(), gameInstanceId, characterId)
-                  .filter(PlayCommandHandler::hasGameplayBinding);
+                  .filter(SessionContext::hasGameplayRegionBinding);
           boolean resumedOrTookOver =
               existingBinding
                   .map(
@@ -360,24 +371,18 @@ public class PlayCommandHandler {
   }
 
   private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
-      SessionContext context,
+      FirstPartyConnectContextResolution connectContextResolution,
       GameplayWorldCatalog.WorldView selectedWorld,
       GameplayWorldCatalog.RealmView selectedRealm,
       String tenantTag) {
-    return resolveFirstPartyConnectContext(context)
+    return connectContextResolution
+        .connectContext()
         .flatMap(
             connectContext -> {
-              if (!hasCompleteFirstPartyConnectContext(connectContext)) {
+              if (!connectContext.hasCompleteRoutingScope()) {
                 return Optional.of(
-                    failure(
-                        "CONNECT_CONTEXT_INVALID",
-                        "Connect context invalid",
-                        "error.play.connect-context-invalid",
-                        Map.of(),
-                        tenantTag,
-                        Long.toString(selectedRealm.gameInstanceId()),
-                        null,
-                        null));
+                    connectContextInvalidFailure(
+                        tenantTag, Long.toString(selectedRealm.gameInstanceId())));
               }
               if (connectContext.tenantId() != selectedRealm.tenantId()
                   || connectContext.gameInstanceId() != selectedRealm.gameInstanceId()
@@ -397,6 +402,19 @@ public class PlayCommandHandler {
               }
               return Optional.empty();
             });
+  }
+
+  private PlayCommandHandlingResult connectContextInvalidFailure(
+      String tenantTag, String gameInstanceTag) {
+    return failure(
+        "CONNECT_CONTEXT_INVALID",
+        "Connect context invalid",
+        "error.play.connect-context-invalid",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        null,
+        null);
   }
 
   private PlayCommandHandlingResult failure(
@@ -520,20 +538,6 @@ public class PlayCommandHandler {
 
   private String normalizeName(String value) {
     return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
-  }
-
-  private static boolean hasGameplayBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        || context.characterId() > 0
-        || StringUtils.hasText(context.roomInstanceId());
-  }
-
-  private static boolean hasCompleteFirstPartyConnectContext(FirstPartyConnectContext context) {
-    return StringUtils.hasText(context.worldSlug())
-        && StringUtils.hasText(context.realmSlug())
-        && context.pointerVersion() > 0
-        && StringUtils.hasText(context.connectScopeId())
-        && StringUtils.hasText(context.connectRequestId());
   }
 
   private void publishSpawnEvent(SessionContext context) {
@@ -932,8 +936,8 @@ public class PlayCommandHandler {
   }
 
   private Optional<GameplayWorldCatalog.RealmView> selectDefaultRealm(
-      SessionContext context, GameplayWorldCatalog.WorldView selectedWorld) {
-    Optional<FirstPartyConnectContext> connectContext = resolveFirstPartyConnectContext(context);
+      GameplayWorldCatalog.WorldView selectedWorld,
+      Optional<FirstPartyConnectContext> connectContext) {
     if (connectContext.isPresent()
         && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
       Optional<GameplayWorldCatalog.RealmView> hintedRealm =
@@ -993,13 +997,6 @@ public class PlayCommandHandler {
 
   private record ResolvedPlaySelection(
       String worldSelector, String explicitRealmSelector, String characterSelector) {}
-
-  private Optional<FirstPartyConnectContext> resolveFirstPartyConnectContext(
-      SessionContext context) {
-    return firstPartyConnectContextRegistry
-        .find(context.sessionId())
-        .or(() -> context.persistedFirstPartyConnectContext());
-  }
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,

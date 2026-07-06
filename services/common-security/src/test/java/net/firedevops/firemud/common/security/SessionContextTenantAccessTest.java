@@ -45,4 +45,32 @@ class SessionContextTenantAccessTest {
     assertFalse(SessionContext.hasAccountAccess(7L, 43L));
     assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 43L));
   }
+
+  @Test
+  void hasAuthenticatedCallerContextReturnsFalseWhenClaimsAreAbsent() {
+    SessionContext.clear();
+
+    assertFalse(SessionContext.hasAuthenticatedCallerContext());
+  }
+
+  @Test
+  void hasAuthenticatedCallerContextIgnoresBlankAccountWithoutRoles() {
+    SessionContext.setContext("   ", List.of(), Map.of());
+
+    assertFalse(SessionContext.hasAuthenticatedCallerContext());
+  }
+
+  @Test
+  void hasAuthenticatedCallerContextTreatsMalformedAccountClaimAsPresent() {
+    SessionContext.setContext("not-a-long", List.of(), Map.of());
+
+    assertTrue(SessionContext.hasAuthenticatedCallerContext());
+  }
+
+  @Test
+  void hasAuthenticatedCallerContextTreatsRoleOnlyClaimsAsPresent() {
+    SessionContext.setContext(null, List.of(), Map.of("7", List.of("tenantAdmin")));
+
+    assertTrue(SessionContext.hasAuthenticatedCallerContext());
+  }
 }

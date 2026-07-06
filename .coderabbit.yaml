@@ -26,6 +26,9 @@ reviews:
       - "dependabot[bot]"
       - "renovate"
       - "renovate[bot]"
+  tools:
+    pmd:
+      config_file: "ruleset.xml"
   path_instructions:
     - path: "services/**"
       instructions: |

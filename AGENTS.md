@@ -15,8 +15,6 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
-- Keep fast-moving AI-driven PRs in draft while push-looping so CodeRabbit does not auto-review every incremental commit.
-- If a PR must stay non-draft during active iteration, pause CodeRabbit with `@coderabbitai pause` and request a fresh pass only at meaningful checkpoints with `@coderabbitai review` or `@coderabbitai full review`. Do not use `@coderabbit`; use `@coderabbitai` only.
 - Repository-local CodeRabbit config auto-pauses incremental reviews after one reviewed commit; resume manually when another checkpoint is ready.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
@@ -78,6 +76,10 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Breaking changes are allowed across DB schema, Redis keys, protocol fields, route shapes, and internal APIs.
 - Do not add migration scaffolding unless explicitly requested.
 - When a contract changes, update all call sites, tests, and docs in the same change and remove obsolete paths.
+- Because the product is still pre-v1, AI contributors have standing permission to widen a slice, create a new concrete slice, or complete a broader convergence pass when that is the cheaper or more correct path to the designed target state.
+- Do not artificially keep work narrow when the live invariant clearly spans multiple services or seams and a wider in-scope pass will reduce churn, repeated review cost, or follow-up rework.
+- Do not stop to ask for special approval merely because a change becomes cross-service, breaking, or larger than an initially narrow seam; only stop when design intent is genuinely unclear or competing target states exist.
+- Default to the cheapest credible path to canonical convergence, even when that means folding adjacent slice work together, replacing a larger surface directly, or retiring obsolete code in the same pass.
 
 ## Documentation Rules
 

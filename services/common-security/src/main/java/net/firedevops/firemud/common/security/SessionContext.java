@@ -93,6 +93,19 @@ public final class SessionContext {
     return roles.contains("tenantAdmin") || roles.contains("moderator");
   }
 
+  /** Returns whether the current caller carries any non-internal account or role context. */
+  public static boolean hasAuthenticatedCallerContext() {
+    ClaimsData data = currentData();
+    if (data == null) {
+      return false;
+    }
+    if (data.accountId != null && !data.accountId.isBlank()) {
+      return true;
+    }
+    return (data.globalRoles != null && !data.globalRoles.isEmpty())
+        || (data.scopedRoles != null && !data.scopedRoles.isEmpty());
+  }
+
   /** Throws 403 when the current caller cannot act on the provided tenant. */
   public static void requireTenantAccess(Long tenantId) {
     if (tenantId == null) {

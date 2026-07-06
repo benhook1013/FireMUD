@@ -168,6 +168,27 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void firstPartyHandshakeDoesNotMaskUnexpectedJwtParserRuntimeFailure() {
+    JwtUtil jwtUtil = mock(JwtUtil.class);
+    when(jwtUtil.parseToken("boom-token")).thenThrow(new IllegalStateException("boom"));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            jwtUtil, TEST_RUNTIME_IDENTITY, null, environmentWithProfiles("test"));
+
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/ws/game/test")
+                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, "boom-token")
+                .build());
+
+    IllegalStateException ex =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalStateException.class, () -> filter.filter(exchange, e -> Mono.empty()).block());
+
+    assertThat(ex).hasMessage("boom");
+  }
+
+  @Test
   void rejectsScopeMismatchWhenRequestHeadersDisagreeWithTokenClaims() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(

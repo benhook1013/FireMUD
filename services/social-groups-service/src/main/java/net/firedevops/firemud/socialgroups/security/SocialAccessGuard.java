@@ -22,14 +22,6 @@ public class SocialAccessGuard {
   }
 
   private boolean isCurrentAccount(long accountId) {
-    String currentAccountId = SessionContext.getAccountId();
-    if (currentAccountId == null || currentAccountId.isBlank()) {
-      return false;
-    }
-    try {
-      return Long.parseLong(currentAccountId) == accountId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
+    return SessionContext.isCurrentAccount(accountId);
   }
 }

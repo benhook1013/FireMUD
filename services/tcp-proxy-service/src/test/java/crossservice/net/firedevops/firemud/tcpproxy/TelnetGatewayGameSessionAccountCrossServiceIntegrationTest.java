@@ -211,6 +211,53 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
+  void telnetAndGatewayWebSocketCanMoveNorthOnSharedRuntime() throws Exception {
+    ensureTestServicesStarted();
+
+    try (GameplayTelnetDriver telnetClient =
+            GameplayTelnetScenarios.openReady(
+                this::openTelnetClient,
+                GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT));
+        GameplayWebSocketDriver webSocketClient =
+            openReadyGatewayWebSocketClient("Sora", "gateway-sora")) {
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
+      telnetClient.sendLine("MOVE north");
+
+      assertThat(
+              telnetClient
+                  .readBlockMatching(
+                      GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                          LookTestFixtures.DESTINATION_ROOM_ID),
+                      "canonical telnet move refresh")
+                  .trim())
+          .matches(
+              GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
+                  LookTestFixtures.DESTINATION_ROOM_ID));
+
+      webSocketClient.send("north");
+      assertThat(
+              webSocketClient.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID).trim())
+          .matches(
+              GameplayTranscriptMatchers.matchesCanonicalMoveOrLookWithOptionalPrompt(
+                  LookTestFixtures.DESTINATION_ROOM_ID));
+
+      assertThat(
+              sessionContextService.findByGameplayName(
+                  TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Emberline"))
+          .hasValueSatisfying(
+              context ->
+                  assertThat(context.roomInstanceId())
+                      .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+      assertThat(
+              sessionContextService.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora"))
+          .hasValueSatisfying(
+              context ->
+                  assertThat(context.roomInstanceId())
+                      .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+    }
+  }
+
+  @Test
   void telnetItemAndEquipmentLoopMatchesWebSocketCommandSurface() throws Exception {
     ensureTestServicesStarted();
 
@@ -325,14 +372,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
     ensureTestServicesStarted();
 
-    try (GameplayWebSocketDriver webSocketClient =
-        GameplayWebSocketScenarios.openReady(
-            URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
-            COMMAND_WAIT,
-            TENANT_ID,
-            1L,
-            READY_LOOK_TEXT,
-            "gateway-1")) {
+    try (GameplayWebSocketDriver webSocketClient = openReadyGatewayWebSocketClient("gateway-1")) {
       webSocketClient.send("INV HERE");
       assertThat(
               webSocketClient.awaitResponseMatching(
@@ -690,6 +730,28 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private GameplayTelnetDriver openReadyTelnetClient() throws Exception {
     return GameplayTelnetScenarios.openReady(this::openTelnetClient, READY_LOOK_TEXT);
+  }
+
+  private GameplayWebSocketDriver openReadyGatewayWebSocketClient(String connectionId)
+      throws Exception {
+    return GameplayWebSocketScenarios.openReady(
+        URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
+        COMMAND_WAIT,
+        TENANT_ID,
+        1L,
+        READY_LOOK_TEXT,
+        connectionId);
+  }
+
+  private GameplayWebSocketDriver openReadyGatewayWebSocketClient(
+      String characterName, String connectionId) throws Exception {
+    return GameplayWebSocketScenarios.openReady(
+        URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
+        COMMAND_WAIT,
+        TENANT_ID,
+        1L,
+        GameplayWebSocketScenarios.demoAdmission(characterName, READY_LOOK_TEXT),
+        connectionId);
   }
 
   private static AccountRuntimeStubServer accountStub() {

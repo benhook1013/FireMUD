@@ -280,6 +280,23 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  public boolean hasGameplayBinding() {
+    return gameInstanceId > 0
+        || characterId > 0
+        || roomInstanceId != null && !roomInstanceId.isBlank();
+  }
+
+  public boolean hasGameplayRegionBinding() {
+    return gameInstanceId > 0
+        && characterId > 0
+        && roomInstanceId != null
+        && !roomInstanceId.isBlank();
+  }
+
+  public static boolean hasGameplayRegionBindingOrFalse(SessionContext context) {
+    return context != null && context.hasGameplayRegionBinding();
+  }
+
   public boolean sameGameplayIdentity(SessionContext that) {
     if (that == null) {
       return false;
@@ -292,15 +309,10 @@ public record SessionContext(
   }
 
   public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
-    if (accountId <= 0
-        || tenantId <= 0
-        || bootstrapGameInstanceId <= 0
-        || !hasRoutingBundle()
-        || connectScopeId == null
-        || connectRequestId == null) {
+    if (accountId <= 0 || tenantId <= 0) {
       return Optional.empty();
     }
-    return Optional.of(
+    FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
             accountId,
             tenantId,
@@ -311,10 +323,17 @@ public record SessionContext(
             connectScopeId,
             null,
             connectRequestId,
-            null));
+            null);
+    return connectContext.hasCompleteRoutingScope()
+        ? Optional.of(connectContext)
+        : Optional.empty();
   }
 
-  private boolean hasRoutingBundle() {
-    return worldSlug != null && realmSlug != null && pointerVersion > 0;
+  public boolean hasPartialPersistedFirstPartyConnectContext() {
+    if (accountId <= 0 || tenantId <= 0) {
+      return false;
+    }
+    boolean hasAnyPersistedSelectorField = connectScopeId != null || connectRequestId != null;
+    return hasAnyPersistedSelectorField && persistedFirstPartyConnectContext().isEmpty();
   }
 }

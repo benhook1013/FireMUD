@@ -9,7 +9,6 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 public final class DefaultGameplayPresenceLifecycleService
@@ -54,7 +53,7 @@ public final class DefaultGameplayPresenceLifecycleService
     if (context == null) {
       return;
     }
-    if (hasGameplayRegionBinding(context)) {
+    if (context.hasGameplayRegionBinding()) {
       scriptEventPublisher.publishRegionExitEvent(
           context, clearedBindingEventId(context, clearReason), clearReason);
     }
@@ -65,19 +64,13 @@ public final class DefaultGameplayPresenceLifecycleService
   public void recordDisconnected(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
-        .filter(this::hasGameplayRegionBinding)
+        .filter(SessionContext::hasGameplayRegionBindingOrFalse)
         .ifPresent(
             context ->
                 scriptEventPublisher.publishRegionExitEvent(
                     context, disconnectEventId(context, disposition), disposition.name()));
     accountRecentPresenceService.recordDisconnect(sessionId, disposition);
     gameplayPresenceService.removeBySessionId(sessionId);
-  }
-
-  private boolean hasGameplayRegionBinding(SessionContext context) {
-    return context.gameInstanceId() > 0
-        && context.characterId() > 0
-        && StringUtils.hasText(context.roomInstanceId());
   }
 
   private static String disconnectEventId(

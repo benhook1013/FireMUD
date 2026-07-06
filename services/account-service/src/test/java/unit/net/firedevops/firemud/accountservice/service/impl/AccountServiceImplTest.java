@@ -328,6 +328,55 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapWorldsRejectsBootstrapTokenWithoutAudience() {
+    String malformedBootstrapToken =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken("11", Map.of("accountId", "11", "tenantId", "7"));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(malformedBootstrapToken));
+
+    assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+  }
+
+  @Test
+  void listBootstrapWorldsDoesNotMaskUnexpectedJwtParserRuntimeFailure() {
+    JwtUtil jwtUtil = org.mockito.Mockito.mock(JwtUtil.class);
+    when(jwtUtil.parseToken("boom-token")).thenThrow(new IllegalStateException("boom"));
+    service =
+        new AccountServiceImpl(
+            accountRepository,
+            accountRealmAccessGrantRepository,
+            accountTenantMembershipRepository,
+            Mappers.getMapper(AccountMapper.class),
+            profileRepository,
+            profileMapper,
+            paymentTransactionRepository,
+            subscriptionRepository,
+            externalAccountRepository,
+            passwordResetTokenRepository,
+            emailVerificationTokenRepository,
+            notificationService,
+            emailService,
+            mailProperties,
+            tokenProperties,
+            jwtAuthProperties,
+            loggingAdminClient,
+            gameSessionClient,
+            entityManagementClient,
+            jwtUtil,
+            sessionService,
+            sagaRunner);
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.listBootstrapWorlds("boom-token"));
+
+    assertEquals("boom", ex.getMessage());
+  }
+
+  @Test
   void issueConnectTokenRejectsMalformedConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
@@ -352,6 +401,35 @@ class AccountServiceImplTest {
             () ->
                 service.issueConnectToken(
                     bootstrap.bootstrapToken(), new ConnectTokenRequest("bad", "req-err")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
+  }
+
+  @Test
+  void issueConnectTokenRejectsBlankConnectScopeId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(), new ConnectTokenRequest("   ", "req-blank-scope")));
 
     assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
   }
@@ -1157,6 +1235,55 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapRealmsDropsRealmWithMalformedTenantId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("broken")
+                    .setDisplayName("Broken Realm")
+                    .setTenantId("bad")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(1, realms.size());
+    assertEquals("production", realms.getFirst().realmSlug());
+  }
+
+  @Test
   void listBootstrapCharactersUsesIsolatedRealmRoster() {
     Account account = new Account();
     account.setId(11L);
@@ -1220,6 +1347,46 @@ class AccountServiceImplTest {
     assertEquals("ForkMara", characters.getFirst().characterName());
     assertEquals("ISOLATED", characters.getFirst().stateScope());
     assertEquals("COPIED_ONLY", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsAdmissionPointerWithMalformedGameInstanceId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("bad")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
+    org.mockito.Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
