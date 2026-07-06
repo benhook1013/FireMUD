@@ -48,13 +48,38 @@ public final class GameplayTranscriptMatchers {
   }
 
   private static Predicate<String> promptTolerantMatcher(String canonical) {
-    String leadingPrompt = "demo> \n" + canonical;
-    String trailingPrompt = canonical + "\n\ndemo>";
-    String wrappedPrompt = "demo> \n" + trailingPrompt;
-    return response ->
-        response.equals(canonical)
-            || response.equals(leadingPrompt)
-            || response.equals(trailingPrompt)
-            || response.equals(wrappedPrompt);
+    return response -> canonical.equals(stripOptionalGameplayPrompt(response));
+  }
+
+  private static String stripOptionalGameplayPrompt(String response) {
+    return stripTrailingPrompt(stripLeadingPrompt(response)).trim();
+  }
+
+  private static String stripLeadingPrompt(String response) {
+    int newlineIndex = response.indexOf('\n');
+    if (newlineIndex < 0) {
+      return response;
+    }
+    String firstLine = response.substring(0, newlineIndex).trim();
+    if (!looksLikeGameplayPrompt(firstLine)) {
+      return response;
+    }
+    return response.substring(newlineIndex + 1).stripLeading();
+  }
+
+  private static String stripTrailingPrompt(String response) {
+    int separatorIndex = response.lastIndexOf("\n\n");
+    if (separatorIndex < 0) {
+      return response;
+    }
+    String trailingLine = response.substring(separatorIndex + 2).trim();
+    if (!looksLikeGameplayPrompt(trailingLine)) {
+      return response;
+    }
+    return response.substring(0, separatorIndex);
+  }
+
+  private static boolean looksLikeGameplayPrompt(String line) {
+    return !line.isBlank() && line.endsWith(">");
   }
 }

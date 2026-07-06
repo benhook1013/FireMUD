@@ -124,6 +124,7 @@ class MultiplayerLoadProofCrossServiceTest {
     List<PlayerSessionDriver> connectedPlayers = openReadyPlayersConcurrently(uri, players);
     try {
       runConcurrentNorthMovement(connectedPlayers);
+      runConcurrentDestinationLook(connectedPlayers);
 
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
@@ -167,59 +168,60 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private List<PlayerSessionDriver> openReadyPlayersConcurrently(
       URI uri, List<GameplayLoadScenarios.PlayerSeed> players) throws Exception {
-    CountDownLatch start = new CountDownLatch(1);
-    ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
-    try {
-      List<Future<PlayerSessionDriver>> futures = new ArrayList<>();
-      for (GameplayLoadScenarios.PlayerSeed player : players) {
-        futures.add(
-            executor.submit(
-                () -> {
-                  assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
-                  GameplayWebSocketDriver driver =
-                      GameplayLoadScenarios.openReadyPlayer(
-                          uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber");
-                  return new PlayerSessionDriver(player, driver);
-                }));
-      }
-
-      start.countDown();
-
-      List<PlayerSessionDriver> connectedPlayers = new ArrayList<>();
-      for (Future<PlayerSessionDriver> future : futures) {
-        connectedPlayers.add(future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS));
-      }
-      return connectedPlayers;
-    } finally {
-      executor.shutdownNow();
-      executor.awaitTermination(5, TimeUnit.SECONDS);
-    }
+    return runConcurrently(
+        players,
+        player -> {
+          GameplayWebSocketDriver driver =
+              GameplayLoadScenarios.openReadyPlayer(
+                  uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber");
+          return new PlayerSessionDriver(player, driver);
+        });
   }
 
   private void runConcurrentNorthMovement(List<PlayerSessionDriver> connectedPlayers)
       throws Exception {
+    runConcurrently(
+        connectedPlayers,
+        connectedPlayer -> {
+          connectedPlayer.driver().send("north");
+          connectedPlayer.driver().awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+          return null;
+        });
+  }
+
+  private void runConcurrentDestinationLook(List<PlayerSessionDriver> connectedPlayers)
+      throws Exception {
+    runConcurrently(
+        connectedPlayers,
+        connectedPlayer -> {
+          connectedPlayer.driver().send("LOOK");
+          connectedPlayer.driver().awaitCanonicalLook(LookTestFixtures.DESTINATION_ROOM_ID);
+          return null;
+        });
+  }
+
+  private <T, R> List<R> runConcurrently(List<T> items, ConcurrentTask<T, R> task)
+      throws Exception {
     CountDownLatch start = new CountDownLatch(1);
-    ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
+    ExecutorService executor = Executors.newFixedThreadPool(items.size());
     try {
-      List<Future<Void>> futures = new ArrayList<>();
-      for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+      List<Future<R>> futures = new ArrayList<>();
+      for (T item : items) {
         futures.add(
             executor.submit(
                 () -> {
                   assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
-                  connectedPlayer.driver().send("north");
-                  connectedPlayer
-                      .driver()
-                      .awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
-                  return null;
+                  return task.run(item);
                 }));
       }
 
       start.countDown();
 
-      for (Future<Void> future : futures) {
-        future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS);
+      List<R> results = new ArrayList<>();
+      for (Future<R> future : futures) {
+        results.add(future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS));
       }
+      return results;
     } finally {
       executor.shutdownNow();
       executor.awaitTermination(5, TimeUnit.SECONDS);
@@ -230,6 +232,11 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private record PlayerSessionDriver(
       GameplayLoadScenarios.PlayerSeed player, GameplayWebSocketDriver driver) {}
+
+  @FunctionalInterface
+  private interface ConcurrentTask<T, R> {
+    R run(T item) throws Exception;
+  }
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
     return STACK.gameSession();
