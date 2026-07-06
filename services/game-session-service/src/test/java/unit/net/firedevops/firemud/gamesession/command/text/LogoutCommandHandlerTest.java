@@ -319,6 +319,38 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
+  void logoutSkipsGameplayCleanupForPartialGameplayShell() {
+    SessionContext partial =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "demo",
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L,
+            null,
+            null,
+            0L,
+            null);
+    when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(partial));
+
+    LogoutCommandHandlingResult result = handler.handle("41");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(gameplayPresenceLifecycleService)
+        .recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
+    verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
+  }
+
+  @Test
   void logoutBeforeLoginReturnsBoundedFailure() {
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.empty());
 

@@ -141,4 +141,20 @@ class SessionContextTest {
     assertTrue(roomOnly.hasGameplayBinding());
     assertFalse(blank.hasGameplayBinding());
   }
+
+  @Test
+  void hasGameplayIdentityRequiresPositiveGameInstanceAndCharacter() {
+    SessionContext complete =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+    SessionContext missingGameInstance =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, "room-1", "jwt");
+    SessionContext missingCharacter =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "room-1", "jwt");
+
+    assertTrue(complete.hasGameplayIdentity());
+    assertFalse(missingGameInstance.hasGameplayIdentity());
+    assertFalse(missingCharacter.hasGameplayIdentity());
+  }
 }

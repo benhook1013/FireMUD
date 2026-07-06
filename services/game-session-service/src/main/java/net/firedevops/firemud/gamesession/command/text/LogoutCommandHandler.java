@@ -76,14 +76,14 @@ public final class LogoutCommandHandler {
     SessionContext context = maybeContext.orElseThrow();
     SessionContext persistedContext = maybePersistedContext.orElse(context);
     try {
-      if (context.gameInstanceId() > 0 && context.characterId() > 0) {
+      if (context.hasGameplayIdentity()) {
         scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
       }
       boolean stopSession = shouldStopSession(context, persistedContext);
       if (stopSession) {
         gameInstanceService.stopSession(context.gameInstanceId());
       }
-      if (context.gameInstanceId() > 0 && context.characterId() > 0) {
+      if (context.hasGameplayIdentity()) {
         screenBufferService.clear(
             context.tenantId(), context.gameInstanceId(), context.characterId());
       }

@@ -357,7 +357,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     maybeContext
-        .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
+        .filter(SessionContext::hasGameplayIdentity)
         .ifPresent(
             context ->
                 screenBufferService.append(
@@ -383,7 +383,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     maybeContext
-        .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
+        .filter(SessionContext::hasGameplayIdentity)
         .ifPresent(
             context -> {
               try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
