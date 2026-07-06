@@ -466,9 +466,8 @@ public class EntityManagementGrpcService
       ListCharactersByAccountRequest request,
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long accountId = Long.parseLong(request.getAccountId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
       var characters =
           characterService
               .listForGameplayScope(
@@ -534,13 +533,12 @@ public class EntityManagementGrpcService
       FindCharacterByNameRequest request,
       StreamObserver<FindCharacterByNameResponse> responseObserver) {
     try {
+      long tenantId = requireTenantId(request.getTenantId());
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getTenantId(),
+          String.valueOf(tenantId),
           request.getGameInstanceId(),
           null);
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
           .findByGameplayScopeAndName(
@@ -609,9 +607,8 @@ public class EntityManagementGrpcService
   public void createCharacter(
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long accountId = Long.parseLong(request.getAccountId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
       CharacterDto created =
           characterService.create(
               tenantId,
@@ -624,6 +621,19 @@ public class EntityManagementGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateCharacter",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder()
               .setError(
@@ -656,9 +666,8 @@ public class EntityManagementGrpcService
   public void updateEntity(
       UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long entityId = Long.parseLong(request.getEntityId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long entityId = RequestIdValidation.requirePositiveLong(request.getEntityId(), "entityId");
       boolean result =
           characterService.updateEntity(
               tenantId,
@@ -1695,25 +1704,15 @@ public class EntityManagementGrpcService
       StreamObserver<CleanupRuntimeInstanceResponse> responseObserver) {
     CleanupRuntimeInstanceResponse.Builder builder = CleanupRuntimeInstanceResponse.newBuilder();
     try {
-      requireTenantAccessWhenPresent(Long.parseLong(request.getTenantId()));
+      long tenantId = requireTenantId(request.getTenantId());
       var result =
           runtimeInstanceCleanupService.cleanupRuntimeInstance(
-              Long.parseLong(request.getTenantId()),
-              request.getGameInstanceId(),
-              request.getTerminationRequestId());
+              tenantId, request.getGameInstanceId(), request.getTerminationRequestId());
       builder
           .setDeletedRoomGroundEntries(result.deletedRoomGroundEntries())
           .setDeletedItemStacks(result.deletedItemStacks())
           .setDeletedItemInstances(result.deletedItemInstances())
           .setDeletedContainerInstances(result.deletedContainerInstances());
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "CleanupRuntimeInstance",
-              "INVALID_ARGUMENT",
-              "tenant_id must be numeric"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -1743,18 +1742,22 @@ public class EntityManagementGrpcService
     SessionContext.requireTenantAccess(tenantId);
   }
 
-  private GameplayActorScope requireGameplayActorScope(
-      String tenantIdText, String characterIdText) {
+  private long requireTenantId(String tenantIdText) {
     long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
     requireTenantAccessWhenPresent(tenantId);
+    return tenantId;
+  }
+
+  private GameplayActorScope requireGameplayActorScope(
+      String tenantIdText, String characterIdText) {
+    long tenantId = requireTenantId(tenantIdText);
     return new GameplayActorScope(
         tenantId, RequestIdValidation.requirePositiveLong(characterIdText, "characterId"));
   }
 
   private GameplayRoomScope requireGameplayRoomScope(
       String tenantIdText, String gameInstanceId, String roomInstanceId) {
-    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
-    requireTenantAccessWhenPresent(tenantId);
+    long tenantId = requireTenantId(tenantIdText);
     return new GameplayRoomScope(
         tenantId,
         String.valueOf(tenantId),
