@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
@@ -29,6 +30,8 @@ import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
+import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -408,5 +411,48 @@ class AutomationScriptingGrpcServiceTest {
     assertEquals(2, ref.get().getUpdatedScheduleCount());
     assertEquals(1, ref.get().getFiredScheduleCount());
     assertEquals(3, ref.get().getTruncatedFiringCount());
+  }
+
+  @Test
+  void updateScriptRejectsZeroTenantIdBeforeUpdate() {
+    ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            scriptService,
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
+    service.updateScript(
+        UpdateScriptRequest.newBuilder()
+            .setTenantId("0")
+            .setName("guard-script")
+            .setVersion("v1")
+            .setDefinition("{}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(UpdateScriptResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(scriptService);
   }
 }
