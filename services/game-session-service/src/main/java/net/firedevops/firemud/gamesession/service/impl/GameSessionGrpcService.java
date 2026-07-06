@@ -595,11 +595,12 @@ public final class GameSessionGrpcService
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
     try {
-      requireTenantAccess(
-          ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId"));
+      long tenantId =
+          ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
+      requireTenantAccess(tenantId);
       featureFlagService.toggleFlag(
           new net.firedevops.firemud.gamesession.dto.ToggleFeatureFlagRequest(
-              Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
+              tenantId, request.getName(), request.getEnabled()));
       ToggleFeatureFlagResponse response =
           ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
