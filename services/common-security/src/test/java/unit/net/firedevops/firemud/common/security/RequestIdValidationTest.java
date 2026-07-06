@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import net.firedevops.firemud.common.security.RequestIdValidation;
@@ -22,5 +23,18 @@ class RequestIdValidationTest {
             IllegalArgumentException.class,
             () -> RequestIdValidation.requirePositiveLong("0", "tenantId"));
     assertEquals("tenantId must be positive", nonPositive.getMessage());
+  }
+
+  @Test
+  void parseOptionalPositiveLongTreatsBlankAsAbsentAndRejectsMalformedInput() {
+    assertNull(RequestIdValidation.parseOptionalPositiveLong(null, "recipientId"));
+    assertNull(RequestIdValidation.parseOptionalPositiveLong("   ", "recipientId"));
+    assertEquals(7L, RequestIdValidation.parseOptionalPositiveLong("7", "recipientId"));
+
+    IllegalArgumentException malformed =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.parseOptionalPositiveLong("abc", "recipientId"));
+    assertEquals("recipientId must be numeric", malformed.getMessage());
   }
 }

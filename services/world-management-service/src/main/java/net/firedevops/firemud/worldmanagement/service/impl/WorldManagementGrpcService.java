@@ -98,16 +98,19 @@ public class WorldManagementGrpcService
       var snapshot =
           worldInstanceActivationService.prepareWorldInstance(
               new PreparedWorldInstanceRequest(
-                  requirePositiveLong(request.getTenantId(), "tenantId"),
-                  requirePositiveLong(request.getGameInstanceId(), "gameInstanceId"),
-                  requirePositiveLong(request.getGameTemplateId(), "gameTemplateId"),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameTemplateId(), "gameTemplateId"),
                   request.getControlPlaneRequestId(),
                   request.getLaunchDescriptorId(),
-                  requirePositiveLong(request.getVersionId(), "versionId"),
+                  RequestIdValidation.requirePositiveLong(request.getVersionId(), "versionId"),
                   request.getScriptPatchVersion(),
                   request.getRuntimeFlagsJson(),
                   request.getGenerationConfigRevision(),
-                  requirePositiveLong(request.getReleaseBundleId(), "releaseBundleId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getReleaseBundleId(), "releaseBundleId"),
                   request.getPublishedReleaseBundleRef(),
                   request.getVersionStateEpoch(),
                   request.getRemapSetId().isBlank() ? null : request.getRemapSetId()));
@@ -133,8 +136,9 @@ public class WorldManagementGrpcService
     try {
       var snapshot =
           worldInstanceActivationService.activatePreparedWorldInstance(
-              requirePositiveLong(request.getTenantId(), "tenantId"),
-              requirePositiveLong(request.getGameInstanceId(), "gameInstanceId"),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getGameInstanceId(), "gameInstanceId"),
               request.getExpectedLifecycleEpoch());
       builder.setWorldInstance(toProto(snapshot));
     } catch (IllegalArgumentException ex) {
@@ -163,8 +167,9 @@ public class WorldManagementGrpcService
     try {
       var snapshot =
           worldInstanceActivationService.failPreparedWorldInstance(
-              requirePositiveLong(request.getTenantId(), "tenantId"),
-              requirePositiveLong(request.getGameInstanceId(), "gameInstanceId"),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getGameInstanceId(), "gameInstanceId"),
               request.getExpectedLifecycleEpoch(),
               request.getReason());
       builder.setWorldInstance(toProto(snapshot));
@@ -195,8 +200,9 @@ public class WorldManagementGrpcService
       builder.setWorldInstance(
           toProto(
               worldInstanceActivationService.getWorldInstanceLifecycle(
-                  requirePositiveLong(request.getTenantId(), "tenantId"),
-                  requirePositiveLong(request.getGameInstanceId(), "gameInstanceId"))));
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"))));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -223,8 +229,9 @@ public class WorldManagementGrpcService
       builder.setWorldInstance(
           toProto(
               worldInstanceActivationService.terminateWorldInstance(
-                  requirePositiveLong(request.getTenantId(), "tenantId"),
-                  requirePositiveLong(request.getGameInstanceId(), "gameInstanceId"),
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"),
                   request.getExpectedLifecycleEpoch(),
                   request.getTerminationRequestId(),
                   request.getReason())));
@@ -302,9 +309,11 @@ public class WorldManagementGrpcService
     try {
       var validation =
           worldUpgradeValidationService.validateWorldUpgradeMappings(
-              requirePositiveLong(request.getTenantId(), "tenantId"),
-              requirePositiveLong(request.getSourceGameInstanceId(), "sourceGameInstanceId"),
-              requirePositiveLong(request.getTargetVersionId(), "targetVersionId"),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getSourceGameInstanceId(), "sourceGameInstanceId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getTargetVersionId(), "targetVersionId"),
               request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
       builder
           .addAllStateClassesChecked(validation.stateClassesChecked())
@@ -330,10 +339,6 @@ public class WorldManagementGrpcService
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
-  }
-
-  private long requirePositiveLong(String value, String fieldName) {
-    return RequestIdValidation.requirePositiveLong(value, fieldName);
   }
 
   @Override

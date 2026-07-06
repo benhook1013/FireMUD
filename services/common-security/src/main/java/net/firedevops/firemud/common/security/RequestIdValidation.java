@@ -15,4 +15,8 @@ public final class RequestIdValidation {
       throw new IllegalArgumentException(fieldName + " must be numeric", ex);
     }
   }
+
+  public static Long parseOptionalPositiveLong(String value, String fieldName) {
+    return value == null || value.isBlank() ? null : requirePositiveLong(value, fieldName);
+  }
 }

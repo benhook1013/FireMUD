@@ -104,9 +104,10 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               senderScope.accountId(),
               mapChatType(request),
               request.getChannelId(),
-              requireOptionalPositiveLong(request.getRecipientId(), "recipientId"),
-              requireOptionalPositiveLong(request.getGuildId(), "guildId"),
-              requireOptionalPositiveLong(request.getCityId(), "cityId"),
+              RequestIdValidation.parseOptionalPositiveLong(
+                  request.getRecipientId(), "recipientId"),
+              RequestIdValidation.parseOptionalPositiveLong(request.getGuildId(), "guildId"),
+              RequestIdValidation.parseOptionalPositiveLong(request.getCityId(), "cityId"),
               request.getContent(),
               request.getEffectId().isEmpty() ? null : request.getEffectId());
       chatService.sendMessage(dto);
@@ -188,7 +189,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new AddFriendRequest(
               accountScope.tenantId(),
               accountScope.accountId(),
-              requirePositiveLong(request.getFriendAccountId(), "friendAccountId"));
+              RequestIdValidation.requirePositiveLong(
+                  request.getFriendAccountId(), "friendAccountId"));
       friendService.addFriend(dto);
       AddFriendResponse response = AddFriendResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
@@ -222,7 +224,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       friendService.removeFriend(
           accountScope.tenantId(),
           accountScope.accountId(),
-          requirePositiveLong(request.getFriendAccountId(), "friendAccountId"));
+          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId"));
       responseObserver.onNext(RemoveFriendResponse.newBuilder().setSuccess(true).build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -259,7 +261,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     try {
       AccountScope accountScope =
           requireAccountScope(request.getTenantId(), request.getAccountId(), "accountId");
-      long friendAccountId = requirePositiveLong(request.getFriendAccountId(), "friendAccountId");
+      long friendAccountId =
+          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId");
       FriendRosterEntryDto friend =
           friendService
               .getFriend(accountScope.tenantId(), accountScope.accountId(), friendAccountId)
@@ -771,7 +774,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new SendMailRequest(
               senderScope.tenantId(),
               senderScope.accountId(),
-              requirePositiveLong(request.getRecipientAccountId(), "recipientAccountId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getRecipientAccountId(), "recipientAccountId"),
               request.getSubject(),
               request.getContent());
       mailService.sendMail(dto);
@@ -829,18 +833,10 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
 
   private AccountScope requireAccountScope(
       String tenantIdText, String accountIdText, String accountFieldName) {
-    long tenantId = requirePositiveLong(tenantIdText, "tenantId");
-    long accountId = requirePositiveLong(accountIdText, accountFieldName);
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    long accountId = RequestIdValidation.requirePositiveLong(accountIdText, accountFieldName);
     requireAccountAccess(tenantId, accountId);
     return new AccountScope(tenantId, accountId);
-  }
-
-  private long requirePositiveLong(String value, String fieldName) {
-    return RequestIdValidation.requirePositiveLong(value, fieldName);
-  }
-
-  private Long requireOptionalPositiveLong(String value, String fieldName) {
-    return value == null || value.isEmpty() ? null : requirePositiveLong(value, fieldName);
   }
 
   private record AccountScope(long tenantId, long accountId) {}

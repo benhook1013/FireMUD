@@ -978,9 +978,10 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
-      long itemId = requirePositiveLong(request.getItemId(), "itemId");
+      long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getItemInstanceId(), "itemInstanceId");
       WearEquipmentItemResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1139,7 +1140,8 @@ public class EntityManagementGrpcService
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       long containerInstanceId =
-          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
+          RequestIdValidation.requirePositiveLong(
+              request.getContainerInstanceId(), "containerInstanceId");
       var items =
           containerService.listContainerContents(
               actorScope.tenantId(),
@@ -1215,10 +1217,12 @@ public class EntityManagementGrpcService
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       long containerInstanceId =
-          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
-      long itemId = requirePositiveLong(request.getItemId(), "itemId");
+          RequestIdValidation.requirePositiveLong(
+              request.getContainerInstanceId(), "containerInstanceId");
+      long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getItemInstanceId(), "itemInstanceId");
       PutItemIntoContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1302,10 +1306,12 @@ public class EntityManagementGrpcService
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       long containerInstanceId =
-          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
-      long itemId = requirePositiveLong(request.getItemId(), "itemId");
+          RequestIdValidation.requirePositiveLong(
+              request.getContainerInstanceId(), "containerInstanceId");
+      long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getItemInstanceId(), "itemInstanceId");
       TakeItemFromContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1387,7 +1393,7 @@ public class EntityManagementGrpcService
           request.getTenantId(),
           request.getGameInstanceId(),
           request.getRoomInstanceId());
-      long tenantId = requirePositiveLong(request.getTenantId(), "tenantId");
+      long tenantId = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
       requireTenantAccessWhenPresent(tenantId);
       var items =
           inventoryService.listRoomGroundItems(
@@ -1461,7 +1467,7 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
-      long itemId = requirePositiveLong(request.getItemId(), "itemId");
+      long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
       int quantity = request.getQuantity();
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1477,7 +1483,8 @@ public class EntityManagementGrpcService
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId"),
+                        RequestIdValidation.parseOptionalPositiveLong(
+                            request.getItemInstanceId(), "itemInstanceId"),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
@@ -1544,7 +1551,7 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
-      long itemId = requirePositiveLong(request.getItemId(), "itemId");
+      long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
       int quantity = request.getQuantity();
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1560,7 +1567,8 @@ public class EntityManagementGrpcService
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId"),
+                        RequestIdValidation.parseOptionalPositiveLong(
+                            request.getItemInstanceId(), "itemInstanceId"),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
@@ -1745,17 +1753,10 @@ public class EntityManagementGrpcService
 
   private GameplayActorScope requireGameplayActorScope(
       String tenantIdText, String characterIdText) {
-    long tenantId = requirePositiveLong(tenantIdText, "tenantId");
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
     requireTenantAccessWhenPresent(tenantId);
-    return new GameplayActorScope(tenantId, requirePositiveLong(characterIdText, "characterId"));
-  }
-
-  private long requirePositiveLong(String value, String fieldName) {
-    return RequestIdValidation.requirePositiveLong(value, fieldName);
-  }
-
-  private Long parseOptionalPositiveLong(String value, String fieldName) {
-    return blankToNull(value) == null ? null : requirePositiveLong(value, fieldName);
+    return new GameplayActorScope(
+        tenantId, RequestIdValidation.requirePositiveLong(characterIdText, "characterId"));
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
