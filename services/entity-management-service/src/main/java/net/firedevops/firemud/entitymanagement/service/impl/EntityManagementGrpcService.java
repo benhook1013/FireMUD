@@ -91,6 +91,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Simple gRPC service exposing the Ping RPC. */
@@ -842,6 +843,8 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      String conditionKey = requireText(request.getConditionKey(), "conditionKey");
+      String sourceType = requireText(request.getSourceType(), "sourceType");
       Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
@@ -855,9 +858,9 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getConditionKey(),
+                        conditionKey,
                         request.getStackCount(),
-                        request.getSourceType(),
+                        sourceType,
                         request.getSourceId(),
                         expiresAt,
                         request.getEffectPayloadJson());
@@ -1067,6 +1070,7 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      String slot = requireText(request.getSlot(), "slot");
       RemoveEquipmentResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1079,7 +1083,7 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getSlot(),
+                        slot,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
@@ -1855,6 +1859,13 @@ public class EntityManagementGrpcService
       throw new IllegalArgumentException("quantity must be positive");
     }
     return quantity;
+  }
+
+  private String requireText(String value, String fieldName) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalArgumentException(fieldName + " must be specified");
+    }
+    return value.trim();
   }
 
   private String blankToNull(String value) {

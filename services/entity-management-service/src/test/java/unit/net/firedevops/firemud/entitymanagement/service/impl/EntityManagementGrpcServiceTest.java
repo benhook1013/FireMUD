@@ -2188,6 +2188,138 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void applyActorConditionRejectsBlankConditionKeyBeforeReplayExecution() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("   ")
+            .setStackCount(1)
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("conditionKey must be specified", ref.get().getError().getMessage());
+    verifyNoInteractions(conditionMutationService, effectReplayService);
+  }
+
+  @Test
+  void applyActorConditionRejectsBlankSourceTypeBeforeReplayExecution() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setStackCount(1)
+            .setSourceType("   ")
+            .setSourceId("effect-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("sourceType must be specified", ref.get().getError().getMessage());
+    verifyNoInteractions(conditionMutationService, effectReplayService);
+  }
+
+  @Test
   void listEquipmentReturnsEquipmentItems() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -2468,6 +2600,63 @@ class EntityManagementGrpcServiceTest {
     assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
     assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
     assertEquals("66", ref.get().getEquipmentItem().getContainerInstanceId());
+  }
+
+  @Test
+  void removeEquipmentRejectsBlankSlotBeforeReplayLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<RemoveEquipmentResponse> ref = new AtomicReference<>();
+    service.removeEquipment(
+        RemoveEquipmentRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .setEffectId("effect-slot-1")
+            .setSlot("   ")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(RemoveEquipmentResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("slot must be specified", ref.get().getError().getMessage());
+    verifyNoInteractions(equipmentService, replayService);
   }
 
   @Test
