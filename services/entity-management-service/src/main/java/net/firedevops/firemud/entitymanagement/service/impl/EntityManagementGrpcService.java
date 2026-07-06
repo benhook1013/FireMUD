@@ -1468,6 +1468,9 @@ public class EntityManagementGrpcService
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
+      Long itemInstanceId =
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getItemInstanceId(), "itemInstanceId");
       int quantity = request.getQuantity();
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1483,8 +1486,7 @@ public class EntityManagementGrpcService
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        RequestIdValidation.parseOptionalPositiveLong(
-                            request.getItemInstanceId(), "itemInstanceId"),
+                        itemInstanceId,
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
@@ -1552,6 +1554,9 @@ public class EntityManagementGrpcService
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       long itemId = RequestIdValidation.requirePositiveLong(request.getItemId(), "itemId");
+      Long itemInstanceId =
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getItemInstanceId(), "itemInstanceId");
       int quantity = request.getQuantity();
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1567,8 +1572,7 @@ public class EntityManagementGrpcService
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        RequestIdValidation.parseOptionalPositiveLong(
-                            request.getItemInstanceId(), "itemInstanceId"),
+                        itemInstanceId,
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
