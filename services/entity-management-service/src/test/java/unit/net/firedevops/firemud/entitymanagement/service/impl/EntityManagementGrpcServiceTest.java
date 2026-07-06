@@ -414,6 +414,53 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void listContainerContentsRejectsZeroContainerInstanceIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListContainerContentsResponse> ref = new AtomicReference<>();
+    service.listContainerContents(
+        ListContainerContentsRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setContainerInstanceId("0")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListContainerContentsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("containerInstanceId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(containerService);
+  }
+
+  @Test
   void listRoomGroundInventoryReturnsMappedItems() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -465,6 +512,48 @@ class EntityManagementGrpcServiceTest {
     assertEquals(1, ref.get().getItemsCount());
     assertEquals("Torch", ref.get().getItems(0).getItemName());
     assertEquals(2, ref.get().getItems(0).getQuantity());
+  }
+
+  @Test
+  void listRoomGroundInventoryRejectsZeroTenantIdBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListRoomGroundInventoryResponse> ref = new AtomicReference<>();
+    service.listRoomGroundInventory(
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("0")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("R-1")
+            .setSessionAttestation("probe")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomGroundInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService);
   }
 
   @Test
@@ -614,6 +703,56 @@ class EntityManagementGrpcServiceTest {
     assertEquals("Torch", item.getItemName());
     assertEquals("44", item.getItemInstanceId());
     assertEquals("torch44", item.getVisibleRef());
+  }
+
+  @Test
+  void putItemIntoContainerRejectsMalformedItemInstanceIdBeforeMutation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<PutItemIntoContainerResponse> ref = new AtomicReference<>();
+    service.putItemIntoContainer(
+        PutItemIntoContainerRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setContainerInstanceId("10")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setItemId("11")
+            .setItemInstanceId("bad")
+            .setQuantity(1)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PutItemIntoContainerResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("itemInstanceId must be numeric", ref.get().getError().getMessage());
+    verifyNoInteractions(containerService);
   }
 
   @Test
@@ -2000,6 +2139,51 @@ class EntityManagementGrpcServiceTest {
     assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
     assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
     assertEquals("66", ref.get().getEquipmentItem().getContainerInstanceId());
+  }
+
+  @Test
+  void wearEquipmentRejectsZeroItemIdBeforeMutation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<WearEquipmentItemResponse> ref = new AtomicReference<>();
+    service.wearEquipment(
+        WearEquipmentItemRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setItemId("0")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(WearEquipmentItemResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("itemId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(equipmentService);
   }
 
   @Test

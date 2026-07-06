@@ -975,24 +975,21 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long itemId = Long.parseLong(request.getItemId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long itemId = requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          request.getItemInstanceId().isBlank()
-              ? null
-              : Long.parseLong(request.getItemInstanceId());
+          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
       WearEquipmentItemResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "WearEquipment",
               () -> {
                 CharacterEquipmentEntryDto dto =
                     equipmentService.wearItem(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         itemId,
@@ -1004,15 +1001,6 @@ public class EntityManagementGrpcService
                     .build();
               },
               WearEquipmentItemResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      WearEquipmentItemResponse response =
-          WearEquipmentItemResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "WearEquipment", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1074,19 +1062,18 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       RemoveEquipmentResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "RemoveEquipment",
               () -> {
                 CharacterEquipmentEntryDto dto =
                     equipmentService.removeWornItem(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getSlot(),
@@ -1095,19 +1082,6 @@ public class EntityManagementGrpcService
                 return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
               },
               RemoveEquipmentResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      RemoveEquipmentResponse response =
-          RemoveEquipmentResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "RemoveEquipment",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1161,14 +1135,14 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long containerInstanceId =
+          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
       var items =
           containerService.listContainerContents(
-              tenantId,
-              characterId,
+              actorScope.tenantId(),
+              actorScope.characterId(),
               containerInstanceId,
               resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
               resolvePlayableStateScope(request.getPlayableStateScope(), claims),
@@ -1177,19 +1151,6 @@ public class EntityManagementGrpcService
       ListContainerContentsResponse response =
           ListContainerContentsResponse.newBuilder()
               .addAllItems(items.stream().map(this::toProto).toList())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      ListContainerContentsResponse response =
-          ListContainerContentsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ListContainerContents",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1250,25 +1211,23 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
-      long itemId = Long.parseLong(request.getItemId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long containerInstanceId =
+          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
+      long itemId = requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          request.getItemInstanceId().isBlank()
-              ? null
-              : Long.parseLong(request.getItemInstanceId());
+          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
       PutItemIntoContainerResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "PutItemIntoContainer",
               () -> {
                 var dto =
                     containerService.putItemIntoContainer(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         containerInstanceId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
@@ -1284,19 +1243,6 @@ public class EntityManagementGrpcService
                     .build();
               },
               PutItemIntoContainerResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      PutItemIntoContainerResponse response =
-          PutItemIntoContainerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "PutItemIntoContainer",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1352,25 +1298,23 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               null,
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
-      long itemId = Long.parseLong(request.getItemId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long containerInstanceId =
+          requirePositiveLong(request.getContainerInstanceId(), "containerInstanceId");
+      long itemId = requirePositiveLong(request.getItemId(), "itemId");
       Long itemInstanceId =
-          request.getItemInstanceId().isBlank()
-              ? null
-              : Long.parseLong(request.getItemInstanceId());
+          parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId");
       TakeItemFromContainerResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "TakeItemFromContainer",
               () -> {
                 var dto =
                     containerService.takeItemFromContainer(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         containerInstanceId,
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
@@ -1386,19 +1330,6 @@ public class EntityManagementGrpcService
                     .build();
               },
               TakeItemFromContainerResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      TakeItemFromContainerResponse response =
-          TakeItemFromContainerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "TakeItemFromContainer",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1455,7 +1386,7 @@ public class EntityManagementGrpcService
           request.getTenantId(),
           request.getGameInstanceId(),
           request.getRoomInstanceId());
-      long tenantId = Long.parseLong(request.getTenantId());
+      long tenantId = requirePositiveLong(request.getTenantId(), "tenantId");
       requireTenantAccessWhenPresent(tenantId);
       var items =
           inventoryService.listRoomGroundItems(
@@ -1466,19 +1397,6 @@ public class EntityManagementGrpcService
       ListRoomGroundInventoryResponse response =
           ListRoomGroundInventoryResponse.newBuilder()
               .addAllItems(items.stream().map(this::toProto).toList())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      ListRoomGroundInventoryResponse response =
-          ListRoomGroundInventoryResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ListRoomGroundInventory",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1540,28 +1458,25 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long itemId = Long.parseLong(request.getItemId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long itemId = requirePositiveLong(request.getItemId(), "itemId");
       int quantity = request.getQuantity();
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "PickupItemFromRoom",
               () -> {
                 var dto =
                     inventoryService.pickupItemFromRoom(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         request.getGameInstanceId(),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        request.getItemInstanceId().isBlank()
-                            ? null
-                            : Long.parseLong(request.getItemInstanceId()),
+                        parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId"),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
@@ -1572,19 +1487,6 @@ public class EntityManagementGrpcService
                     .build();
               },
               PickupItemFromRoomResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      PickupItemFromRoomResponse response =
-          PickupItemFromRoomResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "PickupItemFromRoom",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1639,28 +1541,25 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               request.getPlayableStateScope());
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long characterId = Long.parseLong(request.getCharacterId());
-      long itemId = Long.parseLong(request.getItemId());
+      GameplayActorScope actorScope =
+          requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      long itemId = requirePositiveLong(request.getItemId(), "itemId");
       int quantity = request.getQuantity();
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
-              tenantId,
+              actorScope.tenantId(),
               request.getEffectId(),
               "DropItemToRoom",
               () -> {
                 var dto =
                     inventoryService.dropItemToRoom(
-                        tenantId,
-                        characterId,
+                        actorScope.tenantId(),
+                        actorScope.characterId(),
                         request.getGameInstanceId(),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
                         request.getRoomInstanceId(),
                         itemId,
-                        request.getItemInstanceId().isBlank()
-                            ? null
-                            : Long.parseLong(request.getItemInstanceId()),
+                        parseOptionalPositiveLong(request.getItemInstanceId(), "itemInstanceId"),
                         request.getContainerInstanceId(),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
@@ -1669,15 +1568,6 @@ public class EntityManagementGrpcService
                 return DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
               },
               DropItemToRoomResponse::parseFrom);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      DropItemToRoomResponse response =
-          DropItemToRoomResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "DropItemToRoom", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -1869,6 +1759,10 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       throw new IllegalArgumentException(fieldName + " must be numeric", ex);
     }
+  }
+
+  private Long parseOptionalPositiveLong(String value, String fieldName) {
+    return blankToNull(value) == null ? null : requirePositiveLong(value, fieldName);
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
