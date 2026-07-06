@@ -73,7 +73,7 @@ public final class GameplayTranscriptMatchers {
       return response;
     }
     String trailingLine = response.substring(separatorIndex + 2).trim();
-    if (!looksLikeGameplayPrompt(trailingLine)) {
+    if (trailingLine.contains("\n") || !looksLikeGameplayPrompt(trailingLine)) {
       return response;
     }
     return response.substring(0, separatorIndex);

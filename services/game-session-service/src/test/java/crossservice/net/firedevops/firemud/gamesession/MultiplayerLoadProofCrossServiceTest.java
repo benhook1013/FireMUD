@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -190,14 +191,22 @@ class MultiplayerLoadProofCrossServiceTest {
 
   private List<PlayerSessionDriver> openReadyPlayersConcurrently(
       URI uri, List<GameplayLoadScenarios.PlayerSeed> players) throws Exception {
-    return runConcurrently(
-        players,
-        player -> {
-          GameplayWebSocketDriver driver =
-              GameplayLoadScenarios.openReadyPlayer(
-                  uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber");
-          return new PlayerSessionDriver(player, driver);
-        });
+    List<PlayerSessionDriver> openedDrivers = Collections.synchronizedList(new ArrayList<>());
+    try {
+      return runConcurrently(
+          players,
+          player -> {
+            GameplayWebSocketDriver driver =
+                GameplayLoadScenarios.openReadyPlayer(
+                    uri, COMMAND_WAIT, TENANT_ID, player, "demo", "Candle-lit Antechamber");
+            PlayerSessionDriver sessionDriver = new PlayerSessionDriver(player, driver);
+            openedDrivers.add(sessionDriver);
+            return sessionDriver;
+          });
+    } catch (Exception ex) {
+      openedDrivers.forEach(sessionDriver -> sessionDriver.driver().close());
+      throw ex;
+    }
   }
 
   private void runConcurrentNorthMovement(List<PlayerSessionDriver> connectedPlayers)
