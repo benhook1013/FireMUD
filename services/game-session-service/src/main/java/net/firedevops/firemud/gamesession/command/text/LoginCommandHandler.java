@@ -368,18 +368,14 @@ public final class LoginCommandHandler {
                 projectedExisting.worldSlug(),
                 projectedExisting.realmSlug(),
                 projectedExisting.pointerVersion());
+    GameplayAdmissionPointerSnapshots.RoutingBundle preservedRoutingBundle =
+        fallbackRoutingBundle != null ? fallbackRoutingBundle : projectedRoutingBundle;
     String preservedWorldSlug =
-        fallbackRoutingBundle != null
-            ? fallbackRoutingBundle.worldSlug()
-            : projectedRoutingBundle != null ? projectedRoutingBundle.worldSlug() : null;
+        preservedRoutingBundle == null ? null : preservedRoutingBundle.worldSlug();
     String preservedRealmSlug =
-        fallbackRoutingBundle != null
-            ? fallbackRoutingBundle.realmSlug()
-            : projectedRoutingBundle != null ? projectedRoutingBundle.realmSlug() : null;
+        preservedRoutingBundle == null ? null : preservedRoutingBundle.realmSlug();
     long preservedPointerVersion =
-        fallbackRoutingBundle != null
-            ? fallbackRoutingBundle.pointerVersion()
-            : projectedRoutingBundle != null ? projectedRoutingBundle.pointerVersion() : 0L;
+        preservedRoutingBundle == null ? 0L : preservedRoutingBundle.pointerVersion();
     long bootstrapGameInstanceId =
         projectedExisting != null && projectedExisting.bootstrapGameInstanceId() > 0
             ? projectedExisting.bootstrapGameInstanceId()

@@ -50,7 +50,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 When using subagents, call `spawn_agent` with an explicit `agent_type`, a tightly scoped task, and a `model` override only when there is a clear reason not to inherit the parent model. Prefer these models for delegation:
 
-- `gpt-5.3-codex-spark`: Use for most tasks.
+- `gpt-5.3-codex-spark`: Use for most bounded delegation. Main thread owns slice boundaries, integration, and final validation.
 - `gpt-5.4-mini`: Use for targeted tasks.
 - `gpt-5.5`: Use when delegation needs a smarter model for harder reasoning, ambiguous implementation work, or higher-risk synthesis.
 

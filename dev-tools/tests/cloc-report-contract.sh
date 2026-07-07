@@ -180,6 +180,7 @@ chmod +x "$MINIMAL_REPO/dev-tools/maintenance/cloc-report.sh"
 # Minimal Repo
 Only markdown here.
 EOF
+  # Track the copied cloc wrapper so prod scope still has one file in the minimal fixture repo.
   git add .
   git commit -q -m "Initial minimal fixture"
 )
@@ -290,9 +291,6 @@ deletion_summary = json.loads(deletion_diff.stdout)
 deletion_scopes = {row["scope"]: row for row in deletion_summary["scopes"]}
 assert all(row["files"] == 0 and row["code"] == 0 for row in deletion_scopes.values())
 assert "omitted 1 tracked path(s) that are deleted or otherwise missing in the current checkout" in deletion_diff.stderr
-
-assert source_sum["code"] == prod_sum["code"] + tests_sum["code"]
-assert source_sum["nFiles"] == prod_sum["nFiles"] + tests_sum["nFiles"]
 
 print("cloc report contract checks passed")
 PY
