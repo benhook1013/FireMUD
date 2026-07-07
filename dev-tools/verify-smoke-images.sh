@@ -53,7 +53,6 @@ merge_env_vars() {
     upsert_env_var "$target_file" "$key" "$value"
   done <"$source_file"
 }
-
 upsert_env_var() {
   local file="$1"
   local key="$2"
@@ -92,6 +91,11 @@ fi
 if [[ -f "$ROOT_ENV_FILE" ]]; then
   ROOT_ENV_BACKUP="$(mktemp)"
   cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"
+elif [[ -f "$ROOT_ENV_SAMPLE" ]]; then
+  cp "$ROOT_ENV_SAMPLE" "$ROOT_ENV_FILE"
+else
+  echo ".env.sample is missing; cannot seed local compose defaults for smoke images." >&2
+  exit 1
 fi
 
 if [[ -f "$ROOT_ENV_SAMPLE" ]]; then
