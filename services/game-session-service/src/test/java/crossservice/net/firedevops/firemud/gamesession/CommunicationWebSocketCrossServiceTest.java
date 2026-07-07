@@ -740,6 +740,8 @@ class CommunicationWebSocketCrossServiceTest {
         FIRST_PARTY_CONNECT_SECRET,
         Long.toString(ACCOUNT_ID),
         Map.of(
+            "accountId",
+            Long.toString(ACCOUNT_ID),
             "tenantId",
             Long.toString(TENANT_ID),
             "worldSlug",

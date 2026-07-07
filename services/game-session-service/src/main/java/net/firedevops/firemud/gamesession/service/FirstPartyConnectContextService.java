@@ -37,7 +37,7 @@ public class FirstPartyConnectContextService {
     }
     try {
       Claims claims = jwtUtil.parseToken(token).getPayload();
-      long accountId = parseLong(claims.getSubject(), "accountId");
+      long accountId = requireAccountId(claims);
       long tenantId = parseLong(claims.get("tenantId"), "tenantId");
       long gameInstanceId = parseLong(claims.get("gameInstanceId"), "gameInstanceId");
       long pointerVersion = parseLong(claims.get("pointerVersion"), "pointerVersion");
@@ -57,6 +57,15 @@ public class FirstPartyConnectContextService {
       logger.warn("Rejecting invalid first-party connect context", ex);
       return Optional.empty();
     }
+  }
+
+  private static long requireAccountId(Claims claims) {
+    long subjectAccountId = parseLong(claims.getSubject(), "sub");
+    long claimedAccountId = parseLong(claims.get("accountId"), "accountId");
+    if (subjectAccountId != claimedAccountId) {
+      throw new IllegalArgumentException("first-party connect context account subject mismatch");
+    }
+    return claimedAccountId;
   }
 
   private static long parseLong(Object value, String claimName) {
