@@ -136,6 +136,54 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void rejectsAutomationCommandWhenRegionEpochIsZero() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+                    new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+                        1L,
+                        2L,
+                        "region-alpha",
+                        0L,
+                        "AUTOMATION",
+                        "dispatch-1",
+                        "work-item-1",
+                        "script-1",
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "character-1",
+                        null,
+                        null,
+                        "say hello",
+                        false,
+                        null),
+                    gameInstanceRepository,
+                    gameplayCommandRepository,
+                    runtimeRegionStatusRepository,
+                    tickService));
+
+    assertEquals("region_epoch must be positive", ex.getMessage());
+  }
+
+  @Test
   void rejectsAutomationCommandWhenRegionOwnershipBelongsToDifferentGameInstance() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);

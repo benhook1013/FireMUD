@@ -2254,6 +2254,51 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getGameplayCommandStatusRejectsZeroRegionEpoch() {
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(RemoteFollowupRepository.class),
+            Mockito.mock(RemoteCommandCoordinatorRepository.class),
+            Mockito.mock(RemoteFollowupResultRepository.class),
+            null,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient(),
+            Mockito.mock(TickService.class),
+            meterRegistry,
+            new GameSessionProperties());
+
+    AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
+    service.getGameplayCommandStatus(
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .setRegionEpoch(0L)
+            .setAutomationDispatchId("dispatch-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameplayCommandStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals("region_epoch must be positive", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+    Mockito.verifyNoInteractions(commandRepository);
+  }
+
+  @Test
   void getGameplayCommandStatusCanResolveAutomationDispatchIdentity() {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("auto-123");

@@ -937,6 +937,57 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupRejectsZeroOriginRegionEpoch() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.scheduleFollowup(
+                    new RemoteFollowupRuntimeService.ScheduleRequest(
+                        1L,
+                        "cmd-1",
+                        "coord-1",
+                        7L,
+                        "region-a",
+                        0L,
+                        8L,
+                        "region-b",
+                        8L,
+                        22L,
+                        4L,
+                        25L,
+                        "late_result_safe_to_ignore",
+                        "followup-1",
+                        "effect-1",
+                        "entity-9",
+                        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+                        "enqueue_automation_command",
+                        "LOOK",
+                        true,
+                        "SHARED",
+                        "demo",
+                        "production",
+                        17L,
+                        "patch-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "dispatch-1",
+                        "work-1",
+                        "script-1",
+                        "REMOTE_FOLLOWUP",
+                        "TARGET_REGION_EXECUTED",
+                        44L,
+                        22L,
+                        1700L)));
+
+    assertEquals("origin_region_epoch must be positive", ex.getMessage());
+    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(followupRepository, never())
+        .findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+            anyLong(), anyString(), anyLong(), anyString());
+  }
+
+  @Test
   void scheduleFollowupRejectsTriggerScriptEventWithoutSnapshotToken() {
     IllegalArgumentException ex =
         assertThrows(

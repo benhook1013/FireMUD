@@ -138,9 +138,7 @@ public final class GameSessionCommandControlPlaneService {
     long tenantId = parseTenantId(request.getTenantId());
     long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
     requireText(request.getRegionId(), "region_id is required");
-    if (request.getRegionEpoch() <= 0) {
-      throw new IllegalArgumentException("region_epoch must be positive");
-    }
+    ControlPlaneRequestParser.requirePositive(request.getRegionEpoch(), "region_epoch");
     requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
     return gameplayCommandRepository
         .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(

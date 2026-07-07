@@ -65,16 +65,10 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static void validate(AdmissionRequest request) {
-    if (request.tenantId() == null || request.tenantId() <= 0) {
-      throw new IllegalArgumentException("tenant_id must be positive");
-    }
-    if (request.gameInstanceId() == null || request.gameInstanceId() <= 0) {
-      throw new IllegalArgumentException("game_instance_id must be positive");
-    }
+    ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
+    ControlPlaneRequestParser.requirePositive(request.gameInstanceId(), "game_instance_id");
     requireText(request.regionId(), "region_id is required");
-    if (request.regionEpoch() == null || request.regionEpoch() <= 0) {
-      throw new IllegalArgumentException("region_epoch must be positive");
-    }
+    ControlPlaneRequestParser.requirePositive(request.regionEpoch(), "region_epoch");
     requireText(request.sourceType(), "source_type is required");
     if ("AUTOMATION".equals(request.sourceType())) {
       requireText(request.automationDispatchId(), "automation_dispatch_id is required");
