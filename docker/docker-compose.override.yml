@@ -1,3 +1,5 @@
+# Local override for plaintext/dev-only Compose behavior. Do not reuse these
+# settings as a template for preview or other production-like environments.
 x-local-java-env: &local-java-env
   FIREMUD_GRPC_PLAINTEXT: "true"
   GRPC_SERVER_TLS_ENABLED: "false"

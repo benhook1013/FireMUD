@@ -1,0 +1,167 @@
+FireMUD misc scan collation
+Updated: 2026-07-08
+
+Purpose
+- Temporary merged notes from multiple repo scans that explicitly ignored `src/` and `design/`.
+- This is a discussion aid, not a finished backlog or truth source.
+
+Input shape
+- 4 pasted scan batches
+- Repeated overlap across infra, CI, scripts, local scaffolding, and misc root files
+
+High-level take
+- Most findings are not immediate product breakages.
+- The strongest repeated pattern is boundary drift between local/demo/example convenience and production-shaped configuration.
+- The next strongest pattern is determinism/trust drift in automation: mutable tags, direct downloads, stale path filters, and environment-assuming scripts.
+- A smaller bucket is repo hygiene: crash artifacts, backup growth, local cert material, and discoverability/clarity issues.
+
+Suggested priority order
+1. Production-shaped checked-in secrets/defaults
+2. Repeated demo/local credentials and weak defaults
+3. Automation determinism and supply-chain hardening
+4. Script safety and environment-contract clarity
+5. Docs/path cleanup and repo hygiene
+
+Merged findings
+
+1. High - Production-shaped infra still carries checked-in credentials or placeholder secrets.
+Why it survived dedupe
+- This was the clearest repeated concern and the most serious if these files are copied forward uncritically.
+Main evidence repeatedly cited
+- `k8s/terraform-production/postgres-values.yaml`
+- `k8s/terraform-production/main.tf`
+- `k8s/velero/minio.yaml`
+- `k8s/velero/README.md`
+Interpretation
+- The problem is less "a secret leak already happened" and more "production-looking paths teach unsafe defaults."
+Likely action shape
+- Move secrets to external inputs.
+- Make example-only status explicit where applicable.
+- Avoid checked-in values that look deployable as-is.
+
+2. High-Medium - Local/demo/default credentials are duplicated across workflows, compose, env scaffolding, and helper scripts.
+Why it survived dedupe
+- This appeared in almost every scan, with the same examples recurring.
+Main evidence repeatedly cited
+- `.github/workflows/preview.yml`
+- `.github/workflows/dev-demo.yml`
+- `.github/workflows/smoke.yml`
+- `dev-tools/hosted/shared/hosted-login-look-smoke.sh`
+- `docker/docker-compose.yml`
+- `docker/docker-compose.override.yml`
+- `.env.sample`
+- `dev-tools/verify-smoke-images.sh`
+- `k8s/helm/firemud/values-preview.example.yaml`
+- `k8s/helm/firemud/values-dev-demo.example.yaml`
+Interpretation
+- There are two linked problems:
+- repeated values drift across files
+- local/demo defaults can be mistaken for stronger environment defaults
+Likely action shape
+- Centralize demo auth/default contracts where possible.
+- Tighten labeling of local/demo/example-only values.
+- Reduce how often the same value is re-expressed in different places.
+
+3. Medium - Automation and validation paths are less deterministic than they should be.
+Why it survived dedupe
+- Multiple scans independently called out mutable tags, implicit runtime assumptions, and stale trigger/filter wiring.
+Main evidence repeatedly cited
+- `.github/workflows/validate-kustomize-overlays.yml`
+- `k8s/base/account-service.yaml`
+- `dev-tools/docs/generate-erd.sh`
+- `.github/workflows/ci.yml`
+- `dev-tools/validation/validate-helm.sh`
+- workflow path filters in `.github/workflows/ci.yml`, `.github/workflows/runtime-images.yml`, `.github/workflows/smoke.yml`
+Specific subthemes
+- mutable `latest` tags in validation/base manifests
+- Java/toolchain/runtime mismatch: `build.gradle.kts` at Java 21 vs `docker/base.Dockerfile` at Java 25
+- docs checks assuming Node in CI without a clearly enforced setup contract
+- stale path filter references such as `services/common-library/`
+Likely action shape
+- Pin versions/tags where the repo expects reproducibility.
+- Decide and document whether runtime/toolchain mismatch is intentional.
+- Make CI tool provisioning explicit.
+- Audit workflow path filters for dead entries.
+
+4. Medium - CI/bootstrap supply-chain hardening is weak in places.
+Why it survived dedupe
+- It came up as a distinct concern rather than just "general CI drift."
+Main evidence repeatedly cited
+- `.github/workflows/security.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/manual-backup-restore.yml`
+Interpretation
+- Direct downloads and remote install scripts are probably convenient today, but they reduce trust and repeatability.
+Likely action shape
+- Prefer setup actions, package managers, or checksum/signature verification.
+
+5. Medium - Several operational scripts are environment-specific or safety-light.
+Why it survived dedupe
+- These findings were narrower, but they cluster into one practical maintenance theme.
+Main evidence repeatedly cited
+- `dev-tools/docs/generate-erd.sh`
+- `dev-tools/restore-redis-aof.sh`
+- `dev-tools/verify-fresh-bootstrap.sh`
+Interpretation
+- These scripts may be valid for current operators, but they encode assumptions that are easy to misuse or misunderstand.
+Likely action shape
+- Add explicit env overrides and prechecks.
+- Add stronger guardrails for destructive actions.
+- Clarify when heavy bootstrap/smoke scripts are the right proof path.
+
+6. Low-Medium - Docs and contributor-facing operational guidance have a few trust gaps.
+Why it survived dedupe
+- These were not severe, but they are cheap cleanup candidates and affect repo legibility.
+Main evidence repeatedly cited
+- `k8s/README.md`
+- `README.md`
+- `AGENTS.md`
+- `.github/dependabot.yml`
+Specific subthemes
+- mixed Helm command path conventions
+- weak root-level discoverability of `AGENTS.md`
+- Dependabot config may be intentionally disabled but that intent is not obvious
+- no compact "which proof path is canonical for which task" guide
+Likely action shape
+- Standardize command examples.
+- Add lightweight pointers to operational source-of-truth docs.
+- Clarify updater ownership if Renovate has replaced Dependabot.
+
+7. Low - Repo/workspace hygiene could be a little tighter.
+Why it survived dedupe
+- These were one-off but potentially useful cleanup notes.
+Main evidence repeatedly cited
+- `buildSrc/.kotlin/errors/errors-*.log`
+- `services/game-session-service/hs_err_pid*.log`
+- `services/game-session-service/replay_pid*.log`
+- `dev-tools/certs/`
+- `docker/backups/`
+- `charts/firemud/values.yaml`
+Interpretation
+- Mostly local clutter, local material handling, and example/legacy surfaces that can confuse scans.
+Likely action shape
+- Keep ignore/cleanup guidance explicit.
+- Keep local cert material clearly non-production.
+- Document backup retention expectations.
+- Either mark legacy/example chart values clearly or make them less misleading.
+
+Potential "quick wins" if you want a small cleanup pass
+- Standardize Helm command paths in `k8s/README.md`.
+- Remove stale workflow path filters such as dead service references if confirmed.
+- Clarify Dependabot vs Renovate ownership in `.github/dependabot.yml` or adjacent docs.
+- Add stronger labeling comments around local/demo/example-only credentials in compose and Helm example files.
+
+Potential "real work" items if you want higher-value follow-up
+- Refactor production-shaped Terraform and Velero/MinIO secrets away from checked-in defaults.
+- Centralize demo/default credential contracts used by preview/dev-demo/smoke paths.
+- Harden CI/bootstrap downloads with verification or managed setup actions.
+- Decide on and enforce the intended runtime/toolchain contract.
+
+Probably not urgent
+- Crash-log cleanup and backup-directory lifecycle docs
+- Root pointer to `AGENTS.md`
+- Legacy chart placeholder cleanup unless that chart is still actively presented as installable
+
+Notes on confidence
+- These are collated from repeated scan summaries, not from a fresh single-pass re-audit.
+- Repetition across independent scans is strongest around defaults/secrets drift and automation determinism.

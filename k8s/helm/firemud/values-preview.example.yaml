@@ -1,3 +1,6 @@
+# Example values for the hosted preview path. These defaults are for preview
+# bootstrap and testability, not for direct promotion into a production secret
+# contract without environment-specific overrides.
 preview:
   prNumber: 123
   namespace: pr-123

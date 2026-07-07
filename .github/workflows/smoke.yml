@@ -78,7 +78,6 @@ jobs:
               "services/account-service/",
               "services/automation-scripting-service/",
               "services/common-data-runtime/",
-              "services/common-library/",
               "services/common-platform-core/",
               "services/common-saga/",
               "services/common-security/",

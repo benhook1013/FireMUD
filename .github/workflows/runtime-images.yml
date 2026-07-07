@@ -15,7 +15,6 @@ on:
       - '.github/workflows/smoke.yml'
       - '.github/workflows/smoke-full.yml'
       - 'services/common-data-runtime/**'
-      - 'services/common-library/**'
       - 'services/common-platform-core/**'
       - 'services/common-saga/**'
       - 'services/common-security/**'

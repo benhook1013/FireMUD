@@ -1,3 +1,6 @@
+# Local Docker Compose defaults only. These fallback credentials and secrets are
+# for local/dev smoke convenience and should not be copied into preview,
+# Kubernetes, or other production-like environments.
 x-service-environment: &service-env
   FIREMUD_POSTGRES_HOST: ${FIREMUD_POSTGRES_HOST:-postgres}
   FIREMUD_POSTGRES_PORT: ${FIREMUD_POSTGRES_PORT:-5432}
