@@ -9,8 +9,8 @@ set -euo pipefail
 # Active findings / planned fixes:
 # - Keep FireMUD on prod/tests for now rather than adding a third verification
 #   bucket; revisit only if the broader tests bucket proves too lossy.
-# - Add FireMUD-shaped docs modes later, for example design, architecture, and
-#   possibly service-docs, after the canonical inventory exists.
+# - Consider whether a service-docs mode is still useful after design and
+#   architecture modes have had real use.
 # - Add diff-scoped reporting later using git diff-backed inventories and the
 #   same classifier rather than introducing a separate counting path.
 # - Add short summary/paste-friendly output only after the underlying inventory
@@ -18,7 +18,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|markdown] [extra cloc args...]
+Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|markdown|design|architecture] [extra cloc args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
@@ -28,6 +28,8 @@ Modes:
   debug     Print tracked source-scope file classification as: bucket TAB rule TAB path.
   by-module Aggregate tracked source/prod/tests counts by FireMUD module bucket.
   markdown  Markdown-only count across the repository.
+  design    Tracked files under design/.
+  architecture Tracked files under design/architecture/.
 
 Examples:
   bash dev-tools/maintenance/cloc-report.sh
@@ -37,6 +39,8 @@ Examples:
   bash dev-tools/maintenance/cloc-report.sh debug | column -t -s $'\t'
   bash dev-tools/maintenance/cloc-report.sh by-module
   bash dev-tools/maintenance/cloc-report.sh by-module --json
+  bash dev-tools/maintenance/cloc-report.sh design
+  bash dev-tools/maintenance/cloc-report.sh architecture --json
   bash dev-tools/maintenance/cloc-report.sh markdown --by-file
 EOF
 }
@@ -80,6 +84,14 @@ is_root_file() {
 
 is_markdown_path() {
   [[ "$(basename "$1")" == *.md ]]
+}
+
+is_design_path() {
+  [[ "$1" == design/* ]]
+}
+
+is_architecture_path() {
+  [[ "$1" == design/architecture/* ]]
 }
 
 is_source_root_file() {
@@ -208,6 +220,12 @@ should_include_file() {
       classification="$(classify_source_path "$path")" || return 1
       bucket="${classification%%$'\t'*}"
       [[ "$bucket" == "tests" ]]
+      ;;
+    design)
+      is_design_path "$path"
+      ;;
+    architecture)
+      is_architecture_path "$path"
       ;;
     markdown)
       is_markdown_path "$path"
@@ -427,6 +445,12 @@ case "$mode" in
     ;;
   by-module)
     run_by_module_mode "$@"
+    ;;
+  design)
+    run_cloc_mode design "Running cloc in design mode (tracked files under design/)..." "$@"
+    ;;
+  architecture)
+    run_cloc_mode architecture "Running cloc in architecture mode (tracked files under design/architecture/)..." "$@"
     ;;
   markdown)
     run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"
