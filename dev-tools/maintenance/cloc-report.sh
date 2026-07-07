@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TEMP BACKLOG
-# Track near-term script improvements here until we decide which ones to keep.
-# Clean this header up once the next round of cloc-report work is chosen.
+# TEMP PLAN
+# Track the next cloc-report improvements here and remove completed items as
+# they land. This header is temporary and should be cleaned up after the next
+# round of work.
 #
-# Candidate improvements:
-# - Add a by-service mode so FireMUD service ownership is visible instead of
-#   only global repo/source/prod/test totals.
-# - Make source/prod/tests accounting additive from one canonical file
-#   inventory so duplicate suppression does not cause split totals to drift.
-# - Add machine-readable output helpers such as JSON or CSV for CI, trending,
-#   and PR/report automation.
-# - Add a changed-files mode to count only files touched relative to a base
-#   ref or commit.
-# - Add more document-focused modes, for example separating architecture docs
-#   under design/ from broader repository Markdown.
-# - Add a short summary output mode for easy paste into PRs, notes, or audit
-#   logs.
+# Active findings / planned fixes:
+# - Tighten FireMUD-specific classification so prod/tests splits handle more
+#   than Gradle-style src/test roots, including repo-owned verification code
+#   under dev-tools/tests and validation-style test scripts.
+# - Decide whether FireMUD should keep prod/tests only or add a separate
+#   verification bucket for smoke/validation tooling that is test-like but not
+#   service-local src/test code.
+# - Add a debug/inventory mode that prints file -> bucket -> rule so
+#   classification stays inspectable and easy to correct.
+# - Add by-module reporting instead of only by-service, covering services/*,
+#   shared common-* modules, web-client, protos, dev-tools, buildSrc, gradle,
+#   and optionally design.
+# - Add FireMUD-shaped docs modes later, for example design, architecture, and
+#   possibly service-docs, after the canonical inventory exists.
+# - Add diff-scoped reporting later using git diff-backed inventories and the
+#   same classifier rather than introducing a separate counting path.
+# - Add short summary/paste-friendly output only after the underlying inventory
+#   and bucketing are trustworthy.
 
 usage() {
   cat <<'EOF'
@@ -44,28 +50,20 @@ if ! command -v cloc >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed or not on PATH." >&2
+  exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "cloc-report.sh must be run from inside a Git working tree." >&2
+  exit 1
+fi
+
 mode="${1:-repo}"
 if [[ $# -gt 0 ]]; then
   shift
 fi
-
-exclude_dirs=".git,.gradle,build,node_modules,target,bower_components,dist,coverage,out,.next,site,generated,grpc-docs"
-exclude=(--exclude-dir="$exclude_dirs")
-
-repo_dirs=(
-  .github
-  buildSrc
-  charts
-  config
-  design
-  dev-tools
-  docker
-  gradle
-  k8s
-  protos
-  services
-  web-client
-)
 
 source_dirs=(
   buildSrc
@@ -76,21 +74,38 @@ source_dirs=(
   web-client
 )
 
-source_exclude_dir_names=(
-  .git
-  .gradle
-  build
-  node_modules
-  target
-  bower_components
-  dist
-  coverage
-  out
-  .next
-  site
-  generated
-  grpc-docs
-)
+print_banner() {
+  printf '%s\n' "$*" >&2
+}
+
+is_root_file() {
+  [[ "$1" != */* ]]
+}
+
+is_markdown_path() {
+  [[ "$(basename "$1")" == *.md ]]
+}
+
+is_source_root_file() {
+  is_root_file "$1" || return 1
+  ! is_markdown_path "$1"
+}
+
+is_under_source_roots() {
+  local path="$1"
+  local root
+  for root in "${source_dirs[@]}"; do
+    if [[ "$path" == "$root"/* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_source_path() {
+  local path="$1"
+  is_under_source_roots "$path" || is_source_root_file "$path"
+}
 
 is_test_path() {
   local path="$1"
@@ -118,76 +133,73 @@ is_test_path() {
   return 1
 }
 
-populate_source_file_lists() {
-  local prod_list="$1"
-  local test_list="$2"
-  local -a find_cmd
-  local dir
-
-  find_cmd=(find)
-  for dir in "${source_dirs[@]}"; do
-    find_cmd+=("$dir")
-  done
-  find_cmd+=("(" "-type" "d" "(")
-  for ((i = 0; i < ${#source_exclude_dir_names[@]}; i++)); do
-    if ((i > 0)); then
-      find_cmd+=("-o")
-    fi
-    find_cmd+=("-name" "${source_exclude_dir_names[i]}")
-  done
-  find_cmd+=(")" "-prune" ")" "-o" "-type" "f" "-print")
-
-  while IFS= read -r file; do
-    if is_test_path "$file"; then
-      printf '%s\n' "$file" >>"$test_list"
-    else
-      printf '%s\n' "$file" >>"$prod_list"
-    fi
-  done < <("${find_cmd[@]}")
-}
-
-run_source_split_mode() {
+should_include_file() {
   local mode="$1"
-  shift
-
-  local prod_list
-  local test_list
-  prod_list="$(mktemp)"
-  test_list="$(mktemp)"
-  trap 'rm -f "$prod_list" "$test_list"' RETURN
-
-  populate_source_file_lists "$prod_list" "$test_list"
+  local path="$2"
 
   case "$mode" in
+    repo)
+      return 0
+      ;;
+    source)
+      is_source_path "$path"
+      ;;
     prod)
-      echo "Running cloc in prod mode (source only, excluding tests and test fixtures), excluding generated/dependency trees..."
-      cloc --list-file="$prod_list" "$@"
+      is_source_path "$path" && ! is_test_path "$path"
       ;;
     tests)
-      echo "Running cloc in tests mode (test directories, fixtures, and test-named source files only), excluding generated/dependency trees..."
-      cloc --list-file="$test_list" "$@"
+      is_source_path "$path" && is_test_path "$path"
+      ;;
+    markdown)
+      is_markdown_path "$path"
       ;;
   esac
 }
 
+populate_mode_file_list() {
+  local mode="$1"
+  local output_file="$2"
+  local tracked_file
+
+  while IFS= read -r -d '' tracked_file; do
+    if should_include_file "$mode" "$tracked_file"; then
+      printf '%s\n' "$tracked_file" >>"$output_file"
+    fi
+  done < <(git ls-files -z)
+}
+
+run_cloc_mode() {
+  local mode="$1"
+  local banner="$2"
+  shift 2
+
+  local file_list
+  local status
+  file_list="$(mktemp)"
+
+  populate_mode_file_list "$mode" "$file_list"
+  print_banner "$banner"
+  cloc --quiet --list-file="$file_list" "$@"
+  status=$?
+  rm -f "$file_list"
+  return "$status"
+}
+
 case "$mode" in
   repo)
-    echo "Running cloc in repo mode (source + docs + config + CI), excluding generated/dependency trees..."
-    cloc "${repo_dirs[@]}" "${exclude[@]}" "$@"
+    run_cloc_mode repo "Running cloc in repo mode (tracked repository footprint across source, docs, config, CI, and scripts)..." "$@"
     ;;
   source)
-    echo "Running cloc in source mode (build logic, scripts, protos, services, web client), excluding generated/dependency trees..."
-    cloc "${source_dirs[@]}" "${exclude[@]}" "$@"
+    run_cloc_mode source "Running cloc in source mode (tracked build logic, scripts, protos, services, web client, and non-Markdown root support files)..." "$@"
     ;;
   prod)
-    run_source_split_mode prod "$@"
+    run_cloc_mode prod "Running cloc in prod mode (tracked source only, excluding files currently classified as tests)..." "$@"
     ;;
   tests)
-    run_source_split_mode tests "$@"
+    run_cloc_mode tests "Running cloc in tests mode (tracked files currently classified as tests only)..." "$@"
     ;;
   markdown)
-    echo "Running cloc in markdown mode (Markdown files only), excluding generated/dependency trees..."
-    cloc . --include-ext=md "${exclude[@]}" "$@"
+    run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"
     ;;
   -h|--help|help)
     usage
