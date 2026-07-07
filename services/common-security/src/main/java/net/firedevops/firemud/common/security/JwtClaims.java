@@ -33,6 +33,15 @@ public final class JwtClaims {
     return parsed;
   }
 
+  public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
+    long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
+    long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);
+    if (subjectAccountId != claimedAccountId) {
+      throw new IllegalArgumentException(mismatchMessage);
+    }
+    return claimedAccountId;
+  }
+
   public static String claimText(Object value) {
     if (value == null) {
       return "";

@@ -268,16 +268,8 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   }
 
   private static String requireAccountId(Claims payload) {
-    String subject = parsePositiveSubject(payload);
-    String accountId = parsePositiveClaim(payload, "accountId");
-    if (!Objects.equals(subject, accountId)) {
-      throw new IllegalArgumentException("Connect token account subject mismatch");
-    }
-    return accountId;
-  }
-
-  private static String parsePositiveSubject(Claims payload) {
-    return Long.toString(JwtClaims.requireLong(payload.getSubject(), "sub", false));
+    return Long.toString(
+        JwtClaims.requireSignedActorAccountId(payload, "Connect token account subject mismatch"));
   }
 
   private static String parsePositiveClaim(Claims payload, String claimName) {

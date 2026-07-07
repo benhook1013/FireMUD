@@ -60,12 +60,8 @@ public class FirstPartyConnectContextService {
   }
 
   private static long requireAccountId(Claims claims) {
-    long subjectAccountId = parseLong(claims.getSubject(), "sub");
-    long claimedAccountId = parseLong(claims.get("accountId"), "accountId");
-    if (subjectAccountId != claimedAccountId) {
-      throw new IllegalArgumentException("first-party connect context account subject mismatch");
-    }
-    return claimedAccountId;
+    return JwtClaims.requireSignedActorAccountId(
+        claims, "first-party connect context account subject mismatch");
   }
 
   private static long parseLong(Object value, String claimName) {

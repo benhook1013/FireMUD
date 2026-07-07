@@ -40,4 +40,42 @@ class JwtClaimsTest {
     assertThrows(
         IllegalArgumentException.class, () -> JwtClaims.requireClaim(claimsBlank, "blank"));
   }
+
+  @Test
+  void requireSignedActorAccountIdRejectsMalformedOrMismatchedAccountClaims() {
+    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+
+    Claims validClaims =
+        jwtUtil.parseToken(jwtUtil.generateToken("11", Map.of("accountId", "11"))).getPayload();
+    assertEquals(
+        11L, JwtClaims.requireSignedActorAccountId(validClaims, "signed token account mismatch"));
+
+    Claims malformedSubjectClaims =
+        jwtUtil
+            .parseToken(jwtUtil.generateToken("not-a-number", Map.of("accountId", "11")))
+            .getPayload();
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            JwtClaims.requireSignedActorAccountId(
+                malformedSubjectClaims, "signed token account mismatch"));
+
+    Claims malformedAccountClaims =
+        jwtUtil
+            .parseToken(jwtUtil.generateToken("11", Map.of("accountId", "not-a-number")))
+            .getPayload();
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            JwtClaims.requireSignedActorAccountId(
+                malformedAccountClaims, "signed token account mismatch"));
+
+    Claims mismatchedClaims =
+        jwtUtil.parseToken(jwtUtil.generateToken("11", Map.of("accountId", "12"))).getPayload();
+    IllegalArgumentException mismatch =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> JwtClaims.requireSignedActorAccountId(mismatchedClaims, "custom mismatch"));
+    assertEquals("custom mismatch", mismatch.getMessage());
+  }
 }

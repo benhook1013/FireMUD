@@ -909,12 +909,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private static long requireSignedActorAccountId(Claims claims) {
-    long subjectAccountId = JwtClaims.requireLong(claims.getSubject(), "sub", false);
-    long claimedAccountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
-    if (subjectAccountId != claimedAccountId) {
-      throw new IllegalArgumentException("signed token account subject mismatch");
-    }
-    return claimedAccountId;
+    return JwtClaims.requireSignedActorAccountId(claims, "signed token account subject mismatch");
   }
 
   private Claims requireSignedTokenClaims(
