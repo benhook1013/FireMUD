@@ -419,10 +419,10 @@ public final class GameSessionGrpcService
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
-      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
-      if (accountIds.size() > 100) {
+      if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
+      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
       QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
       for (var snapshot :
           accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {

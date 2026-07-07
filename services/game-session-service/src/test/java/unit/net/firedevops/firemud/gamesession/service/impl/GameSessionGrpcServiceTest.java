@@ -377,6 +377,60 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void queryAccountPresenceRejectsTooManyAccountIdsBeforeParsing() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    AccountPresenceQueryService accountPresenceQueryService =
+        Mockito.mock(AccountPresenceQueryService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("42", List.of(), Map.of());
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            accountPresenceQueryService,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    QueryAccountPresenceRequest.Builder request =
+        QueryAccountPresenceRequest.newBuilder().setTenantId("1").setViewerAccountId("42");
+    for (int index = 0; index < 101; index++) {
+      request.addAccountIds(index == 100 ? "not-a-number" : Long.toString(index + 1L));
+    }
+
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        request.build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountIds must contain at most 100 entries", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountPresenceQueryService);
+  }
+
+  @Test
   void gameplayCatalogRpcReturnsCanonicalRealmData() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
