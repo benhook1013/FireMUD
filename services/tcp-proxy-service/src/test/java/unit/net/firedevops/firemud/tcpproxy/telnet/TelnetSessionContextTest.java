@@ -44,4 +44,16 @@ class TelnetSessionContextTest {
     assertEquals(null, sessionContext.realmSlug());
     assertEquals(null, sessionContext.pointerVersion());
   }
+
+  @Test
+  void bootstrap_dropsRoutingBundleWhenPointerVersionIsNonPositive() {
+    sessionContext.bootstrap("sess-3", "tenant-gamma", "demo", "production", "0");
+
+    assertTrue(sessionContext.isReady());
+    assertEquals("sess-3", sessionContext.gameInstanceId());
+    assertEquals("tenant-gamma", sessionContext.tenantId());
+    assertEquals(null, sessionContext.worldSlug());
+    assertEquals(null, sessionContext.realmSlug());
+    assertEquals(null, sessionContext.pointerVersion());
+  }
 }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
+import net.firedevops.firemud.common.security.JwtClaims;
 import org.springframework.util.StringUtils;
 
 record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
@@ -9,6 +10,13 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
         || !StringUtils.hasText(pointerVersion)) {
       return null;
     }
-    return new TelnetRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    try {
+      return new TelnetRoutingBundle(
+          worldSlug,
+          realmSlug,
+          Long.toString(JwtClaims.requireLong(pointerVersion, "pointerVersion", false)));
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 }

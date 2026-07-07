@@ -25,4 +25,14 @@ class TelnetRoutingBundleTest {
   void normalizeReturnsNullWhenPointerVersionIsBlank() {
     assertNull(TelnetRoutingBundle.normalize("demo", "production", ""));
   }
+
+  @Test
+  void normalizeReturnsNullWhenPointerVersionIsMalformed() {
+    assertNull(TelnetRoutingBundle.normalize("demo", "production", "abc"));
+  }
+
+  @Test
+  void normalizeReturnsNullWhenPointerVersionIsNonPositive() {
+    assertNull(TelnetRoutingBundle.normalize("demo", "production", "0"));
+  }
 }
