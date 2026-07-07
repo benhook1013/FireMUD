@@ -135,10 +135,13 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       if (!"gameplay-connect".equals(audience)) {
         throw new IllegalArgumentException("Invalid audience");
       }
-      String accountId = requireAccountId(payload);
-      RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(payload);
-      String tenantId = parsePositiveClaim(payload, "tenantId");
-      String gameInstanceId = parsePositiveClaim(payload, "gameInstanceId");
+      JwtClaims.SignedGameplayRoutingClaims routingClaims =
+          JwtClaims.requireSignedGameplayRoutingClaims(
+              payload, "Connect token account subject mismatch");
+      String accountId = Long.toString(routingClaims.accountId());
+      RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(routingClaims);
+      String tenantId = Long.toString(routingClaims.tenantId());
+      String gameInstanceId = Long.toString(routingClaims.gameInstanceId());
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -259,21 +262,12 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     }
   }
 
-  private static RoutingBundle parseRuntimeRoutingBundleFromClaims(Claims payload) {
-    return parseRuntimeRoutingBundle(
-        JwtClaims.claimText(payload.get("worldSlug")),
-        JwtClaims.claimText(payload.get("realmSlug")),
-        JwtClaims.claimText(payload.get("pointerVersion")),
-        false);
-  }
-
-  private static String requireAccountId(Claims payload) {
-    return Long.toString(
-        JwtClaims.requireSignedActorAccountId(payload, "Connect token account subject mismatch"));
-  }
-
-  private static String parsePositiveClaim(Claims payload, String claimName) {
-    return Long.toString(JwtClaims.requireLong(payload.get(claimName), claimName, false));
+  private static RoutingBundle parseRuntimeRoutingBundleFromClaims(
+      JwtClaims.SignedGameplayRoutingClaims routingClaims) {
+    return new RoutingBundle(
+        routingClaims.worldSlug(),
+        routingClaims.realmSlug(),
+        Long.toString(routingClaims.pointerVersion()));
   }
 
   private static RoutingBundle parseRuntimeRoutingBundleFromHeaders(ServerWebExchange exchange) {

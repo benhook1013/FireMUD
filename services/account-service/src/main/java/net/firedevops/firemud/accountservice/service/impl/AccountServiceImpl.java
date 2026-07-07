@@ -878,34 +878,25 @@ public class AccountServiceImpl implements AccountService {
             "CONNECT_SCOPE_INVALID",
             INVALID_CONNECT_SCOPE_MESSAGE,
             INVALID_CONNECT_SCOPE_MESSAGE);
-    long accountId;
-    long tenantId;
-    long gameInstanceId;
-    long pointerVersion;
-    String worldSlug;
-    String realmSlug;
     try {
-      accountId = requireSignedActorAccountId(claims);
-      tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
-      gameInstanceId = JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false);
-      pointerVersion = JwtClaims.requireLong(claims.get("pointerVersion"), "pointerVersion", false);
-      worldSlug = JwtClaims.requireText(claims.get("worldSlug"), "worldSlug");
-      realmSlug = JwtClaims.requireText(claims.get("realmSlug"), "realmSlug");
+      JwtClaims.SignedGameplayRoutingClaims routingClaims =
+          JwtClaims.requireSignedGameplayRoutingClaims(
+              claims, "signed token account subject mismatch");
+      Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
+      if (connectScopeExpiresAt == null) {
+        throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+      }
+      return new ConnectScopeContext(
+          routingClaims.accountId(),
+          routingClaims.tenantId(),
+          routingClaims.worldSlug(),
+          routingClaims.realmSlug(),
+          routingClaims.gameInstanceId(),
+          routingClaims.pointerVersion(),
+          connectScopeExpiresAt);
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
-    Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
-    if (connectScopeExpiresAt == null) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
-    }
-    return new ConnectScopeContext(
-        accountId,
-        tenantId,
-        worldSlug,
-        realmSlug,
-        gameInstanceId,
-        pointerVersion,
-        connectScopeExpiresAt);
   }
 
   private static long requireSignedActorAccountId(Claims claims) {

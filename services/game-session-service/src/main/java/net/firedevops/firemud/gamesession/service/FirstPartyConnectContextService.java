@@ -37,18 +37,17 @@ public class FirstPartyConnectContextService {
     }
     try {
       Claims claims = jwtUtil.parseToken(token).getPayload();
-      long accountId = requireAccountId(claims);
-      long tenantId = parseLong(claims.get("tenantId"), "tenantId");
-      long gameInstanceId = parseLong(claims.get("gameInstanceId"), "gameInstanceId");
-      long pointerVersion = parseLong(claims.get("pointerVersion"), "pointerVersion");
+      JwtClaims.SignedGameplayRoutingClaims routingClaims =
+          JwtClaims.requireSignedGameplayRoutingClaims(
+              claims, "first-party connect context account subject mismatch");
       return Optional.of(
           new FirstPartyConnectContext(
-              accountId,
-              tenantId,
-              requiredTextClaim(claims, "worldSlug"),
-              requiredTextClaim(claims, "realmSlug"),
-              gameInstanceId,
-              pointerVersion,
+              routingClaims.accountId(),
+              routingClaims.tenantId(),
+              routingClaims.worldSlug(),
+              routingClaims.realmSlug(),
+              routingClaims.gameInstanceId(),
+              routingClaims.pointerVersion(),
               requiredTextClaim(claims, "connectScopeId"),
               stringClaim(claims, "connectTokenJti"),
               requiredTextClaim(claims, "connectRequestId"),
@@ -57,15 +56,6 @@ public class FirstPartyConnectContextService {
       logger.warn("Rejecting invalid first-party connect context", ex);
       return Optional.empty();
     }
-  }
-
-  private static long requireAccountId(Claims claims) {
-    return JwtClaims.requireSignedActorAccountId(
-        claims, "first-party connect context account subject mismatch");
-  }
-
-  private static long parseLong(Object value, String claimName) {
-    return JwtClaims.requireLong(value, claimName, false);
   }
 
   private static String stringClaim(Claims claims, String key) {
