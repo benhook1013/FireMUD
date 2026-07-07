@@ -94,6 +94,39 @@ class VersionUpgradePreparationServiceImplTest {
   }
 
   @Test
+  void prepareVersionUpgradeRejectsMismatchedReplayPayloadForExistingControlPlaneRequestId()
+      throws Exception {
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    PreparedVersionUpgradeRepository repository =
+        Mockito.mock(PreparedVersionUpgradeRepository.class);
+    ObjectMapper objectMapper = new ObjectMapper();
+    PreparedVersionUpgrade existing = new PreparedVersionUpgrade();
+    existing.setPreparationId("pvu-1");
+    existing.setControlPlaneRequestId("pvu-req-1");
+    existing.setTenantId(1L);
+    existing.setSourceGameInstanceId(7L);
+    existing.setTargetVersionId(9L);
+    existing.setReasonsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setCheckedParticipantsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setParticipantResultsJson(objectMapper.writeValueAsString(List.of()));
+    Mockito.when(repository.findByTenantIdAndControlPlaneRequestId(1L, "pvu-req-1"))
+        .thenReturn(java.util.Optional.of(existing));
+    VersionUpgradePreparationServiceImpl service =
+        new VersionUpgradePreparationServiceImpl(compatibilityService, repository, objectMapper);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.prepareVersionUpgrade(1L, 8L, 9L, "pvu-req-1"));
+
+    assertEquals(
+        "control_plane_request_id already used for a different version-upgrade preparation",
+        error.getMessage());
+    Mockito.verifyNoInteractions(compatibilityService);
+  }
+
+  @Test
   void getPreparedVersionUpgradeReturnsPersistedPreparation() throws Exception {
     InstanceCutoverCompatibilityService compatibilityService =
         Mockito.mock(InstanceCutoverCompatibilityService.class);
@@ -184,6 +217,39 @@ class VersionUpgradePreparationServiceImplTest {
     assertEquals(55L, prepared.executedTargetGameInstanceId());
     assertEquals(4L, prepared.executedPointerVersion());
     assertEquals("cutover-req-1", prepared.executionControlPlaneRequestId());
+  }
+
+  @Test
+  void markPreparedVersionUpgradeExecutedRejectsMismatchedReplayPayload() throws Exception {
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    PreparedVersionUpgradeRepository repository =
+        Mockito.mock(PreparedVersionUpgradeRepository.class);
+    ObjectMapper objectMapper = new ObjectMapper();
+    PreparedVersionUpgrade existing = new PreparedVersionUpgrade();
+    existing.setPreparationId("pvu-1");
+    existing.setTenantId(1L);
+    existing.setReasonsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setCheckedParticipantsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setParticipantResultsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setExecutedAt(Instant.parse("2026-04-20T10:30:00Z"));
+    existing.setExecutedTargetGameInstanceId(55L);
+    existing.setExecutedPointerVersion(4L);
+    existing.setExecutionControlPlaneRequestId("cutover-req-1");
+    Mockito.when(repository.findByPreparationId("pvu-1"))
+        .thenReturn(java.util.Optional.of(existing));
+    VersionUpgradePreparationServiceImpl service =
+        new VersionUpgradePreparationServiceImpl(compatibilityService, repository, objectMapper);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.markPreparedVersionUpgradeExecuted(1L, "pvu-1", 56L, 4L, "cutover-req-1"));
+
+    assertEquals(
+        "prepared version upgrade already recorded for a different cutover execution",
+        error.getMessage());
   }
 
   @Test

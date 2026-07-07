@@ -47,8 +47,7 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
             tenantId, controlPlaneRequestId);
     if (existing.isPresent()) {
       PreparedVersionUpgrade prepared = existing.get();
-      if (!Long.valueOf(sourceGameInstanceId).equals(prepared.getSourceGameInstanceId())
-          || !Long.valueOf(targetVersionId).equals(prepared.getTargetVersionId())) {
+      if (!matchesPreparedRequest(prepared, sourceGameInstanceId, targetVersionId)) {
         throw new IllegalArgumentException(
             "control_plane_request_id already used for a different version-upgrade preparation");
       }
@@ -101,9 +100,8 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
     PreparedVersionUpgrade prepared =
         requirePreparedVersionUpgradeForTenant(tenantId, preparationId);
     if (prepared.getExecutedAt() != null) {
-      if (!Long.valueOf(targetGameInstanceId).equals(prepared.getExecutedTargetGameInstanceId())
-          || !Long.valueOf(executedPointerVersion).equals(prepared.getExecutedPointerVersion())
-          || !executionControlPlaneRequestId.equals(prepared.getExecutionControlPlaneRequestId())) {
+      if (!matchesPreparedExecution(
+          prepared, targetGameInstanceId, executedPointerVersion, executionControlPlaneRequestId)) {
         throw new IllegalArgumentException(
             "prepared version upgrade already recorded for a different cutover execution");
       }
@@ -127,6 +125,22 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
       throw new IllegalArgumentException("Prepared version upgrade not found");
     }
     return prepared;
+  }
+
+  private boolean matchesPreparedRequest(
+      PreparedVersionUpgrade prepared, long sourceGameInstanceId, long targetVersionId) {
+    return Long.valueOf(sourceGameInstanceId).equals(prepared.getSourceGameInstanceId())
+        && Long.valueOf(targetVersionId).equals(prepared.getTargetVersionId());
+  }
+
+  private boolean matchesPreparedExecution(
+      PreparedVersionUpgrade prepared,
+      long targetGameInstanceId,
+      long executedPointerVersion,
+      String executionControlPlaneRequestId) {
+    return Long.valueOf(targetGameInstanceId).equals(prepared.getExecutedTargetGameInstanceId())
+        && Long.valueOf(executedPointerVersion).equals(prepared.getExecutedPointerVersion())
+        && executionControlPlaneRequestId.equals(prepared.getExecutionControlPlaneRequestId());
   }
 
   private String toJson(Object value) {
