@@ -35,7 +35,7 @@ public class ActionStateCommandHandler {
 
   public ActionStateCommandHandlingResult handle(
       SessionContext context, TextCommand command, String effectId) {
-    if (context == null || context.gameInstanceId() <= 0) {
+    if (context == null || !context.hasGameplayIdentity()) {
       return failure("NOT_PLAYING", "You are not in the game.");
     }
     if (command.type() != TextCommandType.BLOCK || !command.args().isEmpty()) {

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
@@ -68,5 +69,21 @@ class ActionStateCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+  }
+
+  @Test
+  void blockRejectsPartialGameplayIdentityShell() {
+    SessionContext partialContext =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 0L, null, 5L, "R-1", "jwt-token");
+
+    var result =
+        handler.handle(
+            partialContext,
+            new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK"),
+            "effect-1");
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_PLAYING");
+    verifyNoInteractions(gameLogicClient);
   }
 }

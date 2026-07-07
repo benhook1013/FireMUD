@@ -29,7 +29,7 @@ public final class AfkCommandHandler {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService
             .resolveSessionContext(sessionId)
-            .filter(context -> context.gameInstanceId() > 0);
+            .filter(SessionContext::hasGameplayIdentity);
     if (maybeContext.isEmpty()) {
       return failure("NOT_PLAYING", "You are not in the game.");
     }
@@ -45,7 +45,7 @@ public final class AfkCommandHandler {
   }
 
   public AfkCommandHandlingResult handle(SessionContext context, TextCommand command) {
-    if (context == null || context.gameInstanceId() <= 0) {
+    if (context == null || !context.hasGameplayIdentity()) {
       return failure("NOT_PLAYING", "You are not in the game.");
     }
     if (!(command.payload() instanceof TextCommandPayload.AfkRequest request)
