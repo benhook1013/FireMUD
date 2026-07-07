@@ -9,9 +9,6 @@ set -euo pipefail
 # Active findings / planned fixes:
 # - Keep FireMUD on prod/tests for now rather than adding a third verification
 #   bucket; revisit only if the broader tests bucket proves too lossy.
-# - Add by-module reporting instead of only by-service, covering services/*,
-#   shared common-* modules, web-client, protos, dev-tools, buildSrc, gradle,
-#   and optionally design.
 # - Add FireMUD-shaped docs modes later, for example design, architecture, and
 #   possibly service-docs, after the canonical inventory exists.
 # - Add diff-scoped reporting later using git diff-backed inventories and the
@@ -21,7 +18,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|markdown] [extra cloc args...]
+Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|markdown] [extra cloc args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
@@ -29,6 +26,7 @@ Modes:
   prod      Source-focused count excluding files currently classified as tests.
   tests     Test-only count across standard test directories, test fixtures, repo-owned contract tests, and validation-style test scripts.
   debug     Print tracked source-scope file classification as: bucket TAB rule TAB path.
+  by-module Aggregate tracked source/prod/tests counts by FireMUD module bucket.
   markdown  Markdown-only count across the repository.
 
 Examples:
@@ -37,6 +35,8 @@ Examples:
   bash dev-tools/maintenance/cloc-report.sh prod
   bash dev-tools/maintenance/cloc-report.sh tests
   bash dev-tools/maintenance/cloc-report.sh debug | column -t -s $'\t'
+  bash dev-tools/maintenance/cloc-report.sh by-module
+  bash dev-tools/maintenance/cloc-report.sh by-module --json
   bash dev-tools/maintenance/cloc-report.sh markdown --by-file
 EOF
 }
@@ -239,6 +239,157 @@ run_debug_mode() {
   done < <(git ls-files -z)
 }
 
+run_by_module_mode() {
+  local source_list
+  local prod_list
+  local tests_list
+  local source_json
+  local prod_json
+  local tests_json
+  local output_mode="table"
+  local arg
+  local status
+
+  for arg in "$@"; do
+    case "$arg" in
+      --json)
+        output_mode="json"
+        ;;
+      *)
+        echo "by-module only supports the wrapper flag --json." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  source_list="$(mktemp)"
+  prod_list="$(mktemp)"
+  tests_list="$(mktemp)"
+  source_json="$(mktemp)"
+  prod_json="$(mktemp)"
+  tests_json="$(mktemp)"
+
+  populate_mode_file_list source "$source_list"
+  populate_mode_file_list prod "$prod_list"
+  populate_mode_file_list tests "$tests_list"
+
+  print_banner "Running by-module rollup from tracked source/prod/tests inventories..."
+  cloc --quiet --skip-uniqueness --json --by-file --list-file="$source_list" >"$source_json"
+  cloc --quiet --skip-uniqueness --json --by-file --list-file="$prod_list" >"$prod_json"
+  cloc --quiet --skip-uniqueness --json --by-file --list-file="$tests_list" >"$tests_json"
+
+  python3 - "$source_json" "$prod_json" "$tests_json" "$output_mode" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_json_path = Path(sys.argv[1])
+prod_json_path = Path(sys.argv[2])
+tests_json_path = Path(sys.argv[3])
+output_mode = sys.argv[4]
+
+
+def bucket_for_path(path: str) -> str:
+    if "/" not in path:
+        return "repo-root"
+    if path.startswith("services/"):
+        return "/".join(path.split("/", 2)[:2])
+    return path.split("/", 1)[0]
+
+
+def aggregate(path: Path) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    obj = json.loads(path.read_text())
+    buckets: dict[str, dict[str, int]] = {}
+    for file_path, stats in obj.items():
+        if file_path in {"header", "SUM"}:
+            continue
+        bucket = bucket_for_path(file_path)
+        bucket_stats = buckets.setdefault(bucket, {"files": 0, "code": 0})
+        bucket_stats["files"] += 1
+        bucket_stats["code"] += int(stats["code"])
+    summary = obj["SUM"]
+    return buckets, {"files": int(summary["nFiles"]), "code": int(summary["code"])}
+
+
+source_buckets, source_summary = aggregate(source_json_path)
+prod_buckets, prod_summary = aggregate(prod_json_path)
+tests_buckets, tests_summary = aggregate(tests_json_path)
+
+all_buckets = set(source_buckets) | set(prod_buckets) | set(tests_buckets)
+
+root_order = {
+    "repo-root": 0,
+    "buildSrc": 1,
+    "dev-tools": 2,
+    "gradle": 3,
+    "protos": 4,
+    "web-client": 5,
+}
+
+
+def sort_key(bucket: str) -> tuple[int, str]:
+    if bucket.startswith("services/"):
+        return (10, bucket)
+    return (root_order.get(bucket, 20), bucket)
+
+
+rows = []
+for bucket in sorted(all_buckets, key=sort_key):
+    source_stats = source_buckets.get(bucket, {"files": 0, "code": 0})
+    prod_stats = prod_buckets.get(bucket, {"files": 0, "code": 0})
+    tests_stats = tests_buckets.get(bucket, {"files": 0, "code": 0})
+    rows.append(
+        {
+            "module": bucket,
+            "total_files": source_stats["files"],
+            "total_code": source_stats["code"],
+            "prod_files": prod_stats["files"],
+            "prod_code": prod_stats["code"],
+            "tests_files": tests_stats["files"],
+            "tests_code": tests_stats["code"],
+        }
+    )
+
+summary_row = {
+    "module": "TOTAL",
+    "total_files": source_summary["files"],
+    "total_code": source_summary["code"],
+    "prod_files": prod_summary["files"],
+    "prod_code": prod_summary["code"],
+    "tests_files": tests_summary["files"],
+    "tests_code": tests_summary["code"],
+}
+
+if output_mode == "json":
+    print(json.dumps({"modules": rows, "summary": summary_row}, indent=2))
+    raise SystemExit(0)
+
+headers = [
+    ("module", "module"),
+    ("total_files", "total_files"),
+    ("total_code", "total_code"),
+    ("prod_files", "prod_files"),
+    ("prod_code", "prod_code"),
+    ("tests_files", "tests_files"),
+    ("tests_code", "tests_code"),
+]
+
+widths = {}
+for key, label in headers:
+    widths[key] = max(len(label), len(str(summary_row[key])), *(len(str(row[key])) for row in rows))
+
+header_line = "  ".join(label.ljust(widths[key]) for key, label in headers)
+print(header_line)
+for row in rows:
+    print("  ".join(str(row[key]).ljust(widths[key]) for key, _ in headers))
+print("  ".join(str(summary_row[key]).ljust(widths[key]) for key, _ in headers))
+PY
+  status=$?
+
+  rm -f "$source_list" "$prod_list" "$tests_list" "$source_json" "$prod_json" "$tests_json"
+  return "$status"
+}
+
 run_cloc_mode() {
   local mode="$1"
   local banner="$2"
@@ -273,6 +424,9 @@ case "$mode" in
     ;;
   debug)
     run_debug_mode
+    ;;
+  by-module)
+    run_by_module_mode "$@"
     ;;
   markdown)
     run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"
