@@ -135,13 +135,10 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       if (!"gameplay-connect".equals(audience)) {
         throw new IllegalArgumentException("Invalid audience");
       }
-      String accountId = JwtClaims.requireText(payload.get("accountId"), "accountId");
+      String accountId = requireAccountId(payload);
       RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(payload);
-      String tenantId =
-          Long.toString(JwtClaims.requireLong(payload.get("tenantId"), "tenantId", false));
-      String gameInstanceId =
-          Long.toString(
-              JwtClaims.requireLong(payload.get("gameInstanceId"), "gameInstanceId", false));
+      String tenantId = parsePositiveClaim(payload, "tenantId");
+      String gameInstanceId = parsePositiveClaim(payload, "gameInstanceId");
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -268,6 +265,23 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
         JwtClaims.claimText(payload.get("realmSlug")),
         JwtClaims.claimText(payload.get("pointerVersion")),
         false);
+  }
+
+  private static String requireAccountId(Claims payload) {
+    String subject = parsePositiveSubject(payload);
+    String accountId = parsePositiveClaim(payload, "accountId");
+    if (!Objects.equals(subject, accountId)) {
+      throw new IllegalArgumentException("Connect token account subject mismatch");
+    }
+    return accountId;
+  }
+
+  private static String parsePositiveSubject(Claims payload) {
+    return Long.toString(JwtClaims.requireLong(payload.getSubject(), "sub", false));
+  }
+
+  private static String parsePositiveClaim(Claims payload, String claimName) {
+    return Long.toString(JwtClaims.requireLong(payload.get(claimName), claimName, false));
   }
 
   private static RoutingBundle parseRuntimeRoutingBundleFromHeaders(ServerWebExchange exchange) {

@@ -118,16 +118,12 @@ public final class SessionContext {
 
   /** Returns whether the current caller matches the provided account id. */
   public static boolean isCurrentAccount(Long accountId) {
-    if (accountId == null) {
-      return false;
-    }
-    ClaimsData data = currentData();
-    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+    if (accountId == null || accountId <= 0L) {
       return false;
     }
     try {
-      return Long.parseLong(data.accountId) == accountId;
-    } catch (NumberFormatException ex) {
+      return currentAccountId() == accountId;
+    } catch (IllegalArgumentException ex) {
       return false;
     }
   }
@@ -162,6 +158,14 @@ public final class SessionContext {
       return false;
     }
     return data.globalRoles.contains("platformAdmin") || data.globalRoles.contains("moderator");
+  }
+
+  private static long currentAccountId() {
+    ClaimsData data = currentData();
+    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+      throw new IllegalArgumentException("accountId is required");
+    }
+    return JwtClaims.requireLong(data.accountId, "accountId", false);
   }
 
   static Context grpcContextWith(SessionClaims claims) {
