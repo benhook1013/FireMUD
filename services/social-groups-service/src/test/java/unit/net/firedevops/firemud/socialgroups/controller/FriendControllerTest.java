@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -117,6 +118,23 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(
             jsonPath("$.error.message").value("Cannot add or remove your own account as a friend"));
+  }
+
+  @Test
+  void removeFriendRejectsMalformedFriendAccountIdBeforeAccessCheck() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            delete("/friends/not-a-number")
+                .param("tenantId", "1")
+                .param("accountId", "2")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("friendAccountId must be numeric"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
   }
 
   @Test
@@ -265,6 +283,23 @@ class FriendControllerTest {
   }
 
   @Test
+  void getFriendPresencePolicyRejectsMalformedAccountIdBeforeAccessCheck() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            get("/friends/visibility")
+                .param("tenantId", "1")
+                .param("accountId", "bad-account")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
+  }
+
+  @Test
   void updateFriendPresencePolicyReturnsCanonicalPolicy() throws Exception {
     UpdateFriendPresencePolicyRequest request =
         new UpdateFriendPresencePolicyRequest(
@@ -362,6 +397,23 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.data.friends[0].status").value("active"))
         .andExpect(jsonPath("$.data.friends[0].presence.online").value(true))
         .andExpect(jsonPath("$.data.friends[0].presence.worldSlug").value("demo"));
+  }
+
+  @Test
+  void listFriendsRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            get("/friends")
+                .param("tenantId", "0")
+                .param("accountId", "2")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
   }
 
   @Test

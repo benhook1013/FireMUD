@@ -2,8 +2,10 @@ package net.firedevops.firemud.socialgroups.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ErrorDetail;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
@@ -55,115 +57,143 @@ public class FriendController {
 
   @DeleteMapping("/{friendAccountId}")
   public ResponseEntity<ApiResponse<Void>> removeFriend(
-      @PathVariable long friendAccountId,
-      @RequestParam long tenantId,
-      @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    try {
-      friendService.removeFriend(tenantId, accountId, friendAccountId);
-      return ResponseEntity.ok(ApiResponse.success(null));
-    } catch (IllegalArgumentException ex) {
-      return badRequest(ex);
-    }
+      @PathVariable String friendAccountId,
+      @RequestParam String tenantId,
+      @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          long parsedFriendAccountId = requireFriendAccountId(friendAccountId);
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          friendService.removeFriend(scope.tenantId(), scope.accountId(), parsedFriendAccountId);
+          return ResponseEntity.ok(ApiResponse.success(null));
+        });
   }
 
   @GetMapping("/{friendAccountId}")
   public ResponseEntity<ApiResponse<FriendRosterEntryDto>> getFriend(
-      @PathVariable long friendAccountId,
-      @RequestParam long tenantId,
-      @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    return friendService
-        .getFriend(tenantId, accountId, friendAccountId)
-        .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
-        .orElseGet(
-            () ->
-                ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(
-                        ApiResponse.error(
-                            new ErrorDetail(
-                                "FRIEND_NOT_FOUND",
-                                "Friend not found for accountId=" + friendAccountId))));
+      @PathVariable String friendAccountId,
+      @RequestParam String tenantId,
+      @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          long parsedFriendAccountId = requireFriendAccountId(friendAccountId);
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return friendService
+              .getFriend(scope.tenantId(), scope.accountId(), parsedFriendAccountId)
+              .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
+              .orElseGet(
+                  () ->
+                      ResponseEntity.status(HttpStatus.NOT_FOUND)
+                          .body(
+                              ApiResponse.error(
+                                  new ErrorDetail(
+                                      "FRIEND_NOT_FOUND",
+                                      "Friend not found for accountId=" + parsedFriendAccountId))));
+        });
   }
 
   @GetMapping("/entry/{ordinal}")
   public ResponseEntity<ApiResponse<FriendRosterEntryDto>> getFriendByOrdinal(
-      @PathVariable int ordinal, @RequestParam long tenantId, @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    try {
-      return friendService
-          .getFriendByOrdinal(tenantId, accountId, ordinal)
-          .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
-          .orElseGet(
-              () ->
-                  ResponseEntity.status(HttpStatus.NOT_FOUND)
-                      .body(
-                          ApiResponse.error(
-                              new ErrorDetail(
-                                  "FRIEND_NOT_FOUND", "Friend not found for ordinal=" + ordinal))));
-    } catch (IllegalArgumentException ex) {
-      return badRequest(ex);
-    }
+      @PathVariable int ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return friendService
+              .getFriendByOrdinal(scope.tenantId(), scope.accountId(), ordinal)
+              .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
+              .orElseGet(
+                  () ->
+                      ResponseEntity.status(HttpStatus.NOT_FOUND)
+                          .body(
+                              ApiResponse.error(
+                                  new ErrorDetail(
+                                      "FRIEND_NOT_FOUND",
+                                      "Friend not found for ordinal=" + ordinal))));
+        });
   }
 
   @GetMapping
   public ResponseEntity<ApiResponse<FriendRosterViewDto>> listFriends(
-      @RequestParam long tenantId,
-      @RequestParam long accountId,
+      @RequestParam String tenantId,
+      @RequestParam String accountId,
       @RequestParam(defaultValue = "ALL") FriendRosterFilter filter) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    return ResponseEntity.ok(
-        ApiResponse.success(friendService.listFriends(tenantId, accountId, filter)));
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  friendService.listFriends(scope.tenantId(), scope.accountId(), filter)));
+        });
   }
 
   @GetMapping("/summary")
   public ResponseEntity<ApiResponse<FriendRosterSummaryDto>> getFriendRosterSummary(
-      @RequestParam long tenantId, @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    return ResponseEntity.ok(
-        ApiResponse.success(friendService.getFriendRosterSummary(tenantId, accountId)));
+      @RequestParam String tenantId, @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  friendService.getFriendRosterSummary(scope.tenantId(), scope.accountId())));
+        });
   }
 
   @DeleteMapping("/entry/{ordinal}")
   public ResponseEntity<ApiResponse<FriendRosterEntryDto>> removeFriendByOrdinal(
-      @PathVariable int ordinal, @RequestParam long tenantId, @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    try {
-      return friendService
-          .removeFriendByOrdinal(tenantId, accountId, ordinal)
-          .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
-          .orElseGet(
-              () ->
-                  ResponseEntity.status(HttpStatus.NOT_FOUND)
-                      .body(
-                          ApiResponse.error(
-                              new ErrorDetail(
-                                  "FRIEND_NOT_FOUND", "Friend not found for ordinal=" + ordinal))));
-    } catch (IllegalArgumentException ex) {
-      return badRequest(ex);
-    }
+      @PathVariable int ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return friendService
+              .removeFriendByOrdinal(scope.tenantId(), scope.accountId(), ordinal)
+              .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
+              .orElseGet(
+                  () ->
+                      ResponseEntity.status(HttpStatus.NOT_FOUND)
+                          .body(
+                              ApiResponse.error(
+                                  new ErrorDetail(
+                                      "FRIEND_NOT_FOUND",
+                                      "Friend not found for ordinal=" + ordinal))));
+        });
   }
 
   @GetMapping("/presence")
   public ResponseEntity<ApiResponse<FriendPresenceViewDto>> listFriendPresence(
-      @RequestParam long tenantId,
-      @RequestParam long accountId,
+      @RequestParam String tenantId,
+      @RequestParam String accountId,
       @RequestParam(defaultValue = "ALL") FriendRosterFilter filter) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    return ResponseEntity.ok(
-        ApiResponse.success(friendService.listFriendPresence(tenantId, accountId, filter)));
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  friendService.listFriendPresence(scope.tenantId(), scope.accountId(), filter)));
+        });
   }
 
   @GetMapping("/visibility")
   public ResponseEntity<ApiResponse<FriendPresencePolicyViewDto>> getFriendPresencePolicy(
-      @RequestParam long tenantId, @RequestParam long accountId) {
-    socialAccessGuard.requireAccountAccess(tenantId, accountId);
-    try {
-      return ResponseEntity.ok(
-          ApiResponse.success(friendService.getFriendPresencePolicy(tenantId, accountId)));
-    } catch (IllegalStateException ex) {
-      return unavailable(ex);
-    }
+      @RequestParam String tenantId, @RequestParam String accountId) {
+    return withBadRequest(
+        () -> {
+          AccountScope scope = requireAccountScope(tenantId, accountId);
+          socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
+          try {
+            return ResponseEntity.ok(
+                ApiResponse.success(
+                    friendService.getFriendPresencePolicy(scope.tenantId(), scope.accountId())));
+          } catch (IllegalStateException ex) {
+            return unavailable(ex);
+          }
+        });
   }
 
   @PutMapping("/visibility")
@@ -182,6 +212,25 @@ public class FriendController {
     }
   }
 
+  private long requireFriendAccountId(String friendAccountId) {
+    return RequestIdValidation.requirePositiveLong(friendAccountId, "friendAccountId");
+  }
+
+  private AccountScope requireAccountScope(String tenantId, String accountId) {
+    return new AccountScope(
+        RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
+        RequestIdValidation.requirePositiveLong(accountId, "accountId"));
+  }
+
+  private <T> ResponseEntity<ApiResponse<T>> withBadRequest(
+      Supplier<ResponseEntity<ApiResponse<T>>> action) {
+    try {
+      return action.get();
+    } catch (IllegalArgumentException ex) {
+      return badRequest(ex);
+    }
+  }
+
   private <T> ResponseEntity<ApiResponse<T>> badRequest(IllegalArgumentException ex) {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST)
         .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));
@@ -191,4 +240,6 @@ public class FriendController {
     return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
         .body(ApiResponse.error(new ErrorDetail("UNAVAILABLE", ex.getMessage())));
   }
+
+  private record AccountScope(long tenantId, long accountId) {}
 }
