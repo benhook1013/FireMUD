@@ -102,7 +102,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
-      if (!matchesRuntimeScope(state, runtimeRegionId, runtimeRegionEpoch)) {
+      if (!AutomationRuntimeScopeSupport.matches(state, runtimeRegionId, runtimeRegionEpoch)) {
         continue;
       }
       String pluginId = normalize(state.getPluginId());
@@ -249,15 +249,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     return runtime;
   }
 
-  private static boolean matchesRuntimeScope(
-      PluginRuntimeState state, String runtimeRegionId, long runtimeRegionEpoch) {
-    if (runtimeRegionId == null || runtimeRegionId.isBlank() || runtimeRegionEpoch <= 0) {
-      return true;
-    }
-    return runtimeRegionId.equals(normalize(state.getRuntimeRegionId()))
-        && runtimeRegionEpoch == zeroIfNull(state.getRuntimeRegionEpoch());
-  }
-
   private void requireAbilitySchemaMatch(
       ActivationCommand command, long runtimeVersionId, String pluginAbilitySchemaDigest) {
     var releaseBundle =
@@ -341,12 +332,18 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
                     PluginState.PLUGIN_STATE_ENABLED.name(),
                     "",
                     PageRequest.of(0, limit));
-    RuntimeScope runtimeScope =
+    AutomationRuntimeScopeSupport.RuntimeScope runtimeScope =
         normalize(gameInstanceId).isBlank()
-            ? RuntimeScope.UNKNOWN
-            : currentRuntimeScope(tenantId, gameInstanceId, preferredRuntimeRegionId(activeStates));
+            ? AutomationRuntimeScopeSupport.RuntimeScope.UNKNOWN
+            : AutomationRuntimeScopeSupport.currentRuntimeScope(
+                gameSessionControlPlaneClient,
+                tenantId,
+                gameInstanceId,
+                preferredRuntimeRegionId(activeStates));
     activeStates =
-        activeStates.stream().filter(state -> matchesRuntimeScope(state, runtimeScope)).toList();
+        activeStates.stream()
+            .filter(state -> AutomationRuntimeScopeSupport.matches(state, runtimeScope))
+            .toList();
     long evaluatedAtMs = Instant.now().toEpochMilli();
     List<PluginPolicyViolation> violations =
         activeStates.stream()
@@ -419,21 +416,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     reconcileSchedules(saved);
   }
 
-  private RuntimeScope currentRuntimeScope(
-      String tenantId, String gameInstanceId, String preferredRegionId) {
-    GetGameInstanceRuntimeStateResponse runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            tenantId, gameInstanceId, preferredRegionId);
-    if (runtime == null
-        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
-        || !runtime.hasRuntimeState()) {
-      return RuntimeScope.UNKNOWN;
-    }
-    return new RuntimeScope(
-        normalize(runtime.getRuntimeState().getRegionId()),
-        runtime.getRuntimeState().getRegionEpoch());
-  }
-
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> activeStates) {
     for (PluginRuntimeState state : activeStates) {
       String runtimeRegionId = normalize(state.getRuntimeRegionId());
@@ -442,27 +424,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       }
     }
     return "";
-  }
-
-  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
-    if (!runtimeScope.known()) {
-      return true;
-    }
-    String stateRegionId = normalize(state.getRuntimeRegionId());
-    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
-    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
-      return false;
-    }
-    return stateRegionId.equals(runtimeScope.regionId())
-        && stateRegionEpoch == runtimeScope.regionEpoch();
-  }
-
-  private record RuntimeScope(String regionId, long regionEpoch) {
-    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
-
-    private boolean known() {
-      return !regionId.isBlank() && regionEpoch > 0;
-    }
   }
 
   private void transition(
