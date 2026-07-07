@@ -125,6 +125,38 @@ class NpcFormationGrpcServiceTest {
   }
 
   @Test
+  void createFormationRejectsZeroTenantIdBeforeCreate() {
+    NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
+    AutomationScriptingGrpcService service = newService(npcService);
+
+    AtomicReference<CreateFormationResponse> ref = new AtomicReference<>();
+    service.createFormation(
+        CreateFormationRequest.newBuilder()
+            .setTenantId("0")
+            .setName("alpha")
+            .setLeaderNpcId("2")
+            .setFormationType("LINE")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateFormationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(npcService);
+  }
+
+  @Test
   void createFormationRejectsZeroLeaderNpcIdBeforeCreate() {
     NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service = newService(npcService);
@@ -157,6 +189,38 @@ class NpcFormationGrpcServiceTest {
   }
 
   @Test
+  void addFormationMemberRejectsZeroTenantIdBeforeDispatch() {
+    NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
+    AutomationScriptingGrpcService service = newService(npcService);
+
+    AtomicReference<AddFormationMemberResponse> ref = new AtomicReference<>();
+    service.addFormationMember(
+        AddFormationMemberRequest.newBuilder()
+            .setTenantId("0")
+            .setFormationId("5")
+            .setNpcId("2")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(AddFormationMemberResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(npcService);
+  }
+
+  @Test
   void addFormationMemberRejectsZeroNpcIdBeforeDispatch() {
     NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service = newService(npcService);
@@ -185,6 +249,33 @@ class NpcFormationGrpcServiceTest {
     assertFalse(ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("npcId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(npcService);
+  }
+
+  @Test
+  void listFormationMembersRejectsZeroTenantIdBeforeLookup() {
+    NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
+    AutomationScriptingGrpcService service = newService(npcService);
+
+    AtomicReference<ListFormationMembersResponse> ref = new AtomicReference<>();
+    service.listFormationMembers(
+        ListFormationMembersRequest.newBuilder().setTenantId("0").setFormationId("5").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListFormationMembersResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(npcService);
   }
 

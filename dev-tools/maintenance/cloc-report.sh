@@ -78,6 +78,10 @@ print_banner() {
   printf '%s\n' "$*" >&2
 }
 
+cleanup_files() {
+  rm -f "$@"
+}
+
 is_root_file() {
   [[ "$1" != */* ]]
 }
@@ -286,6 +290,7 @@ run_by_module_mode() {
   source_json="$(mktemp)"
   prod_json="$(mktemp)"
   tests_json="$(mktemp)"
+  trap "cleanup_files '$source_list' '$prod_list' '$tests_list' '$source_json' '$prod_json' '$tests_json'" EXIT
 
   populate_mode_file_list source "$source_list"
   populate_mode_file_list prod "$prod_list"
@@ -404,7 +409,8 @@ print("  ".join(str(summary_row[key]).ljust(widths[key]) for key, _ in headers))
 PY
   status=$?
 
-  rm -f "$source_list" "$prod_list" "$tests_list" "$source_json" "$prod_json" "$tests_json"
+  cleanup_files "$source_list" "$prod_list" "$tests_list" "$source_json" "$prod_json" "$tests_json"
+  trap - EXIT
   return "$status"
 }
 
@@ -416,6 +422,7 @@ run_cloc_mode() {
   local file_list
   local status
   file_list="$(mktemp)"
+  trap "cleanup_files '$file_list'" EXIT
 
   populate_mode_file_list "$mode" "$file_list"
   print_banner "$banner"
@@ -423,7 +430,8 @@ run_cloc_mode() {
   # buckets remain additive and predictable across modes.
   cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
   status=$?
-  rm -f "$file_list"
+  cleanup_files "$file_list"
+  trap - EXIT
   return "$status"
 }
 
