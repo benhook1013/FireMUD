@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
@@ -136,15 +137,12 @@ public class InstanceCutoverCompatibilityServiceImpl
 
   private long requireSourceVersionId(GameInstance sourceInstance) {
     if (sourceInstance.getVersionId() != null) {
-      return sourceInstance.getVersionId();
+      return requirePositiveSourceMetadata(sourceInstance.getVersionId(), "versionId");
     }
     if (sourceInstance.getRuntimeVersion() != null
         && !sourceInstance.getRuntimeVersion().isBlank()) {
-      try {
-        return Long.parseLong(sourceInstance.getRuntimeVersion());
-      } catch (NumberFormatException ignored) {
-        // Fall through to canonical error below.
-      }
+      return RequestIdValidation.requirePositiveLong(
+          sourceInstance.getRuntimeVersion(), "runtimeVersion");
     }
     throw new IllegalArgumentException("Source game instance version metadata missing");
   }
@@ -153,7 +151,11 @@ public class InstanceCutoverCompatibilityServiceImpl
     if (sourceInstance.getGameTemplateId() == null) {
       throw new IllegalArgumentException("Source game instance gameTemplateId missing");
     }
-    return sourceInstance.getGameTemplateId();
+    return requirePositiveSourceMetadata(sourceInstance.getGameTemplateId(), "gameTemplateId");
+  }
+
+  private long requirePositiveSourceMetadata(Long value, String fieldName) {
+    return RequestIdValidation.requirePositiveLong(value.toString(), fieldName);
   }
 
   private ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
