@@ -746,6 +746,56 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void invalidCredentialsDropPartialProjectedRoutingBundleDuringFailedLoginCleanup() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid credentials")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    SessionContext partialRoutingProjection =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "room-2045",
+            AUTH_TOKEN,
+            "en-NZ",
+            1L,
+            "demo",
+            null,
+            3L,
+            "LIVE",
+            "scope-stale",
+            "req-stale");
+    stubSessionContext(partialRoutingProjection);
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService, times(2)).save(captor.capture());
+    verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(partialRoutingProjection, "STALE_ADMISSION_POINTER");
+    assertClearedSessionContext(lastCaptured(captor), 0L);
+  }
+
+  @Test
   void accountMismatchReturnsFailure() {
     TextCommand command =
         new TextCommand(

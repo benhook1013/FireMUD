@@ -358,25 +358,28 @@ public final class LoginCommandHandler {
     if (tenantId <= 0) {
       return;
     }
-    boolean fallbackHasRoutingBundle =
-        StringUtils.hasText(worldSlug) && StringUtils.hasText(realmSlug) && pointerVersion > 0;
-    boolean projectedHasRoutingBundle =
-        projectedExisting != null
-            && StringUtils.hasText(projectedExisting.worldSlug())
-            && StringUtils.hasText(projectedExisting.realmSlug())
-            && projectedExisting.pointerVersion() > 0;
+    GameplayAdmissionPointerSnapshots.RoutingBundle fallbackRoutingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            worldSlug, realmSlug, pointerVersion);
+    GameplayAdmissionPointerSnapshots.RoutingBundle projectedRoutingBundle =
+        projectedExisting == null
+            ? null
+            : GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+                projectedExisting.worldSlug(),
+                projectedExisting.realmSlug(),
+                projectedExisting.pointerVersion());
     String preservedWorldSlug =
-        fallbackHasRoutingBundle
-            ? worldSlug
-            : projectedHasRoutingBundle ? projectedExisting.worldSlug() : null;
+        fallbackRoutingBundle != null
+            ? fallbackRoutingBundle.worldSlug()
+            : projectedRoutingBundle != null ? projectedRoutingBundle.worldSlug() : null;
     String preservedRealmSlug =
-        fallbackHasRoutingBundle
-            ? realmSlug
-            : projectedHasRoutingBundle ? projectedExisting.realmSlug() : null;
+        fallbackRoutingBundle != null
+            ? fallbackRoutingBundle.realmSlug()
+            : projectedRoutingBundle != null ? projectedRoutingBundle.realmSlug() : null;
     long preservedPointerVersion =
-        fallbackHasRoutingBundle
-            ? pointerVersion
-            : projectedHasRoutingBundle ? projectedExisting.pointerVersion() : 0L;
+        fallbackRoutingBundle != null
+            ? fallbackRoutingBundle.pointerVersion()
+            : projectedRoutingBundle != null ? projectedRoutingBundle.pointerVersion() : 0L;
     long bootstrapGameInstanceId =
         projectedExisting != null && projectedExisting.bootstrapGameInstanceId() > 0
             ? projectedExisting.bootstrapGameInstanceId()
