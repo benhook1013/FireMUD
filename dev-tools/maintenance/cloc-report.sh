@@ -284,7 +284,7 @@ populate_mode_file_list() {
   local output_file="$2"
   local inventory_file
   inventory_file="$(mktemp)"
-  trap "cleanup_files '$inventory_file'" EXIT
+  trap 'cleanup_files "$inventory_file"' EXIT
   build_tracked_inventory_file "$inventory_file"
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$output_file"
   cleanup_files "$inventory_file"
@@ -297,7 +297,7 @@ build_mode_json_from_inventory() {
   local output_json="$3"
   local file_list
   file_list="$(mktemp)"
-  trap "cleanup_files '$file_list'" EXIT
+  trap 'cleanup_files "$file_list"' EXIT
 
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
   if [[ ! -s "$file_list" ]]; then
@@ -351,7 +351,7 @@ run_by_module_mode_with_inventory() {
   source_json="$(mktemp)"
   prod_json="$(mktemp)"
   tests_json="$(mktemp)"
-  trap "cleanup_files '$source_json' '$prod_json' '$tests_json'" EXIT
+  trap 'cleanup_files "$source_json" "$prod_json" "$tests_json"' EXIT
 
   print_banner "Running by-module rollup from $scope_label inventories..."
   build_mode_json_from_inventory source "$inventory_file" "$source_json"
@@ -474,7 +474,7 @@ PY
 run_by_module_mode() {
   local inventory_file
   inventory_file="$(mktemp)"
-  trap "cleanup_files '$inventory_file'" EXIT
+  trap 'cleanup_files "$inventory_file"' EXIT
   build_tracked_inventory_file "$inventory_file"
   run_by_module_mode_with_inventory "$inventory_file" "tracked source/prod/tests" "$@"
   local status=$?
@@ -520,7 +520,7 @@ run_summary_mode_with_inventory() {
   design_json="$(mktemp)"
   architecture_json="$(mktemp)"
   service_docs_json="$(mktemp)"
-  trap "cleanup_files '$repo_json' '$source_json' '$prod_json' '$tests_json' '$markdown_json' '$design_json' '$architecture_json' '$service_docs_json'" EXIT
+  trap 'cleanup_files "$repo_json" "$source_json" "$prod_json" "$tests_json" "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json"' EXIT
 
   print_banner "Running summary rollup from $scope_label inventories..."
   build_mode_json_from_inventory repo "$inventory_file" "$repo_json"
@@ -582,7 +582,7 @@ PY
 run_summary_mode() {
   local inventory_file
   inventory_file="$(mktemp)"
-  trap "cleanup_files '$inventory_file'" EXIT
+  trap 'cleanup_files "$inventory_file"' EXIT
   build_tracked_inventory_file "$inventory_file"
   run_summary_mode_with_inventory "$inventory_file" "tracked repo/source/docs" "$@"
   local status=$?
@@ -622,7 +622,7 @@ run_diff_mode() {
   done
 
   inventory_file="$(mktemp)"
-  trap "cleanup_files '$inventory_file'" EXIT
+  trap 'cleanup_files "$inventory_file"' EXIT
   build_diff_inventory_file "$git_range" "$inventory_file"
 
   if [[ "$by_module" == "true" ]]; then
@@ -656,7 +656,7 @@ run_cloc_mode_with_inventory() {
   local file_list
   local status
   file_list="$(mktemp)"
-  trap "cleanup_files '$file_list'" EXIT
+  trap 'cleanup_files "$file_list"' EXIT
 
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
   print_banner "$banner"
@@ -677,7 +677,7 @@ run_cloc_mode() {
   local inventory_file
   local status
   inventory_file="$(mktemp)"
-  trap "cleanup_files '$inventory_file'" EXIT
+  trap 'cleanup_files "$inventory_file"' EXIT
 
   build_tracked_inventory_file "$inventory_file"
   run_cloc_mode_with_inventory "$inventory_file" "$mode" "$banner" "$@"
