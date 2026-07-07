@@ -152,14 +152,13 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       long tenantId,
       GameplayPresence presence,
       Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
-    if (presence == null
-        || presence.tenantId() != tenantId
-        || presence.gameInstanceId() <= 0
-        || presence.pointerVersion() <= 0
-        || presence.worldSlug() == null
-        || presence.worldSlug().isBlank()
-        || presence.realmSlug() == null
-        || presence.realmSlug().isBlank()) {
+    if (presence == null || presence.tenantId() != tenantId || presence.gameInstanceId() <= 0) {
+      return false;
+    }
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        normalizedRoutingBundle(
+            presence.worldSlug(), presence.realmSlug(), Long.valueOf(presence.pointerVersion()));
+    if (routingBundle == null) {
       return false;
     }
     return currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
@@ -169,9 +168,9 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                     List.of(pointer),
                     tenantId,
                     presence.gameInstanceId(),
-                    presence.worldSlug(),
-                    presence.realmSlug(),
-                    presence.pointerVersion(),
+                    routingBundle.worldSlug(),
+                    routingBundle.realmSlug(),
+                    routingBundle.pointerVersion(),
                     presence.playableStateScope()))
         .orElse(false);
   }
@@ -231,6 +230,12 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     if (recentState == null || recentState.gameInstanceId() <= 0) {
       return null;
     }
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        normalizedRoutingBundle(
+            recentState.worldSlug(), recentState.realmSlug(), recentState.pointerVersion());
+    if (routingBundle == null) {
+      return null;
+    }
     return currentRuntimePointer(
             recentState.tenantId(), recentState.gameInstanceId(), currentRuntimePointers)
         .filter(
@@ -239,10 +244,16 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
                     List.of(pointer),
                     recentState.tenantId(),
                     recentState.gameInstanceId(),
-                    recentState.worldSlug(),
-                    recentState.realmSlug(),
-                    recentState.pointerVersion(),
+                    routingBundle.worldSlug(),
+                    routingBundle.realmSlug(),
+                    routingBundle.pointerVersion(),
                     recentState.playableStateScope()))
         .orElse(null);
+  }
+
+  private GameplayAdmissionPointerSnapshots.RoutingBundle normalizedRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion) {
+    return GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+        worldSlug, realmSlug, pointerVersion != null && pointerVersion > 0 ? pointerVersion : null);
   }
 }
