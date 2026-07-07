@@ -682,6 +682,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private static final class InvalidRequestException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
     private InvalidRequestException(String message, Throwable cause) {
       super(message, cause);
     }

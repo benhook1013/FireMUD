@@ -88,6 +88,27 @@ cleanup_files() {
   rm -f "$@"
 }
 
+temp_files=()
+
+register_temp_file() {
+  temp_files+=("$1")
+}
+
+create_temp_file() {
+  local temp_file
+  temp_file="$(mktemp)"
+  register_temp_file "$temp_file"
+  printf '%s\n' "$temp_file"
+}
+
+cleanup_registered_temp_files() {
+  if [[ ${#temp_files[@]} -gt 0 ]]; then
+    cleanup_files "${temp_files[@]}"
+  fi
+}
+
+trap cleanup_registered_temp_files EXIT
+
 is_root_file() {
   [[ "$1" != */* ]]
 }
@@ -283,12 +304,9 @@ populate_mode_file_list() {
   local mode="$1"
   local output_file="$2"
   local inventory_file
-  inventory_file="$(mktemp)"
-  trap 'cleanup_files "$inventory_file"' EXIT
+  inventory_file="$(create_temp_file)"
   build_tracked_inventory_file "$inventory_file"
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$output_file"
-  cleanup_files "$inventory_file"
-  trap - EXIT
 }
 
 build_mode_json_from_inventory() {
@@ -296,8 +314,7 @@ build_mode_json_from_inventory() {
   local inventory_file="$2"
   local output_json="$3"
   local file_list
-  file_list="$(mktemp)"
-  trap 'cleanup_files "$file_list"' EXIT
+  file_list="$(create_temp_file)"
 
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
   if [[ ! -s "$file_list" ]]; then
@@ -307,9 +324,6 @@ EOF
   else
     cloc --quiet --skip-uniqueness --json --by-file --list-file="$file_list" >"$output_json"
   fi
-
-  cleanup_files "$file_list"
-  trap - EXIT
 }
 
 run_debug_mode() {
@@ -348,10 +362,9 @@ run_by_module_mode_with_inventory() {
     esac
   done
 
-  source_json="$(mktemp)"
-  prod_json="$(mktemp)"
-  tests_json="$(mktemp)"
-  trap 'cleanup_files "$source_json" "$prod_json" "$tests_json"' EXIT
+  source_json="$(create_temp_file)"
+  prod_json="$(create_temp_file)"
+  tests_json="$(create_temp_file)"
 
   print_banner "Running by-module rollup from $scope_label inventories..."
   build_mode_json_from_inventory source "$inventory_file" "$source_json"
@@ -466,21 +479,15 @@ print("  ".join(str(summary_row[key]).ljust(widths[key]) for key, _ in headers))
 PY
   status=$?
 
-  cleanup_files "$source_json" "$prod_json" "$tests_json"
-  trap - EXIT
   return "$status"
 }
 
 run_by_module_mode() {
   local inventory_file
-  inventory_file="$(mktemp)"
-  trap 'cleanup_files "$inventory_file"' EXIT
+  inventory_file="$(create_temp_file)"
   build_tracked_inventory_file "$inventory_file"
   run_by_module_mode_with_inventory "$inventory_file" "tracked source/prod/tests" "$@"
-  local status=$?
-  cleanup_files "$inventory_file"
-  trap - EXIT
-  return "$status"
+  return $?
 }
 
 run_summary_mode_with_inventory() {
@@ -512,15 +519,14 @@ run_summary_mode_with_inventory() {
     esac
   done
 
-  repo_json="$(mktemp)"
-  source_json="$(mktemp)"
-  prod_json="$(mktemp)"
-  tests_json="$(mktemp)"
-  markdown_json="$(mktemp)"
-  design_json="$(mktemp)"
-  architecture_json="$(mktemp)"
-  service_docs_json="$(mktemp)"
-  trap 'cleanup_files "$repo_json" "$source_json" "$prod_json" "$tests_json" "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json"' EXIT
+  repo_json="$(create_temp_file)"
+  source_json="$(create_temp_file)"
+  prod_json="$(create_temp_file)"
+  tests_json="$(create_temp_file)"
+  markdown_json="$(create_temp_file)"
+  design_json="$(create_temp_file)"
+  architecture_json="$(create_temp_file)"
+  service_docs_json="$(create_temp_file)"
 
   print_banner "Running summary rollup from $scope_label inventories..."
   build_mode_json_from_inventory repo "$inventory_file" "$repo_json"
@@ -574,21 +580,15 @@ for row in rows:
 PY
   status=$?
 
-  cleanup_files "$repo_json" "$source_json" "$prod_json" "$tests_json" "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json"
-  trap - EXIT
   return "$status"
 }
 
 run_summary_mode() {
   local inventory_file
-  inventory_file="$(mktemp)"
-  trap 'cleanup_files "$inventory_file"' EXIT
+  inventory_file="$(create_temp_file)"
   build_tracked_inventory_file "$inventory_file"
   run_summary_mode_with_inventory "$inventory_file" "tracked repo/source/docs" "$@"
-  local status=$?
-  cleanup_files "$inventory_file"
-  trap - EXIT
-  return "$status"
+  return $?
 }
 
 run_diff_mode() {
@@ -621,8 +621,7 @@ run_diff_mode() {
     esac
   done
 
-  inventory_file="$(mktemp)"
-  trap 'cleanup_files "$inventory_file"' EXIT
+  inventory_file="$(create_temp_file)"
   build_diff_inventory_file "$git_range" "$inventory_file"
 
   if [[ "$by_module" == "true" ]]; then
@@ -640,9 +639,6 @@ run_diff_mode() {
     fi
     status=$?
   fi
-
-  cleanup_files "$inventory_file"
-  trap - EXIT
   return "$status"
 }
 
@@ -655,8 +651,7 @@ run_cloc_mode_with_inventory() {
 
   local file_list
   local status
-  file_list="$(mktemp)"
-  trap 'cleanup_files "$file_list"' EXIT
+  file_list="$(create_temp_file)"
 
   populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
   print_banner "$banner"
@@ -664,8 +659,6 @@ run_cloc_mode_with_inventory() {
   # buckets remain additive and predictable across modes.
   cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
   status=$?
-  cleanup_files "$file_list"
-  trap - EXIT
   return "$status"
 }
 
@@ -676,15 +669,11 @@ run_cloc_mode() {
 
   local inventory_file
   local status
-  inventory_file="$(mktemp)"
-  trap 'cleanup_files "$inventory_file"' EXIT
+  inventory_file="$(create_temp_file)"
 
   build_tracked_inventory_file "$inventory_file"
   run_cloc_mode_with_inventory "$inventory_file" "$mode" "$banner" "$@"
   status=$?
-
-  cleanup_files "$inventory_file"
-  trap - EXIT
   return "$status"
 }
 

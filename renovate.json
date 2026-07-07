@@ -37,7 +37,7 @@
       "groupName": "gradle non-major updates",
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true
+      "platformAutomerge": false
     },
     {
       "matchManagers": [
@@ -61,7 +61,7 @@
       "groupName": "github actions non-major updates",
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true
+      "platformAutomerge": false
     },
     {
       "matchManagers": [
@@ -78,13 +78,13 @@
       "groupName": "infrastructure non-major updates",
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true
+      "platformAutomerge": false
     }
   ],
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true,
     "automergeType": "pr",
-    "platformAutomerge": true
+    "platformAutomerge": false
   }
 }

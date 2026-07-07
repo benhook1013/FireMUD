@@ -4,6 +4,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
@@ -1851,7 +1852,7 @@ public class EntityManagementGrpcService
     }
     try {
       return Instant.parse(text);
-    } catch (RuntimeException ex) {
+    } catch (DateTimeParseException ex) {
       throw new IllegalArgumentException("expiresAt must be ISO-8601", ex);
     }
   }
