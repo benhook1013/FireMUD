@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -72,5 +73,33 @@ class CharacterControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.content[0].name").value("Hero"));
+  }
+
+  @Test
+  void listRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/tenants/not-a-number/accounts/1/characters")
+                .param("gameInstanceId", "44")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(characterService);
+  }
+
+  @Test
+  void listRejectsZeroAccountIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/tenants/1/accounts/0/characters")
+                .param("gameInstanceId", "44")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(characterService);
   }
 }
