@@ -30,7 +30,7 @@ final class GameplayPresenceRoleClassifier {
           return GameplayPresenceRole.GOD;
         }
       }
-    } catch (JwtException ex) {
+    } catch (IllegalArgumentException | JwtException ex) {
       logger.debug(
           "Failed to classify WHO role from JWT for session {} tenant {}",
           context.sessionId(),
