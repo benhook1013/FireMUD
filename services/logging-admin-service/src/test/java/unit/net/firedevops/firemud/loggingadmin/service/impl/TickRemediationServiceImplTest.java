@@ -140,6 +140,22 @@ class TickRemediationServiceImplTest {
   }
 
   @Test
+  void pauseRejectsMalformedCurrentAccountClaimBeforeDispatchAndAudit() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    SessionContext.setContext("not-a-long", java.util.List.of("platformAdmin"), java.util.Map.of());
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(
+            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "7", null, "maint")))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("400 BAD_REQUEST");
+    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
+  }
+
+  @Test
   void resumeForRegionPropagatesGrpcValidationError() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

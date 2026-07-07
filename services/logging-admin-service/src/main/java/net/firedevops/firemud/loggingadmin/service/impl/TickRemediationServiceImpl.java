@@ -198,20 +198,11 @@ public class TickRemediationServiceImpl implements TickRemediationService {
   }
 
   private String actorPrincipal() {
-    String accountId = net.firedevops.firemud.common.security.SessionContext.getAccountId();
-    return accountId == null || accountId.isBlank() ? "internal-service" : accountId;
+    return SessionActorReaders.actorPrincipalOrInternalService();
   }
 
   private Long parseAccountId() {
-    String accountId = net.firedevops.firemud.common.security.SessionContext.getAccountId();
-    if (accountId == null || accountId.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(accountId);
-    } catch (NumberFormatException ex) {
-      return null;
-    }
+    return SessionActorReaders.currentAccountIdOrNull();
   }
 
   private String scopeType(TickRemediationRequest request) {

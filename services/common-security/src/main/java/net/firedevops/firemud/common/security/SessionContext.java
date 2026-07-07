@@ -106,6 +106,19 @@ public final class SessionContext {
         || (data.scopedRoles != null && !data.scopedRoles.isEmpty());
   }
 
+  /**
+   * Returns the current account id when present.
+   *
+   * <p>Blank or missing claims return {@code null}. Malformed or non-positive claims fail closed.
+   */
+  public static Long currentAccountIdOrNull() {
+    ClaimsData data = currentData();
+    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+      return null;
+    }
+    return JwtClaims.requireLong(data.accountId, "accountId", false);
+  }
+
   /** Throws 403 when the current caller cannot act on the provided tenant. */
   public static void requireTenantAccess(Long tenantId) {
     if (tenantId == null) {

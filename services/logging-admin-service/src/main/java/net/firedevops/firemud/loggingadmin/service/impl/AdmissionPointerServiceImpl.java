@@ -381,7 +381,6 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
   }
 
   private String resolveActorPrincipal() {
-    String accountId = SessionContext.getAccountId();
-    return accountId == null || accountId.isBlank() ? "internal-service" : accountId;
+    return SessionActorReaders.actorPrincipalOrInternalService();
   }
 }
