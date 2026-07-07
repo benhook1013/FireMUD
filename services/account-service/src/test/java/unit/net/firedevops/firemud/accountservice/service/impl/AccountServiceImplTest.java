@@ -298,6 +298,21 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapWorldsRejectsBootstrapTokenAccountSubjectMismatch() {
+    String malformedBootstrapToken =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(
+                "12", Map.of("aud", "player-bootstrap", "accountId", "11", "tenantId", "7"));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(malformedBootstrapToken));
+
+    assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+  }
+
+  @Test
   void listBootstrapWorldsRejectsNonPositiveBootstrapTokenClaims() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
@@ -536,6 +551,59 @@ class AccountServiceImplTest {
                 service.issueConnectToken(
                     bootstrap.bootstrapToken(),
                     new ConnectTokenRequest(malformedConnectScopeId, "req-err3")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
+  }
+
+  @Test
+  void issueConnectTokenRejectsConnectScopeAccountSubjectMismatch() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    String malformedConnectScopeId =
+        new JwtUtil(JWT_SECRET, 120000L)
+            .generateToken(
+                "12",
+                Map.of(
+                    "aud",
+                    "bootstrap-connect-scope",
+                    "accountId",
+                    "11",
+                    "tenantId",
+                    "7",
+                    "worldSlug",
+                    "demo",
+                    "realmSlug",
+                    "production",
+                    "gameInstanceId",
+                    "44",
+                    "pointerVersion",
+                    "17",
+                    "connectScopeExpiresAt",
+                    java.time.Instant.now().plusSeconds(3600).toString(),
+                    "jti",
+                    "invalid"));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(malformedConnectScopeId, "req-subject-mismatch")));
 
     assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
   }

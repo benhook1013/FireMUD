@@ -763,7 +763,7 @@ public class AccountServiceImpl implements AccountService {
             "Missing bootstrap token",
             "Invalid bootstrap token");
     try {
-      long accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
+      long accountId = requireSignedActorAccountId(claims);
       long tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
       Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
       if (storedAccountId == null || !storedAccountId.equals(accountId)) {
@@ -885,7 +885,7 @@ public class AccountServiceImpl implements AccountService {
     String worldSlug;
     String realmSlug;
     try {
-      accountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
+      accountId = requireSignedActorAccountId(claims);
       tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
       gameInstanceId = JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false);
       pointerVersion = JwtClaims.requireLong(claims.get("pointerVersion"), "pointerVersion", false);
@@ -906,6 +906,15 @@ public class AccountServiceImpl implements AccountService {
         gameInstanceId,
         pointerVersion,
         connectScopeExpiresAt);
+  }
+
+  private static long requireSignedActorAccountId(Claims claims) {
+    long subjectAccountId = JwtClaims.requireLong(claims.getSubject(), "sub", false);
+    long claimedAccountId = JwtClaims.requireLong(claims.get("accountId"), "accountId", false);
+    if (subjectAccountId != claimedAccountId) {
+      throw new IllegalArgumentException("signed token account subject mismatch");
+    }
+    return claimedAccountId;
   }
 
   private Claims requireSignedTokenClaims(
