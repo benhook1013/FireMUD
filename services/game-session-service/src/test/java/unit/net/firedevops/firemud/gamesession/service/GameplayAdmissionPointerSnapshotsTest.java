@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -55,6 +56,35 @@ class GameplayAdmissionPointerSnapshotsTest {
         .isEqualTo(new GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle(null, null, null));
     assertThat(GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(missingRouting))
         .isFalse();
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsPartialRoutingClaimsWithCallerSpecificMessage() {
+    SessionContext partialRouting =
+        new SessionContext(
+            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, "world", null, 17L, null);
+
+    assertThatThrownBy(
+            () ->
+                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                    partialRouting, "Game Logic request"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Incomplete admitted routing bundle on session context for Game Logic request");
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsMissingRoutingClaimsWithCallerSpecificMessage() {
+    SessionContext missingRouting =
+        new SessionContext(
+            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, null, null, 0L, null);
+
+    assertThatThrownBy(
+            () ->
+                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                    missingRouting, "Entity Management request"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Missing admitted routing bundle on session context for Entity Management request");
   }
 
   @Test

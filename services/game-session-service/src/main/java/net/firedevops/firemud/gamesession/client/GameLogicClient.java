@@ -678,15 +678,8 @@ public class GameLogicClient
 
   private String sessionAttestation(SessionContext context, String roomId) {
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
-        GameplayAdmissionPointerSnapshots.admittedRoutingBundle(context);
-    if (GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(context)) {
-      throw new IllegalStateException(
-          "Incomplete admitted routing bundle on session context for Game Logic request");
-    }
-    if (!routingBundle.isPresent()) {
-      throw new IllegalStateException(
-          "Missing admitted routing bundle on session context for Game Logic request");
-    }
+        GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+            context, "Game Logic request");
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),

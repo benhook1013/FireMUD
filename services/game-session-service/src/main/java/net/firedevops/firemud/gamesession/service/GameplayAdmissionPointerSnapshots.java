@@ -23,6 +23,20 @@ public final class GameplayAdmissionPointerSnapshots {
         context.worldSlug(), context.realmSlug(), context.pointerVersion());
   }
 
+  public static AdmittedRoutingBundle requireAdmittedRoutingBundle(
+      SessionContext context, String requestTarget) {
+    AdmittedRoutingBundle routingBundle = admittedRoutingBundle(context);
+    if (hasPartialAdmittedRoutingBundle(context)) {
+      throw new IllegalStateException(
+          "Incomplete admitted routing bundle on session context for " + requestTarget);
+    }
+    if (!routingBundle.isPresent()) {
+      throw new IllegalStateException(
+          "Missing admitted routing bundle on session context for " + requestTarget);
+    }
+    return routingBundle;
+  }
+
   public static boolean hasPartialAdmittedRoutingBundle(SessionContext context) {
     if (context == null) {
       return false;
