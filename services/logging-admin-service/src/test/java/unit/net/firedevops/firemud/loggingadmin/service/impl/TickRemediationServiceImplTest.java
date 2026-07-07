@@ -92,6 +92,29 @@ class TickRemediationServiceImplTest {
   }
 
   @Test
+  void getRuntimeOwnershipStatusRejectsZeroGameInstanceIdForRegionScope() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(gameSessionClient.getRuntimeOwnershipStatus(1L, null, "region-7"))
+        .thenReturn(
+            GetRuntimeOwnershipStatusResponse.newBuilder()
+                .setOwnership(
+                    RuntimeOwnershipStatus.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("0")
+                        .setRegionId("region-7")
+                        .build())
+                .build());
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, "region-7"))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("500 INTERNAL_SERVER_ERROR");
+  }
+
+  @Test
   void pauseForGameInstanceForwardsAndAudits() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

@@ -286,6 +286,22 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void getRuntimeStateRejectsZeroControlPlaneGameInstanceId() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState(2L, 7L))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder().setTenantId("2").setGameInstanceId("0"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRuntimeState(2L, 7L));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
   void prepareVersionUpgradeReturnsDurablePreparation() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.prepareVersionUpgrade(any()))

@@ -45,13 +45,13 @@ public class TickRemediationServiceImpl implements TickRemediationService {
         gameSessionControlPlaneClient.getRuntimeOwnershipStatus(tenantId, gameInstanceId, regionId);
     requireNoError(response.getError());
     RuntimeOwnershipStatus ownership = response.getOwnership();
-    if (parseLong(ownership.getTenantId(), "tenant_id") != tenantId) {
+    if (parseResponseLong(ownership.getTenantId(), "tenant_id") != tenantId) {
       throw new ResponseStatusException(
           HttpStatus.INTERNAL_SERVER_ERROR,
           "control-plane runtime ownership response did not match requested tenant_id");
     }
     if (hasText(gameInstanceId)
-        && parseLong(ownership.getGameInstanceId(), "game_instance_id")
+        && parseResponseLong(ownership.getGameInstanceId(), "game_instance_id")
             != parseLong(gameInstanceId, "gameInstanceId")) {
       throw new ResponseStatusException(
           HttpStatus.INTERNAL_SERVER_ERROR,
@@ -137,8 +137,8 @@ public class TickRemediationServiceImpl implements TickRemediationService {
 
   private RuntimeOwnershipStatusDto toDto(RuntimeOwnershipStatus ownership) {
     return new RuntimeOwnershipStatusDto(
-        parseLong(ownership.getTenantId(), "tenant_id"),
-        parseLong(ownership.getGameInstanceId(), "game_instance_id"),
+        parseResponseLong(ownership.getTenantId(), "tenant_id"),
+        parseResponseLong(ownership.getGameInstanceId(), "game_instance_id"),
         ownership.getRegionEpoch(),
         ownership.getExecutorFence(),
         ownership.getOwnerService(),
@@ -228,6 +228,10 @@ public class TickRemediationServiceImpl implements TickRemediationService {
 
   private static boolean hasText(String value) {
     return value != null && !value.isBlank();
+  }
+
+  private long parseResponseLong(String value, String field) {
+    return ControlPlaneResponseReaders.parseLong(value, field);
   }
 
   private long parseLong(String value, String field) {

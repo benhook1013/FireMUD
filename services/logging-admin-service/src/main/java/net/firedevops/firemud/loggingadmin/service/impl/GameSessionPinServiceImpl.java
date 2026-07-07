@@ -99,11 +99,6 @@ public class GameSessionPinServiceImpl implements GameSessionPinService {
   }
 
   private long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, field + " was not numeric in control-plane response");
-    }
+    return ControlPlaneResponseReaders.parseLong(value, field);
   }
 }

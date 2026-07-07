@@ -196,6 +196,22 @@ class GameplayCommandStatusServiceImplTest {
   }
 
   @Test
+  void getGameplayCommandStatusRejectsZeroSessionIdInResponse() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus("cmd-123"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(commandStatus("2").toBuilder().setSessionId("0"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, "cmd-123"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
   void getGameplayCommandStatusRequiresAccessibleTenant() {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 

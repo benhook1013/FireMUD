@@ -90,6 +90,24 @@ class GameSessionPinServiceImplTest {
     assertThat(result.publication().scriptPatchVersion()).isEqualTo("patch-9");
   }
 
+  @Test
+  void getGameSessionPinConvergenceRejectsZeroGameInstanceIdInResponse() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameSessionPinConvergence(1L, 7L))
+        .thenReturn(
+            GetGameSessionPinConvergenceResponse.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("0")
+                .build());
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    GameSessionPinServiceImpl service = new GameSessionPinServiceImpl(gameSessionClient);
+
+    assertThatThrownBy(() -> service.getGameSessionPinConvergence(1L, 7L))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("500 INTERNAL_SERVER_ERROR");
+  }
+
   private ScriptPatchPublicationLink publication() {
     return ScriptPatchPublicationLink.newBuilder()
         .setScriptPatchVersion("patch-9")
