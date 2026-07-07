@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -122,6 +123,37 @@ class AccountControllerTest {
   }
 
   @Test
+  void exportAccountRejectsMalformedAccountIdBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/accounts/not-a-number/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void exportTenantDataRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/accounts/42/tenant-export")
+                .param("tenantId", "0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
   void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
@@ -132,5 +164,18 @@ class AccountControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void deleteAccountRejectsZeroAccountIdBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("1", Map.of("accountId", "1"));
+
+    mockMvc
+        .perform(delete("/accounts/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(accountService);
   }
 }

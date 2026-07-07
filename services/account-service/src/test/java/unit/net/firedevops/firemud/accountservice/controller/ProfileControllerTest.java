@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -95,6 +96,38 @@ class ProfileControllerTest {
   }
 
   @Test
+  void getProfileRejectsMalformedAccountIdBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/profiles/not-a-number")
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getProfileRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/profiles/2")
+                .param("tenantId", "0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
   void updateProfileAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
     UpdateProfileRequest req =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
@@ -111,5 +144,24 @@ class ProfileControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void updateProfileRejectsZeroAccountIdBeforeDispatch() throws Exception {
+    UpdateProfileRequest req =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            put("/profiles/0")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(accountService);
   }
 }

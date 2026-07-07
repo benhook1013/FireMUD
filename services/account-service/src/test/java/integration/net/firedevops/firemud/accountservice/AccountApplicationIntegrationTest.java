@@ -2,16 +2,23 @@ package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -33,6 +40,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH
     })
 class AccountApplicationIntegrationTest {
+  private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -48,6 +56,7 @@ class AccountApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+  @Autowired private JwtUtil jwtUtil;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -58,5 +67,24 @@ class AccountApplicationIntegrationTest {
   void pingEndpointReturnsPong() {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
+  }
+
+  @Test
+  void exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
   }
 }

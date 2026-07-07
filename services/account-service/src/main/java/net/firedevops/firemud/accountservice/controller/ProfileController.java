@@ -6,6 +6,7 @@ import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,24 +31,35 @@ public class ProfileController {
 
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
-      @PathVariable Long accountId, @RequestParam Long tenantId) {
-    SessionContext.requireAccountAccess(tenantId, accountId);
-    ProfileDto dto = accountService.getProfile(tenantId, accountId);
+      @PathVariable String accountId, @RequestParam String tenantId) {
+    long parsedAccountId = requireAccountId(accountId);
+    long parsedTenantId = requireTenantId(tenantId);
+    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+    ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
-      @PathVariable Long accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    SessionContext.requireAccountAccess(request.tenantId(), accountId);
+      @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
+    long parsedAccountId = requireAccountId(accountId);
+    SessionContext.requireAccountAccess(request.tenantId(), parsedAccountId);
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(
                 request.tenantId(),
-                accountId,
+                parsedAccountId,
                 request.displayName(),
                 request.bio(),
                 request.presenceVisibilityPolicy()));
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private long requireAccountId(String accountId) {
+    return RequestIdValidation.requirePositiveLong(accountId, "accountId");
+  }
+
+  private long requireTenantId(String tenantId) {
+    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }
