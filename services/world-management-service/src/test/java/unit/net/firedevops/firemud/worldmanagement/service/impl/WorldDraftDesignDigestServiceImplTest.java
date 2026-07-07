@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
@@ -14,6 +15,68 @@ import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
 class WorldDraftDesignDigestServiceImplTest {
+  @Test
+  void rejectsZeroTenantIdBeforeRepositoryReads() {
+    RegionRepository regionRepository = Mockito.mock(RegionRepository.class);
+    ZoneRepository zoneRepository = Mockito.mock(ZoneRepository.class);
+    RoomRepository roomRepository = Mockito.mock(RoomRepository.class);
+    RoomExitRepository roomExitRepository = Mockito.mock(RoomExitRepository.class);
+    GenerationRuleRepository generationRuleRepository =
+        Mockito.mock(GenerationRuleRepository.class);
+    WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository =
+        Mockito.mock(WorldEntitySpawnBindingRepository.class);
+    WorldDraftDesignDigestServiceImpl service =
+        new WorldDraftDesignDigestServiceImpl(
+            regionRepository,
+            zoneRepository,
+            roomRepository,
+            roomExitRepository,
+            generationRuleRepository,
+            worldEntitySpawnBindingRepository,
+            new ObjectMapper());
+
+    assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("0", "7"));
+
+    Mockito.verifyNoInteractions(
+        regionRepository,
+        zoneRepository,
+        roomRepository,
+        roomExitRepository,
+        generationRuleRepository,
+        worldEntitySpawnBindingRepository);
+  }
+
+  @Test
+  void rejectsZeroVersionIdBeforeRepositoryReads() {
+    RegionRepository regionRepository = Mockito.mock(RegionRepository.class);
+    ZoneRepository zoneRepository = Mockito.mock(ZoneRepository.class);
+    RoomRepository roomRepository = Mockito.mock(RoomRepository.class);
+    RoomExitRepository roomExitRepository = Mockito.mock(RoomExitRepository.class);
+    GenerationRuleRepository generationRuleRepository =
+        Mockito.mock(GenerationRuleRepository.class);
+    WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository =
+        Mockito.mock(WorldEntitySpawnBindingRepository.class);
+    WorldDraftDesignDigestServiceImpl service =
+        new WorldDraftDesignDigestServiceImpl(
+            regionRepository,
+            zoneRepository,
+            roomRepository,
+            roomExitRepository,
+            generationRuleRepository,
+            worldEntitySpawnBindingRepository,
+            new ObjectMapper());
+
+    assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("1", "0"));
+
+    Mockito.verifyNoInteractions(
+        regionRepository,
+        zoneRepository,
+        roomRepository,
+        roomExitRepository,
+        generationRuleRepository,
+        worldEntitySpawnBindingRepository);
+  }
+
   @Test
   void computesDigestFromVersionScopedTemplateRows() {
     RegionRepository regionRepository = Mockito.mock(RegionRepository.class);
