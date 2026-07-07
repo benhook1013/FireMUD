@@ -192,6 +192,58 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
+  void applyWorldDesignMutationRejectsZeroVersionIdBeforeMutation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            mutationService,
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    service.applyWorldDesignMutation(
+        ApplyWorldDesignMutationRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId("0")
+            .setCommitId("commit-1")
+            .setRevisionId("revision-1")
+            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+            .setScopeId("44")
+            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyWorldDesignMutationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("versionId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(mutationService);
+  }
+
+  @Test
   void prepareWorldInstanceReturnsLifecycleSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);

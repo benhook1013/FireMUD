@@ -649,8 +649,8 @@ public class WorldManagementGrpcService
 
   private WorldDesignMutationRequestDto toDto(ApplyWorldDesignMutationRequest request) {
     return new WorldDesignMutationRequestDto(
-        Long.parseLong(request.getTenantId()),
-        Long.parseLong(request.getVersionId()),
+        RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+        RequestIdValidation.requirePositiveLong(request.getVersionId(), "versionId"),
         request.getCommitId(),
         request.getRevisionId(),
         operationName(request),

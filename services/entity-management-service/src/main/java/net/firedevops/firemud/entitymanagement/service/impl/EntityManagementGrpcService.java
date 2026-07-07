@@ -408,9 +408,11 @@ public class EntityManagementGrpcService
     try {
       var validation =
           entityUpgradeValidationService.validateEntityUpgradeMappings(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getSourceGameInstanceId()),
-              Long.parseLong(request.getTargetVersionId()),
+              requireTenantId(request.getTenantId()),
+              RequestIdValidation.requirePositiveLong(
+                  request.getSourceGameInstanceId(), "sourceGameInstanceId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getTargetVersionId(), "targetVersionId"),
               request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
       ValidateEntityUpgradeMappingsResponse.Builder builder =
           ValidateEntityUpgradeMappingsResponse.newBuilder()
@@ -424,18 +426,6 @@ public class EntityManagementGrpcService
         builder.setRemapSetId(validation.remapSetId());
       }
       responseObserver.onNext(builder.build());
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      responseObserver.onNext(
-          ValidateEntityUpgradeMappingsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ValidateEntityUpgradeMappings",
-                      "INVALID_ARGUMENT",
-                      "invalid id"))
-              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(

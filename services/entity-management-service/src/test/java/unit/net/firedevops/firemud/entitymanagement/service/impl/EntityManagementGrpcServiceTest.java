@@ -347,6 +347,58 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void validateEntityUpgradeMappingsRejectsZeroSourceGameInstanceIdBeforeValidation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityUpgradeValidationService validationService =
+        Mockito.mock(EntityUpgradeValidationService.class);
+    var meterRegistry = new SimpleMeterRegistry();
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            validationService,
+            attestationService(),
+            meterRegistry);
+
+    AtomicReference<ValidateEntityUpgradeMappingsResponse> ref = new AtomicReference<>();
+    service.validateEntityUpgradeMappings(
+        ValidateEntityUpgradeMappingsRequest.newBuilder()
+            .setTenantId("1")
+            .setSourceGameInstanceId("0")
+            .setTargetVersionId("11")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ValidateEntityUpgradeMappingsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("sourceGameInstanceId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(validationService);
+  }
+
+  @Test
   void listContainerContentsReturnsMappedItems() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
