@@ -1,11 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionClaims;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -19,16 +16,9 @@ final class GameplayPresenceRoleClassifier {
       return GameplayPresenceRole.PLAYER;
     }
     try {
-      Claims claims = jwtUtil.parseToken(context.jwt()).getPayload();
-      if (hasElevatedRole(claims.get("globalRoles", List.class))) {
+      SessionClaims claims = SessionClaims.fromJwt(jwtUtil.parseToken(context.jwt()));
+      if (claims.hasGameplayElevatedRole(Long.toString(context.tenantId()))) {
         return GameplayPresenceRole.GOD;
-      }
-      Object scopedRoles = claims.get("scopedRoles");
-      if (scopedRoles instanceof Map<?, ?> scopedMap) {
-        Object tenantRoles = scopedMap.get(Long.toString(context.tenantId()));
-        if (hasElevatedRole(tenantRoles)) {
-          return GameplayPresenceRole.GOD;
-        }
       }
     } catch (IllegalArgumentException | JwtException ex) {
       logger.debug(
@@ -38,20 +28,5 @@ final class GameplayPresenceRoleClassifier {
           ex);
     }
     return GameplayPresenceRole.PLAYER;
-  }
-
-  private static boolean hasElevatedRole(Object rolesRaw) {
-    if (!(rolesRaw instanceof List<?> roles)) {
-      return false;
-    }
-    for (Object role : roles) {
-      String normalized = String.valueOf(role).trim().toLowerCase(Locale.ROOT);
-      if (normalized.equals("platformadmin")
-          || normalized.equals("tenantadmin")
-          || normalized.equals("god")) {
-        return true;
-      }
-    }
-    return false;
   }
 }
