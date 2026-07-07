@@ -26,6 +26,7 @@ mkdir -p \
   services/foo/src/main/java/example \
   services/foo/src/test/java/example \
   services/foo/design \
+  services/foo/docs \
   services/foo/bin \
   services/bar/src/main/java/example \
   services/bar/src/testFixtures/java/example \
@@ -90,6 +91,11 @@ EOF
 cat >services/foo/design/notes.md <<'EOF'
 # Foo Notes
 Service design notes.
+EOF
+
+cat >services/foo/docs/README.md <<'EOF'
+# Nested Foo Docs
+Should not count as a service-local README.
 EOF
 
 cat >services/foo/src/main/java/example/Foo.java <<'EOF'

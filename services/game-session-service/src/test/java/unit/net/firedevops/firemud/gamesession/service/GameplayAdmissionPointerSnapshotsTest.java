@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -350,6 +351,30 @@ class GameplayAdmissionPointerSnapshotsTest {
     SessionContext incoming = bootstrapShell(22L, 1L, "DEMO", "PRODUCTION", 7L);
 
     assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isTrue();
+  }
+
+  @Test
+  void sameBootstrapRouteRejectsFirstPartyConnectContextWhenRoutingIdentityChanges() {
+    FirstPartyConnectContext existing =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+
+    assertThat(
+            GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                existing, 22L, 1L, "sandbox", "production", 7L))
+        .isFalse();
+  }
+
+  @Test
+  void sameBootstrapRouteAcceptsFirstPartyConnectContextWithCaseInsensitiveRoutingIdentity() {
+    FirstPartyConnectContext existing =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+
+    assertThat(
+            GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                existing, 22L, 1L, "DEMO", "PRODUCTION", 7L))
+        .isTrue();
   }
 
   private static SessionContext bootstrapShell(

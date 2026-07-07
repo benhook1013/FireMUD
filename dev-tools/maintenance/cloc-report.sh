@@ -135,7 +135,7 @@ is_architecture_path() {
 }
 
 is_service_local_docs_path() {
-  [[ "$1" == services/*/README.md || "$1" == services/*/design/* ]]
+  [[ "$1" =~ ^services/[^/]+/README\.md$ || "$1" == services/*/design/* ]]
 }
 
 requests_json_output() {
@@ -304,27 +304,19 @@ build_tracked_inventory_file() {
 build_diff_inventory_file() {
   local git_range="$1"
   local output_file="$2"
-  local changed_file
-
-  while IFS= read -r -d '' changed_file; do
-    if [[ -e "$changed_file" ]]; then
-      printf '%s\n' "$changed_file" >>"$output_file"
-    fi
-  done < <(git diff --name-only --diff-filter=ACMR -z "$git_range" --)
-}
-
-count_diff_omitted_paths() {
-  local git_range="$1"
+  local omitted_count_file="$3"
   local changed_file
   local omitted_count=0
 
   while IFS= read -r -d '' changed_file; do
-    if [[ ! -e "$changed_file" ]]; then
+    if [[ -e "$changed_file" ]]; then
+      printf '%s\n' "$changed_file" >>"$output_file"
+    else
       omitted_count=$((omitted_count + 1))
     fi
   done < <(git diff --name-only --diff-filter=ACMRD -z "$git_range" --)
 
-  printf '%s\n' "$omitted_count"
+  printf '%s\n' "$omitted_count" >"$omitted_count_file"
 }
 
 populate_mode_file_list_from_inventory() {
@@ -641,6 +633,7 @@ run_diff_mode() {
   local omitted_count
   local arg
   local inventory_file
+  local omitted_count_file
   local status
 
   if [[ -z "$git_range" ]]; then
@@ -664,8 +657,9 @@ run_diff_mode() {
   done
 
   inventory_file="$(create_temp_file)"
-  build_diff_inventory_file "$git_range" "$inventory_file"
-  omitted_count="$(count_diff_omitted_paths "$git_range")"
+  omitted_count_file="$(create_temp_file)"
+  build_diff_inventory_file "$git_range" "$inventory_file" "$omitted_count_file"
+  omitted_count="$(<"$omitted_count_file")"
   if [[ "$omitted_count" != "0" ]]; then
     print_banner "Note: diff mode omitted $omitted_count tracked path(s) that are deleted or otherwise missing in the current checkout for $git_range."
   fi

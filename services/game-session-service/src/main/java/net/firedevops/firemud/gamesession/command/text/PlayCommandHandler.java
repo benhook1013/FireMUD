@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -384,11 +385,13 @@ public class PlayCommandHandler {
                     connectContextInvalidFailure(
                         tenantTag, Long.toString(selectedRealm.gameInstanceId())));
               }
-              if (connectContext.tenantId() != selectedRealm.tenantId()
-                  || connectContext.gameInstanceId() != selectedRealm.gameInstanceId()
-                  || connectContext.pointerVersion() != selectedRealm.pointerVersion()
-                  || !selectedWorld.slug().equalsIgnoreCase(connectContext.worldSlug())
-                  || !selectedRealm.slug().equalsIgnoreCase(connectContext.realmSlug())) {
+              if (!GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                  connectContext,
+                  selectedRealm.tenantId(),
+                  selectedRealm.gameInstanceId(),
+                  selectedWorld.slug(),
+                  selectedRealm.slug(),
+                  selectedRealm.pointerVersion())) {
                 return Optional.of(
                     failure(
                         "CONNECT_SCOPE_MISMATCH",

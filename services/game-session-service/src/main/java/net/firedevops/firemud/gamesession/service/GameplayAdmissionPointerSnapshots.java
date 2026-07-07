@@ -143,6 +143,40 @@ public final class GameplayAdmissionPointerSnapshots {
     return existing.pointerVersion() == incoming.pointerVersion();
   }
 
+  public static boolean sameBootstrapRoute(
+      FirstPartyConnectContext existing,
+      long tenantId,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {
+    if (existing == null) {
+      return false;
+    }
+    if (existing.tenantId() != tenantId || existing.gameInstanceId() != bootstrapGameInstanceId) {
+      return false;
+    }
+    RoutingBundle existingRoutingBundle =
+        normalizeRoutingBundle(
+            existing.worldSlug(), existing.realmSlug(), Long.valueOf(existing.pointerVersion()));
+    RoutingBundle incomingRoutingBundle =
+        normalizeRoutingBundle(worldSlug, realmSlug, Long.valueOf(pointerVersion));
+    if ((existingRoutingBundle == null) != (incomingRoutingBundle == null)) {
+      return false;
+    }
+    if (incomingRoutingBundle == null) {
+      return true;
+    }
+    if (!sameRoutingIdentity(
+        existingRoutingBundle.worldSlug(),
+        existingRoutingBundle.realmSlug(),
+        incomingRoutingBundle.worldSlug(),
+        incomingRoutingBundle.realmSlug())) {
+      return false;
+    }
+    return existingRoutingBundle.pointerVersion().equals(incomingRoutingBundle.pointerVersion());
+  }
+
   public static Optional<GameplayAdmissionPointerSnapshot> singularCompletePointer(
       List<GameplayAdmissionPointerSnapshot> pointers) {
     if (pointers == null) {
@@ -251,24 +285,7 @@ public final class GameplayAdmissionPointerSnapshots {
     if (!hasPartialAdmittedRoutingBundle(shell)) {
       return shell;
     }
-    return new SessionContext(
-        shell.sessionId(),
-        shell.tenantId(),
-        shell.accountId(),
-        shell.loginName(),
-        shell.characterId(),
-        shell.characterName(),
-        shell.gameInstanceId(),
-        shell.roomInstanceId(),
-        shell.jwt(),
-        shell.localeTag(),
-        shell.bootstrapGameInstanceId(),
-        null,
-        null,
-        0L,
-        shell.playableStateScope(),
-        shell.connectScopeId(),
-        shell.connectRequestId());
+    return clearGenericBootstrapRouting(shell);
   }
 
   private static String blankToNull(String value) {
