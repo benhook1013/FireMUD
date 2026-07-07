@@ -1,24 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TEMP PLAN
-# Track the next cloc-report improvements here and remove completed items as
-# they land. This header is temporary and should be cleaned up after the next
-# round of work.
-#
-# Active findings / planned fixes:
-# - Keep FireMUD on prod/tests for now rather than adding a third verification
-#   bucket; revisit only if the broader tests bucket proves too lossy.
-# - Consider whether a service-docs mode is still useful after design and
-#   architecture modes have had real use.
-# - Add diff-scoped reporting later using git diff-backed inventories and the
-#   same classifier rather than introducing a separate counting path.
-# - Add short summary/paste-friendly output only after the underlying inventory
-#   and bucketing are trustworthy.
+# FireMUD cloc report wrapper.
+# - Builds every view from git-tracked inventories so ignored local outputs such
+#   as **/bin/** do not pollute counts.
+# - Uses cloc --skip-uniqueness by default so totals represent tracked file
+#   footprint rather than deduplicated content.
+# - Treats source scope as buildSrc, dev-tools, gradle, protos, services,
+#   web-client, plus non-Markdown repo-root support files.
+# - Classifies tests broadly enough for this repo: src/test*, test fixtures,
+#   JS/TS test naming patterns, dev-tools/tests, and dev-tools/validation
+#   test_*.py helpers.
+# - Keeps wrapper banners on stderr so cloc structured output flags such as
+#   --json remain clean on stdout.
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|markdown|design|architecture] [extra cloc args...]
+Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|summary|diff|markdown|design|architecture|service-docs] [extra args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
@@ -27,9 +25,12 @@ Modes:
   tests     Test-only count across standard test directories, test fixtures, repo-owned contract tests, and validation-style test scripts.
   debug     Print tracked source-scope file classification as: bucket TAB rule TAB path.
   by-module Aggregate tracked source/prod/tests counts by FireMUD module bucket.
+  summary   Print a compact repo/source/prod/tests/docs rollup for tracked files.
+  diff      Run summary output for changed tracked files in a git diff range; add --by-module for per-module output.
   markdown  Markdown-only count across the repository.
   design    Tracked files under design/.
   architecture Tracked files under design/architecture/.
+  service-docs Tracked service-local docs under services/*/README.md and services/*/design/.
 
 Examples:
   bash dev-tools/maintenance/cloc-report.sh
@@ -39,8 +40,13 @@ Examples:
   bash dev-tools/maintenance/cloc-report.sh debug | column -t -s $'\t'
   bash dev-tools/maintenance/cloc-report.sh by-module
   bash dev-tools/maintenance/cloc-report.sh by-module --json
+  bash dev-tools/maintenance/cloc-report.sh summary
+  bash dev-tools/maintenance/cloc-report.sh summary --json
+  bash dev-tools/maintenance/cloc-report.sh diff develop...HEAD
+  bash dev-tools/maintenance/cloc-report.sh diff develop...HEAD --by-module --json
   bash dev-tools/maintenance/cloc-report.sh design
   bash dev-tools/maintenance/cloc-report.sh architecture --json
+  bash dev-tools/maintenance/cloc-report.sh service-docs
   bash dev-tools/maintenance/cloc-report.sh markdown --by-file
 EOF
 }
@@ -96,6 +102,10 @@ is_design_path() {
 
 is_architecture_path() {
   [[ "$1" == design/architecture/* ]]
+}
+
+is_service_docs_path() {
+  [[ "$1" == services/*/README.md || "$1" == services/*/design/* ]]
 }
 
 is_source_root_file() {
@@ -231,22 +241,75 @@ should_include_file() {
     architecture)
       is_architecture_path "$path"
       ;;
+    service-docs)
+      is_service_docs_path "$path"
+      ;;
     markdown)
       is_markdown_path "$path"
       ;;
   esac
 }
 
-populate_mode_file_list() {
-  local mode="$1"
+build_tracked_inventory_file() {
+  local output_file="$1"
+  git ls-files >"$output_file"
+}
+
+build_diff_inventory_file() {
+  local git_range="$1"
   local output_file="$2"
+  local changed_file
+
+  while IFS= read -r -d '' changed_file; do
+    printf '%s\n' "$changed_file" >>"$output_file"
+  done < <(git diff --name-only --diff-filter=ACMR -z "$git_range" --)
+}
+
+populate_mode_file_list_from_inventory() {
+  local mode="$1"
+  local inventory_file="$2"
+  local output_file="$3"
   local tracked_file
 
-  while IFS= read -r -d '' tracked_file; do
+  while IFS= read -r tracked_file; do
+    [[ -n "$tracked_file" ]] || continue
     if should_include_file "$mode" "$tracked_file"; then
       printf '%s\n' "$tracked_file" >>"$output_file"
     fi
-  done < <(git ls-files -z)
+  done <"$inventory_file"
+}
+
+populate_mode_file_list() {
+  local mode="$1"
+  local output_file="$2"
+  local inventory_file
+  inventory_file="$(mktemp)"
+  trap "cleanup_files '$inventory_file'" EXIT
+  build_tracked_inventory_file "$inventory_file"
+  populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$output_file"
+  cleanup_files "$inventory_file"
+  trap - EXIT
+}
+
+build_mode_json_from_inventory() {
+  local mode="$1"
+  local inventory_file="$2"
+  local output_json="$3"
+  local file_list
+  file_list="$(mktemp)"
+  trap "cleanup_files '$file_list'" EXIT
+
+  populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
+  if [[ ! -s "$file_list" ]]; then
+    cat >"$output_json" <<'EOF'
+{"SUM":{"blank":0,"comment":0,"code":0,"nFiles":0}}
+EOF
+  else
+    cloc --quiet --skip-uniqueness --json --by-file --list-file="$file_list" >"$output_json"
+  fi
+
+  cleanup_files "$file_list"
+  trap - EXIT
 }
 
 run_debug_mode() {
@@ -261,10 +324,11 @@ run_debug_mode() {
   done < <(git ls-files -z)
 }
 
-run_by_module_mode() {
-  local source_list
-  local prod_list
-  local tests_list
+run_by_module_mode_with_inventory() {
+  local inventory_file="$1"
+  local scope_label="$2"
+  shift 2
+
   local source_json
   local prod_json
   local tests_json
@@ -284,22 +348,15 @@ run_by_module_mode() {
     esac
   done
 
-  source_list="$(mktemp)"
-  prod_list="$(mktemp)"
-  tests_list="$(mktemp)"
   source_json="$(mktemp)"
   prod_json="$(mktemp)"
   tests_json="$(mktemp)"
-  trap "cleanup_files '$source_list' '$prod_list' '$tests_list' '$source_json' '$prod_json' '$tests_json'" EXIT
+  trap "cleanup_files '$source_json' '$prod_json' '$tests_json'" EXIT
 
-  populate_mode_file_list source "$source_list"
-  populate_mode_file_list prod "$prod_list"
-  populate_mode_file_list tests "$tests_list"
-
-  print_banner "Running by-module rollup from tracked source/prod/tests inventories..."
-  cloc --quiet --skip-uniqueness --json --by-file --list-file="$source_list" >"$source_json"
-  cloc --quiet --skip-uniqueness --json --by-file --list-file="$prod_list" >"$prod_json"
-  cloc --quiet --skip-uniqueness --json --by-file --list-file="$tests_list" >"$tests_json"
+  print_banner "Running by-module rollup from $scope_label inventories..."
+  build_mode_json_from_inventory source "$inventory_file" "$source_json"
+  build_mode_json_from_inventory prod "$inventory_file" "$prod_json"
+  build_mode_json_from_inventory tests "$inventory_file" "$tests_json"
 
   python3 - "$source_json" "$prod_json" "$tests_json" "$output_mode" <<'PY'
 import json
@@ -409,12 +466,189 @@ print("  ".join(str(summary_row[key]).ljust(widths[key]) for key, _ in headers))
 PY
   status=$?
 
-  cleanup_files "$source_list" "$prod_list" "$tests_list" "$source_json" "$prod_json" "$tests_json"
+  cleanup_files "$source_json" "$prod_json" "$tests_json"
   trap - EXIT
   return "$status"
 }
 
-run_cloc_mode() {
+run_by_module_mode() {
+  local inventory_file
+  inventory_file="$(mktemp)"
+  trap "cleanup_files '$inventory_file'" EXIT
+  build_tracked_inventory_file "$inventory_file"
+  run_by_module_mode_with_inventory "$inventory_file" "tracked source/prod/tests" "$@"
+  local status=$?
+  cleanup_files "$inventory_file"
+  trap - EXIT
+  return "$status"
+}
+
+run_summary_mode_with_inventory() {
+  local inventory_file="$1"
+  local scope_label="$2"
+  shift 2
+
+  local repo_json
+  local source_json
+  local prod_json
+  local tests_json
+  local markdown_json
+  local design_json
+  local architecture_json
+  local service_docs_json
+  local output_mode="table"
+  local arg
+  local status
+
+  for arg in "$@"; do
+    case "$arg" in
+      --json)
+        output_mode="json"
+        ;;
+      *)
+        echo "summary only supports the wrapper flag --json." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  repo_json="$(mktemp)"
+  source_json="$(mktemp)"
+  prod_json="$(mktemp)"
+  tests_json="$(mktemp)"
+  markdown_json="$(mktemp)"
+  design_json="$(mktemp)"
+  architecture_json="$(mktemp)"
+  service_docs_json="$(mktemp)"
+  trap "cleanup_files '$repo_json' '$source_json' '$prod_json' '$tests_json' '$markdown_json' '$design_json' '$architecture_json' '$service_docs_json'" EXIT
+
+  print_banner "Running summary rollup from $scope_label inventories..."
+  build_mode_json_from_inventory repo "$inventory_file" "$repo_json"
+  build_mode_json_from_inventory source "$inventory_file" "$source_json"
+  build_mode_json_from_inventory prod "$inventory_file" "$prod_json"
+  build_mode_json_from_inventory tests "$inventory_file" "$tests_json"
+  build_mode_json_from_inventory markdown "$inventory_file" "$markdown_json"
+  build_mode_json_from_inventory design "$inventory_file" "$design_json"
+  build_mode_json_from_inventory architecture "$inventory_file" "$architecture_json"
+  build_mode_json_from_inventory service-docs "$inventory_file" "$service_docs_json"
+
+  python3 - \
+    "$repo_json" "$source_json" "$prod_json" "$tests_json" \
+    "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json" \
+    "$output_mode" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+paths = [Path(arg) for arg in sys.argv[1:9]]
+output_mode = sys.argv[9]
+labels = [
+    ("repo", paths[0]),
+    ("source", paths[1]),
+    ("prod", paths[2]),
+    ("tests", paths[3]),
+    ("markdown", paths[4]),
+    ("design", paths[5]),
+    ("architecture", paths[6]),
+    ("service_docs", paths[7]),
+]
+
+rows = []
+for label, path in labels:
+    obj = json.loads(path.read_text())
+    summary = obj["SUM"]
+    rows.append({"scope": label, "files": int(summary["nFiles"]), "code": int(summary["code"])})
+
+if output_mode == "json":
+    print(json.dumps({"scopes": rows}, indent=2))
+    raise SystemExit(0)
+
+headers = [("scope", "scope"), ("files", "files"), ("code", "code")]
+widths = {}
+for key, label in headers:
+    widths[key] = max(len(label), *(len(str(row[key])) for row in rows))
+
+print("  ".join(label.ljust(widths[key]) for key, label in headers))
+for row in rows:
+    print("  ".join(str(row[key]).ljust(widths[key]) for key, _ in headers))
+PY
+  status=$?
+
+  cleanup_files "$repo_json" "$source_json" "$prod_json" "$tests_json" "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json"
+  trap - EXIT
+  return "$status"
+}
+
+run_summary_mode() {
+  local inventory_file
+  inventory_file="$(mktemp)"
+  trap "cleanup_files '$inventory_file'" EXIT
+  build_tracked_inventory_file "$inventory_file"
+  run_summary_mode_with_inventory "$inventory_file" "tracked repo/source/docs" "$@"
+  local status=$?
+  cleanup_files "$inventory_file"
+  trap - EXIT
+  return "$status"
+}
+
+run_diff_mode() {
+  local git_range="${1:-}"
+  shift || true
+
+  local by_module="false"
+  local output_mode="table"
+  local arg
+  local inventory_file
+  local status
+
+  if [[ -z "$git_range" ]]; then
+    echo "diff requires a git diff range, for example: develop...HEAD" >&2
+    return 1
+  fi
+
+  for arg in "$@"; do
+    case "$arg" in
+      --by-module)
+        by_module="true"
+        ;;
+      --json)
+        output_mode="json"
+        ;;
+      *)
+        echo "diff only supports the wrapper flags --by-module and --json." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  inventory_file="$(mktemp)"
+  trap "cleanup_files '$inventory_file'" EXIT
+  build_diff_inventory_file "$git_range" "$inventory_file"
+
+  if [[ "$by_module" == "true" ]]; then
+    if [[ "$output_mode" == "json" ]]; then
+      run_by_module_mode_with_inventory "$inventory_file" "changed files in $git_range" --json
+    else
+      run_by_module_mode_with_inventory "$inventory_file" "changed files in $git_range"
+    fi
+    status=$?
+  else
+    if [[ "$output_mode" == "json" ]]; then
+      run_summary_mode_with_inventory "$inventory_file" "changed files in $git_range" --json
+    else
+      run_summary_mode_with_inventory "$inventory_file" "changed files in $git_range"
+    fi
+    status=$?
+  fi
+
+  cleanup_files "$inventory_file"
+  trap - EXIT
+  return "$status"
+}
+
+run_cloc_mode_with_inventory() {
+  local inventory_file="$1"
+  shift
   local mode="$1"
   local banner="$2"
   shift 2
@@ -424,13 +658,32 @@ run_cloc_mode() {
   file_list="$(mktemp)"
   trap "cleanup_files '$file_list'" EXIT
 
-  populate_mode_file_list "$mode" "$file_list"
+  populate_mode_file_list_from_inventory "$mode" "$inventory_file" "$file_list"
   print_banner "$banner"
   # Count tracked file footprint rather than deduplicated content so split
   # buckets remain additive and predictable across modes.
   cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
   status=$?
   cleanup_files "$file_list"
+  trap - EXIT
+  return "$status"
+}
+
+run_cloc_mode() {
+  local mode="$1"
+  local banner="$2"
+  shift 2
+
+  local inventory_file
+  local status
+  inventory_file="$(mktemp)"
+  trap "cleanup_files '$inventory_file'" EXIT
+
+  build_tracked_inventory_file "$inventory_file"
+  run_cloc_mode_with_inventory "$inventory_file" "$mode" "$banner" "$@"
+  status=$?
+
+  cleanup_files "$inventory_file"
   trap - EXIT
   return "$status"
 }
@@ -454,11 +707,20 @@ case "$mode" in
   by-module)
     run_by_module_mode "$@"
     ;;
+  summary)
+    run_summary_mode "$@"
+    ;;
+  diff)
+    run_diff_mode "$@"
+    ;;
   design)
     run_cloc_mode design "Running cloc in design mode (tracked files under design/)..." "$@"
     ;;
   architecture)
     run_cloc_mode architecture "Running cloc in architecture mode (tracked files under design/architecture/)..." "$@"
+    ;;
+  service-docs)
+    run_cloc_mode service-docs "Running cloc in service-docs mode (tracked service-local docs under services/*/README.md and services/*/design/)..." "$@"
     ;;
   markdown)
     run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"
