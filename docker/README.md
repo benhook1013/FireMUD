@@ -2,7 +2,7 @@
 
 This directory holds the local Docker/Compose runtime surfaces for FireMUD. Run commands from the repository root.
 
-Copy `.env.sample` to `.env` in the repository root if you need to override the default local credentials or service settings.
+Copy `.env.sample` to `.env` in the repository root before running the local Compose stack. `.env.sample` is the canonical source for local default credentials and service settings; `docker-compose.yml` intentionally reads from `.env` instead of repeating those defaults inline.
 
 ## Local Docker Lanes
 

@@ -302,7 +302,7 @@ The `docker/docker-compose.yml` file orchestrates all services, including Postgr
 ./gradlew devUp
 ```
 
-This task builds all service images and starts the Docker Compose stack with PostgreSQL and Redis. Connection settings are read from an optional `.env` file. A sample file named `.env.sample` is provided with default credentials:
+This task builds all service images and starts the Docker Compose stack with PostgreSQL and Redis. Connection settings are read from the repository-root `.env` file. A sample file named `.env.sample` is the canonical local-default contract:
 
 ```env
 FIREMUD_POSTGRES_USER=firemud
@@ -310,13 +310,15 @@ FIREMUD_POSTGRES_PASSWORD=firemud
 FIREMUD_POSTGRES_DB=firemud
 FIREMUD_POSTGRES_HOST=postgres
 FIREMUD_POSTGRES_PORT=5432
+FIREMUD_REDIS_HOST=redis-cache
+FIREMUD_REDIS_PORT=6379
 FIREMUD_REDIS_COORD_HOST=redis-coord
 FIREMUD_REDIS_COORD_PORT=6379
 FIREMUD_REDIS_CACHE_HOST=redis-cache
 FIREMUD_REDIS_CACHE_PORT=6379
 ```
 
-Copy this to `.env` and adjust values as needed before running the stack.
+Copy this to `.env` and adjust values as needed before running the stack. The local Compose files intentionally read from `.env` instead of repeating those default literals inline.
 
 To stop the stack:
 

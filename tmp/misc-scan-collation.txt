@@ -16,7 +16,8 @@ done - Production-shaped checked-in secrets/defaults
 
 next - Repeated demo/local credential contracts
 - Hosted preview/dev-demo/smoke now routes through a shared demo-smoke defaults file instead of repeating inline login values.
-- Local Compose and example Helm values still repeat weak/demo defaults across several files.
+- Local Compose now treats `.env.sample` -> `.env` as the canonical local default contract instead of repeating those same literals in `docker-compose.yml`.
+- Example Helm values still repeat weak/demo defaults across preview and dev-demo files.
 - Goal: reduce the remaining duplication and make the contract more canonical across local and hosted paths.
 
 next - Automation determinism and environment contracts

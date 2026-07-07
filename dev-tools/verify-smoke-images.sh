@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKER_DIR="$ROOT_DIR/docker"
 ROOT_ENV_FILE="$ROOT_DIR/.env"
+ROOT_ENV_SAMPLE="$ROOT_DIR/.env.sample"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
 ROOT_ENV_BACKUP=""
 COMPOSE_FILES=(
@@ -41,6 +42,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+upsert_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$file" ]]; then
+    grep -v "^${key}=" "$file" >"$tmp" || true
+  fi
+  printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  mv "$tmp" "$file"
+}
+
 compose_up_with_retry() {
   local attempt=1
   local max_attempts="$SMOKE_COMPOSE_UP_ATTEMPTS"
@@ -66,10 +80,13 @@ printf 'SMOKE_IMAGE_TAG=%s\n' "$SMOKE_IMAGE_TAG" >"$DOCKER_ENV_FILE"
 if [[ -f "$ROOT_ENV_FILE" ]]; then
   ROOT_ENV_BACKUP="$(mktemp)"
   cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"
+elif [[ -f "$ROOT_ENV_SAMPLE" ]]; then
+  cp "$ROOT_ENV_SAMPLE" "$ROOT_ENV_FILE"
+else
+  echo ".env.sample is missing; cannot seed local compose defaults for smoke images." >&2
+  exit 1
 fi
-cat >"$ROOT_ENV_FILE" <<EOF
-SMOKE_IMAGE_TAG=$SMOKE_IMAGE_TAG
-EOF
+upsert_env_var "$ROOT_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 
 docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
