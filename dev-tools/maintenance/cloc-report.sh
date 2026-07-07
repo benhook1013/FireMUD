@@ -7,14 +7,8 @@ set -euo pipefail
 # round of work.
 #
 # Active findings / planned fixes:
-# - Tighten FireMUD-specific classification so prod/tests splits handle more
-#   than Gradle-style src/test roots, including repo-owned verification code
-#   under dev-tools/tests and validation-style test scripts.
-# - Decide whether FireMUD should keep prod/tests only or add a separate
-#   verification bucket for smoke/validation tooling that is test-like but not
-#   service-local src/test code.
-# - Add a debug/inventory mode that prints file -> bucket -> rule so
-#   classification stays inspectable and easy to correct.
+# - Keep FireMUD on prod/tests for now rather than adding a third verification
+#   bucket; revisit only if the broader tests bucket proves too lossy.
 # - Add by-module reporting instead of only by-service, covering services/*,
 #   shared common-* modules, web-client, protos, dev-tools, buildSrc, gradle,
 #   and optionally design.
@@ -27,13 +21,14 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|markdown] [extra cloc args...]
+Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|markdown] [extra cloc args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
   source    Source-focused count across build logic, scripts, protos, services, and web client code, including tests.
-  prod      Source-focused count excluding test directories, test fixtures, and common test file naming patterns.
-  tests     Test-only count across standard test directories, test fixtures, and common test file naming patterns.
+  prod      Source-focused count excluding files currently classified as tests.
+  tests     Test-only count across standard test directories, test fixtures, repo-owned contract tests, and validation-style test scripts.
+  debug     Print tracked source-scope file classification as: bucket TAB rule TAB path.
   markdown  Markdown-only count across the repository.
 
 Examples:
@@ -41,6 +36,7 @@ Examples:
   bash dev-tools/maintenance/cloc-report.sh source
   bash dev-tools/maintenance/cloc-report.sh prod
   bash dev-tools/maintenance/cloc-report.sh tests
+  bash dev-tools/maintenance/cloc-report.sh debug | column -t -s $'\t'
   bash dev-tools/maintenance/cloc-report.sh markdown --by-file
 EOF
 }
@@ -107,25 +103,53 @@ is_source_path() {
   is_under_source_roots "$path" || is_source_root_file "$path"
 }
 
-is_test_path() {
+test_path_rule() {
   local path="$1"
   local base
   base="$(basename "$path")"
 
   case "$path" in
-    */src/test/*|*/src/testFixtures/*|*/src/integrationTest/*|*/src/e2e/*|*/src/e2eTest/*|*/__tests__/*)
+    */src/test/*)
+      printf '%s\n' "gradle_src_test"
+      return 0
+      ;;
+    */src/testFixtures/*)
+      printf '%s\n' "gradle_test_fixtures"
+      return 0
+      ;;
+    */src/integrationTest/*)
+      printf '%s\n' "gradle_integration_test"
+      return 0
+      ;;
+    */src/e2e/*|*/src/e2eTest/*)
+      printf '%s\n' "gradle_e2e_test"
+      return 0
+      ;;
+    */__tests__/*)
+      printf '%s\n' "js_dunder_tests"
+      return 0
+      ;;
+    dev-tools/tests/*)
+      printf '%s\n' "dev_tools_contract_tests"
+      return 0
+      ;;
+    dev-tools/validation/test_*.py)
+      printf '%s\n' "dev_tools_validation_test"
       return 0
       ;;
   esac
 
   case "$base" in
     *.test.js|*.test.jsx|*.test.ts|*.test.tsx|*.spec.js|*.spec.jsx|*.spec.ts|*.spec.tsx)
+      printf '%s\n' "js_test_name"
       return 0
       ;;
     playwright.config.js|playwright.config.ts|playwright.config.cjs|playwright.config.mjs)
+      printf '%s\n' "playwright_config"
       return 0
       ;;
     cypress.config.js|cypress.config.ts|cypress.config.cjs|cypress.config.mjs)
+      printf '%s\n' "cypress_config"
       return 0
       ;;
   esac
@@ -133,22 +157,57 @@ is_test_path() {
   return 1
 }
 
+classify_source_path() {
+  local path="$1"
+  local reason
+  local root
+
+  if ! is_source_path "$path"; then
+    return 1
+  fi
+
+  if reason="$(test_path_rule "$path")"; then
+    printf 'tests\t%s\n' "$reason"
+    return 0
+  fi
+
+  if is_root_file "$path"; then
+    printf 'prod\t%s\n' "root_non_markdown"
+    return 0
+  fi
+
+  for root in "${source_dirs[@]}"; do
+    if [[ "$path" == "$root"/* ]]; then
+      printf 'prod\tsource_root:%s\n' "$root"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 should_include_file() {
   local mode="$1"
   local path="$2"
+  local classification
+  local bucket
 
   case "$mode" in
     repo)
       return 0
       ;;
     source)
-      is_source_path "$path"
+      classify_source_path "$path" >/dev/null
       ;;
     prod)
-      is_source_path "$path" && ! is_test_path "$path"
+      classification="$(classify_source_path "$path")" || return 1
+      bucket="${classification%%$'\t'*}"
+      [[ "$bucket" == "prod" ]]
       ;;
     tests)
-      is_source_path "$path" && is_test_path "$path"
+      classification="$(classify_source_path "$path")" || return 1
+      bucket="${classification%%$'\t'*}"
+      [[ "$bucket" == "tests" ]]
       ;;
     markdown)
       is_markdown_path "$path"
@@ -168,6 +227,18 @@ populate_mode_file_list() {
   done < <(git ls-files -z)
 }
 
+run_debug_mode() {
+  local tracked_file
+  local classification
+
+  print_banner "Printing tracked source-scope classification as: bucket<TAB>rule<TAB>path"
+  printf 'bucket\trule\tpath\n'
+  while IFS= read -r -d '' tracked_file; do
+    classification="$(classify_source_path "$tracked_file")" || continue
+    printf '%s\t%s\n' "$classification" "$tracked_file"
+  done < <(git ls-files -z)
+}
+
 run_cloc_mode() {
   local mode="$1"
   local banner="$2"
@@ -179,7 +250,9 @@ run_cloc_mode() {
 
   populate_mode_file_list "$mode" "$file_list"
   print_banner "$banner"
-  cloc --quiet --list-file="$file_list" "$@"
+  # Count tracked file footprint rather than deduplicated content so split
+  # buckets remain additive and predictable across modes.
+  cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
   status=$?
   rm -f "$file_list"
   return "$status"
@@ -197,6 +270,9 @@ case "$mode" in
     ;;
   tests)
     run_cloc_mode tests "Running cloc in tests mode (tracked files currently classified as tests only)..." "$@"
+    ;;
+  debug)
+    run_debug_mode
     ;;
   markdown)
     run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"
