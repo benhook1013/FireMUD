@@ -17,6 +17,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,7 +71,7 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     requireText(pluginVersionId, "plugin_version_id");
     requireText(
         scriptPatchVersion, "PLUGIN_BINDINGS_UNAVAILABLE: pinned script patch version is missing");
-    long tenantKey = parseTenantId(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<ScriptDefinition> definitions =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionOrderByNameAsc(
             tenantKey, scriptPatchVersion);
@@ -292,14 +293,6 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     } catch (Exception ex) {
       throw new IllegalArgumentException(
           "PLUGIN_BINDINGS_UNAVAILABLE: script definition json is invalid");
-    }
-  }
-
-  private static long parseTenantId(String tenantId) {
-    try {
-      return Long.parseLong(tenantId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("tenant_id must be numeric");
     }
   }
 

@@ -34,6 +34,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.boot.json.JsonParserFactory;
@@ -160,6 +161,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Override
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
+    long tenantKey = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
     String schemaVersion = schemaVersion(request);
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
@@ -174,7 +176,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
     TriggerAdmission admission = validate(request, schemaVersion, sourceService, definition);
     if (admission.admitted()) {
-      admission = admissionWithHandlers(request, schemaVersion, definition, sourceService);
+      admission =
+          admissionWithHandlers(request, schemaVersion, definition, sourceService, tenantKey);
     }
     HandlerScopeValues requestScopeValues = requestScopeValues(request);
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
@@ -483,11 +486,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerScriptEventRequest request,
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
-      String sourceService) {
+      String sourceService,
+      long tenantKey) {
     if (isOnLoadRequest(request)) {
       return admissionWithOnLoadHandler(request, schemaVersion, definition, sourceService);
     }
-    long tenantKey = Long.parseLong(request.getTenantId());
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
     List<ScriptEventBinding> scopedBindings =
         bindingRepository

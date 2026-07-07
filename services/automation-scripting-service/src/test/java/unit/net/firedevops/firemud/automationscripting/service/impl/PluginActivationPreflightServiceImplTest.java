@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -19,6 +20,33 @@ import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
 class PluginActivationPreflightServiceImplTest {
+  @Test
+  void rejectsZeroTenantIdBeforeLookups() {
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    PluginRuntimeStateRepository runtimeStateRepository =
+        Mockito.mock(PluginRuntimeStateRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PluginActivationPreflightServiceImpl service =
+        new PluginActivationPreflightServiceImpl(
+            definitionRepository,
+            bindingRepository,
+            runtimeStateRepository,
+            gameSessionClient,
+            new ObjectMapper());
+
+    assertThatThrownBy(
+            () ->
+                service.validateActivation("0", "game-1", "patch-1", "town-crier", "town-crier-v2"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenantId must be positive");
+    verifyNoInteractions(
+        definitionRepository, bindingRepository, runtimeStateRepository, gameSessionClient);
+  }
+
   @Test
   void rejectsUnsupportedBuiltInCommandAlias() {
     ScriptDefinitionRepository definitionRepository =
