@@ -81,14 +81,7 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
     if (preparationId == null || preparationId.isBlank()) {
       throw new IllegalArgumentException("preparation_id is required");
     }
-    PreparedVersionUpgrade prepared =
-        preparedVersionUpgradeRepository
-            .findByPreparationId(preparationId)
-            .orElseThrow(() -> new IllegalArgumentException("Prepared version upgrade not found"));
-    if (!Long.valueOf(tenantId).equals(prepared.getTenantId())) {
-      throw new IllegalArgumentException("Prepared version upgrade not found");
-    }
-    return toDto(prepared);
+    return toDto(requirePreparedVersionUpgradeForTenant(tenantId, preparationId));
   }
 
   @Override
@@ -106,12 +99,7 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
       throw new IllegalArgumentException("execution_control_plane_request_id is required");
     }
     PreparedVersionUpgrade prepared =
-        preparedVersionUpgradeRepository
-            .findByPreparationId(preparationId)
-            .orElseThrow(() -> new IllegalArgumentException("Prepared version upgrade not found"));
-    if (!Long.valueOf(tenantId).equals(prepared.getTenantId())) {
-      throw new IllegalArgumentException("Prepared version upgrade not found");
-    }
+        requirePreparedVersionUpgradeForTenant(tenantId, preparationId);
     if (prepared.getExecutedAt() != null) {
       if (!Long.valueOf(targetGameInstanceId).equals(prepared.getExecutedTargetGameInstanceId())
           || !Long.valueOf(executedPointerVersion).equals(prepared.getExecutedPointerVersion())
@@ -127,6 +115,18 @@ public class VersionUpgradePreparationServiceImpl implements VersionUpgradePrepa
     prepared.setExecutionControlPlaneRequestId(executionControlPlaneRequestId);
     preparedVersionUpgradeRepository.save(prepared);
     return toDto(prepared);
+  }
+
+  private PreparedVersionUpgrade requirePreparedVersionUpgradeForTenant(
+      long tenantId, String preparationId) {
+    PreparedVersionUpgrade prepared =
+        preparedVersionUpgradeRepository
+            .findByPreparationId(preparationId)
+            .orElseThrow(() -> new IllegalArgumentException("Prepared version upgrade not found"));
+    if (!Long.valueOf(tenantId).equals(prepared.getTenantId())) {
+      throw new IllegalArgumentException("Prepared version upgrade not found");
+    }
+    return prepared;
   }
 
   private String toJson(Object value) {

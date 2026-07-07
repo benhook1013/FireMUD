@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
 import java.util.List;
@@ -127,6 +128,31 @@ class VersionUpgradePreparationServiceImplTest {
   }
 
   @Test
+  void getPreparedVersionUpgradeRejectsCrossTenantPreparationLookup() throws Exception {
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    PreparedVersionUpgradeRepository repository =
+        Mockito.mock(PreparedVersionUpgradeRepository.class);
+    ObjectMapper objectMapper = new ObjectMapper();
+    PreparedVersionUpgrade existing = new PreparedVersionUpgrade();
+    existing.setPreparationId("pvu-1");
+    existing.setTenantId(2L);
+    existing.setReasonsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setCheckedParticipantsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setParticipantResultsJson(objectMapper.writeValueAsString(List.of()));
+    Mockito.when(repository.findByPreparationId("pvu-1"))
+        .thenReturn(java.util.Optional.of(existing));
+    VersionUpgradePreparationServiceImpl service =
+        new VersionUpgradePreparationServiceImpl(compatibilityService, repository, objectMapper);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.getPreparedVersionUpgrade(1L, "pvu-1"));
+
+    assertEquals("Prepared version upgrade not found", error.getMessage());
+  }
+
+  @Test
   void markPreparedVersionUpgradeExecutedPersistsExecutionState() throws Exception {
     InstanceCutoverCompatibilityService compatibilityService =
         Mockito.mock(InstanceCutoverCompatibilityService.class);
@@ -158,5 +184,32 @@ class VersionUpgradePreparationServiceImplTest {
     assertEquals(55L, prepared.executedTargetGameInstanceId());
     assertEquals(4L, prepared.executedPointerVersion());
     assertEquals("cutover-req-1", prepared.executionControlPlaneRequestId());
+  }
+
+  @Test
+  void markPreparedVersionUpgradeExecutedRejectsCrossTenantPreparationLookup() throws Exception {
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    PreparedVersionUpgradeRepository repository =
+        Mockito.mock(PreparedVersionUpgradeRepository.class);
+    ObjectMapper objectMapper = new ObjectMapper();
+    PreparedVersionUpgrade existing = new PreparedVersionUpgrade();
+    existing.setPreparationId("pvu-1");
+    existing.setTenantId(2L);
+    existing.setReasonsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setCheckedParticipantsJson(objectMapper.writeValueAsString(List.of()));
+    existing.setParticipantResultsJson(objectMapper.writeValueAsString(List.of()));
+    Mockito.when(repository.findByPreparationId("pvu-1"))
+        .thenReturn(java.util.Optional.of(existing));
+    VersionUpgradePreparationServiceImpl service =
+        new VersionUpgradePreparationServiceImpl(compatibilityService, repository, objectMapper);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.markPreparedVersionUpgradeExecuted(1L, "pvu-1", 55L, 4L, "cutover-req-1"));
+
+    assertEquals("Prepared version upgrade not found", error.getMessage());
   }
 }
