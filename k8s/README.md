@@ -89,7 +89,7 @@ A sample Terraform module is available in [`k8s/terraform/`](terraform/) to spin
 
 ## Persistent Storage
 
-The production Terraform modules provision persistent volumes for PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases. Default sizes are defined in `terraform-production/postgres-values.yaml`, `terraform-production/redis-coord-values.yaml`, and `terraform-production/redis-cache-values.yaml` as **10Gi**, **8Gi**, and **8Gi** respectively. Update these values to match your capacity planning when deploying to a real cluster.
+The production Terraform modules provision persistent volumes for PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases. Default sizes are defined in `terraform-production/postgres-values.yaml.tftpl`, `terraform-production/redis-coord-values.yaml`, and `terraform-production/redis-cache-values.yaml` as **10Gi**, **8Gi**, and **8Gi** respectively. Update these values and provide real Terraform credential inputs before deploying to a real cluster.
 
 ## Helm Charts
 

@@ -26,7 +26,14 @@ resource "helm_release" "postgresql" {
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "postgresql-ha"
   namespace  = var.namespace
-  values     = [file("${path.module}/postgres-values.yaml")]
+  values = [
+    templatefile("${path.module}/postgres-values.yaml.tftpl", {
+      postgres_superuser_password = var.postgres_superuser_password
+      postgres_app_username       = var.postgres_app_username
+      postgres_app_password       = var.postgres_app_password
+      postgres_database           = var.postgres_database
+    })
+  ]
 }
 
 resource "helm_release" "redis_coord" {

@@ -4,16 +4,6 @@ metadata:
   name: minio
 ---
 apiVersion: v1
-kind: Secret
-metadata:
-  name: minio-creds
-  namespace: minio
-type: Opaque
-stringData:
-  accesskey: myaccesskey
-  secretkey: mysecretkey
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: minio-data
