@@ -848,6 +848,35 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
+  void friendsMutationRejectsCharacterTargetWithMalformedResolvedAccountId() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(entityManagementClient.findCharacterByName(
+            Mockito.any(),
+            Mockito.eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            Mockito.eq("Sora")))
+        .thenReturn(
+            Optional.of(Character.newBuilder().setName("Sora").setAccountId("abc").build()));
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, java.util.List.of("ADD", "Sora"), "FRIENDS ADD Sora"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_TARGET_NOT_FOUND");
+    assertThat(result.outputs())
+        .singleElement()
+        .extracting(PlayerOutput::text)
+        .isEqualTo("ERROR FRIEND_TARGET_NOT_FOUND Character not found: Sora");
+    Mockito.verifyNoInteractions(socialGroupsClient);
+  }
+
+  @Test
   void friendsVisibilityShowsCurrentCanonicalPolicy() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);

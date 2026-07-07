@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewO
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
@@ -561,8 +562,15 @@ public class FriendsCommandHandler {
           null,
           friendTargetError("FRIEND_TARGET_NOT_FOUND", notFoundMessage(action.targetToken())));
     }
-    return new ResolvedFriendTarget(
-        Long.parseLong(character.get().getAccountId()), character.get().getName(), null);
+    PositiveLongParsing.ParsedPositiveLong parsedAccountId =
+        PositiveLongParsing.parseOptionalText(character.get().getAccountId(), "friendAccountId");
+    if (!parsedAccountId.valid()) {
+      return new ResolvedFriendTarget(
+          0L,
+          null,
+          friendTargetError("FRIEND_TARGET_NOT_FOUND", notFoundMessage(action.targetToken())));
+    }
+    return new ResolvedFriendTarget(parsedAccountId.value(), character.get().getName(), null);
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {

@@ -261,6 +261,66 @@ class FriendServiceImplTest {
   }
 
   @Test
+  void listFriendsDropsPresenceRowsWithMalformedAccountId() {
+    AccountFriendLink sora = new AccountFriendLink();
+    sora.setId(7L);
+    sora.setTenantId(11L);
+    sora.setAccountId(2L);
+    sora.setFriendAccountId(3L);
+    sora.setStatus("active");
+    sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(sora));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder().setAccountId("abc").setOnline(true).build())
+                .build());
+
+    var result = service.listFriends(11L, 2L, FriendRosterFilter.ALL);
+
+    assertEquals(1, result.totalCount());
+    assertEquals(false, result.friends().getFirst().presence().online());
+    assertEquals(null, result.friends().getFirst().presence().characterName());
+    assertEquals(null, result.friends().getFirst().presence().gameInstanceId());
+  }
+
+  @Test
+  void listFriendPresenceDropsNonPositiveVisibleIds() {
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("3")
+                        .setOnline(true)
+                        .setGameInstanceId("0")
+                        .setCharacterId("-7")
+                        .setVisibilityPolicy(
+                            AccountPresenceVisibilityPolicy
+                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
+                        .build())
+                .build());
+    AccountFriendLink sora = new AccountFriendLink();
+    sora.setId(7L);
+    sora.setTenantId(11L);
+    sora.setAccountId(2L);
+    sora.setFriendAccountId(3L);
+    sora.setStatus("active");
+    sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(sora));
+
+    var result = service.listFriendPresence(11L, 2L, FriendRosterFilter.ALL);
+
+    assertEquals(1, result.presences().size());
+    assertEquals(3L, result.presences().getFirst().friendAccountId());
+    assertEquals(null, result.presences().getFirst().gameInstanceId());
+    assertEquals(null, result.presences().getFirst().characterId());
+  }
+
+  @Test
   void getFriendPresencePolicyReturnsCanonicalAccountPolicy() {
     when(accountClient.getPresenceVisibilityPolicy(11L, 2L))
         .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.PRIVATE));

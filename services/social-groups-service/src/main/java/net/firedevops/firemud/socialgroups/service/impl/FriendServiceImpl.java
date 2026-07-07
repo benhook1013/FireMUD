@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
@@ -293,14 +294,16 @@ public class FriendServiceImpl implements FriendService {
 
     Map<Long, FriendPresenceDto> byAccountId = new LinkedHashMap<>();
     for (AccountPresenceEntry entry : response.getPresencesList()) {
-      long friendAccountId = Long.parseLong(entry.getAccountId());
-      byAccountId.put(friendAccountId, mapPresence(entry));
+      Long friendAccountId = parseRequiredPositivePresenceId(entry.getAccountId(), "accountId");
+      if (friendAccountId == null) {
+        continue;
+      }
+      byAccountId.put(friendAccountId, mapPresence(friendAccountId, entry));
     }
     return byAccountId;
   }
 
-  private FriendPresenceDto mapPresence(AccountPresenceEntry entry) {
-    long friendAccountId = Long.parseLong(entry.getAccountId());
+  private FriendPresenceDto mapPresence(long friendAccountId, AccountPresenceEntry entry) {
     return new FriendPresenceDto(
         friendAccountId,
         visibleOnline(entry),
@@ -359,8 +362,7 @@ public class FriendServiceImpl implements FriendService {
       case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
-      default ->
-          entry.getGameInstanceId().isBlank() ? null : Long.valueOf(entry.getGameInstanceId());
+      default -> parseOptionalPositivePresenceId(entry.getGameInstanceId(), "gameInstanceId");
     };
   }
 
@@ -369,7 +371,7 @@ public class FriendServiceImpl implements FriendService {
       case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
           ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
           null;
-      default -> entry.getCharacterId().isBlank() ? null : Long.valueOf(entry.getCharacterId());
+      default -> parseOptionalPositivePresenceId(entry.getCharacterId(), "characterId");
     };
   }
 
@@ -465,6 +467,22 @@ public class FriendServiceImpl implements FriendService {
       case ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> "HIDDEN_STAFF";
       default -> null;
     };
+  }
+
+  private Long parseOptionalPositivePresenceId(String value, String fieldName) {
+    try {
+      return RequestIdValidation.parseOptionalPositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
+  }
+
+  private Long parseRequiredPositivePresenceId(String value, String fieldName) {
+    try {
+      return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 
   private FriendRecentPresenceDisposition mapRecentDisposition(
