@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.GenerationRuleDto;
 import net.firedevops.firemud.worldmanagement.service.GenerationRuleService;
@@ -30,9 +31,14 @@ public class GenerationRuleController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<GenerationRuleDto>>> list(
-      @RequestParam Long tenantId, Pageable pageable) {
-    SessionContext.requireTenantAccess(tenantId);
-    Page<GenerationRuleDto> list = generationRuleService.listRules(tenantId, pageable);
+      @RequestParam String tenantId, Pageable pageable) {
+    long parsedTenantId = requireTenantId(tenantId);
+    SessionContext.requireTenantAccess(parsedTenantId);
+    Page<GenerationRuleDto> list = generationRuleService.listRules(parsedTenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
+  }
+
+  private long requireTenantId(String tenantId) {
+    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }

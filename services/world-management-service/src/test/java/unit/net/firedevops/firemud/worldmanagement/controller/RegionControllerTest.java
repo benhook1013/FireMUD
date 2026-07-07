@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -55,6 +56,28 @@ class RegionControllerTest {
     mockMvc
         .perform(post("/regions/4/move").param("tenantId", "1").param("shardId", "3"))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void listRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(get("/regions").param("tenantId", "bad-tenant"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(regionService);
+  }
+
+  @Test
+  void moveRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(post("/regions/4/move").param("tenantId", "0").param("shardId", "3"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(regionService);
   }
 
   private void installTenantContext(Map<String, List<String>> scopedRoles) {

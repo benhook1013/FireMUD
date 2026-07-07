@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.controller;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.RegionDto;
 import net.firedevops.firemud.worldmanagement.service.RegionService;
@@ -16,16 +17,22 @@ public class RegionController {
   private final RegionService regionService;
 
   @GetMapping
-  public ResponseEntity<ApiResponse<List<RegionDto>>> list(@RequestParam Long tenantId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(ApiResponse.success(regionService.listRegions(tenantId)));
+  public ResponseEntity<ApiResponse<List<RegionDto>>> list(@RequestParam String tenantId) {
+    long parsedTenantId = requireTenantId(tenantId);
+    SessionContext.requireTenantAccess(parsedTenantId);
+    return ResponseEntity.ok(ApiResponse.success(regionService.listRegions(parsedTenantId)));
   }
 
   @PostMapping("/{id}/move")
   public ResponseEntity<ApiResponse<RegionDto>> moveRegion(
-      @PathVariable Long id, @RequestParam Long tenantId, @RequestParam Integer shardId) {
-    SessionContext.requireTenantAccess(tenantId);
-    RegionDto result = regionService.moveRegion(tenantId, id, shardId);
+      @PathVariable Long id, @RequestParam String tenantId, @RequestParam Integer shardId) {
+    long parsedTenantId = requireTenantId(tenantId);
+    SessionContext.requireTenantAccess(parsedTenantId);
+    RegionDto result = regionService.moveRegion(parsedTenantId, id, shardId);
     return ResponseEntity.ok(ApiResponse.success(result));
+  }
+
+  private long requireTenantId(String tenantId) {
+    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }

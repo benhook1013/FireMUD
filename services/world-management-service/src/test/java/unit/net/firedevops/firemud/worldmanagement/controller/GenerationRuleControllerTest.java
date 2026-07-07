@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -65,6 +66,28 @@ class GenerationRuleControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"id\":7,\"tenantId\":1,\"name\":\"room\",\"value\":\"{}\"}"))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void listRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(get("/generation/rules").param("tenantId", "bad-tenant"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void listRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(get("/generation/rules").param("tenantId", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(generationRuleService);
   }
 
   private void installTenantContext(Map<String, List<String>> scopedRoles) {
