@@ -22,7 +22,7 @@ done - Repeated demo/local credential contracts
 next - Automation determinism and environment contracts
 - Harden CI/bootstrap downloads that currently use direct scripts or unverified binaries.
 - Decide whether Java 21 build + Java 25 runtime is intentional and document or align it.
-- Make CI Node/tool provisioning explicit where docs validation depends on it.
+- CI docs validation now sets up Node explicitly before `./gradlew lintMarkdown linkCheck -PfullCheck`.
 
 later - Operational script hardening
 - `dev-tools/docs/generate-erd.sh`: remove mutable tag and hardcoded local DB assumptions.
