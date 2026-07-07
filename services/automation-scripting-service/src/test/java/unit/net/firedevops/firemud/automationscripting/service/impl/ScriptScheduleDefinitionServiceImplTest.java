@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -23,6 +24,18 @@ class ScriptScheduleDefinitionServiceImplTest {
   void setup() {
     repository = mock(ScriptScheduleDefinitionRepository.class);
     service = new ScriptScheduleDefinitionServiceImpl(repository, new ObjectMapper());
+  }
+
+  @Test
+  void refreshPatchSchedulesRejectsZeroTenantIdBeforeRepositoryReads() {
+    assertThatThrownBy(
+            () ->
+                service.refreshPatchSchedules(
+                    "0", "patch-1", List.of(new ScriptDefinition()), List.of("npc-guard")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenantId must be positive");
+
+    verifyNoInteractions(repository);
   }
 
   @Test

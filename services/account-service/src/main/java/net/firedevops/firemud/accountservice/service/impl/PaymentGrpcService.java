@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.dto.SubscriptionDto;
 import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,8 +50,8 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     try {
       PaymentIntentDto dto =
           paymentService.createPaymentIntent(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getAmountCents());
       CreatePaymentIntentResponse response =
           CreatePaymentIntentResponse.newBuilder()
@@ -90,8 +91,8 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     try {
       SubscriptionDto dto =
           paymentService.createSubscription(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getPlanId());
       CreateSubscriptionResponse response =
           CreateSubscriptionResponse.newBuilder().setSubscriptionId(dto.id().toString()).build();
@@ -127,8 +128,8 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     try {
       PaymentIntentDto dto =
           paymentService.createDonation(
-              Long.valueOf(request.getTenantId()),
-              Long.valueOf(request.getAccountId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
               request.getAmountCents());
       CreateDonationResponse response =
           CreateDonationResponse.newBuilder()
@@ -162,7 +163,8 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       RefundPaymentRequest request, StreamObserver<RefundPaymentResponse> responseObserver) {
     try {
       paymentService.refundPayment(
-          Long.valueOf(request.getTenantId()), Long.valueOf(request.getPaymentId()));
+          RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+          RequestIdValidation.requirePositiveLong(request.getPaymentId(), "paymentId"));
       RefundPaymentResponse response = RefundPaymentResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

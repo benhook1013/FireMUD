@@ -20,3 +20,8 @@ Entry format:
   - Context: after the WSL Docker path was corrected, the fresh-bootstrap stack exposed repeated `Unable to access jarfile /app/app.jar` failures across non-root Java service containers.
   - Observation: host-built jars can legitimately land with restrictive local modes such as `0600`. If service images inherit that mode directly, non-root runtime users fail at startup and the resulting container error looks like a runtime wiring problem instead of an artifact-packaging contract bug.
   - Expected pattern: service Dockerfiles should set explicit jar ownership and readable mode during image build, and any image that performs extra rename or pruning work should still finish by restoring the intended non-root runtime user.
+
+- `2026-07-07`: CodeRabbit actionable findings can live only in the top-level summary comment
+  - Context: a PR reported zero unresolved review threads, but the latest CodeRabbit review summary still contained an `Outside diff range comments` finding that was not surfaced by thread-only review checks.
+  - Observation: treating `reviewThreads` as the entire CodeRabbit truth is insufficient. Actionable `Outside diff range comments` and `Duplicate comments` can exist in the latest top-level CodeRabbit summary comment even when unresolved inline-thread counts are zero, which makes a PR look review-clean when it is not.
+  - Expected pattern: PR review gating should inspect both unresolved review-thread counts and the latest top-level CodeRabbit actionable summary sections before calling a PR review-clean or retriggering review.

@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationExceptio
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
@@ -410,19 +411,18 @@ public class WorldManagementGrpcService
   @Timed(value = "worldGrpc.getRoom")
   public void getRoom(GetRoomRequest request, StreamObserver<GetRoomResponse> responseObserver) {
     try {
-      Long roomId = Long.valueOf(resolveRoomId(request));
-      Long tenantId = Long.valueOf(resolveTenantId(request));
-      Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
+      GameplayRoomScope roomScope =
+          requireGameplayRoomScope(request.getTenantId(), request.getRoomInstance());
       requireGameplayAttestation(
           request.getSessionAttestation(),
-          request.getRoomInstance().getTenantId().isBlank()
-              ? request.getTenantId()
-              : request.getRoomInstance().getTenantId(),
-          request.getRoomInstance().getGameInstanceId(),
-          request.getRoomInstance().getRoomInstanceId());
-      requireTenantAccessWhenPresent(tenantId);
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceIdText(),
+          roomScope.roomInstanceIdText());
+      requireTenantAccessWhenPresent(roomScope.tenantId());
       Optional<String> json =
-          Optional.ofNullable(roomService.getRoom(tenantId, gameInstanceId, roomId))
+          Optional.ofNullable(
+                  roomService.getRoom(
+                      roomScope.tenantId(), roomScope.gameInstanceId(), roomScope.roomInstanceId()))
               .map(this::toJson);
       if (json.isPresent()) {
         GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
@@ -438,15 +438,6 @@ public class WorldManagementGrpcService
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       }
-    } catch (NumberFormatException ex) {
-      GetRoomResponse response =
-          GetRoomResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "GetRoom", "INVALID_ARGUMENT", "invalid id"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
       GetRoomResponse response =
           GetRoomResponse.newBuilder()
@@ -485,31 +476,22 @@ public class WorldManagementGrpcService
   public void getRoomSnapshot(
       GetRoomSnapshotRequest request, StreamObserver<GetRoomSnapshotResponse> responseObserver) {
     try {
-      Long roomId = Long.valueOf(resolveRoomId(request));
-      Long tenantId = Long.valueOf(resolveTenantId(request));
-      Long gameInstanceId = Long.valueOf(request.getRoomInstance().getGameInstanceId());
+      GameplayRoomScope roomScope =
+          requireGameplayRoomScope(request.getTenantId(), request.getRoomInstance());
       requireGameplayAttestation(
           request.getSessionAttestation(),
-          request.getRoomInstance().getTenantId().isBlank()
-              ? request.getTenantId()
-              : request.getRoomInstance().getTenantId(),
-          request.getRoomInstance().getGameInstanceId(),
-          request.getRoomInstance().getRoomInstanceId());
-      requireTenantAccessWhenPresent(tenantId);
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceIdText(),
+          roomScope.roomInstanceIdText());
+      requireTenantAccessWhenPresent(roomScope.tenantId());
       RoomSnapshotDto snapshot =
           roomService.getRoomSnapshot(
-              tenantId, gameInstanceId, roomId, request.getPreferredLocale());
+              roomScope.tenantId(),
+              roomScope.gameInstanceId(),
+              roomScope.roomInstanceId(),
+              request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      GetRoomSnapshotResponse response =
-          GetRoomSnapshotResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "GetRoomSnapshot", "INVALID_ARGUMENT", "invalid id"))
-              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (GameplaySessionAttestationException ex) {
@@ -641,34 +623,6 @@ public class WorldManagementGrpcService
     }
   }
 
-  private String resolveTenantId(GetRoomRequest request) {
-    if (request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getTenantId();
-    }
-    return request.getRoomInstance().getTenantId();
-  }
-
-  private String resolveRoomId(GetRoomRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.room_instance_id is required");
-    }
-    return request.getRoomInstance().getRoomInstanceId();
-  }
-
-  private String resolveTenantId(GetRoomSnapshotRequest request) {
-    if (request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getTenantId();
-    }
-    return request.getRoomInstance().getTenantId();
-  }
-
-  private String resolveRoomId(GetRoomSnapshotRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.room_instance_id is required");
-    }
-    return request.getRoomInstance().getRoomInstanceId();
-  }
-
   private String errorCodeFor(IllegalArgumentException ex) {
     String message = ex.getMessage();
     if ("Room not found".equals(message)) {
@@ -695,8 +649,8 @@ public class WorldManagementGrpcService
 
   private WorldDesignMutationRequestDto toDto(ApplyWorldDesignMutationRequest request) {
     return new WorldDesignMutationRequestDto(
-        Long.parseLong(request.getTenantId()),
-        Long.parseLong(request.getVersionId()),
+        RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+        RequestIdValidation.requirePositiveLong(request.getVersionId(), "versionId"),
         request.getCommitId(),
         request.getRevisionId(),
         operationName(request),
@@ -879,6 +833,40 @@ public class WorldManagementGrpcService
     SessionContext.requireTenantAccess(tenantId);
   }
 
+  private GameplayRoomScope requireGameplayRoomScope(
+      String topLevelTenantIdText, RoomInstanceRef roomInstance) {
+    String topLevelTenantId = blankToNull(topLevelTenantIdText);
+    String nestedTenantId = blankToNull(roomInstance.getTenantId());
+    if (topLevelTenantId != null
+        && nestedTenantId != null
+        && !topLevelTenantId.equals(nestedTenantId)) {
+      throw new IllegalArgumentException("tenantId must match roomInstance.tenantId");
+    }
+    String tenantIdText =
+        nestedTenantId != null ? nestedTenantId : requireText(topLevelTenantId, "tenantId");
+    String gameInstanceIdText = requireText(roomInstance.getGameInstanceId(), "gameInstanceId");
+    String roomInstanceIdText = requireText(roomInstance.getRoomInstanceId(), "roomInstanceId");
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    return new GameplayRoomScope(
+        tenantId,
+        RequestIdValidation.requirePositiveLong(gameInstanceIdText, "gameInstanceId"),
+        RequestIdValidation.requirePositiveLong(roomInstanceIdText, "roomInstanceId"),
+        tenantIdText,
+        gameInstanceIdText,
+        roomInstanceIdText);
+  }
+
+  private String requireText(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must be specified");
+    }
+    return value;
+  }
+
+  private String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+
   private void requireGameplayAttestation(
       String token, String tenantId, String gameInstanceId, String roomInstanceId) {
     gameplaySessionAttestationService.requireGameplayOrProbeMatch(
@@ -888,4 +876,12 @@ public class WorldManagementGrpcService
           "SESSION_ATTESTATION_INVALID", "Gameplay world RPCs require internal service identity");
     }
   }
+
+  private record GameplayRoomScope(
+      long tenantId,
+      long gameInstanceId,
+      long roomInstanceId,
+      String tenantIdText,
+      String gameInstanceIdText,
+      String roomInstanceIdText) {}
 }

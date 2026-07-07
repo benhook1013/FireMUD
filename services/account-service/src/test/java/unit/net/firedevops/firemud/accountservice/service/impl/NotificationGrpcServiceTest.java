@@ -1,7 +1,9 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -49,7 +51,7 @@ class NotificationGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals(true, ref.get().getSuccess());
+    assertTrue(ref.get().getSuccess());
   }
 
   @Test
@@ -149,5 +151,39 @@ class NotificationGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void sendNotificationRejectsZeroTenantIdBeforeDispatch() {
+    NotificationService notificationService = Mockito.mock(NotificationService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    NotificationGrpcService service =
+        new NotificationGrpcService(notificationService, new SimpleMeterRegistry());
+
+    AtomicReference<SendNotificationResponse> ref = new AtomicReference<>();
+    service.sendNotification(
+        SendNotificationRequest.newBuilder()
+            .setTenantId("0")
+            .setAccountId("2")
+            .setMessage("hi")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendNotificationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(notificationService);
   }
 }

@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
@@ -500,7 +501,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
     return new ResolvedLaunchDescriptor(
         descriptor.getLaunchDescriptorId(),
-        Long.parseLong(descriptor.getTenantId()),
+        requirePositiveExternalId(descriptor.getTenantId(), "tenantId"),
         descriptor.getGameTemplateId(),
         descriptor.getControlPlaneRequestId(),
         descriptor.getVersionId(),
@@ -573,9 +574,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
     return new PreparedWorldInstance(
-        Long.parseLong(response.getWorldInstance().getTenantId()),
-        Long.parseLong(response.getWorldInstance().getGameInstanceId()),
+        requirePositiveExternalId(response.getWorldInstance().getTenantId(), "tenantId"),
+        requirePositiveExternalId(
+            response.getWorldInstance().getGameInstanceId(), "gameInstanceId"),
         response.getWorldInstance().getLifecycleEpoch());
+  }
+
+  private long requirePositiveExternalId(String value, String fieldName) {
+    return RequestIdValidation.requirePositiveLong(value, fieldName);
   }
 
   private void activatePreparedWorldInstance(PreparedWorldInstance preparedWorldInstance) {

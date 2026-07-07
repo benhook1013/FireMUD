@@ -1,7 +1,9 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -83,5 +85,76 @@ class ReportGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createReportRejectsZeroReporterAccountIdBeforeDispatch() {
+    ReportService reportService = Mockito.mock(ReportService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReportGrpcService service = new ReportGrpcService(reportService, meterRegistry);
+
+    AtomicReference<CreateReportResponse> ref = new AtomicReference<>();
+    service.createReport(
+        CreateReportRequest.newBuilder()
+            .setTenantId("1")
+            .setReporterAccountId("0")
+            .setType("BUG")
+            .setDescription("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateReportResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("reporterAccountId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(reportService);
+  }
+
+  @Test
+  void createReportRejectsZeroTargetAccountIdBeforeDispatch() {
+    ReportService reportService = Mockito.mock(ReportService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReportGrpcService service = new ReportGrpcService(reportService, meterRegistry);
+
+    AtomicReference<CreateReportResponse> ref = new AtomicReference<>();
+    service.createReport(
+        CreateReportRequest.newBuilder()
+            .setTenantId("1")
+            .setReporterAccountId("2")
+            .setTargetAccountId("0")
+            .setType("BUG")
+            .setDescription("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateReportResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("targetAccountId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(reportService);
   }
 }

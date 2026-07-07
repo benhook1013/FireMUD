@@ -37,6 +37,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstance
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -113,18 +114,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return;
     }
 
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     String scriptPatchVersion = runtimeState.getPinnedScriptPatchVersion();
     List<ScriptScheduleDefinition> definitions =
         scheduleDefinitionRepository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
-                Long.parseLong(tenantId), scriptPatchVersion);
+                tenantKey, scriptPatchVersion);
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
-        bindingsByScriptEvent(Long.parseLong(tenantId), scriptPatchVersion);
+        bindingsByScriptEvent(tenantKey, scriptPatchVersion);
     Map<String, String> activePluginVersions =
         activePluginVersions(
             tenantId,
             gameInstanceId,
-            new RuntimeScope(
+            new AutomationRuntimeScopeSupport.RuntimeScope(
                 blankToEmpty(runtimeState.getRegionId()), runtimeState.getRegionEpoch()));
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
@@ -379,14 +381,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private Map<String, String> activePluginVersions(
-      String tenantId, String gameInstanceId, RuntimeScope runtimeScope) {
+      String tenantId,
+      String gameInstanceId,
+      AutomationRuntimeScopeSupport.RuntimeScope runtimeScope) {
     Map<String, String> active = new HashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
-      if (!matchesRuntimeScope(state, runtimeScope)) {
+      if (!AutomationRuntimeScopeSupport.matches(state, runtimeScope)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -396,25 +400,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     return active;
-  }
-
-  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
-    if (!runtimeScope.known()) {
-      return true;
-    }
-    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
-    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
-    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
-      return false;
-    }
-    return stateRegionId.equals(runtimeScope.regionId())
-        && stateRegionEpoch == runtimeScope.regionEpoch();
-  }
-
-  private record RuntimeScope(String regionId, long regionEpoch) {
-    private boolean known() {
-      return !regionId.isBlank() && regionEpoch > 0;
-    }
   }
 
   private static boolean shouldMaterialize(

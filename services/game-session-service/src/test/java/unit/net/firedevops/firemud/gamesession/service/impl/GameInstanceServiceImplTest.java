@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -400,6 +401,50 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionRejectsNonPositiveLaunchDescriptorTenantIdBeforeWorldPreparation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-launch-tenant", 42L);
+    doReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-cp-launch-tenant")
+                        .setTenantId("0")
+                        .setGameTemplateId(3L)
+                        .setControlPlaneRequestId("cp-launch-tenant")
+                        .setVersionId(11L)
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .build())
+                .build())
+        .when(gameDesignClient)
+        .resolveLaunchDescriptor(anyLong(), anyLong(), anyString());
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals("tenantId must be positive", error.getMessage());
+    verify(worldManagementClient, never())
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+    verify(stateService, never()).saveState(any());
+  }
+
+  @Test
   void startSessionFailsWhenReleaseBundleSchemaIsUnsupported() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-schema", 42L);
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
@@ -422,6 +467,47 @@ class GameInstanceServiceImplTest {
     assertEquals(
         "SCHEMA_VERSION_UNSUPPORTED: unsupported published release bundle attestation schema v999",
         error.getMessage());
+  }
+
+  @Test
+  void startSessionRejectsMalformedPreparedWorldInstanceGameInstanceIdBeforeActivation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-prep-id", 42L);
+    doReturn(
+            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("bad")
+                        .setLifecycleEpoch(1L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                        .build())
+                .build())
+        .when(worldManagementClient)
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals("gameInstanceId must be numeric", error.getMessage());
+    verify(worldManagementClient, never())
+        .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+    verify(stateService, never()).saveState(any());
   }
 
   private void configureWorldActivation() {

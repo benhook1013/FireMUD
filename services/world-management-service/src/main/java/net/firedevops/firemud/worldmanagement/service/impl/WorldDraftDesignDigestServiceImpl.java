@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Map;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -52,8 +53,8 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
     if (versionId == null || versionId.isBlank()) {
       throw new IllegalArgumentException("version_id is required");
     }
-    long tenantKey = Long.parseLong(tenantId);
-    long versionKey = Long.parseLong(versionId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    long versionKey = RequestIdValidation.requirePositiveLong(versionId, "versionId");
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(

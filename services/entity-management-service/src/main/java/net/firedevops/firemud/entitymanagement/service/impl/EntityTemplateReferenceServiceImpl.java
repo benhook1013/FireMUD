@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.NpcRepository;
 import net.firedevops.firemud.entitymanagement.service.EntityTemplateReferenceService;
@@ -14,9 +15,9 @@ public class EntityTemplateReferenceServiceImpl implements EntityTemplateReferen
 
   @Override
   public boolean exists(String tenantId, String versionId, String templateType, String templateId) {
-    long tenantKey = Long.parseLong(tenantId);
-    long versionKey = Long.parseLong(versionId);
-    long templateKey = Long.parseLong(templateId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    long versionKey = RequestIdValidation.requirePositiveLong(versionId, "versionId");
+    long templateKey = RequestIdValidation.requirePositiveLong(templateId, "templateId");
     return switch (templateType) {
       case "ITEM" ->
           itemRepository

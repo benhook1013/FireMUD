@@ -4,6 +4,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
@@ -91,6 +92,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Simple gRPC service exposing the Ping RPC. */
@@ -407,9 +409,11 @@ public class EntityManagementGrpcService
     try {
       var validation =
           entityUpgradeValidationService.validateEntityUpgradeMappings(
-              Long.parseLong(request.getTenantId()),
-              Long.parseLong(request.getSourceGameInstanceId()),
-              Long.parseLong(request.getTargetVersionId()),
+              requireTenantId(request.getTenantId()),
+              RequestIdValidation.requirePositiveLong(
+                  request.getSourceGameInstanceId(), "sourceGameInstanceId"),
+              RequestIdValidation.requirePositiveLong(
+                  request.getTargetVersionId(), "targetVersionId"),
               request.getRemapSetId().isBlank() ? null : request.getRemapSetId());
       ValidateEntityUpgradeMappingsResponse.Builder builder =
           ValidateEntityUpgradeMappingsResponse.newBuilder()
@@ -423,18 +427,6 @@ public class EntityManagementGrpcService
         builder.setRemapSetId(validation.remapSetId());
       }
       responseObserver.onNext(builder.build());
-      responseObserver.onCompleted();
-    } catch (NumberFormatException ex) {
-      responseObserver.onNext(
-          ValidateEntityUpgradeMappingsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ValidateEntityUpgradeMappings",
-                      "INVALID_ARGUMENT",
-                      "invalid id"))
-              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -465,9 +457,8 @@ public class EntityManagementGrpcService
       ListCharactersByAccountRequest request,
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long accountId = Long.parseLong(request.getAccountId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
       var characters =
           characterService
               .listForGameplayScope(
@@ -533,13 +524,12 @@ public class EntityManagementGrpcService
       FindCharacterByNameRequest request,
       StreamObserver<FindCharacterByNameResponse> responseObserver) {
     try {
+      long tenantId = requireTenantId(request.getTenantId());
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getTenantId(),
+          String.valueOf(tenantId),
           request.getGameInstanceId(),
           null);
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
           .findByGameplayScopeAndName(
@@ -608,9 +598,8 @@ public class EntityManagementGrpcService
   public void createCharacter(
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long accountId = Long.parseLong(request.getAccountId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
       CharacterDto created =
           characterService.create(
               tenantId,
@@ -623,6 +612,19 @@ public class EntityManagementGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateCharacter",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder()
               .setError(
@@ -655,9 +657,8 @@ public class EntityManagementGrpcService
   public void updateEntity(
       UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
     try {
-      long tenantId = Long.parseLong(request.getTenantId());
-      requireTenantAccessWhenPresent(tenantId);
-      long entityId = Long.parseLong(request.getEntityId());
+      long tenantId = requireTenantId(request.getTenantId());
+      long entityId = RequestIdValidation.requirePositiveLong(request.getEntityId(), "entityId");
       boolean result =
           characterService.updateEntity(
               tenantId,
@@ -842,6 +843,9 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      String conditionKey = requireText(request.getConditionKey(), "conditionKey");
+      String sourceType = requireText(request.getSourceType(), "sourceType");
+      Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -854,11 +858,11 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getConditionKey(),
+                        conditionKey,
                         request.getStackCount(),
-                        request.getSourceType(),
+                        sourceType,
                         request.getSourceId(),
-                        parseOptionalInstant(request.getExpiresAt()),
+                        expiresAt,
                         request.getEffectPayloadJson());
                 return ApplyActorConditionResponse.newBuilder()
                     .setActiveCondition(toProto(activeCondition))
@@ -1066,6 +1070,7 @@ public class EntityManagementGrpcService
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
+      String slot = requireText(request.getSlot(), "slot");
       RemoveEquipmentResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1078,7 +1083,7 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         resolveGameplayTargetGameInstanceId(request.getGameInstanceId(), claims),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getSlot(),
+                        slot,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
@@ -1223,6 +1228,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      int quantity = requirePositiveQuantity(request.getQuantity());
       PutItemIntoContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1240,7 +1246,7 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity(),
+                        quantity,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return PutItemIntoContainerResponse.newBuilder()
@@ -1312,6 +1318,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      int quantity = requirePositiveQuantity(request.getQuantity());
       TakeItemFromContainerResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1329,7 +1336,7 @@ public class EntityManagementGrpcService
                         itemId,
                         itemInstanceId,
                         blankToNull(request.getStackFamilyKey()),
-                        request.getQuantity(),
+                        quantity,
                         blankToNull(request.getEffectId()),
                         blankToNull(claims.sessionId()));
                 return TakeItemFromContainerResponse.newBuilder()
@@ -1388,18 +1395,19 @@ public class EntityManagementGrpcService
       ListRoomGroundInventoryRequest request,
       StreamObserver<ListRoomGroundInventoryResponse> responseObserver) {
     try {
+      GameplayRoomScope roomScope =
+          requireGameplayRoomScope(
+              request.getTenantId(), request.getGameInstanceId(), request.getRoomInstanceId());
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getTenantId(),
-          request.getGameInstanceId(),
-          request.getRoomInstanceId());
-      long tenantId = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
-      requireTenantAccessWhenPresent(tenantId);
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceId(),
+          roomScope.roomInstanceId());
       var items =
           inventoryService.listRoomGroundItems(
-              tenantId,
-              request.getGameInstanceId(),
-              request.getRoomInstanceId(),
+              roomScope.tenantId(),
+              roomScope.gameInstanceId(),
+              roomScope.roomInstanceId(),
               Pageable.unpaged());
       ListRoomGroundInventoryResponse response =
           ListRoomGroundInventoryResponse.newBuilder()
@@ -1471,7 +1479,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
-      int quantity = request.getQuantity();
+      int quantity = requirePositiveQuantity(request.getQuantity());
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1557,7 +1565,7 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
-      int quantity = request.getQuantity();
+      int quantity = requirePositiveQuantity(request.getQuantity());
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
@@ -1621,24 +1629,25 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
+      GameplayRoomScope roomScope = requireGameplayRoomScope(request);
       requireGameplayOrProbeAttestation(
           request.getSessionAttestation(),
-          request.getRoomInstance().getTenantId(),
-          request.getRoomInstance().getGameInstanceId(),
-          request.getRoomInstance().getRoomInstanceId());
-      requireTenantAccessWhenPresent(Long.parseLong(resolveTenantId(request)));
+          roomScope.tenantIdText(),
+          roomScope.gameInstanceId(),
+          roomScope.roomInstanceId());
       var entities =
           roomEntityService.listEntities(
-              resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));
-      String tenantId = resolveTenantId(request);
-      String gameInstanceId = resolveGameInstanceId(request);
-      String roomInstanceId = resolveRoomId(request);
+              roomScope.tenantIdText(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
       var builder =
           ListRoomEntitiesResponse.newBuilder()
-              .setTenantId(tenantId)
-              .setGameInstanceId(gameInstanceId)
-              .setRoomInstanceId(roomInstanceId)
-              .setEntitySnapshotId(readFence(tenantId, gameInstanceId, roomInstanceId));
+              .setTenantId(roomScope.tenantIdText())
+              .setGameInstanceId(roomScope.gameInstanceId())
+              .setRoomInstanceId(roomScope.roomInstanceId())
+              .setEntitySnapshotId(
+                  readFence(
+                      roomScope.tenantIdText(),
+                      roomScope.gameInstanceId(),
+                      roomScope.roomInstanceId()));
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
@@ -1686,25 +1695,15 @@ public class EntityManagementGrpcService
       StreamObserver<CleanupRuntimeInstanceResponse> responseObserver) {
     CleanupRuntimeInstanceResponse.Builder builder = CleanupRuntimeInstanceResponse.newBuilder();
     try {
-      requireTenantAccessWhenPresent(Long.parseLong(request.getTenantId()));
+      long tenantId = requireTenantId(request.getTenantId());
       var result =
           runtimeInstanceCleanupService.cleanupRuntimeInstance(
-              Long.parseLong(request.getTenantId()),
-              request.getGameInstanceId(),
-              request.getTerminationRequestId());
+              tenantId, request.getGameInstanceId(), request.getTerminationRequestId());
       builder
           .setDeletedRoomGroundEntries(result.deletedRoomGroundEntries())
           .setDeletedItemStacks(result.deletedItemStacks())
           .setDeletedItemInstances(result.deletedItemInstances())
           .setDeletedContainerInstances(result.deletedContainerInstances());
-    } catch (NumberFormatException ex) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "CleanupRuntimeInstance",
-              "INVALID_ARGUMENT",
-              "tenant_id must be numeric"));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -1718,27 +1717,6 @@ public class EntityManagementGrpcService
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
-  }
-
-  private String resolveTenantId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getTenantId();
-    }
-    return request.getRoomInstance().getTenantId();
-  }
-
-  private String resolveRoomId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.room_instance_id is required");
-    }
-    return request.getRoomInstance().getRoomInstanceId();
-  }
-
-  private String resolveGameInstanceId(ListRoomEntitiesRequest request) {
-    if (request.getRoomInstance().getGameInstanceId().isBlank()) {
-      throw new IllegalArgumentException("room_instance.game_instance_id is required");
-    }
-    return request.getRoomInstance().getGameInstanceId();
   }
 
   private String readFence(String tenantId, String gameInstanceId, String roomInstanceId) {
@@ -1755,12 +1733,41 @@ public class EntityManagementGrpcService
     SessionContext.requireTenantAccess(tenantId);
   }
 
-  private GameplayActorScope requireGameplayActorScope(
-      String tenantIdText, String characterIdText) {
+  private long requireTenantId(String tenantIdText) {
     long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
     requireTenantAccessWhenPresent(tenantId);
+    return tenantId;
+  }
+
+  private GameplayActorScope requireGameplayActorScope(
+      String tenantIdText, String characterIdText) {
+    long tenantId = requireTenantId(tenantIdText);
     return new GameplayActorScope(
         tenantId, RequestIdValidation.requirePositiveLong(characterIdText, "characterId"));
+  }
+
+  private GameplayRoomScope requireGameplayRoomScope(
+      String tenantIdText, String gameInstanceId, String roomInstanceId) {
+    long tenantId = requireTenantId(tenantIdText);
+    return new GameplayRoomScope(
+        tenantId,
+        String.valueOf(tenantId),
+        requireText(gameInstanceId, "gameInstanceId"),
+        requireText(roomInstanceId, "roomInstanceId"));
+  }
+
+  private GameplayRoomScope requireGameplayRoomScope(ListRoomEntitiesRequest request) {
+    String topLevelTenantId = blankToNull(request.getTenantId());
+    String roomTenantId = blankToNull(request.getRoomInstance().getTenantId());
+    if (topLevelTenantId != null
+        && roomTenantId != null
+        && !topLevelTenantId.equals(roomTenantId)) {
+      throw new IllegalArgumentException("tenantId must match roomInstance.tenantId");
+    }
+    return requireGameplayRoomScope(
+        roomTenantId != null ? roomTenantId : requireText(topLevelTenantId, "tenantId"),
+        request.getRoomInstance().getGameInstanceId(),
+        request.getRoomInstance().getRoomInstanceId());
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
@@ -1773,6 +1780,9 @@ public class EntityManagementGrpcService
   }
 
   private record GameplayActorScope(long tenantId, long characterId) {}
+
+  private record GameplayRoomScope(
+      long tenantId, String tenantIdText, String gameInstanceId, String roomInstanceId) {}
 
   private PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
     if (playableStateScope == null
@@ -1837,7 +1847,28 @@ public class EntityManagementGrpcService
 
   private Instant parseOptionalInstant(String value) {
     String text = blankToNull(value);
-    return text == null ? null : Instant.parse(text);
+    if (text == null) {
+      return null;
+    }
+    try {
+      return Instant.parse(text);
+    } catch (DateTimeParseException ex) {
+      throw new IllegalArgumentException("expiresAt must be ISO-8601", ex);
+    }
+  }
+
+  private int requirePositiveQuantity(int quantity) {
+    if (quantity <= 0) {
+      throw new IllegalArgumentException("quantity must be positive");
+    }
+    return quantity;
+  }
+
+  private String requireText(String value, String fieldName) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalArgumentException(fieldName + " must be specified");
+    }
+    return value.trim();
   }
 
   private String blankToNull(String value) {

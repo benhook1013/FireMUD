@@ -17,7 +17,7 @@ import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRep
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
-import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,7 +71,7 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     requireText(pluginVersionId, "plugin_version_id");
     requireText(
         scriptPatchVersion, "PLUGIN_BINDINGS_UNAVAILABLE: pinned script patch version is missing");
-    long tenantKey = parseTenantId(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<ScriptDefinition> definitions =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionOrderByNameAsc(
             tenantKey, scriptPatchVersion);
@@ -95,8 +95,12 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
 
     List<PluginRuntimeState> runtimeStates =
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
-    RuntimeScope runtimeScope =
-        currentRuntimeScope(tenantId, gameInstanceId, preferredRuntimeRegionId(runtimeStates));
+    AutomationRuntimeScopeSupport.RuntimeScope runtimeScope =
+        AutomationRuntimeScopeSupport.currentRuntimeScope(
+            gameSessionControlPlaneClient,
+            tenantId,
+            gameInstanceId,
+            preferredRuntimeRegionId(runtimeStates));
     Map<String, String> activePluginVersions = activePluginVersions(runtimeStates, runtimeScope);
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
@@ -164,13 +168,14 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
   }
 
   private Map<String, String> activePluginVersions(
-      List<PluginRuntimeState> runtimeStates, RuntimeScope runtimeScope) {
+      List<PluginRuntimeState> runtimeStates,
+      AutomationRuntimeScopeSupport.RuntimeScope runtimeScope) {
     Map<String, String> active = new LinkedHashMap<>();
     for (PluginRuntimeState state : runtimeStates) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
         continue;
       }
-      if (!matchesRuntimeScope(state, runtimeScope)) {
+      if (!AutomationRuntimeScopeSupport.matches(state, runtimeScope)) {
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
@@ -180,19 +185,6 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       }
     }
     return active;
-  }
-
-  private RuntimeScope currentRuntimeScope(
-      String tenantId, String gameInstanceId, String preferredRegionId) {
-    GetGameInstanceRuntimeStateResponse runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            tenantId, gameInstanceId, preferredRegionId);
-    if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
-      return RuntimeScope.UNKNOWN;
-    }
-    return new RuntimeScope(
-        blankToEmpty(runtime.getRuntimeState().getRegionId()),
-        runtime.getRuntimeState().getRegionEpoch());
   }
 
   private static String preferredRuntimeRegionId(List<PluginRuntimeState> runtimeStates) {
@@ -213,27 +205,6 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       }
     }
     return preferredRegionId;
-  }
-
-  private static boolean matchesRuntimeScope(PluginRuntimeState state, RuntimeScope runtimeScope) {
-    if (!runtimeScope.known()) {
-      return true;
-    }
-    String stateRegionId = blankToEmpty(state.getRuntimeRegionId());
-    long stateRegionEpoch = zeroIfNull(state.getRuntimeRegionEpoch());
-    if (stateRegionId.isBlank() || stateRegionEpoch <= 0) {
-      return false;
-    }
-    return stateRegionId.equals(runtimeScope.regionId())
-        && stateRegionEpoch == runtimeScope.regionEpoch();
-  }
-
-  private record RuntimeScope(String regionId, long regionEpoch) {
-    private static final RuntimeScope UNKNOWN = new RuntimeScope("", 0L);
-
-    private boolean known() {
-      return !regionId.isBlank() && regionEpoch > 0;
-    }
   }
 
   private boolean participatesInResolvedHandlerSet(
@@ -322,14 +293,6 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     } catch (Exception ex) {
       throw new IllegalArgumentException(
           "PLUGIN_BINDINGS_UNAVAILABLE: script definition json is invalid");
-    }
-  }
-
-  private static long parseTenantId(String tenantId) {
-    try {
-      return Long.parseLong(tenantId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("tenant_id must be numeric");
     }
   }
 

@@ -1605,6 +1605,56 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void toggleFeatureFlagRejectsZeroTenantIdBeforeDispatch() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("tenantAdmin")));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+    service.toggleFeatureFlag(
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId("0")
+            .setName("x")
+            .setEnabled(true)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ToggleFeatureFlagResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(featureFlagService);
+  }
+
+  @Test
   void pauseTicksRuntimeFailureReturnsInternalErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);

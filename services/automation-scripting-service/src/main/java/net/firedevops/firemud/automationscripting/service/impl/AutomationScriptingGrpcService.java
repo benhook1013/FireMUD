@@ -41,6 +41,7 @@ import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
@@ -171,9 +172,9 @@ public class AutomationScriptingGrpcService
       requireAdminRole();
       Long id =
           formationService.createFormation(
-              Long.parseLong(request.getTenantId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
-              Long.parseLong(request.getLeaderNpcId()),
+              RequestIdValidation.requirePositiveLong(request.getLeaderNpcId(), "leaderNpcId"),
               FormationType.valueOf(request.getFormationType()));
       CreateFormationResponse resp =
           CreateFormationResponse.newBuilder().setFormationId(id.toString()).build();
@@ -217,9 +218,9 @@ public class AutomationScriptingGrpcService
     try {
       requireAdminRole();
       formationService.addMember(
-          Long.parseLong(request.getTenantId()),
-          Long.parseLong(request.getFormationId()),
-          Long.parseLong(request.getNpcId()));
+          RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+          RequestIdValidation.requirePositiveLong(request.getFormationId(), "formationId"),
+          RequestIdValidation.requirePositiveLong(request.getNpcId(), "npcId"));
       AddFormationMemberResponse resp =
           AddFormationMemberResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(resp);
@@ -266,7 +267,8 @@ public class AutomationScriptingGrpcService
       requireAdminRole();
       List<Long> members =
           formationService.getMembers(
-              Long.parseLong(request.getTenantId()), Long.parseLong(request.getFormationId()));
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+              RequestIdValidation.requirePositiveLong(request.getFormationId(), "formationId"));
       ListFormationMembersResponse resp =
           ListFormationMembersResponse.newBuilder()
               .addAllNpcIds(members.stream().map(Object::toString).toList())
@@ -312,7 +314,7 @@ public class AutomationScriptingGrpcService
       ScriptDefinitionDto dto =
           new ScriptDefinitionDto(
               null,
-              Long.parseLong(request.getTenantId()),
+              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
               request.getName(),
               request.getVersion(),
               request.getDefinition(),

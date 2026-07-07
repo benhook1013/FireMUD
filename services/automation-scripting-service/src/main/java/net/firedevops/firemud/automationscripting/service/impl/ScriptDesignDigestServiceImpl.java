@@ -9,6 +9,7 @@ import java.util.Map;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -34,7 +35,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
 
   @Override
   public ScriptDraftDesignDigest getDraftDesignDigestForVersion(String tenantId, String versionId) {
-    long tenantKey = Long.parseLong(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<Map<String, Object>> scripts =
         repository.findByTenantIdOrderByNameAscScriptVersionAsc(tenantKey).stream()
             .map(
@@ -73,7 +74,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
   @Override
   public ScriptDraftDesignDigest getDraftDesignDigestForScriptPatch(
       String tenantId, String scriptPatchVersion) {
-    long tenantKey = Long.parseLong(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<Map<String, Object>> scripts =
         repository
             .findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)

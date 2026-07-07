@@ -11,6 +11,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,8 +44,8 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
     try {
       AdminRoleGuard.requireAdminRole();
       notificationService.sendNotification(
-          Long.valueOf(request.getTenantId()),
-          Long.valueOf(request.getAccountId()),
+          RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+          RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
           request.getMessage());
       SendNotificationResponse response =
           SendNotificationResponse.newBuilder().setSuccess(true).build();

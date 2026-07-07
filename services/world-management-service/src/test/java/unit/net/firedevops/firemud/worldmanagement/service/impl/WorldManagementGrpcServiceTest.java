@@ -192,6 +192,58 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
+  void applyWorldDesignMutationRejectsZeroVersionIdBeforeMutation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            digestService,
+            mutationService,
+            Mockito.mock(WorldUpgradeValidationService.class),
+            Mockito.mock(GameplaySessionAttestationService.class),
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    service.applyWorldDesignMutation(
+        ApplyWorldDesignMutationRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId("0")
+            .setCommitId("commit-1")
+            .setRevisionId("revision-1")
+            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+            .setScopeId("44")
+            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyWorldDesignMutationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("versionId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(mutationService);
+  }
+
+  @Test
   void prepareWorldInstanceReturnsLifecycleSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
@@ -530,10 +582,11 @@ class WorldManagementGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must be numeric", ref.get().getError().getMessage());
   }
 
   @Test
-  void getRoomSnapshotMissingRoomIdReturnsInvalidArgument() {
+  void getRoomSnapshotMissingGameInstanceIdReturnsInvalidArgument() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
@@ -558,6 +611,106 @@ class WorldManagementGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("gameInstanceId must be specified", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void getRoomRejectsMismatchedTenantIdsBeforeAttestationAndLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            Mockito.mock(WorldDraftDesignDigestService.class),
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            attestationService,
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
+        new AtomicReference<>();
+    service.getRoom(
+        net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionAttestation("probe")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId("2")
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("1")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.worldmanagement.v1.GetRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("tenantId must match roomInstance.tenantId", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(roomService, attestationService);
+  }
+
+  @Test
+  void getRoomSnapshotRejectsBlankGameInstanceIdBeforeAttestationAndLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            Mockito.mock(WorldDraftDesignDigestService.class),
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            attestationService,
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
+    service.getRoomSnapshot(
+        GetRoomSnapshotRequest.newBuilder()
+            .setTenantId("1")
+            .setPreferredLocale("fr")
+            .setSessionAttestation("probe")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetRoomSnapshotResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("gameInstanceId must be specified", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(roomService, attestationService);
   }
 
   @Test

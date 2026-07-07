@@ -1,8 +1,10 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -39,6 +41,20 @@ class ScriptPatchVersionCommandServiceTest {
             scheduleInstanceService,
             scriptEventIngressService,
             readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateRejectsZeroTenantIdBeforeLookups() {
+    assertThatThrownBy(() -> service.notifyUpdate("0", "v1-script.1", List.of("npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenantId must be positive");
+
+    verifyNoInteractions(
+        repository,
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
   }
 
   @Test
