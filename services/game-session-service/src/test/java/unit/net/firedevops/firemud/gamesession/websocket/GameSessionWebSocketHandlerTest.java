@@ -202,6 +202,53 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void afterConnectionEstablishedRepairsPartialRoutingTupleFromSingularRuntimeAuthority() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    8L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && "demo".equals(context.worldSlug())
+                        && "production".equals(context.realmSlug())
+                        && context.pointerVersion() == 8L));
+    verify(activeTransportSessionRegistry).register(41L, session);
+  }
+
+  @Test
   void afterConnectionEstablishedDropsGenericBootstrapRoutingWhenRuntimeAuthorityIsAmbiguous() {
     when(session.getAttributes())
         .thenReturn(
@@ -209,6 +256,69 @@ class GameSessionWebSocketHandlerTest {
                 GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
                 GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "22",
                 GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "7"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "preview",
+                    "Preview",
+                    22L,
+                    7L,
+                    4L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.characterId() == 0L
+                        && context.characterName() == null
+                        && context.gameInstanceId() == 0L
+                        && context.roomInstanceId() == null
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
+  }
+
+  @Test
+  void afterConnectionEstablishedDropsPartialRoutingTupleWhenRuntimeAuthorityIsAmbiguous() {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
@@ -785,6 +895,78 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void handleMessageRepairsPartialGenericBootstrapRoutingBeforeInterpretingWhenMissing()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    8L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(null), eq(List.of()), eq(true)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq(null),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOGIN");
+
+    handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && "demo".equals(context.worldSlug())
+                        && "production".equals(context.realmSlug())
+                        && context.pointerVersion() == 8L));
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
+    inOrder.verify(sessionContextService).save(any(SessionContext.class));
+    inOrder.verify(interpreter).interpret("41", command, false);
+  }
+
+  @Test
   void handleMessageRebootsGenericSessionContextWhenSessionIndexLookupIsMissing() throws Exception {
     when(session.getAttributes())
         .thenReturn(
@@ -838,5 +1020,87 @@ class GameSessionWebSocketHandlerTest {
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
     inOrder.verify(sessionContextService).save(tenantScoped);
     inOrder.verify(interpreter).interpret("41", command, false);
+  }
+
+  @Test
+  void handleMessageClearsPartialGenericBootstrapRoutingWhenAuthorityIsAmbiguous()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7",
+                GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+                "demo",
+                GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR,
+                "3"));
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "preview",
+                    "Preview",
+                    22L,
+                    7L,
+                    4L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(), false, false));
+    when(promptBurstCoordinator.applyPromptWindow(eq("41"), eq(null), eq(List.of()), eq(true)))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            eq(null),
+            any(PresentationProperties.class)))
+        .thenReturn("OK LOGIN");
+
+    handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
+
+    verify(sessionContextService)
+        .save(
+            argThat(
+                context ->
+                    context.sessionId() == 41L
+                        && context.tenantId() == 22L
+                        && context.bootstrapGameInstanceId() == 7L
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L));
   }
 }

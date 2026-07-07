@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -26,7 +25,6 @@ import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
@@ -617,7 +615,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
     SessionContext incomingShell =
-        repairGenericBootstrapShell(
+        GameplayAdmissionPointerSnapshots.repairGenericBootstrapShell(
             bootstrapShell(
                 sessionId,
                 tenantId.get(),
@@ -627,7 +625,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 resolvePointerVersion(session),
                 null,
                 null,
-                resolveLocaleTag(session)));
+                resolveLocaleTag(session)),
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                tenantId.get(), bootstrapGameInstanceId.get()));
     if (existing.isPresent()) {
       maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
       return;
@@ -791,86 +791,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         null,
         connectScopeId,
         connectRequestId);
-  }
-
-  private SessionContext repairGenericBootstrapShell(SessionContext shell) {
-    List<GameplayAdmissionPointerSnapshot> runtimePointers =
-        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-            shell.tenantId(), shell.bootstrapGameInstanceId());
-    if (GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(shell)) {
-      if (runtimePointers.stream().filter(pointer -> pointer != null).findAny().isEmpty()) {
-        return shell;
-      }
-      if (GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-          runtimePointers,
-          shell.tenantId(),
-          shell.bootstrapGameInstanceId(),
-          shell.worldSlug(),
-          shell.realmSlug(),
-          shell.pointerVersion())) {
-        return shell;
-      }
-      return new SessionContext(
-          shell.sessionId(),
-          shell.tenantId(),
-          shell.accountId(),
-          shell.loginName(),
-          shell.characterId(),
-          shell.characterName(),
-          shell.gameInstanceId(),
-          shell.roomInstanceId(),
-          shell.jwt(),
-          shell.localeTag(),
-          shell.bootstrapGameInstanceId(),
-          null,
-          null,
-          0L,
-          shell.playableStateScope(),
-          shell.connectScopeId(),
-          shell.connectRequestId());
-    }
-    Optional<GameplayAdmissionPointerSnapshot> pointer =
-        GameplayAdmissionPointerSnapshots.singularCompletePointer(runtimePointers);
-    return pointer
-        .map(
-            snapshot ->
-                new SessionContext(
-                    shell.sessionId(),
-                    shell.tenantId(),
-                    shell.accountId(),
-                    shell.loginName(),
-                    shell.characterId(),
-                    shell.characterName(),
-                    shell.gameInstanceId(),
-                    shell.roomInstanceId(),
-                    shell.jwt(),
-                    shell.localeTag(),
-                    shell.bootstrapGameInstanceId(),
-                    snapshot.worldSlug(),
-                    snapshot.realmSlug(),
-                    snapshot.pointerVersion(),
-                    shell.playableStateScope(),
-                    shell.connectScopeId(),
-                    shell.connectRequestId()))
-        .orElse(
-            new SessionContext(
-                shell.sessionId(),
-                shell.tenantId(),
-                shell.accountId(),
-                shell.loginName(),
-                shell.characterId(),
-                shell.characterName(),
-                shell.gameInstanceId(),
-                shell.roomInstanceId(),
-                shell.jwt(),
-                shell.localeTag(),
-                shell.bootstrapGameInstanceId(),
-                null,
-                null,
-                0L,
-                shell.playableStateScope(),
-                shell.connectScopeId(),
-                shell.connectRequestId()));
   }
 
   private void closeInvalidFirstPartyContext(WebSocketSession session) {

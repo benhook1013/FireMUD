@@ -49,6 +49,55 @@ public final class GameplayAdmissionPointerSnapshots {
             || context.pointerVersion() > 0);
   }
 
+  public static SessionContext repairGenericBootstrapShell(
+      SessionContext shell, List<GameplayAdmissionPointerSnapshot> runtimePointers) {
+    if (shell == null) {
+      return null;
+    }
+    List<GameplayAdmissionPointerSnapshot> filteredRuntimePointers =
+        runtimePointers == null
+            ? List.of()
+            : runtimePointers.stream().filter(pointer -> pointer != null).toList();
+    SessionContext normalizedShell = normalizePartialGenericRouting(shell);
+    if (hasCompleteRoutingBundle(normalizedShell)) {
+      if (filteredRuntimePointers.isEmpty()) {
+        return normalizedShell;
+      }
+      if (matchesCurrentRuntimeTarget(
+          filteredRuntimePointers,
+          normalizedShell.tenantId(),
+          normalizedShell.bootstrapGameInstanceId(),
+          normalizedShell.worldSlug(),
+          normalizedShell.realmSlug(),
+          normalizedShell.pointerVersion())) {
+        return normalizedShell;
+      }
+      return clearGenericBootstrapRouting(normalizedShell);
+    }
+    return singularCompletePointer(filteredRuntimePointers)
+        .map(
+            pointer ->
+                new SessionContext(
+                    normalizedShell.sessionId(),
+                    normalizedShell.tenantId(),
+                    normalizedShell.accountId(),
+                    normalizedShell.loginName(),
+                    normalizedShell.characterId(),
+                    normalizedShell.characterName(),
+                    normalizedShell.gameInstanceId(),
+                    normalizedShell.roomInstanceId(),
+                    normalizedShell.jwt(),
+                    normalizedShell.localeTag(),
+                    normalizedShell.bootstrapGameInstanceId(),
+                    pointer.worldSlug(),
+                    pointer.realmSlug(),
+                    pointer.pointerVersion(),
+                    normalizedShell.playableStateScope(),
+                    normalizedShell.connectScopeId(),
+                    normalizedShell.connectRequestId()))
+        .orElse(clearGenericBootstrapRouting(normalizedShell));
+  }
+
   public static boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
     return pointer != null
         && pointer.tenantId() > 0L
@@ -175,6 +224,51 @@ public final class GameplayAdmissionPointerSnapshots {
         && hasAnyRoutingValue(worldSlug, realmSlug, pointerVersion)) {
       throw new IllegalArgumentException(message);
     }
+  }
+
+  private static SessionContext clearGenericBootstrapRouting(SessionContext shell) {
+    return new SessionContext(
+        shell.sessionId(),
+        shell.tenantId(),
+        shell.accountId(),
+        shell.loginName(),
+        shell.characterId(),
+        shell.characterName(),
+        shell.gameInstanceId(),
+        shell.roomInstanceId(),
+        shell.jwt(),
+        shell.localeTag(),
+        shell.bootstrapGameInstanceId(),
+        null,
+        null,
+        0L,
+        shell.playableStateScope(),
+        shell.connectScopeId(),
+        shell.connectRequestId());
+  }
+
+  private static SessionContext normalizePartialGenericRouting(SessionContext shell) {
+    if (!hasPartialAdmittedRoutingBundle(shell)) {
+      return shell;
+    }
+    return new SessionContext(
+        shell.sessionId(),
+        shell.tenantId(),
+        shell.accountId(),
+        shell.loginName(),
+        shell.characterId(),
+        shell.characterName(),
+        shell.gameInstanceId(),
+        shell.roomInstanceId(),
+        shell.jwt(),
+        shell.localeTag(),
+        shell.bootstrapGameInstanceId(),
+        null,
+        null,
+        0L,
+        shell.playableStateScope(),
+        shell.connectScopeId(),
+        shell.connectRequestId());
   }
 
   private static String blankToNull(String value) {
