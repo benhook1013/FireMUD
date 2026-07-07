@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
+source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
+
 SMOKE_HOST=${SMOKE_TELNET_HOST:?SMOKE_TELNET_HOST is required}
 TCP_PORT=${TCP_PORT:?TCP_PORT is required}
-SMOKE_USERNAME=${SMOKE_USERNAME:-demo@example.com}
-SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
-SMOKE_WORLD=${SMOKE_WORLD:-demo}
+SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_EMAIL}
+SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
+SMOKE_WORLD=${SMOKE_WORLD:-$DEMO_SMOKE_WORLD}
 SMOKE_TARGET_LABEL=${SMOKE_TARGET_LABEL:-hosted environment}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-20}
 SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-OK WORLDS}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-OK LOGIN}
 SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-OK PLAY}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-OK LOOK}
-export FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
+export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -36,9 +39,9 @@ from smoke_common import login_play_look_steps, run_telnet_smoke_session
 
 host = os.environ["SMOKE_TELNET_HOST"]
 port = int(os.environ["TCP_PORT"])
-username = os.environ.get("SMOKE_USERNAME", "demo@example.com")
-password = os.environ.get("SMOKE_PASSWORD", "swordfish")
-world = os.environ.get("SMOKE_WORLD", "demo")
+username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_EMAIL"])
+password = os.environ.get("SMOKE_PASSWORD", os.environ["DEMO_SMOKE_PASSWORD"])
+world = os.environ.get("SMOKE_WORLD", os.environ["DEMO_SMOKE_WORLD"])
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "20"))
 worlds_expect = os.environ.get("SMOKE_WORLDS_EXPECT", "OK WORLDS")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")

@@ -522,14 +522,23 @@ jobs:
             kubectl -n "${PREVIEW_NAMESPACE}" rollout status "deployment/${deployment}" --timeout=120s
           done
 
+      - name: Export demo smoke defaults
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
+        run: |
+          source ./dev-tools/smoke/demo-smoke-defaults.sh
+          {
+            echo "DEMO_SMOKE_EMAIL=${DEMO_SMOKE_EMAIL}"
+            echo "DEMO_SMOKE_PASSWORD=${DEMO_SMOKE_PASSWORD}"
+            echo "DEMO_SMOKE_USERNAME=${DEMO_SMOKE_USERNAME}"
+            echo "DEMO_SMOKE_WORLD=${DEMO_SMOKE_WORLD}"
+          } >> "$GITHUB_ENV"
+
       - name: Smoke hosted preview over TCP
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.preview-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.preview-plan.outputs.hostname }}
           TCP_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
-          SMOKE_USERNAME: demo@example.com
-          SMOKE_PASSWORD: swordfish
         run: |
           echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
@@ -552,7 +561,7 @@ jobs:
             "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
-            echo "- Demo login: demo@example.com / swordfish"
+            echo "- Demo login: ${DEMO_SMOKE_EMAIL} / ${DEMO_SMOKE_PASSWORD}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize preview unavailability
@@ -581,6 +590,8 @@ jobs:
           PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
           PREVIEW_CLUSTER_AVAILABLE: ${{ steps.preview-access.outputs.available }}
           PREVIEW_CAPACITY_OUTCOME: ${{ steps.preview-capacity.outcome || 'skipped' }}
+          DEMO_SMOKE_EMAIL: ${{ env.DEMO_SMOKE_EMAIL }}
+          DEMO_SMOKE_PASSWORD: ${{ env.DEMO_SMOKE_PASSWORD }}
         with:
           script: |
             const { execFileSync } = require("child_process");
@@ -619,7 +630,7 @@ jobs:
             const summaryText = execFileSync("bash", args, { encoding: "utf8" });
             const bodyLines = ["### Preview Summary", "", summaryText.trimEnd()];
             if (mode === "success") {
-              bodyLines.push("- Demo login: demo@example.com / swordfish");
+              bodyLines.push(`- Demo login: ${process.env.DEMO_SMOKE_EMAIL} / ${process.env.DEMO_SMOKE_PASSWORD}`);
             }
             const body = `${bodyLines.join("\n")}\n`;
 

@@ -15,9 +15,9 @@ done - Production-shaped checked-in secrets/defaults
 - Local Velero/MinIO path should stop shipping checked-in live credentials in `k8s/velero/minio.yaml` and docs.
 
 next - Repeated demo/local credential contracts
-- Preview/dev-demo/smoke/demo login values are duplicated across workflows and hosted smoke helpers.
+- Hosted preview/dev-demo/smoke now routes through a shared demo-smoke defaults file instead of repeating inline login values.
 - Local Compose and example Helm values still repeat weak/demo defaults across several files.
-- Goal: reduce duplication and make the contract more canonical.
+- Goal: reduce the remaining duplication and make the contract more canonical across local and hosted paths.
 
 next - Automation determinism and environment contracts
 - Harden CI/bootstrap downloads that currently use direct scripts or unverified binaries.

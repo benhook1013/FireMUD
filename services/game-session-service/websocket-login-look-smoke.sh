@@ -2,9 +2,12 @@
 # Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop after readiness.
 set -euo pipefail
 
+FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
+
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
-SMOKE_USERNAME=${SMOKE_USERNAME:-demo@example.com}
-SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
+SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_EMAIL}
+SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
 SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
 SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
 SMOKE_ACCOUNT_API_BASE=${SMOKE_ACCOUNT_API_BASE:-http://localhost:8081}
@@ -16,7 +19,6 @@ SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
-FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
@@ -57,8 +59,8 @@ except ImportError as exc:
     ) from exc
 
 websocket_url = os.environ.get("SMOKE_GAME_SESSION_WS_URL", "ws://localhost:8086/ws/game")
-username = os.environ.get("SMOKE_USERNAME", "demo@example.com")
-password = os.environ.get("SMOKE_PASSWORD", "swordfish")
+username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_EMAIL"])
+password = os.environ.get("SMOKE_PASSWORD", os.environ["DEMO_SMOKE_PASSWORD"])
 session_id = os.environ.get("SMOKE_SESSION_ID", "1")
 tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
 account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081")
@@ -84,7 +86,7 @@ steps = gameplay_item_container_equipment_steps(
     login_expect,
     play_expect,
     look_expect,
-    "demo",
+    os.environ.get("SMOKE_WORLD", os.environ["DEMO_SMOKE_WORLD"]),
     look_timeout_seconds,
 ) + [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
 run_websocket_smoke_session(
