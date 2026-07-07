@@ -6,6 +6,9 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.dto.CreateFormationRequest;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.ErrorDetail;
+import net.firedevops.firemud.common.security.RequestIdValidation;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,15 +37,31 @@ public class NpcFormationController {
 
   @PostMapping("/{id}/members")
   public ResponseEntity<ApiResponse<Boolean>> addMember(
-      @PathVariable Long id, @RequestParam Long tenantId, @RequestParam Long npcId) {
-    formationService.addMember(tenantId, id, npcId);
-    return ResponseEntity.ok(ApiResponse.success(true));
+      @PathVariable String id, @RequestParam String tenantId, @RequestParam String npcId) {
+    try {
+      formationService.addMember(
+          RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
+          RequestIdValidation.requirePositiveLong(id, "formationId"),
+          RequestIdValidation.requirePositiveLong(npcId, "npcId"));
+      return ResponseEntity.ok(ApiResponse.success(true));
+    } catch (IllegalArgumentException ex) {
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));
+    }
   }
 
   @GetMapping("/{id}/members")
   public ResponseEntity<ApiResponse<List<Long>>> listMembers(
-      @PathVariable Long id, @RequestParam Long tenantId) {
-    List<Long> members = formationService.getMembers(tenantId, id);
-    return ResponseEntity.ok(ApiResponse.success(members));
+      @PathVariable String id, @RequestParam String tenantId) {
+    try {
+      List<Long> members =
+          formationService.getMembers(
+              RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
+              RequestIdValidation.requirePositiveLong(id, "formationId"));
+      return ResponseEntity.ok(ApiResponse.success(members));
+    } catch (IllegalArgumentException ex) {
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));
+    }
   }
 }

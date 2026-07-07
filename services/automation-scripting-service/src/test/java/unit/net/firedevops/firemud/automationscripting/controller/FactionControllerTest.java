@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -35,5 +36,39 @@ class FactionControllerTest {
                 .param("tenantId", "1"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data").value(5));
+  }
+
+  @Test
+  void adjustReputationRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            patch("/factions/3/reputation")
+                .param("characterId", "2")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .param("delta", "5")
+                .param("tenantId", "bad-tenant"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(factionService);
+  }
+
+  @Test
+  void adjustReputationRejectsZeroCharacterIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            patch("/factions/3/reputation")
+                .param("characterId", "0")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .param("delta", "5")
+                .param("tenantId", "1"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("characterId must be positive"));
+
+    verifyNoInteractions(factionService);
   }
 }
