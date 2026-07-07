@@ -133,6 +133,11 @@ public class SessionServiceImpl implements SessionService {
     stored.put("success", Boolean.toString(replay.success()));
     if (replay.success()) {
       ConnectTokenResult result = requireResult(replay.result(), "connect token replay");
+      requireReplayIdMatch(accountId, result.accountId(), "accountId", "connect token replay");
+      requireReplayIdMatch(tenantId, result.tenantId(), "tenantId", "connect token replay");
+      requireReplayTextMatch(
+          connectScopeId, result.connectScopeId(), "connectScopeId", "connect token replay");
+      requireReplayTextMatch(requestId, result.requestId(), "requestId", "connect token replay");
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
       stored.put("gameInstanceId", Long.toString(result.gameInstanceId()));
@@ -236,9 +241,15 @@ public class SessionServiceImpl implements SessionService {
     if (replay.success()) {
       PublicProductionMembershipResult result =
           requireResult(replay.result(), "public production membership replay");
+      requireReplayIdMatch(
+          accountId, result.accountId(), "accountId", "public production membership replay");
+      requireReplayIdMatch(
+          tenantId, result.tenantId(), "tenantId", "public production membership replay");
       if (!worldSlug.equals(result.worldSlug()) || !realmSlug.equals(result.realmSlug())) {
         throw new IllegalArgumentException("public production membership replay payload mismatch");
       }
+      requireReplayTextMatch(
+          requestId, result.requestId(), "requestId", "public production membership replay");
       stored.put("accountId", Long.toString(result.accountId()));
       stored.put("tenantId", Long.toString(result.tenantId()));
       stored.put("worldSlug", result.worldSlug());
@@ -343,5 +354,19 @@ public class SessionServiceImpl implements SessionService {
       throw new IllegalArgumentException("Missing result for successful " + replayType);
     }
     return result;
+  }
+
+  private static void requireReplayIdMatch(
+      long expected, long actual, String fieldName, String replayType) {
+    if (expected != actual) {
+      throw new IllegalArgumentException(replayType + " payload mismatch for " + fieldName);
+    }
+  }
+
+  private static void requireReplayTextMatch(
+      String expected, String actual, String fieldName, String replayType) {
+    if (!expected.equals(actual)) {
+      throw new IllegalArgumentException(replayType + " payload mismatch for " + fieldName);
+    }
   }
 }

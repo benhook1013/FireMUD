@@ -537,6 +537,32 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void storeConnectTokenReplayRejectsMismatchedPayloadIdentity() {
+    SessionService.ConnectTokenReplay replay =
+        new SessionService.ConnectTokenReplay(
+            true,
+            new net.firedevops.firemud.accountservice.dto.ConnectTokenResult(
+                11L,
+                7L,
+                44L,
+                "production",
+                "scope-other",
+                "connect-1",
+                "jti-1",
+                "req-7",
+                "2026-05-25T00:00:00Z",
+                "2026-05-25T00:00:30Z",
+                false),
+            "",
+            "");
+
+    assertThatThrownBy(
+            () -> service.storeConnectTokenReplay(7L, 11L, "scope-1", "req-7", replay, 30000L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("connect token replay payload mismatch for connectScopeId");
+  }
+
+  @Test
   void storePublicProductionMembershipReplayRejectsMismatchedWorldRealmPayload() {
     SessionService.PublicProductionMembershipReplay replay =
         new SessionService.PublicProductionMembershipReplay(
@@ -560,6 +586,32 @@ class SessionServiceImplTest {
                     7L, 11L, "sandbox", "production", "req-join-1", replay, 30000L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("public production membership replay payload mismatch");
+  }
+
+  @Test
+  void storePublicProductionMembershipReplayRejectsMismatchedRequestIdPayload() {
+    SessionService.PublicProductionMembershipReplay replay =
+        new SessionService.PublicProductionMembershipReplay(
+            true,
+            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
+                11L,
+                7L,
+                "demo",
+                "production",
+                711L,
+                true,
+                "req-other",
+                "2026-05-25T00:00:00Z",
+                false),
+            "",
+            "");
+
+    assertThatThrownBy(
+            () ->
+                service.storePublicProductionMembershipReplay(
+                    7L, 11L, "demo", "production", "req-join-1", replay, 30000L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("public production membership replay payload mismatch for requestId");
   }
 
   private static String sha256(String token) {
