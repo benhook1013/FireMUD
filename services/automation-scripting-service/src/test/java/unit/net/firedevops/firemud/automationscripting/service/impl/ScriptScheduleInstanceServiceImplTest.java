@@ -1,11 +1,13 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -102,6 +104,33 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             new ScriptSchedulerProperties(),
             meterRegistry);
+  }
+
+  @Test
+  void reconcileObservedRuntimeStateRejectsZeroTenantIdBeforeScheduleLookup() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.reconcileObservedRuntimeState(
+                "0",
+                "game-1",
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("0")
+                    .setGameInstanceId("game-1")
+                    .setPinnedScriptPatchVersion("patch-1")
+                    .build()));
+
+    verifyNoInteractions(
+        scheduleDefinitionRepository,
+        scheduleInstanceRepository,
+        pinProjectionRepository,
+        pluginRuntimeStateRepository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        automationQueueService,
+        automationAdmissionStateService,
+        gameDesignControlPlaneClient);
   }
 
   @Test

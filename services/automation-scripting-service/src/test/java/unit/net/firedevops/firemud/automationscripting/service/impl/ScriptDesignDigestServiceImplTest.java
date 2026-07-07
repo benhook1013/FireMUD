@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -47,6 +48,14 @@ class ScriptDesignDigestServiceImplTest {
   }
 
   @Test
+  void getDraftDesignDigestForVersionRejectsZeroTenantIdBeforeLookups() {
+    assertThrows(
+        IllegalArgumentException.class, () -> service.getDraftDesignDigestForVersion("0", "7"));
+
+    verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
   void getDraftDesignDigestReturnsStableFullVersionDigest() {
     ScriptDefinition one = new ScriptDefinition();
     one.setTenantId(1L);
@@ -63,6 +72,15 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestForScriptPatchRejectsZeroTenantIdBeforeLookups() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDraftDesignDigestForScriptPatch("0", "patch-1"));
+
+    verifyNoInteractions(repository, bindingRepository);
   }
 
   @Test
