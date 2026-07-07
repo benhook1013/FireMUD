@@ -62,8 +62,11 @@ public class SessionServiceImpl implements SessionService {
     if (!(value instanceof Map<?, ?> stored)) {
       return Optional.empty();
     }
-    boolean success = Boolean.parseBoolean(stringValue(stored.get("success")));
-    if (success) {
+    Optional<Boolean> success = parseRequiredBoolean(stored.get("success"));
+    if (success.isEmpty()) {
+      return Optional.empty();
+    }
+    if (success.get()) {
       Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
       Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
       Optional<Long> gameInstanceId = parseRequiredLong(stored.get("gameInstanceId"));
@@ -147,8 +150,11 @@ public class SessionServiceImpl implements SessionService {
     if (!(value instanceof Map<?, ?> stored)) {
       return Optional.empty();
     }
-    boolean success = Boolean.parseBoolean(stringValue(stored.get("success")));
-    if (success) {
+    Optional<Boolean> success = parseRequiredBoolean(stored.get("success"));
+    if (success.isEmpty()) {
+      return Optional.empty();
+    }
+    if (success.get()) {
       Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
       Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
       Optional<Long> membershipVersion = parseRequiredLong(stored.get("membershipVersion"));
@@ -166,6 +172,10 @@ public class SessionServiceImpl implements SessionService {
       if (!requestId.equals(stringValue(stored.get("requestId")))) {
         return Optional.empty();
       }
+      Optional<Boolean> created = parseRequiredBoolean(stored.get("created"));
+      if (created.isEmpty()) {
+        return Optional.empty();
+      }
       PublicProductionMembershipResult result =
           new PublicProductionMembershipResult(
               replayAccountId.orElseThrow(),
@@ -173,7 +183,7 @@ public class SessionServiceImpl implements SessionService {
               replayWorldSlug,
               replayRealmSlug,
               membershipVersion.orElseThrow(),
-              Boolean.parseBoolean(stringValue(stored.get("created"))),
+              created.get(),
               stringValue(stored.get("requestId")),
               stringValue(stored.get("evaluatedAt")),
               false);
@@ -284,6 +294,20 @@ public class SessionServiceImpl implements SessionService {
     } catch (NumberFormatException ex) {
       return Optional.empty();
     }
+  }
+
+  private static Optional<Boolean> parseRequiredBoolean(Object value) {
+    if (value instanceof Boolean booleanValue) {
+      return Optional.of(booleanValue);
+    }
+    String text = stringValue(value).trim();
+    if ("true".equalsIgnoreCase(text)) {
+      return Optional.of(true);
+    }
+    if ("false".equalsIgnoreCase(text)) {
+      return Optional.of(false);
+    }
+    return Optional.empty();
   }
 
   private static <T> T requireResult(T result, String replayType) {

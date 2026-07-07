@@ -214,6 +214,28 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void getConnectTokenReplayReturnsEmptyForMalformedSuccessFlag() {
+    String key =
+        "session:connect-token:tenant:7:account:11:scope:"
+            + sha256("scope-1")
+            + ":request:"
+            + sha256("req-7");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "definitely",
+                "errorCode",
+                "CONNECT_SCOPE_MISMATCH",
+                "errorMessage",
+                "Selected gameplay target is no longer admissible"));
+
+    var replay = service.getConnectTokenReplay(7L, 11L, "scope-1", "req-7");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
   void storePublicProductionMembershipReplayWritesHashedRealmAndRequestKey() {
     SessionService.PublicProductionMembershipReplay replay =
         new SessionService.PublicProductionMembershipReplay(
@@ -364,6 +386,43 @@ class SessionServiceImplTest {
                 "711",
                 "created",
                 "true",
+                "requestId",
+                "req-join-1",
+                "evaluatedAt",
+                "2026-05-25T00:00:00Z"));
+
+    var replay =
+        service.getPublicProductionMembershipReplay(7L, 11L, "demo", "production", "req-join-1");
+
+    assertThat(replay).isEmpty();
+  }
+
+  @Test
+  void getPublicProductionMembershipReplayReturnsEmptyForMalformedCreatedFlag() {
+    String key =
+        "session:public-production-membership:tenant:7:account:11:world:"
+            + sha256("demo")
+            + ":realm:"
+            + sha256("production")
+            + ":request:"
+            + sha256("req-join-1");
+    when(valueOperations.get(key))
+        .thenReturn(
+            Map.of(
+                "success",
+                "true",
+                "accountId",
+                "11",
+                "tenantId",
+                "7",
+                "worldSlug",
+                "demo",
+                "realmSlug",
+                "production",
+                "membershipVersion",
+                "711",
+                "created",
+                "sometimes",
                 "requestId",
                 "req-join-1",
                 "evaluatedAt",
