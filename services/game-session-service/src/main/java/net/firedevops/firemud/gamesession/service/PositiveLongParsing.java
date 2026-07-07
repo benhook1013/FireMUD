@@ -18,6 +18,24 @@ public final class PositiveLongParsing {
     }
   }
 
+  public static Optional<Long> requireOptionalText(String text, String fieldName) {
+    if (!StringUtils.hasText(text)) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(JwtClaims.requireLong(text, fieldName, false));
+    } catch (RuntimeException ex) {
+      throw new IllegalArgumentException(invalidMessage(ex, fieldName), ex);
+    }
+  }
+
+  private static String invalidMessage(RuntimeException ex, String fieldName) {
+    if (("Invalid claim: " + fieldName).equals(ex.getMessage())) {
+      return fieldName + " must be positive";
+    }
+    return fieldName + " must be numeric";
+  }
+
   public record ParsedPositiveLong(boolean present, Long value) {
     public boolean valid() {
       return value != null;

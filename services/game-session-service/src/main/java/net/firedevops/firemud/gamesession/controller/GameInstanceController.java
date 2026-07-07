@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,16 +38,17 @@ public class GameInstanceController {
   }
 
   @PostMapping("/{sessionId}/stop")
-  public ResponseEntity<ApiResponse<GameInstanceDto>> stopSession(@PathVariable long sessionId) {
+  public ResponseEntity<ApiResponse<GameInstanceDto>> stopSession(@PathVariable String sessionId) {
     SessionContext.requireGlobalPrivilegedRole();
-    GameInstanceDto dto = gameInstanceService.stopSession(sessionId);
+    GameInstanceDto dto = gameInstanceService.stopSession(SessionIdParsing.require(sessionId));
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PostMapping("/{sessionId}/restart")
-  public ResponseEntity<ApiResponse<GameInstanceDto>> restartSession(@PathVariable long sessionId) {
+  public ResponseEntity<ApiResponse<GameInstanceDto>> restartSession(
+      @PathVariable String sessionId) {
     SessionContext.requireGlobalPrivilegedRole();
-    GameInstanceDto dto = gameInstanceService.restartSession(sessionId);
+    GameInstanceDto dto = gameInstanceService.restartSession(SessionIdParsing.require(sessionId));
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 }

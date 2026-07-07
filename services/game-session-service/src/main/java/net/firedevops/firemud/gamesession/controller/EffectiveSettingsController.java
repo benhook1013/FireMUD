@@ -10,8 +10,10 @@ import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,10 +44,10 @@ public class EffectiveSettingsController {
 
   @GetMapping("/effective")
   public ResponseEntity<ApiResponse<EffectiveSettingsResponse>> effectiveSettings(
-      @RequestParam(required = false) Long sessionId,
-      @RequestParam(required = false) Long tenantId,
-      @RequestParam(required = false) Long gameInstanceId,
-      @RequestParam(required = false) Long bootstrapGameInstanceId) {
+      @RequestParam(required = false) String sessionId,
+      @RequestParam(required = false) String tenantId,
+      @RequestParam(required = false) String gameInstanceId,
+      @RequestParam(required = false) String bootstrapGameInstanceId) {
     SessionResolution resolution =
         resolveContext(sessionId, tenantId, gameInstanceId, bootstrapGameInstanceId);
     EffectiveSettingsResolver.ResolvedValue<PresentationProperties> presentation =
@@ -102,21 +104,26 @@ public class EffectiveSettingsController {
   }
 
   private SessionResolution resolveContext(
-      Long sessionId, Long tenantId, Long gameInstanceId, Long bootstrapGameInstanceId) {
+      String sessionId, String tenantId, String gameInstanceId, String bootstrapGameInstanceId) {
     if (sessionId != null) {
+      long parsedSessionId = SessionIdParsing.require(sessionId);
       SessionContext context =
           sessionAuthenticationService
-              .resolveUnverifiedSessionContext(Long.toString(sessionId))
+              .resolveUnverifiedSessionContext(Long.toString(parsedSessionId))
               .orElseThrow(
                   () ->
                       new ResponseStatusException(
-                          HttpStatus.NOT_FOUND, "Session context not found for " + sessionId));
-      return new SessionResolution(sessionId, context, true);
+                          HttpStatus.NOT_FOUND,
+                          "Session context not found for " + parsedSessionId));
+      return new SessionResolution(parsedSessionId, context, true);
     }
-    long resolvedTenantId = tenantId == null ? 0L : tenantId;
-    long resolvedGameInstanceId = gameInstanceId == null ? 0L : gameInstanceId;
+    long resolvedTenantId =
+        PositiveLongParsing.requireOptionalText(tenantId, "tenantId").orElse(0L);
+    long resolvedGameInstanceId =
+        PositiveLongParsing.requireOptionalText(gameInstanceId, "gameInstanceId").orElse(0L);
     long resolvedBootstrapGameInstanceId =
-        bootstrapGameInstanceId == null ? resolvedGameInstanceId : bootstrapGameInstanceId;
+        PositiveLongParsing.requireOptionalText(bootstrapGameInstanceId, "bootstrapGameInstanceId")
+            .orElse(resolvedGameInstanceId);
     SessionContext synthetic =
         new SessionContext(
             0L,

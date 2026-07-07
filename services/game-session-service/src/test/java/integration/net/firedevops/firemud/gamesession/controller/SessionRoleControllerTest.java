@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -59,5 +60,20 @@ class SessionRoleControllerTest {
         .perform(
             post("/sessions/1/refresh-roles").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void refreshRolesRejectsMalformedSessionIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/sessions/not-a-number/refresh-roles")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("sessionId must be numeric"));
+
+    verifyNoInteractions(sessionRoleService);
   }
 }
