@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PingService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
@@ -102,13 +103,12 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
 
     if (StringUtils.hasText(request.getSessionId())) {
-      try {
-        gameplayPresenceLifecycleService.recordDisconnected(
-            ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId"),
-            AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-      } catch (IllegalArgumentException ignored) {
-        // best-effort advisory cleanup only
-      }
+      SessionIdParsing.parse(request.getSessionId())
+          .optionalValue()
+          .ifPresent(
+              sessionId ->
+                  gameplayPresenceLifecycleService.recordDisconnected(
+                      sessionId, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
     }
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
       meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();

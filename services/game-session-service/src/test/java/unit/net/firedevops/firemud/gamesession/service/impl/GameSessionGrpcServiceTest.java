@@ -1427,9 +1427,54 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
-    assertEquals("sessionId must be a number", ref.get().getError().getMessage());
+    assertEquals("sessionId must be numeric", ref.get().getError().getMessage());
     Mockito.verify(gameInstanceRepository, Mockito.never()).findById(Mockito.anyLong());
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
+  }
+
+  @Test
+  void restartSessionRejectsMalformedSessionId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<RestartSessionResponse> ref = new AtomicReference<>();
+    service.restartSession(
+        RestartSessionRequest.newBuilder().setSessionId("bad").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(RestartSessionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+    assertEquals("sessionId must be numeric", ref.get().getError().getMessage());
+    Mockito.verify(gameInstanceRepository, Mockito.never()).findById(Mockito.anyLong());
+    Mockito.verify(gameInstanceService, Mockito.never()).restartSession(Mockito.anyLong());
   }
 
   @Test
@@ -1607,6 +1652,56 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void enqueueCommandRejectsMalformedSessionId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse> ref =
+        new AtomicReference<>();
+    service.enqueueCommand(
+        net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest.newBuilder()
+            .setSessionId("bad")
+            .setCommand("look")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(ref.get().getAccepted());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("sessionId must be numeric", ref.get().getError().getMessage());
+    Mockito.verify(gameInstanceRepository, Mockito.never()).findById(Mockito.anyLong());
+    Mockito.verifyNoInteractions(textCommandInterpreter);
+  }
+
+  @Test
   void queryStateMissingSessionReturnsNotFoundErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
@@ -1657,6 +1752,51 @@ class GameSessionGrpcServiceTest {
 
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
     assertEquals("No session context found for sessionId=7", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void queryStateRejectsMalformedSessionId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryStateResponse> ref = new AtomicReference<>();
+    service.queryState(
+        QueryStateRequest.newBuilder().setSessionId("bad").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+    assertEquals("sessionId must be numeric", ref.get().getError().getMessage());
+    Mockito.verify(gameInstanceRepository, Mockito.never()).findById(Mockito.anyLong());
+    Mockito.verifyNoInteractions(tickService);
   }
 
   @Test

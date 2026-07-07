@@ -14,6 +14,14 @@ public final class SessionIdParsing {
     }
   }
 
+  public static long require(String sessionIdText) {
+    ParsedSessionId parsed = parse(sessionIdText);
+    if (parsed.valid()) {
+      return parsed.value();
+    }
+    throw new IllegalArgumentException(parsed.errorMessage());
+  }
+
   private static String invalidSessionMessage(RuntimeException ex) {
     if ("Invalid claim: sessionId".equals(ex.getMessage())) {
       return "sessionId must be positive";

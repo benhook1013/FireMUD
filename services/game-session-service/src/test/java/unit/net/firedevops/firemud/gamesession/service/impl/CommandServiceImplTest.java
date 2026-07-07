@@ -91,7 +91,7 @@ class CommandServiceImplTest {
 
     assertTrue(result.hasError());
     assertEquals("INVALID_ARGUMENT", result.errorCode());
-    assertEquals("sessionId must be a number", result.errorMessage());
+    assertEquals("sessionId must be numeric", result.errorMessage());
     verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(Mockito.any());
     verify(rateLimiter, never()).allow(Mockito.anyLong());
     verify(commandRepository, never()).save(Mockito.any());
