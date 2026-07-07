@@ -437,17 +437,15 @@ public class FriendsCommandHandler {
   }
 
   private long parseLong(String value) {
-    if (value == null || value.isBlank()) {
-      return 0L;
-    }
-    return Long.parseLong(value);
+    return PositiveLongParsing.parseOptionalText(value, "friendAccountId")
+        .optionalValue()
+        .orElse(0L);
   }
 
   private Long parseOptionalLong(String value) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    return Long.parseLong(value);
+    return PositiveLongParsing.parseOptionalText(value, "friendLinkId")
+        .optionalValue()
+        .orElse(null);
   }
 
   private String blankToNull(String value) {
@@ -626,14 +624,9 @@ public class FriendsCommandHandler {
   }
 
   private Long tryParseAccountId(String value) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(value.trim());
-    } catch (NumberFormatException ex) {
-      return null;
-    }
+    return PositiveLongParsing.parseOptionalText(value, "friendAccountId")
+        .optionalValue()
+        .orElse(null);
   }
 
   private boolean isOrdinalToken(String value) {

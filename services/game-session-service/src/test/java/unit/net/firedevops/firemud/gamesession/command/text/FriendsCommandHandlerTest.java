@@ -877,6 +877,39 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
+  void friendsListTreatsMalformedFriendLinkIdAsAbsent() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(1L, 41L))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .addFriends(
+                    FriendRosterEntry.newBuilder()
+                        .setFriendLinkId("abc")
+                        .setFriendAccountId("77")
+                        .setStatus("active")
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder().setFriendAccountId("77").build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, java.util.List.of(), "FRIENDS"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    FriendPresenceViewOutput view =
+        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
+    assertThat(view.friends())
+        .singleElement()
+        .satisfies(entry -> assertThat(entry.friendLinkId()).isNull());
+  }
+
+  @Test
   void friendsVisibilityShowsCurrentCanonicalPolicy() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);

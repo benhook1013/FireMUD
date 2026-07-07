@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -466,7 +467,13 @@ public class PlayCommandHandler {
           entityManagementClient.findCharacterByName(
               context, toPlayableStateScope(selectedRealm), characterName.trim());
       if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
-        return Long.parseLong(character.get().getId());
+        Long characterId =
+            PositiveLongParsing.parseOptionalText(character.get().getId(), "characterId")
+                .optionalValue()
+                .orElse(null);
+        if (characterId != null) {
+          return characterId;
+        }
       }
     }
     if (!StringUtils.hasText(requestedCharacter)) {
