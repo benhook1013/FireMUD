@@ -1847,7 +1847,7 @@ class ScriptEventIngressServiceImplTest {
   @Test
   void dryRunBudgetDenialStopsBeforeHandlerResolution() {
     SessionContext.setContext(
-        "operator-1", List.of("platformAdmin"), Map.of(), true, "game-session-service", "gs-1");
+        "41", List.of("platformAdmin"), Map.of(), true, "game-session-service", "gs-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
@@ -1880,7 +1880,7 @@ class ScriptEventIngressServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-1")
                         .build())
                 .build());
-    when(dryRunQuotaService.tryAcquire("1", "script-1", "account:operator-1")).thenReturn(false);
+    when(dryRunQuotaService.tryAcquire("1", "script-1", "account:41")).thenReturn(false);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptEventIngressService service =
@@ -1921,6 +1921,86 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name());
     assertThat(admission.reason()).isEqualTo("dry_run_budget_exceeded");
+    verify(bindingRepository, never())
+        .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+            Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
+  void dryRunRejectsMalformedCurrentAccountClaimBeforeQuotaLookup() {
+    SessionContext.setContext("not-a-long", List.of(), Map.of());
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
+    when(repository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "onCommand",
+                "v1",
+                "patch-1",
+                "event-dry-run-invalid-account",
+                true))
+        .thenReturn(Optional.empty());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .build())
+                .build());
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            dryRunQuotaService);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.admit(
+                gameplayRequestBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-1")
+                    .setRegionEpoch(7)
+                    .setEntityId("entity-1")
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .setScriptId("script-1")
+                    .setEventType("onCommand")
+                    .setScriptPatchVersion("patch-1")
+                    .setScriptEventId("event-dry-run-invalid-account")
+                    .setReadSnapshotToken("snapshot-1")
+                    .setIsDryRun(true)
+                    .build(),
+                "game-session-service"));
+
+    verifyNoInteractions(dryRunQuotaService);
     verify(bindingRepository, never())
         .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
             Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
