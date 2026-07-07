@@ -99,6 +99,8 @@ public class GameplaySessionAttestationService {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation type is unsupported");
     }
+    requireSubjectMatchesClaims(
+        attestationType, claims, tenantId, sessionId, gameInstanceId, roomInstanceId);
     return new GameplaySessionAttestationClaims(
         attestationType,
         tenantId,
@@ -246,6 +248,52 @@ public class GameplaySessionAttestationService {
     } catch (IllegalArgumentException ex) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + name, ex);
+    }
+  }
+
+  private void requireSubjectMatchesClaims(
+      String attestationType,
+      Claims claims,
+      String tenantId,
+      String sessionId,
+      String gameInstanceId,
+      String roomInstanceId) {
+    if (GAMEPLAY_SESSION.equals(attestationType) && !hasPositiveId(sessionId)) {
+      return;
+    }
+    if (INTERNAL_PROBE.equals(attestationType)
+        && (!hasPositiveId(tenantId)
+            || !hasPositiveId(gameInstanceId)
+            || !StringUtils.hasText(roomInstanceId))) {
+      return;
+    }
+    final String subject;
+    try {
+      subject = JwtClaims.requireText(claims.getSubject(), "sub");
+    } catch (IllegalArgumentException ex) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);
+    }
+    String expectedSubject =
+        switch (attestationType) {
+          case GAMEPLAY_SESSION -> "gameplay-session:" + sessionId;
+          case INTERNAL_PROBE ->
+              "gameplay-probe:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
+          default -> throw new IllegalStateException("Unsupported attestation type");
+        };
+    if (!expectedSubject.equals(subject)) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID",
+          "Gameplay session attestation subject does not match claims");
+    }
+  }
+
+  private boolean hasPositiveId(String value) {
+    try {
+      JwtClaims.requireLong(value, "id", false);
+      return true;
+    } catch (IllegalArgumentException ex) {
+      return false;
     }
   }
 
