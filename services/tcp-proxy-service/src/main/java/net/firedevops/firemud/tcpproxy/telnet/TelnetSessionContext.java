@@ -1,7 +1,5 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
-import org.springframework.util.StringUtils;
-
 /**
  * Holds hidden session bootstrap metadata for the Telnet connection so it can be forwarded to the
  * gateway and Game Session Service.
@@ -14,7 +12,10 @@ final class TelnetSessionContext {
   private volatile String pointerVersion;
 
   boolean isReady() {
-    return StringUtils.hasText(gameInstanceId) && StringUtils.hasText(tenantId);
+    return gameInstanceId != null
+        && !gameInstanceId.isBlank()
+        && tenantId != null
+        && !tenantId.isBlank();
   }
 
   String gameInstanceId() {
@@ -43,12 +44,17 @@ final class TelnetSessionContext {
       String worldSlug,
       String realmSlug,
       String pointerVersion) {
-    if (!StringUtils.hasText(gameInstanceId) || !StringUtils.hasText(tenantId)) {
+    if (gameInstanceId == null
+        || gameInstanceId.isBlank()
+        || tenantId == null
+        || tenantId.isBlank()) {
       return;
     }
     this.gameInstanceId = gameInstanceId;
     this.tenantId = tenantId;
-    if (routingBundleIsComplete(worldSlug, realmSlug, pointerVersion)) {
+    TelnetRoutingBundle routingBundle =
+        TelnetRoutingBundle.normalize(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle != null) {
       this.worldSlug = worldSlug;
       this.realmSlug = realmSlug;
       this.pointerVersion = pointerVersion;
@@ -57,12 +63,5 @@ final class TelnetSessionContext {
     this.worldSlug = null;
     this.realmSlug = null;
     this.pointerVersion = null;
-  }
-
-  private static boolean routingBundleIsComplete(
-      String worldSlug, String realmSlug, String pointerVersion) {
-    return StringUtils.hasText(worldSlug)
-        && StringUtils.hasText(realmSlug)
-        && StringUtils.hasText(pointerVersion);
   }
 }

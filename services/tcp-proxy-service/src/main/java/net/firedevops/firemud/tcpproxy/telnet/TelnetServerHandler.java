@@ -277,11 +277,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.bufferDepth = bufferDepth;
     this.defaultGameInstanceId = defaultGameInstanceId;
     this.defaultTenantId = defaultTenantId;
-    RoutingBundle defaultRoutingBundle =
-        normalizeRoutingBundle(defaultWorldSlug, defaultRealmSlug, defaultPointerVersion);
-    this.defaultWorldSlug = defaultRoutingBundle.worldSlug();
-    this.defaultRealmSlug = defaultRoutingBundle.realmSlug();
-    this.defaultPointerVersion = defaultRoutingBundle.pointerVersion();
+    TelnetRoutingBundle defaultRoutingBundle =
+        TelnetRoutingBundle.normalize(defaultWorldSlug, defaultRealmSlug, defaultPointerVersion);
+    this.defaultWorldSlug = defaultRoutingBundle == null ? null : defaultRoutingBundle.worldSlug();
+    this.defaultRealmSlug = defaultRoutingBundle == null ? null : defaultRoutingBundle.realmSlug();
+    this.defaultPointerVersion =
+        defaultRoutingBundle == null ? null : defaultRoutingBundle.pointerVersion();
     this.runtimeIdentity = runtimeIdentity;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
@@ -332,8 +333,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       builder.header("X-Tenant-Id", tenantId);
       builder.header("X-Proxy-Tenant-Id", tenantId);
     }
-    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
-    if (routingBundle.isPresent()) {
+    TelnetRoutingBundle routingBundle =
+        TelnetRoutingBundle.normalize(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle != null) {
       builder.header("X-World-Slug", routingBundle.worldSlug());
       builder.header("X-Realm-Slug", routingBundle.realmSlug());
       builder.header("X-Pointer-Version", routingBundle.pointerVersion());
@@ -597,24 +599,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         defaultPointerVersion);
     notifyConnectIfReady();
     ensureGatewayConnected();
-  }
-
-  private static RoutingBundle normalizeRoutingBundle(
-      String worldSlug, String realmSlug, String pointerVersion) {
-    if (!StringUtils.hasText(worldSlug)
-        || !StringUtils.hasText(realmSlug)
-        || !StringUtils.hasText(pointerVersion)) {
-      return RoutingBundle.EMPTY;
-    }
-    return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
-  }
-
-  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
-    private static final RoutingBundle EMPTY = new RoutingBundle(null, null, null);
-
-    boolean isPresent() {
-      return worldSlug != null;
-    }
   }
 
   private void cancelIdleCheck() {
