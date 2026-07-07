@@ -7,7 +7,6 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -19,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolu
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -441,11 +441,12 @@ public final class LoginCommandHandler {
   }
 
   private Long parseAccountId(String accountIdText) {
-    try {
-      return JwtClaims.requireLong(accountIdText, "accountId", false);
-    } catch (RuntimeException ex) {
+    PositiveLongParsing.ParsedPositiveLong parsed =
+        PositiveLongParsing.parseOptionalText(accountIdText, "accountId");
+    if (!parsed.valid()) {
       return null;
     }
+    return parsed.value();
   }
 
   private LoginCommandHandlingResult invalidSessionFailure(String message) {

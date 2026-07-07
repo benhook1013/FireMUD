@@ -148,6 +148,7 @@ class Generated {}
 EOF
 
 git add .
+git add -f services/foo/bin/Generated.java
 git commit -q -m "Initial fixture repo"
 
 cat >>services/foo/src/main/java/example/Foo.java <<'EOF'
@@ -261,7 +262,7 @@ debug_output = subprocess.check_output([*script, "debug"], cwd=repo, stderr=subp
 assert "tests\tdev_tools_contract_tests\tdev-tools/tests/contract.sh" in debug_output
 assert "tests\tdev_tools_validation_test\tdev-tools/validation/test_helper.py" in debug_output
 assert "tests\tgradle_src_test\tservices/foo/src/test/java/example/DuplicateFootprint.java" in debug_output
-assert "services/foo/bin/Generated.java" not in debug_output
+assert "prod\tsource_root:services\tservices/foo/bin/Generated.java" in debug_output
 
 module_summary = by_module["summary"]
 assert module_summary["total_files"] == source_sum["nFiles"]

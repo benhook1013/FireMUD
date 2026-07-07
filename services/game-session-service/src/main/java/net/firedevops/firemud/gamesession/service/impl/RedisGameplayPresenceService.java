@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -195,7 +196,12 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     ArrayList<GameplayPresence> matches = new ArrayList<>();
     for (Object member : members) {
       String sessionIdText = String.valueOf(member);
-      GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey(sessionIdText));
+      String presenceKey = presenceKey(sessionIdText);
+      if (presenceKey == null) {
+        setOps.remove(gameInstanceKey, sessionIdText);
+        continue;
+      }
+      GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey);
       if (presence == null) {
         setOps.remove(gameInstanceKey, sessionIdText);
         continue;
@@ -237,7 +243,12 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       ArrayList<GameplayPresence> accountMatches = new ArrayList<>();
       for (Object member : members) {
         String sessionIdText = String.valueOf(member);
-        GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey(sessionIdText));
+        String presenceKey = presenceKey(sessionIdText);
+        if (presenceKey == null) {
+          setOps.remove(accountKey, sessionIdText);
+          continue;
+        }
+        GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey);
         if (presence == null) {
           setOps.remove(accountKey, sessionIdText);
           continue;
@@ -267,7 +278,12 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   }
 
   private String presenceKey(String sessionId) {
-    return String.format(PRESENCE_KEY_TEMPLATE, Long.parseLong(sessionId));
+    PositiveLongParsing.ParsedPositiveLong parsed =
+        PositiveLongParsing.parseOptionalText(sessionId, "sessionId");
+    if (!parsed.valid()) {
+      return null;
+    }
+    return presenceKey(parsed.value());
   }
 
   private String gameInstanceKey(long tenantId, long gameInstanceId) {

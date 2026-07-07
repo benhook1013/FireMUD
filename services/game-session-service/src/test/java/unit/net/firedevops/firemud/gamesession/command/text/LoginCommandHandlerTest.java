@@ -240,6 +240,36 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void invalidAccountIdMalformedReturnsInvalidAccount() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId("not-a-number")
+                .build());
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(LoginCommandConstants.INVALID_ACCOUNT_CODE, result.commandResult().errorCode());
+    assertEquals(
+        "ERROR "
+            + LoginCommandConstants.INVALID_ACCOUNT_CODE
+            + " "
+            + LoginCommandConstants.INVALID_ACCOUNT_MESSAGE,
+        joinedOutputText(result.outputs()));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
   void missingGameInstanceReturnsSessionNotFound() {
     TextCommand command =
         new TextCommand(
