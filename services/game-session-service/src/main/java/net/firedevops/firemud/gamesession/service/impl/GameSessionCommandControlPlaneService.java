@@ -271,17 +271,6 @@ public final class GameSessionCommandControlPlaneService {
     return ControlPlaneRequestParser.parsePositiveLong(pointerVersion, "pointer_version");
   }
 
-  private static Long parseGameplayCharacterId(String targetEntityId) {
-    if (targetEntityId == null || targetEntityId.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(targetEntityId);
-    } catch (NumberFormatException ex) {
-      return null;
-    }
-  }
-
   private record GameplayRoutingBundle(
       PlayableStateScope playableStateScope,
       String worldSlug,
