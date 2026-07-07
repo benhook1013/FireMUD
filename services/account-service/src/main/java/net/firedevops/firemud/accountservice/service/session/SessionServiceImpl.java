@@ -70,15 +70,30 @@ public class SessionServiceImpl implements SessionService {
       Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
       Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
       Optional<Long> gameInstanceId = parseRequiredLong(stored.get("gameInstanceId"));
-      if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || gameInstanceId.isEmpty()) {
+      Optional<String> realmSlug = parseRequiredText(stored.get("realmSlug"));
+      Optional<String> replayConnectScopeId = parseRequiredText(stored.get("connectScopeId"));
+      Optional<String> connectToken = parseRequiredText(stored.get("connectToken"));
+      Optional<String> jti = parseRequiredText(stored.get("jti"));
+      Optional<String> replayRequestId = parseRequiredText(stored.get("requestId"));
+      Optional<String> issuedAt = parseRequiredText(stored.get("issuedAt"));
+      Optional<String> expiresAt = parseRequiredText(stored.get("expiresAt"));
+      if (replayAccountId.isEmpty()
+          || replayTenantId.isEmpty()
+          || gameInstanceId.isEmpty()
+          || realmSlug.isEmpty()
+          || replayConnectScopeId.isEmpty()
+          || connectToken.isEmpty()
+          || jti.isEmpty()
+          || replayRequestId.isEmpty()
+          || issuedAt.isEmpty()
+          || expiresAt.isEmpty()) {
         return Optional.empty();
       }
       if (!replayAccountId.get().equals(accountId) || !replayTenantId.get().equals(tenantId)) {
         return Optional.empty();
       }
-      String replayConnectScopeId = stringValue(stored.get("connectScopeId"));
-      String replayRequestId = stringValue(stored.get("requestId"));
-      if (!connectScopeId.equals(replayConnectScopeId) || !requestId.equals(replayRequestId)) {
+      if (!connectScopeId.equals(replayConnectScopeId.get())
+          || !requestId.equals(replayRequestId.get())) {
         return Optional.empty();
       }
       ConnectTokenResult result =
@@ -86,13 +101,13 @@ public class SessionServiceImpl implements SessionService {
               replayAccountId.orElseThrow(),
               replayTenantId.orElseThrow(),
               gameInstanceId.orElseThrow(),
-              stringValue(stored.get("realmSlug")),
-              stringValue(stored.get("connectScopeId")),
-              stringValue(stored.get("connectToken")),
-              stringValue(stored.get("jti")),
-              stringValue(stored.get("requestId")),
-              stringValue(stored.get("issuedAt")),
-              stringValue(stored.get("expiresAt")),
+              realmSlug.orElseThrow(),
+              replayConnectScopeId.orElseThrow(),
+              connectToken.orElseThrow(),
+              jti.orElseThrow(),
+              replayRequestId.orElseThrow(),
+              issuedAt.orElseThrow(),
+              expiresAt.orElseThrow(),
               false);
       return Optional.of(new ConnectTokenReplay(true, result, "", ""));
     }
@@ -158,18 +173,26 @@ public class SessionServiceImpl implements SessionService {
       Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
       Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
       Optional<Long> membershipVersion = parseRequiredLong(stored.get("membershipVersion"));
-      if (replayAccountId.isEmpty() || replayTenantId.isEmpty() || membershipVersion.isEmpty()) {
+      Optional<String> replayWorldSlug = parseRequiredText(stored.get("worldSlug"));
+      Optional<String> replayRealmSlug = parseRequiredText(stored.get("realmSlug"));
+      Optional<String> replayRequestId = parseRequiredText(stored.get("requestId"));
+      Optional<String> evaluatedAt = parseRequiredText(stored.get("evaluatedAt"));
+      if (replayAccountId.isEmpty()
+          || replayTenantId.isEmpty()
+          || membershipVersion.isEmpty()
+          || replayWorldSlug.isEmpty()
+          || replayRealmSlug.isEmpty()
+          || replayRequestId.isEmpty()
+          || evaluatedAt.isEmpty()) {
         return Optional.empty();
       }
       if (!replayAccountId.get().equals(accountId) || !replayTenantId.get().equals(tenantId)) {
         return Optional.empty();
       }
-      String replayWorldSlug = stringValue(stored.get("worldSlug"));
-      String replayRealmSlug = stringValue(stored.get("realmSlug"));
-      if (!worldSlug.equals(replayWorldSlug) || !realmSlug.equals(replayRealmSlug)) {
+      if (!worldSlug.equals(replayWorldSlug.get()) || !realmSlug.equals(replayRealmSlug.get())) {
         return Optional.empty();
       }
-      if (!requestId.equals(stringValue(stored.get("requestId")))) {
+      if (!requestId.equals(replayRequestId.get())) {
         return Optional.empty();
       }
       Optional<Boolean> created = parseRequiredBoolean(stored.get("created"));
@@ -180,12 +203,12 @@ public class SessionServiceImpl implements SessionService {
           new PublicProductionMembershipResult(
               replayAccountId.orElseThrow(),
               replayTenantId.orElseThrow(),
-              replayWorldSlug,
-              replayRealmSlug,
+              replayWorldSlug.orElseThrow(),
+              replayRealmSlug.orElseThrow(),
               membershipVersion.orElseThrow(),
               created.get(),
-              stringValue(stored.get("requestId")),
-              stringValue(stored.get("evaluatedAt")),
+              replayRequestId.orElseThrow(),
+              evaluatedAt.orElseThrow(),
               false);
       return Optional.of(new PublicProductionMembershipReplay(true, result, "", ""));
     }
@@ -308,6 +331,11 @@ public class SessionServiceImpl implements SessionService {
       return Optional.of(false);
     }
     return Optional.empty();
+  }
+
+  private static Optional<String> parseRequiredText(Object value) {
+    String text = stringValue(value);
+    return text.isBlank() ? Optional.empty() : Optional.of(text);
   }
 
   private static <T> T requireResult(T result, String replayType) {
