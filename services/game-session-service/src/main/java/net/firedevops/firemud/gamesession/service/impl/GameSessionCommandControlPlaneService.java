@@ -268,7 +268,7 @@ public final class GameSessionCommandControlPlaneService {
     if (pointerVersion == null || pointerVersion.isBlank()) {
       return null;
     }
-    return Long.parseLong(pointerVersion);
+    return ControlPlaneRequestParser.parsePositiveLong(pointerVersion, "pointer_version");
   }
 
   private static Long parseGameplayCharacterId(String targetEntityId) {
