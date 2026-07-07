@@ -1,18 +1,17 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
+
 final class GameplayCharacterIdParser {
   private GameplayCharacterIdParser() {}
 
   static Long parseGameplayCharacterId(String targetEntityId) {
-    if (targetEntityId == null || targetEntityId.isBlank()) {
+    PositiveLongParsing.ParsedPositiveLong parsed =
+        PositiveLongParsing.parseOptionalText(targetEntityId, "characterId");
+    if (!parsed.valid()) {
       return null;
     }
-    try {
-      long parsed = Long.parseLong(targetEntityId);
-      return parsed > 0 ? parsed : null;
-    } catch (NumberFormatException ex) {
-      return null;
-    }
+    return parsed.value();
   }
 
   static Long parseGameplayCharacterId(Long characterId, String targetEntityId) {

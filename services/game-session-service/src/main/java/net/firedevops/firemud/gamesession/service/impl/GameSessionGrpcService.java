@@ -228,6 +228,12 @@ public final class GameSessionGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
   }
 
+  private List<Long> parseAccountIds(List<String> accountIds) {
+    return accountIds.stream()
+        .map(accountId -> ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId"))
+        .toList();
+  }
+
   private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
     requireTenantAccess(tenantId);
     if (isCurrentAccount(ownerAccountId)) {
@@ -413,8 +419,7 @@ public final class GameSessionGrpcService
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
-      List<Long> accountIds =
-          request.getAccountIdsList().stream().map(Long::parseLong).filter(id -> id > 0).toList();
+      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
       if (accountIds.size() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }

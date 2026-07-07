@@ -273,6 +273,110 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void queryAccountPresenceRejectsMalformedAccountId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    AccountPresenceQueryService accountPresenceQueryService =
+        Mockito.mock(AccountPresenceQueryService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("42", List.of(), Map.of());
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            accountPresenceQueryService,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId("42")
+            .addAccountIds("abc")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be a number", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountPresenceQueryService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsZeroAccountId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    AccountPresenceQueryService accountPresenceQueryService =
+        Mockito.mock(AccountPresenceQueryService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("42", List.of(), Map.of());
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            accountPresenceQueryService,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId("42")
+            .addAccountIds("0")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountPresenceQueryService);
+  }
+
+  @Test
   void gameplayCatalogRpcReturnsCanonicalRealmData() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
