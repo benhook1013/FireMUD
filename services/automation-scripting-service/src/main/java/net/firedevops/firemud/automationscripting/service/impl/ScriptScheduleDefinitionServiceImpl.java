@@ -15,6 +15,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptScheduleDefinitionRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleDefinitionService;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -50,7 +51,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
       String scriptPatchVersion,
       List<ScriptDefinition> definitions,
       List<String> affectedScripts) {
-    long tenantKey = Long.parseLong(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<ScriptScheduleDefinition> existing =
         repository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(

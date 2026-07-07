@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstance
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
@@ -48,7 +49,7 @@ public class ScriptPatchVersionCommandService {
   @Timed(value = "script.version.notify")
   public void notifyUpdate(
       String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
-    Long tenantKey = Long.parseLong(tenantId);
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     logger.info(
         "Applying script patch {} for tenant {} affecting {} scripts",
         scriptPatchVersion,
