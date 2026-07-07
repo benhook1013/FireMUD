@@ -32,9 +32,7 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public boolean canAccept(String ip) {
-    String key = ipKey(ip);
-    String value = redisTemplate.opsForValue().get(key);
-    long count = value == null ? 0L : Long.parseLong(value);
+    long count = currentConnectionCount(ip);
     return count < maxConnectionsPerIp;
   }
 
@@ -90,5 +88,18 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   private String sessionKey(long sessionId) {
     return "sessionip:" + sessionId;
+  }
+
+  private long currentConnectionCount(String ip) {
+    String key = ipKey(ip);
+    String value = redisTemplate.opsForValue().get(key);
+    if (value == null) {
+      return 0L;
+    }
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException ex) {
+      return Long.MAX_VALUE;
+    }
   }
 }
