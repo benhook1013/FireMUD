@@ -99,10 +99,14 @@ The main Helm deployment path in this repository is [`k8s/helm/firemud`](helm/fi
 helm install game-session ./k8s/helm/game-session-service -f k8s/helm/values-local.yaml
 ```
 
-For the hosted full-stack chart path, start from the environment-specific example values under `k8s/helm/firemud`:
+For the hosted full-stack chart path, render environment-specific values from the shared hosted template under `k8s/helm/firemud`:
 
 ```bash
-helm upgrade --install firemud ./k8s/helm/firemud -f k8s/helm/firemud/values-preview.example.yaml -n firemud --create-namespace
+python3 ./dev-tools/hosted/preview/render-preview-values.py \
+  k8s/helm/firemud/values-hosted-shared.example.yaml \
+  /tmp/preview-values.yaml \
+  123 pr-123 pr-123 pr-123.preview.firedevops.net pr-123-deadbeef 32000
+helm upgrade --install firemud ./k8s/helm/firemud -f /tmp/preview-values.yaml -n firemud --create-namespace
 ```
 
 The top-level `charts/firemud` chart is a narrower support chart rather than the main full-stack deployment surface.

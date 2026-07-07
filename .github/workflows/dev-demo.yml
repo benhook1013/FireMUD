@@ -201,7 +201,7 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
-            k8s/helm/firemud/values-dev-demo.example.yaml \
+            k8s/helm/firemud/values-hosted-shared.example.yaml \
             /tmp/dev-demo-values.yaml \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}" \

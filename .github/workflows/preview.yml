@@ -413,7 +413,7 @@ jobs:
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
           python3 ./dev-tools/hosted/preview/render-preview-values.py \
-            k8s/helm/firemud/values-preview.example.yaml \
+            k8s/helm/firemud/values-hosted-shared.example.yaml \
             /tmp/preview-values.yaml \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.namespace }}" \

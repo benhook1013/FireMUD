@@ -19,7 +19,34 @@ if ! command -v helm >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required for hosted Helm values rendering." >&2
+  exit 1
+fi
+
 mode="${1:-all}"
+
+render_hosted_values_samples() {
+  local preview_output="$1"
+  local dev_demo_output="$2"
+  python3 ./dev-tools/hosted/preview/render-preview-values.py \
+    k8s/helm/firemud/values-hosted-shared.example.yaml \
+    "${preview_output}" \
+    123 \
+    pr-123 \
+    pr-123 \
+    pr-123.preview.firedevops.net \
+    pr-123-deadbeef \
+    32000
+  python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
+    k8s/helm/firemud/values-hosted-shared.example.yaml \
+    "${dev_demo_output}" \
+    dev \
+    dev \
+    dev.preview.firedevops.net \
+    develop-deadbeef \
+    32016
+}
 
 run_chart_lint() {
   echo "==> helm lint account-service"
@@ -28,18 +55,24 @@ run_chart_lint() {
   echo "==> helm lint game-session-service"
   helm lint k8s/helm/game-session-service
 
+  local preview_values
+  local dev_demo_values
+  preview_values="$(mktemp)"
+  dev_demo_values="$(mktemp)"
+  render_hosted_values_samples "${preview_values}" "${dev_demo_values}"
   local firemud_values=(
     "k8s/helm/firemud/values.yaml"
     "k8s/helm/values-local.yaml"
     "k8s/helm/values-dev.yaml"
-    "k8s/helm/firemud/values-preview.example.yaml"
-    "k8s/helm/firemud/values-dev-demo.example.yaml"
+    "${preview_values}"
+    "${dev_demo_values}"
   )
   local values_file
   for values_file in "${firemud_values[@]}"; do
     echo "==> helm lint firemud with ${values_file}"
     helm lint k8s/helm/firemud -f "${values_file}"
   done
+  rm -f "${preview_values}" "${dev_demo_values}"
 }
 
 render_and_validate() {
@@ -67,15 +100,21 @@ run_render_validation() {
   echo "==> helm template game-session-service"
   render_and_validate "game-session-service-lint" "k8s/helm/game-session-service" "helm-lint"
 
+  local preview_values
+  local dev_demo_values
+  preview_values="$(mktemp)"
+  dev_demo_values="$(mktemp)"
+  render_hosted_values_samples "${preview_values}" "${dev_demo_values}"
   local firemud_values=(
-    "k8s/helm/firemud/values-preview.example.yaml"
-    "k8s/helm/firemud/values-dev-demo.example.yaml"
+    "${preview_values}"
+    "${dev_demo_values}"
   )
   local values_file
   for values_file in "${firemud_values[@]}"; do
     echo "==> helm template firemud with ${values_file}"
     render_and_validate "firemud-lint" "k8s/helm/firemud" "helm-lint" -f "${values_file}"
   done
+  rm -f "${preview_values}" "${dev_demo_values}"
 }
 
 case "${mode}" in

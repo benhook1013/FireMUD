@@ -1,12 +1,12 @@
-# Example values for the hosted dev-demo path. These defaults are for demo
-# bootstrap and testability, not for direct promotion into a production secret
-# contract without environment-specific overrides.
+# Shared hosted values template for preview/dev-demo rendering. Render this
+# template through the hosted helper scripts before using it as a real values
+# file for a concrete environment.
 preview:
-  prNumber: 0
-  namespace: dev
-  releaseName: dev
-  hostname: dev.preview.firedevops.net
-  telnetPort: 32016
+  prNumber: __PR_NUMBER__
+  namespace: __NAMESPACE__
+  releaseName: __RELEASE_NAME__
+  hostname: __HOSTNAME__
+  telnetPort: __TELNET_PORT__
   seedOnFirstDeploy: true
   maxConcurrentEnforced: false
 
@@ -14,14 +14,14 @@ previewStack:
   enabled: true
   networkPolicies:
     enabled: true
-  defaultImageTag: develop-deadbeef
+  defaultImageTag: __IMAGE_TAG__
   imagePullSecrets:
     - ghcr-preview-pull
   ingress:
     enabled: true
     className: traefik
     clusterIssuer: letsencrypt-prod
-    tlsSecretName: dev-preview-firedevops-net-tls
+    tlsSecretName: __TLS_SECRET_NAME__
 
   seed:
     enabled: true
@@ -95,8 +95,8 @@ previewStack:
   jwt:
     enabled: true
     jwksResourceKind: ConfigMap
-    signingKey: changeit-changeit-changeit-changeit
-    jwksJson: '{"keys":[]}'
+    signingKey: __JWT_SIGNING_KEY__
+    jwksJson: '__JWKS_JSON__'
 
   resources:
     app:
@@ -109,7 +109,7 @@ previewStack:
 
   seedSql: |
     INSERT INTO game_design_service.game (id, tenant_id, name, description)
-    VALUES (1, '1', 'Dev Demo Game', 'Dev-demo bootstrap seed game.')
+    VALUES (1, '1', '__SEED_GAME_NAME__', '__SEED_GAME_DESCRIPTION__')
     ON CONFLICT (id) DO UPDATE SET
       tenant_id = EXCLUDED.tenant_id,
       name = EXCLUDED.name,
@@ -123,7 +123,7 @@ previewStack:
       version_state_epoch,
       notes
     )
-    VALUES (1, '1', 1, 'PUBLISHED', 1, 'Dev-demo seed version')
+    VALUES (1, '1', 1, 'PUBLISHED', 1, '__SEED_VERSION_NOTES__')
     ON CONFLICT (id) DO UPDATE SET
       tenant_id = EXCLUDED.tenant_id,
       version_number = EXCLUDED.version_number,
@@ -144,8 +144,8 @@ previewStack:
     VALUES (
       1,
       '1',
-      'Dev Demo Template',
-      'Dev-demo bootstrap seed template.',
+      '__SEED_TEMPLATE_NAME__',
+      '__SEED_TEMPLATE_DESCRIPTION__',
       '{}'::jsonb,
       1,
       '{}',
@@ -179,9 +179,9 @@ previewStack:
       1,
       1,
       'v1',
-      'dev-demo-seed',
-      'dev-demo-seed-manifest',
-      'genrev:dev-demo-seed',
+      '__SEED_WORKFLOW_ID__',
+      '__SEED_MANIFEST_HASH__',
+      '__SEED_GENERATION_CONFIG_REVISION__',
       '[]',
       '[]',
       FALSE
@@ -213,8 +213,8 @@ previewStack:
       1,
       'PUBLISHED',
       1,
-      'dev-demo-seed-manifest',
-      'dev-demo-seed',
+      '__SEED_MANIFEST_HASH__',
+      '__SEED_WORKFLOW_ID__',
       '[]',
       1
     )
@@ -396,18 +396,17 @@ previewStack:
       healthPort: 8080
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
-        TCP_PROXY_GATEWAY_BASE_URL: http://spring-cloud-gateway
+        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__
         TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
         TCP_PROXY_DEFAULT_REALM_SLUG: "production"
         TCP_PROXY_DEFAULT_POINTER_VERSION: "1"
         TCP_PROXY_DEFAULT_GAME_INSTANCE_ID: "1"
         TCP_PROXY_DEFAULT_TENANT_ID: "1"
       ports:
-        - port: 8080
-          targetPort: 8080
+        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__
         - port: 2323
+          nodePort: __TELNET_PORT__
           targetPort: 2323
-          nodePort: 32016
     - name: world-management-service
       schema: world_management_service
       image:
