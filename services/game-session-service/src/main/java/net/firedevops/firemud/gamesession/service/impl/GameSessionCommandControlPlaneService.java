@@ -608,58 +608,16 @@ public final class GameSessionCommandControlPlaneService {
     currentRuntimeBoundary(tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
-              if (currentBoundary.gameInstanceId() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                } else {
-                  builder.setCurrentTargetRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                }
-              }
-              if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRegionId(currentBoundary.regionId());
-                } else {
-                  builder.setCurrentTargetRuntimeRegionId(currentBoundary.regionId());
-                }
-              }
-              if (originScope) {
-                builder.setCurrentOriginRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              } else {
-                builder.setCurrentTargetRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              }
-              if (currentBoundary.playableStateScope() != null) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                } else {
-                  builder.setCurrentTargetRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                }
-              }
-              if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeWorldSlug(currentBoundary.worldSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeWorldSlug(currentBoundary.worldSlug());
-                }
-              }
-              if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRealmSlug(currentBoundary.realmSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeRealmSlug(currentBoundary.realmSlug());
-                }
-              }
-              if (currentBoundary.pointerVersion() != null
-                  && currentBoundary.pointerVersion() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePointerVersion(currentBoundary.pointerVersion());
-                } else {
-                  builder.setCurrentTargetRuntimePointerVersion(currentBoundary.pointerVersion());
-                }
-              }
+              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+                  currentBoundary.gameInstanceId(),
+                  currentBoundary.regionId(),
+                  currentBoundary.regionEpoch(),
+                  currentBoundary.playableStateScope(),
+                  currentBoundary.worldSlug(),
+                  currentBoundary.realmSlug(),
+                  currentBoundary.pointerVersion(),
+                  originScope,
+                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
             });
   }
 
@@ -671,58 +629,16 @@ public final class GameSessionCommandControlPlaneService {
     currentRuntimeBoundary(tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
-              if (currentBoundary.gameInstanceId() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                } else {
-                  builder.setCurrentTargetRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                }
-              }
-              if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRegionId(currentBoundary.regionId());
-                } else {
-                  builder.setCurrentTargetRuntimeRegionId(currentBoundary.regionId());
-                }
-              }
-              if (originScope) {
-                builder.setCurrentOriginRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              } else {
-                builder.setCurrentTargetRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              }
-              if (currentBoundary.playableStateScope() != null) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                } else {
-                  builder.setCurrentTargetRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                }
-              }
-              if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeWorldSlug(currentBoundary.worldSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeWorldSlug(currentBoundary.worldSlug());
-                }
-              }
-              if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRealmSlug(currentBoundary.realmSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeRealmSlug(currentBoundary.realmSlug());
-                }
-              }
-              if (currentBoundary.pointerVersion() != null
-                  && currentBoundary.pointerVersion() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePointerVersion(currentBoundary.pointerVersion());
-                } else {
-                  builder.setCurrentTargetRuntimePointerVersion(currentBoundary.pointerVersion());
-                }
-              }
+              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+                  currentBoundary.gameInstanceId(),
+                  currentBoundary.regionId(),
+                  currentBoundary.regionEpoch(),
+                  currentBoundary.playableStateScope(),
+                  currentBoundary.worldSlug(),
+                  currentBoundary.realmSlug(),
+                  currentBoundary.pointerVersion(),
+                  originScope,
+                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
             });
   }
 
@@ -734,58 +650,16 @@ public final class GameSessionCommandControlPlaneService {
     currentRuntimeBoundary(tenantId, gameInstanceId)
         .ifPresent(
             currentBoundary -> {
-              if (currentBoundary.gameInstanceId() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                } else {
-                  builder.setCurrentTargetRuntimeGameInstanceId(
-                      Long.toString(currentBoundary.gameInstanceId()));
-                }
-              }
-              if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRegionId(currentBoundary.regionId());
-                } else {
-                  builder.setCurrentTargetRuntimeRegionId(currentBoundary.regionId());
-                }
-              }
-              if (originScope) {
-                builder.setCurrentOriginRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              } else {
-                builder.setCurrentTargetRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              }
-              if (currentBoundary.playableStateScope() != null) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                } else {
-                  builder.setCurrentTargetRuntimePlayableStateScope(
-                      currentBoundary.playableStateScope());
-                }
-              }
-              if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeWorldSlug(currentBoundary.worldSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeWorldSlug(currentBoundary.worldSlug());
-                }
-              }
-              if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimeRealmSlug(currentBoundary.realmSlug());
-                } else {
-                  builder.setCurrentTargetRuntimeRealmSlug(currentBoundary.realmSlug());
-                }
-              }
-              if (currentBoundary.pointerVersion() != null
-                  && currentBoundary.pointerVersion() > 0) {
-                if (originScope) {
-                  builder.setCurrentOriginRuntimePointerVersion(currentBoundary.pointerVersion());
-                } else {
-                  builder.setCurrentTargetRuntimePointerVersion(currentBoundary.pointerVersion());
-                }
-              }
+              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+                  currentBoundary.gameInstanceId(),
+                  currentBoundary.regionId(),
+                  currentBoundary.regionEpoch(),
+                  currentBoundary.playableStateScope(),
+                  currentBoundary.worldSlug(),
+                  currentBoundary.realmSlug(),
+                  currentBoundary.pointerVersion(),
+                  originScope,
+                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
             });
   }
 
