@@ -107,6 +107,26 @@ class RemoteCommandCoordinatorServiceImplTest {
   }
 
   @Test
+  void getRemoteCommandCoordinatorRejectsZeroOriginGameInstanceIdInResponse() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteCommandCoordinator(2L, "coord-123"))
+        .thenReturn(
+            GetRemoteCommandCoordinatorResponse.newBuilder()
+                .setCoordinator(
+                    remoteCoordinator("2", "coord-123").toBuilder()
+                        .setOriginGameInstanceId("0")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.getRemoteCommandCoordinator(2L, "coord-123"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
   void getRemoteCommandCoordinatorRequiresAccessibleTenant() {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 

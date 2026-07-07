@@ -359,28 +359,11 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
   }
 
   private long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          field + " was not numeric in control-plane response",
-          ex);
-    }
+    return ControlPlaneResponseReaders.parseLong(value, field);
   }
 
   private Long parseOptionalLong(String value, String field) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          field + " was not numeric in control-plane response",
-          ex);
-    }
+    return ControlPlaneResponseReaders.parseOptionalLong(value, field);
   }
 
   private Long optionalLong(long value) {

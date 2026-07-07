@@ -96,6 +96,20 @@ class RemoteFollowupResultServiceImplTest {
   }
 
   @Test
+  void getRemoteFollowupResultRejectsZeroTenantIdInResponse() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowupResult(2L, "rr-1"))
+        .thenReturn(
+            GetRemoteFollowupResultResponse.newBuilder().setResult(remoteResult("0")).build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getRemoteFollowupResult(2L, "rr-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
   void getRemoteFollowupResultRequiresAccessibleTenant() {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 
