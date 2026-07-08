@@ -63,8 +63,8 @@ public class RoomServiceImpl implements RoomService {
 
   @Override
   @Timed(value = "room.get")
-  public RoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomId) {
-    String key = cacheKey(tenantId, gameInstanceId, roomId);
+  public RoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
+    String key = cacheKey(tenantId, gameInstanceId, roomInstanceRowId);
     try {
       Object cached = redisTemplate.opsForValue().get(key);
       if (cached instanceof RoomDto dto) {
@@ -77,7 +77,8 @@ public class RoomServiceImpl implements RoomService {
     cacheMissCounter.increment();
     RoomDto dto =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
+                tenantId, gameInstanceId, roomInstanceRowId)
             .map(this::toDto)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     try {
@@ -92,10 +93,11 @@ public class RoomServiceImpl implements RoomService {
   @Timed(value = "room.snapshot")
   @Transactional(readOnly = true)
   public RoomSnapshotDto getRoomSnapshot(
-      Long tenantId, Long gameInstanceId, Long roomId, String preferredLocaleTag) {
+      Long tenantId, Long gameInstanceId, Long roomInstanceRowId, String preferredLocaleTag) {
     RoomInstance room =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
+                tenantId, gameInstanceId, roomInstanceRowId)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     long fromRoomInstanceRecordId = room.getId();
     List<RoomExitSnapshotDto> exits =
@@ -150,8 +152,8 @@ public class RoomServiceImpl implements RoomService {
     return description.substring(0, SHORT_DESCRIPTION_LENGTH) + "...";
   }
 
-  private String cacheKey(Long tenantId, Long gameInstanceId, Long roomId) {
-    return "room:" + tenantId + ":" + gameInstanceId + ":" + roomId;
+  private String cacheKey(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
+    return "room:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceRowId;
   }
 
   private RoomDto toDto(RoomInstance room) {

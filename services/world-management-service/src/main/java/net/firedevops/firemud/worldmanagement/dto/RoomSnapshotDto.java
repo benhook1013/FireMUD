@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 public record RoomSnapshotDto(
-    Long roomId,
+    Long roomInstanceRowId,
     Long tenantId,
     Long gameInstanceId,
     String roomName,
@@ -22,7 +22,7 @@ public record RoomSnapshotDto(
 
   public record RoomExitSnapshotDto(
       Long exitId,
-      Long targetRoomId,
+      Long targetRoomInstanceRowId,
       String targetRoomName,
       String direction,
       String label,

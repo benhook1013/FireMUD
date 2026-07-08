@@ -102,7 +102,7 @@ class RoomServiceImplTest {
     assertEquals("Candle-lit Antechamber", snapshot.roomName());
     assertEquals(longDesc, snapshot.longDescription());
     assertEquals(1, snapshot.exits().size());
-    assertEquals(2045L, snapshot.exits().get(0).targetRoomId().longValue());
+    assertEquals(2045L, snapshot.exits().get(0).targetRoomInstanceRowId().longValue());
     assertEquals("NORTH", snapshot.exits().get(0).direction());
   }
 

@@ -531,7 +531,7 @@ public class WorldManagementGrpcService
 
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
     RoomSnapshot.Builder builder = RoomSnapshot.newBuilder();
-    String runtimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(snapshot.roomId());
+    String runtimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(snapshot.roomInstanceRowId());
     builder
         .setRoomInstanceId(runtimeRoomInstanceId)
         .setTenantId(snapshot.tenantId().toString())
@@ -601,7 +601,8 @@ public class WorldManagementGrpcService
 
   private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
     RoomExitSnapshot.Builder builder = RoomExitSnapshot.newBuilder();
-    String targetRuntimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(exit.targetRoomId());
+    String targetRuntimeRoomInstanceId =
+        RuntimeRoomInstanceIds.canonical(exit.targetRoomInstanceRowId());
     builder
         .setExitId(exit.exitId().toString())
         .setTargetRoomInstanceId(targetRuntimeRoomInstanceId)
