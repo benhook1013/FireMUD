@@ -144,7 +144,7 @@ Cross-service LOOK read consistency is fence-based:
 Current World Management runtime room identity notes:
 
 - World Management emits canonical runtime room ids as opaque text in the form `R-<roomInstanceRowId>`.
-- World Management currently accepts legacy numeric-derived request forms like `R-1021`, `room-1021`, and `1021` at the gameplay bridge, but callers must treat the value as opaque and should not infer row-id semantics from that transitional shape.
+- World Management gameplay bridge readers fail closed on legacy `room-1021` or `1021` request forms; callers must send the canonical opaque runtime room id and must not infer row-id semantics from its shape.
 
 Illustrative `GetRoomSnapshot` fragments:
 

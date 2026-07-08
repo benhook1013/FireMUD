@@ -28,7 +28,7 @@ public record SessionContext(
   private static final long serialVersionUID = 1L;
   private static final String CANONICAL_RUNTIME_ROOM_PREFIX = "R-";
   private static final Pattern LEGACY_NUMERIC_RUNTIME_ROOM_ID_PATTERN =
-      Pattern.compile("^(?:room-)?([1-9][0-9]*)$");
+      Pattern.compile("^(?:room-)?([1-9][0-9]*)$", Pattern.CASE_INSENSITIVE);
 
   public SessionContext {
     loginName = loginName == null ? null : loginName.trim();

@@ -15,12 +15,16 @@ class SessionContextTest {
     SessionContext legacyPrefixed =
         new SessionContext(
             1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+    SessionContext legacyUppercasePrefixed =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "ROOM-1", "jwt");
     SessionContext syntheticProbe =
         new SessionContext(
             1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "readiness-room-1", "jwt");
 
     assertEquals("R-1", legacyNumeric.roomInstanceId());
     assertEquals("R-1", legacyPrefixed.roomInstanceId());
+    assertEquals("R-1", legacyUppercasePrefixed.roomInstanceId());
     assertEquals("readiness-room-1", syntheticProbe.roomInstanceId());
   }
 
