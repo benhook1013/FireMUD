@@ -71,6 +71,34 @@ class GameplaySessionAttestationServiceTest {
   }
 
   @Test
+  void requireGameplaySessionMatchRejectsLegacyRuntimeRoomIdClaim() {
+    String token =
+        jwtUtil.generateToken(
+            "gameplay-session:41",
+            Map.ofEntries(
+                Map.entry("attestationType", "GAMEPLAY_SESSION"),
+                Map.entry("tenantId", "22"),
+                Map.entry("sessionId", "41"),
+                Map.entry("accountId", "7"),
+                Map.entry("characterId", "123"),
+                Map.entry("gameInstanceId", "1"),
+                Map.entry("roomInstanceId", "room-1021"),
+                Map.entry("worldSlug", "demo"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("pointerVersion", "17"),
+                Map.entry("playableStateScope", "SHARED")));
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () ->
+                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
+  }
+
+  @Test
   void requireGameplaySessionMatchRejectsMismatchedAttestedRoutingScope() {
     String token =
         service.issueGameplaySessionAttestation(
@@ -292,6 +320,37 @@ class GameplaySessionAttestationServiceTest {
 
     assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
     assertEquals("Gameplay session attestation does not match roomInstanceId", ex.getMessage());
+  }
+
+  @Test
+  void issueGameplaySessionAttestationRejectsLegacyRuntimeRoomId() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.issueGameplaySessionAttestation(
+                    "22",
+                    "41",
+                    "7",
+                    "123",
+                    "1",
+                    "room-1021",
+                    "demo",
+                    "production",
+                    "17",
+                    "SHARED"));
+
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
+  }
+
+  @Test
+  void issueInternalProbeAttestationRejectsLegacyRuntimeRoomId() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.issueInternalProbeAttestation("22", "1", "room-1021"));
+
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
   }
 
   @Test
