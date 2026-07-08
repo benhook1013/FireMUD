@@ -42,5 +42,11 @@ grep -q '^FIREMUD_REDIS_PORT=6379$' "$ROOT_ENV_FILE"
 grep -q '^FIREMUD_AUTH_JWT_SECRET=existing-jwt-secret$' "$DOCKER_ENV_FILE"
 grep -q '^FIREMUD_REDIS_HOST=redis-cache$' "$DOCKER_ENV_FILE"
 grep -q '^FIREMUD_REDIS_PORT=6379$' "$DOCKER_ENV_FILE"
+grep -q 'ENSURE_ENV_SCRIPT="\$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"' \
+  "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh"
+grep -q 'bash "\$ENSURE_ENV_SCRIPT"' "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh"
+grep -q 'ENSURE_ENV_SCRIPT="\$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"' \
+  "$ROOT_DIR/dev-tools/verify-restart-state.sh"
+grep -q 'bash "\$ENSURE_ENV_SCRIPT"' "$ROOT_DIR/dev-tools/verify-restart-state.sh"
 
 echo "ensure local compose env contract checks passed"
