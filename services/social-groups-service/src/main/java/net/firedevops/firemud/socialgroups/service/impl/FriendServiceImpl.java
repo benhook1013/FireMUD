@@ -294,10 +294,7 @@ public class FriendServiceImpl implements FriendService {
 
     Map<Long, FriendPresenceDto> byAccountId = new LinkedHashMap<>();
     for (AccountPresenceEntry entry : response.getPresencesList()) {
-      Long friendAccountId = parseRequiredPositivePresenceId(entry.getAccountId(), "accountId");
-      if (friendAccountId == null) {
-        continue;
-      }
+      long friendAccountId = requirePositivePresenceId(entry.getAccountId(), "accountId");
       byAccountId.put(friendAccountId, mapPresence(friendAccountId, entry));
     }
     return byAccountId;
@@ -477,11 +474,12 @@ public class FriendServiceImpl implements FriendService {
     }
   }
 
-  private Long parseRequiredPositivePresenceId(String value, String fieldName) {
+  private long requirePositivePresenceId(String value, String fieldName) {
     try {
       return RequestIdValidation.requirePositiveLong(value, fieldName);
     } catch (IllegalArgumentException ex) {
-      return null;
+      throw new IllegalStateException(
+          "Malformed account presence " + fieldName + ": " + ex.getMessage(), ex);
     }
   }
 

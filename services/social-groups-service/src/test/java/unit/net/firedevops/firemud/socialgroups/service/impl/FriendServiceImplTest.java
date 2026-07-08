@@ -261,7 +261,7 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendsDropsPresenceRowsWithMalformedAccountId() {
+  void listFriendsRejectsMalformedPresenceAccountId() {
     AccountFriendLink sora = new AccountFriendLink();
     sora.setId(7L);
     sora.setTenantId(11L);
@@ -278,12 +278,38 @@ class FriendServiceImplTest {
                     AccountPresenceEntry.newBuilder().setAccountId("abc").setOnline(true).build())
                 .build());
 
-    var result = service.listFriends(11L, 2L, FriendRosterFilter.ALL);
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.listFriends(11L, 2L, FriendRosterFilter.ALL));
 
-    assertEquals(1, result.totalCount());
-    assertEquals(false, result.friends().getFirst().presence().online());
-    assertEquals(null, result.friends().getFirst().presence().characterName());
-    assertEquals(null, result.friends().getFirst().presence().gameInstanceId());
+    assertEquals(
+        "Malformed account presence accountId: accountId must be numeric", error.getMessage());
+  }
+
+  @Test
+  void listFriendPresenceRejectsMalformedPresenceAccountId() {
+    AccountFriendLink sora = new AccountFriendLink();
+    sora.setId(7L);
+    sora.setTenantId(11L);
+    sora.setAccountId(2L);
+    sora.setFriendAccountId(3L);
+    sora.setStatus("active");
+    sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(sora));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder().setAccountId("abc").setOnline(true).build())
+                .build());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.listFriendPresence(11L, 2L));
+
+    assertEquals(
+        "Malformed account presence accountId: accountId must be numeric", error.getMessage());
   }
 
   @Test
