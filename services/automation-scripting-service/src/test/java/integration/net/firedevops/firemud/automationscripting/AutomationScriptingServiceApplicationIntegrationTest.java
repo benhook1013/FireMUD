@@ -2,6 +2,12 @@ package net.firedevops.firemud.automationscripting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -34,6 +40,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class AutomationScriptingServiceApplicationIntegrationTest {
+  private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final JwtUtil JWT_UTIL =
+      new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
+
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -54,5 +64,28 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void pingEndpointReturnsPong() {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
+  }
+
+  @Test
+  void adjustReputationRejectsMalformedPlayableStateScopeWithInvalidArgumentEnvelope()
+      throws Exception {
+    String token =
+        JWT_UTIL.generateToken(
+            "automation-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/factions/1/reputation?tenantId=1&characterId=2&gameInstanceId=GI-1&playableStateScope=NOPE&delta=1"))
+            .header("Authorization", "Bearer " + token)
+            .method("PATCH", HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"playableStateScope is invalid\"");
   }
 }

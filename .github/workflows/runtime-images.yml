@@ -14,6 +14,7 @@ on:
       - '.github/workflows/runtime-images.yml'
       - '.github/workflows/smoke.yml'
       - '.github/workflows/smoke-full.yml'
+      - 'services/common-library/**'
       - 'services/common-data-runtime/**'
       - 'services/common-platform-core/**'
       - 'services/common-saga/**'

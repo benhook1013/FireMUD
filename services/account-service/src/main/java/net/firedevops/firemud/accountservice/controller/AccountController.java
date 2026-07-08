@@ -71,10 +71,11 @@ public class AccountController {
   public ResponseEntity<ApiResponse<Void>> linkExternalAccount(
       @PathVariable String accountId, @Valid @RequestBody LinkExternalAccountRequest request) {
     long parsedAccountId = requireAccountId(accountId);
-    SessionContext.requireAccountAccess(request.tenantId(), parsedAccountId);
+    long parsedTenantId = requireTenantId(request.tenantId());
+    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     accountService.linkExternalAccount(
         new LinkExternalAccountRequest(
-            request.tenantId(), parsedAccountId, request.provider(), request.externalId()));
+            parsedTenantId, parsedAccountId, request.provider(), request.externalId()));
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 
@@ -91,6 +92,10 @@ public class AccountController {
   }
 
   private long requireTenantId(String tenantId) {
+    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+  }
+
+  private long requireTenantId(Long tenantId) {
     return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }

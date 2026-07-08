@@ -80,7 +80,7 @@ aws_access_key_id=<same-local-user>
 aws_secret_access_key=<same-local-password>'
 ```
 
-Run the helper script to deploy MinIO, create the bucket, and install Velero. The helper creates or updates `minio-creds` and `velero-minio-creds` for you; set `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` first if you do not want it to generate a local password automatically:
+Run the helper script to deploy MinIO, create the bucket, and install Velero. The helper creates the `minio` and `velero` namespaces as needed, creates or updates `minio-creds` and `velero-minio-creds` for you, and reuses the existing MinIO secret on reruns unless you explicitly override `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`:
 
 ```bash
 dev-tools/backups/setup-local-backup.sh

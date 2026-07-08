@@ -87,4 +87,67 @@ class AccountApplicationIntegrationTest {
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
   }
+
+  @Test
+  void linkExternalRejectsInvalidBodyWithInvalidArgumentEnvelope() throws Exception {
+    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts/2/external"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"accountId":2,"provider":"","externalId":"demo"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"provider must not be blank\"");
+  }
+
+  @Test
+  void linkExternalRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
+    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts/2/external"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":0,"accountId":2,"provider":"steam","externalId":"demo"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"tenantId must be positive\"");
+  }
+
+  @Test
+  void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
+    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .PUT(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":0,"accountId":2,"displayName":"demo","bio":"bio","presenceVisibilityPolicy":"PRIVATE"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"tenantId must be positive\"");
+  }
 }

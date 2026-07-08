@@ -37,4 +37,32 @@ class RequestIdValidationTest {
             () -> RequestIdValidation.parseOptionalPositiveLong("abc", "recipientId"));
     assertEquals("recipientId must be numeric", malformed.getMessage());
   }
+
+  @Test
+  void requirePositiveLongFromBoxedValueRejectsNullAndNonPositiveValues() {
+    assertEquals(7L, RequestIdValidation.requirePositiveLong(Long.valueOf(7L), "tenantId"));
+
+    IllegalArgumentException missing =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.requirePositiveLong((Long) null, "tenantId"));
+    assertEquals("tenantId is required", missing.getMessage());
+
+    IllegalArgumentException nonPositive =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.requirePositiveLong(Long.valueOf(0L), "tenantId"));
+    assertEquals("tenantId must be positive", nonPositive.getMessage());
+  }
+
+  @Test
+  void requirePositiveIntRejectsOversizedValues() {
+    assertEquals(7, RequestIdValidation.requirePositiveInt("7", "ordinal"));
+
+    IllegalArgumentException oversized =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.requirePositiveInt("2147483648", "ordinal"));
+    assertEquals("ordinal must fit in a 32-bit integer", oversized.getMessage());
+  }
 }

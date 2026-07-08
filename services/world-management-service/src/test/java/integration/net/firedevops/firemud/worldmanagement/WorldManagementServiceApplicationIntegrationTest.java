@@ -83,4 +83,44 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"tenantId must be numeric\"");
   }
+
+  @Test
+  void moveRegionRejectsMalformedShardIdWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/regions/4/move?tenantId=1&shardId=bad"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"shardId must be numeric\"");
+  }
+
+  @Test
+  void saveRuleRejectsMalformedBodyWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":"bad","name":"room","scopeType":"ZONE_SUBTREE","scopeId":"12","value":"{}"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"Request body is malformed\"");
+  }
 }

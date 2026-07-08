@@ -2,7 +2,6 @@ package net.firedevops.firemud.loggingadmin.controller;
 
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupDto;
 import net.firedevops.firemud.loggingadmin.dto.RemoteFollowupListRequest;
 import net.firedevops.firemud.loggingadmin.service.RemoteFollowupService;
@@ -27,10 +26,14 @@ public class RemoteFollowupController {
       value = "getRemoteFollowup",
       description = "Read canonical remote followup by tenant-qualified followup id")
   public ResponseEntity<ApiResponse<RemoteFollowupDto>> getRemoteFollowup(
-      @PathVariable long tenantId, @PathVariable String followupId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(remoteFollowupService.getRemoteFollowup(tenantId, followupId)));
+      @PathVariable String tenantId, @PathVariable String followupId) {
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  remoteFollowupService.getRemoteFollowup(parsedTenantId, followupId)));
+        });
   }
 
   @GetMapping("/{tenantId}")
@@ -39,9 +42,13 @@ public class RemoteFollowupController {
       description =
           "List canonical remote followups for a tenant with durable control-plane filters")
   public ResponseEntity<ApiResponse<java.util.List<RemoteFollowupDto>>> listRemoteFollowups(
-      @PathVariable long tenantId, @ModelAttribute RemoteFollowupListRequest request) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(remoteFollowupService.listRemoteFollowups(tenantId, request)));
+      @PathVariable String tenantId, @ModelAttribute RemoteFollowupListRequest request) {
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  remoteFollowupService.listRemoteFollowups(parsedTenantId, request)));
+        });
   }
 }

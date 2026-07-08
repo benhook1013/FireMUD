@@ -164,4 +164,23 @@ class ProfileControllerTest {
 
     verifyNoInteractions(accountService);
   }
+
+  @Test
+  void updateProfileRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    UpdateProfileRequest req =
+        new UpdateProfileRequest(0L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+
+    mockMvc
+        .perform(
+            put("/profiles/2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
 }

@@ -19,4 +19,22 @@ public final class RequestIdValidation {
   public static Long parseOptionalPositiveLong(String value, String fieldName) {
     return value == null || value.isBlank() ? null : requirePositiveLong(value, fieldName);
   }
+
+  public static long requirePositiveLong(Long value, String fieldName) {
+    if (value == null) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+    if (value <= 0L) {
+      throw new IllegalArgumentException(fieldName + " must be positive");
+    }
+    return value;
+  }
+
+  public static int requirePositiveInt(String value, String fieldName) {
+    long parsed = requirePositiveLong(value, fieldName);
+    if (parsed > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException(fieldName + " must fit in a 32-bit integer");
+    }
+    return (int) parsed;
+  }
 }

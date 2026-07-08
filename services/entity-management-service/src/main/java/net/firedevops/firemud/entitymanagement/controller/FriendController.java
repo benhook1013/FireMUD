@@ -62,6 +62,8 @@ public class FriendController {
     return withBadRequest(
         () -> {
           CharacterScope scope = requireCharacterScope(tenantId, characterId);
+          long parsedFriendId =
+              RequestIdValidation.requirePositiveLong(request.friendId(), "friendId");
           SessionContext.requireTenantAccess(scope.tenantId());
           CharacterFriendDto dto =
               friendService.addFriend(
@@ -69,7 +71,7 @@ public class FriendController {
                   scope.characterId(),
                   gameInstanceId,
                   playableStateScope,
-                  request.friendId());
+                  parsedFriendId);
           return ResponseEntity.ok(ApiResponse.success(dto));
         });
   }

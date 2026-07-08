@@ -76,6 +76,7 @@ jobs:
               "config/protobuf/",
               "config/security/",
               "config/spotbugs/",
+              "services/common-library/",
               "services/common-data-runtime/",
               "services/common-platform-core/",
               "services/common-saga/",

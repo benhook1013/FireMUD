@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -72,6 +73,22 @@ class RemoteCommandCoordinatorControllerTest {
   }
 
   @Test
+  void getRemoteCommandCoordinatorRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-command-coordinators/not-a-number/coord-123")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(remoteCommandCoordinatorService);
+  }
+
+  @Test
   void listRemoteCommandCoordinatorsReturnsBoundedRows() throws Exception {
     when(remoteCommandCoordinatorService.listRemoteCommandCoordinators(
             org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
@@ -87,6 +104,22 @@ class RemoteCommandCoordinatorControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].coordinatorId").value("coord-123"));
+  }
+
+  @Test
+  void listRemoteCommandCoordinatorsRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-command-coordinators/0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(remoteCommandCoordinatorService);
   }
 
   private RemoteCommandCoordinatorDto remoteCommandCoordinatorDto() {

@@ -78,4 +78,30 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("pong");
   }
+
+  @Test
+  void remoteFollowupsRejectMalformedPointerVersionWithInvalidArgumentEnvelope() throws Exception {
+    String token = tenantAdminToken(1L);
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/remote-followups/1?pointerVersion=abc"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"pointerVersion");
+  }
+
+  private String tenantAdminToken(long tenantId) {
+    return JWT_UTIL.generateToken(
+        "logging-admin-test",
+        Map.of(
+            "accountId", "42",
+            "globalRoles", java.util.List.of("platformAdmin"),
+            "scopedRoles", Map.of(Long.toString(tenantId), java.util.List.of("tenantAdmin"))));
+  }
 }

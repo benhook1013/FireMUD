@@ -43,11 +43,12 @@ public class ProfileController {
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
     long parsedAccountId = requireAccountId(accountId);
-    SessionContext.requireAccountAccess(request.tenantId(), parsedAccountId);
+    long parsedTenantId = requireTenantId(request.tenantId());
+    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(
-                request.tenantId(),
+                parsedTenantId,
                 parsedAccountId,
                 request.displayName(),
                 request.bio(),
@@ -60,6 +61,10 @@ public class ProfileController {
   }
 
   private long requireTenantId(String tenantId) {
+    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+  }
+
+  private long requireTenantId(Long tenantId) {
     return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }

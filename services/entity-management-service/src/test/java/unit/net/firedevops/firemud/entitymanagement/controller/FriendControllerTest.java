@@ -142,6 +142,23 @@ class FriendControllerTest {
     verifyNoInteractions(friendService);
   }
 
+  @Test
+  void addRejectsZeroFriendIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/tenants/1/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1"))
+                .content("{\"friendId\":0}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("friendId must be positive"));
+
+    verifyNoInteractions(friendService);
+  }
+
   private String tenantToken(String tenantId) {
     return jwtUtil.generateToken(
         "test-account", Map.of("scopedRoles", Map.of(tenantId, List.of("tenantAdmin"))));

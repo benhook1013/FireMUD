@@ -77,6 +77,7 @@ jobs:
               "docker/",
               "services/account-service/",
               "services/automation-scripting-service/",
+              "services/common-library/",
               "services/common-data-runtime/",
               "services/common-platform-core/",
               "services/common-saga/",

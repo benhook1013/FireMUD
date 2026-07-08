@@ -31,30 +31,42 @@ public class TickRemediationController {
       value = "tickRemediationStatus",
       description = "Read durable runtime ownership status for a scoped runtime target")
   public ResponseEntity<ApiResponse<RuntimeOwnershipStatusDto>> getRuntimeOwnershipStatus(
-      @PathVariable long tenantId,
+      @PathVariable String tenantId,
       @RequestParam(required = false) String gameInstanceId,
       @RequestParam(required = false) String regionId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            tickRemediationService.getRuntimeOwnershipStatus(tenantId, gameInstanceId, regionId)));
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  tickRemediationService.getRuntimeOwnershipStatus(
+                      parsedTenantId, gameInstanceId, regionId)));
+        });
   }
 
   @PostMapping("/pause")
   @Timed(value = "tickRemediationPause", description = "Pause ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> pause(
       @Valid @RequestBody TickRemediationRequest request) {
-    SessionContext.requireTenantAccess(request.tenantId());
     return ResponseEntity.ok(
-        ApiResponse.success(tickRemediationService.pauseTicksForScope(request)));
+        ApiResponse.success(
+            tickRemediationService.pauseTicksForScope(
+                requestWithAuthorizedTenant(request, request.tenantId()))));
   }
 
   @PostMapping("/resume")
   @Timed(value = "tickRemediationResume", description = "Resume ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> resume(
       @Valid @RequestBody TickRemediationRequest request) {
-    SessionContext.requireTenantAccess(request.tenantId());
     return ResponseEntity.ok(
-        ApiResponse.success(tickRemediationService.resumeTicksForScope(request)));
+        ApiResponse.success(
+            tickRemediationService.resumeTicksForScope(
+                requestWithAuthorizedTenant(request, request.tenantId()))));
+  }
+
+  private TickRemediationRequest requestWithAuthorizedTenant(
+      TickRemediationRequest request, Long tenantId) {
+    SessionContext.requireTenantAccess(tenantId);
+    return request;
   }
 }

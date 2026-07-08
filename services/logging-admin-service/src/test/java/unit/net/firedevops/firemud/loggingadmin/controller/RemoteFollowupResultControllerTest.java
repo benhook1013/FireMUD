@@ -75,6 +75,22 @@ class RemoteFollowupResultControllerTest {
   }
 
   @Test
+  void getRemoteFollowupResultRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-followup-results/not-a-number/rr-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(remoteFollowupResultService);
+  }
+
+  @Test
   void listRemoteFollowupResultsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupResultService.listRemoteFollowupResults(
             org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
@@ -109,6 +125,21 @@ class RemoteFollowupResultControllerTest {
         .perform(
             get("/remote-followup-results/2").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+
+    verifyNoInteractions(remoteFollowupResultService);
+  }
+
+  @Test
+  void listRemoteFollowupResultsRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-followup-results/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
 
     verifyNoInteractions(remoteFollowupResultService);
   }

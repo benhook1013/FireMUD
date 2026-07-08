@@ -223,6 +223,23 @@ class FriendControllerTest {
   }
 
   @Test
+  void getFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            get("/friends/entry/not-a-number")
+                .param("tenantId", "1")
+                .param("accountId", "2")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("ordinal must be numeric"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
+  }
+
+  @Test
   void listFriendPresenceReturnsPresenceList() throws Exception {
     when(friendService.listFriendPresence(
             1L, 2L, net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY))
@@ -471,5 +488,22 @@ class FriendControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.friendAccountId").value(3L));
+  }
+
+  @Test
+  void removeFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            delete("/friends/entry/not-a-number")
+                .param("tenantId", "1")
+                .param("accountId", "2")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("ordinal must be numeric"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
   }
 }

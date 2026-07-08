@@ -96,13 +96,14 @@ public class FriendController {
 
   @GetMapping("/entry/{ordinal}")
   public ResponseEntity<ApiResponse<FriendRosterEntryDto>> getFriendByOrdinal(
-      @PathVariable int ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
+      @PathVariable String ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
     return withBadRequest(
         () -> {
+          int parsedOrdinal = requireOrdinal(ordinal);
           AccountScope scope = requireAccountScope(tenantId, accountId);
           socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
           return friendService
-              .getFriendByOrdinal(scope.tenantId(), scope.accountId(), ordinal)
+              .getFriendByOrdinal(scope.tenantId(), scope.accountId(), parsedOrdinal)
               .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
               .orElseGet(
                   () ->
@@ -111,7 +112,7 @@ public class FriendController {
                               ApiResponse.error(
                                   new ErrorDetail(
                                       "FRIEND_NOT_FOUND",
-                                      "Friend not found for ordinal=" + ordinal))));
+                                      "Friend not found for ordinal=" + parsedOrdinal))));
         });
   }
 
@@ -145,13 +146,14 @@ public class FriendController {
 
   @DeleteMapping("/entry/{ordinal}")
   public ResponseEntity<ApiResponse<FriendRosterEntryDto>> removeFriendByOrdinal(
-      @PathVariable int ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
+      @PathVariable String ordinal, @RequestParam String tenantId, @RequestParam String accountId) {
     return withBadRequest(
         () -> {
+          int parsedOrdinal = requireOrdinal(ordinal);
           AccountScope scope = requireAccountScope(tenantId, accountId);
           socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
           return friendService
-              .removeFriendByOrdinal(scope.tenantId(), scope.accountId(), ordinal)
+              .removeFriendByOrdinal(scope.tenantId(), scope.accountId(), parsedOrdinal)
               .map(dto -> ResponseEntity.ok(ApiResponse.success(dto)))
               .orElseGet(
                   () ->
@@ -160,7 +162,7 @@ public class FriendController {
                               ApiResponse.error(
                                   new ErrorDetail(
                                       "FRIEND_NOT_FOUND",
-                                      "Friend not found for ordinal=" + ordinal))));
+                                      "Friend not found for ordinal=" + parsedOrdinal))));
         });
   }
 
@@ -214,6 +216,10 @@ public class FriendController {
 
   private long requireFriendAccountId(String friendAccountId) {
     return RequestIdValidation.requirePositiveLong(friendAccountId, "friendAccountId");
+  }
+
+  private int requireOrdinal(String ordinal) {
+    return RequestIdValidation.requirePositiveInt(ordinal, "ordinal");
   }
 
   private AccountScope requireAccountScope(String tenantId, String accountId) {

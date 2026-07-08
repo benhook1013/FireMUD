@@ -339,6 +339,7 @@ grep -q "reason=1 unresolved outdated CodeRabbit thread(s) remain; resolve them 
 expect_failure_output "$TMP_DIR/stale-review.json" "$TMP_DIR/stale-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "explicit_review_after_latest_commit=false" "$TMP_DIR/stale-review.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/stale-review.out"
 grep -q "reason=no explicit CodeRabbit review request found after the latest PR commit" "$TMP_DIR/stale-review.out"
 
 expect_failure_output "$TMP_DIR/unresolved-non-outdated.json" "$TMP_DIR/unresolved-non-outdated.out"
@@ -352,6 +353,7 @@ grep -q "reason=1 unresolved non-outdated CodeRabbit thread(s) remain" "$TMP_DIR
 expect_failure_output "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-not-finished.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-not-finished.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no completed CodeRabbit review found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
 
 expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"

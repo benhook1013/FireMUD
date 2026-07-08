@@ -13,6 +13,7 @@ import java.util.Map;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
@@ -175,6 +176,24 @@ class AccountControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void linkExternalRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    LinkExternalAccountRequest request = new LinkExternalAccountRequest(0L, 2L, "steam", "demo");
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+
+    mockMvc
+        .perform(
+            post("/accounts/2/external")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
 
     verifyNoInteractions(accountService);
   }

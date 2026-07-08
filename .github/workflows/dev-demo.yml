@@ -405,13 +405,13 @@ jobs:
             )
             print(f"Demo account creation attempt returned {status}")
             if status < 400 or status == 409:
-              return
+              return True
             if status >= 500:
               print(
                 "Demo account creation returned a transient error; "
-                "retrying player bootstrap without reissuing account creation"
+                "will retry account creation on the next unauthorized bootstrap attempt"
               )
-              return
+              return False
             raise SystemExit(
               "Dev-demo account creation failed with status "
               f"{status}: {sanitize_error_body(body)}"
@@ -422,7 +422,7 @@ jobs:
             attempt = 1
             last_status = None
             last_body = None
-            account_create_attempted = False
+            account_create_confirmed = False
             while time.time() < deadline:
               status, bootstrap_body = post_json(
                 public_account_url("/auth/player-bootstrap"),
@@ -438,9 +438,8 @@ jobs:
               last_status = status
               last_body = bootstrap_body
               if status == 401:
-                if not account_create_attempted:
-                  ensure_demo_account()
-                  account_create_attempted = True
+                if not account_create_confirmed:
+                  account_create_confirmed = ensure_demo_account()
                 attempt += 1
                 time.sleep(2)
                 continue

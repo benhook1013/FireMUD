@@ -2,7 +2,6 @@ package net.firedevops.firemud.loggingadmin.controller;
 
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorDto;
 import net.firedevops.firemud.loggingadmin.dto.RemoteCommandCoordinatorListRequest;
 import net.firedevops.firemud.loggingadmin.service.RemoteCommandCoordinatorService;
@@ -29,12 +28,16 @@ public class RemoteCommandCoordinatorController {
       description = "List canonical remote command coordinators for a tenant with bounded filters")
   public ResponseEntity<ApiResponse<java.util.List<RemoteCommandCoordinatorDto>>>
       listRemoteCommandCoordinators(
-          @PathVariable long tenantId,
+          @PathVariable String tenantId,
           @ModelAttribute RemoteCommandCoordinatorListRequest request) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            remoteCommandCoordinatorService.listRemoteCommandCoordinators(tenantId, request)));
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  remoteCommandCoordinatorService.listRemoteCommandCoordinators(
+                      parsedTenantId, request)));
+        });
   }
 
   @GetMapping("/{tenantId}/{coordinatorId}")
@@ -42,10 +45,14 @@ public class RemoteCommandCoordinatorController {
       value = "getRemoteCommandCoordinator",
       description = "Read canonical remote command coordinator by tenant-qualified coordinator id")
   public ResponseEntity<ApiResponse<RemoteCommandCoordinatorDto>> getRemoteCommandCoordinator(
-      @PathVariable long tenantId, @PathVariable String coordinatorId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            remoteCommandCoordinatorService.getRemoteCommandCoordinator(tenantId, coordinatorId)));
+      @PathVariable String tenantId, @PathVariable String coordinatorId) {
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  remoteCommandCoordinatorService.getRemoteCommandCoordinator(
+                      parsedTenantId, coordinatorId)));
+        });
   }
 }
