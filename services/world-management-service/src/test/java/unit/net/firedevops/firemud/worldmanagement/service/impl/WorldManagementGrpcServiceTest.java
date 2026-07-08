@@ -781,7 +781,7 @@ class WorldManagementGrpcServiceTest {
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setGameInstanceId("41")
-                    .setRoomInstanceId("room-1")
+                    .setRoomInstanceId("R-1")
                     .build())
             .build(),
         new StreamObserver<>() {
@@ -892,7 +892,7 @@ class WorldManagementGrpcServiceTest {
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setGameInstanceId("41")
-                    .setRoomInstanceId("room-1")
+                    .setRoomInstanceId("R-1")
                     .build())
             .build(),
         new StreamObserver<>() {

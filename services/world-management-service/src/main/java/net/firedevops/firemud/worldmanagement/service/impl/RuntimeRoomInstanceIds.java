@@ -7,7 +7,7 @@ import net.firedevops.firemud.common.security.RequestIdValidation;
 final class RuntimeRoomInstanceIds {
   private static final String CANONICAL_PREFIX = "R-";
   private static final Pattern RUNTIME_ROOM_INSTANCE_ROW_ID_PATTERN =
-      Pattern.compile("^(?:R-|room-)?([1-9][0-9]*)$");
+      Pattern.compile("^R-([1-9][0-9]*)$");
 
   private RuntimeRoomInstanceIds() {}
 

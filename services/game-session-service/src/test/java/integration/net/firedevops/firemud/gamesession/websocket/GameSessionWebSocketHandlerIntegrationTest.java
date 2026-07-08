@@ -670,7 +670,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketLocaleHeaderAppliesToBuiltInLookRendering() throws Exception {
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1707").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1707").build())
             .setRoomName("Galerie")
             .setShortDescription("Un couloir etroit file vers le sud.")
             .setLongDescription("Des lampes fument sous les arches de pierre.")

@@ -14,6 +14,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -57,6 +59,8 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean
   private GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
+  @MockitoBean private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
+
   @MockitoBean
   private org.springframework.data.redis.connection.RedisConnectionFactory redisConnectionFactory;
 
@@ -96,6 +100,8 @@ class GameSessionLoginIntegrationTest {
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
+    when(sharedSettingsAuthorityReader.readOverrides(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(ScopedSettingsSnapshot.empty());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     GameInstance instance = new GameInstance();

@@ -1171,7 +1171,7 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
-    Mockito.when(roomEntityService.listEntities("1", "2", "3"))
+    Mockito.when(roomEntityService.listEntities("1", "2", "R-3"))
         .thenReturn(
             List.of(
                 new RoomEntityDto(
@@ -1202,7 +1202,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
                     .setTenantId("1")
                     .setGameInstanceId("2")
-                    .setRoomInstanceId("3")
+                    .setRoomInstanceId("R-3")
                     .build())
             .setSessionAttestation("probe")
             .build(),
@@ -1259,7 +1259,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
                     .setTenantId("2")
                     .setGameInstanceId("3")
-                    .setRoomInstanceId("4")
+                    .setRoomInstanceId("R-4")
                     .build())
             .setSessionAttestation("probe")
             .build(),
