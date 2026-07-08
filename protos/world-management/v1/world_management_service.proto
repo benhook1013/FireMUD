@@ -133,8 +133,17 @@ message GetRoomRequest {
   string session_attestation = 3;
 }
 
+message RuntimeRoom {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string room_instance_id = 3;
+  string region_id = 4;
+  string name = 5;
+  string description = 6;
+}
+
 message GetRoomResponse {
-  string room_json = 1;
+  RuntimeRoom room = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

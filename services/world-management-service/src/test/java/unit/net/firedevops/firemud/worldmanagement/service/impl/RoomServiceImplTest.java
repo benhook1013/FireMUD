@@ -68,6 +68,7 @@ class RoomServiceImplTest {
 
     assertEquals("A", first.name());
     assertEquals(1L, first.roomInstanceRowId());
+    assertEquals(41L, first.gameInstanceId());
     verify(valueOps).set("room:1:41:1", first, java.time.Duration.ofSeconds(1));
 
     when(valueOps.get("room:1:41:1")).thenReturn(first);

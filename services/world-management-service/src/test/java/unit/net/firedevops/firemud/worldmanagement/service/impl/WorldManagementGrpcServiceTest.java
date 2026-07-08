@@ -590,14 +590,14 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void getRoomReturnsRuntimeRoomJsonWithCanonicalRowIdFieldName() {
+  void getRoomReturnsTypedRuntimeRoomPayload() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     Mockito.when(roomService.getRoom(1L, 41L, 1L))
-        .thenReturn(new RuntimeRoomDto(1L, 1L, 7L, "Room A", "Seed room A"));
+        .thenReturn(new RuntimeRoomDto(1L, 1L, 41L, 7L, "Room A", "Seed room A"));
     WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
@@ -625,9 +625,12 @@ class WorldManagementGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals(
-        "{\"roomInstanceRowId\":1,\"tenantId\":1,\"regionId\":7,\"name\":\"Room A\",\"description\":\"Seed room A\"}",
-        ref.get().getRoomJson());
+    assertEquals("1", ref.get().getRoom().getTenantId());
+    assertEquals("41", ref.get().getRoom().getGameInstanceId());
+    assertEquals("R-1", ref.get().getRoom().getRoomInstanceId());
+    assertEquals("7", ref.get().getRoom().getRegionId());
+    assertEquals("Room A", ref.get().getRoom().getName());
+    assertEquals("Seed room A", ref.get().getRoom().getDescription());
   }
 
   @Test

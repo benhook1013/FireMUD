@@ -160,6 +160,7 @@ public class RoomServiceImpl implements RoomService {
     return new RuntimeRoomDto(
         room.getRoomInstanceRowId(),
         room.getTenantId(),
+        room.getGameInstanceId(),
         room.getZoneInstance().getRegionInstance().getId(),
         room.getName(),
         room.getDescription());

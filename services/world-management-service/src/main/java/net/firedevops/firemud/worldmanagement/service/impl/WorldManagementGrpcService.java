@@ -51,6 +51,7 @@ import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.RuntimeRoom;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult;
@@ -67,7 +68,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
@@ -419,15 +419,15 @@ public class WorldManagementGrpcService
           roomScope.gameInstanceIdText(),
           roomScope.roomInstanceIdText());
       requireTenantAccessWhenPresent(roomScope.tenantId());
-      Optional<String> json =
+      Optional<RuntimeRoom> room =
           Optional.ofNullable(
                   roomService.getRoom(
                       roomScope.tenantId(),
                       roomScope.gameInstanceId(),
                       roomScope.roomInstanceRowId()))
-              .map(this::toJson);
-      if (json.isPresent()) {
-        GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
+              .map(this::toProto);
+      if (room.isPresent()) {
+        GetRoomResponse response = GetRoomResponse.newBuilder().setRoom(room.get()).build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       } else {
@@ -620,12 +620,15 @@ public class WorldManagementGrpcService
     return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
-  private String toJson(RuntimeRoomDto dto) {
-    try {
-      return objectMapper.writeValueAsString(dto);
-    } catch (JacksonException e) {
-      throw new RuntimeException("Failed to serialize room", e);
-    }
+  private RuntimeRoom toProto(RuntimeRoomDto dto) {
+    return RuntimeRoom.newBuilder()
+        .setTenantId(Long.toString(dto.tenantId()))
+        .setGameInstanceId(Long.toString(dto.gameInstanceId()))
+        .setRoomInstanceId(RuntimeRoomInstanceIds.canonical(dto.roomInstanceRowId()))
+        .setRegionId(Long.toString(dto.regionId()))
+        .setName(dto.name() == null ? "" : dto.name())
+        .setDescription(dto.description() == null ? "" : dto.description())
+        .build();
   }
 
   private String errorCodeFor(IllegalArgumentException ex) {
