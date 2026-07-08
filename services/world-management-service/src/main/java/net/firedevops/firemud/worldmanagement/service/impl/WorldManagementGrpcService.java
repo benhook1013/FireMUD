@@ -530,16 +530,17 @@ public class WorldManagementGrpcService
   }
 
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
-    RoomSnapshot.Builder builder =
-        RoomSnapshot.newBuilder()
-            .setRoomInstanceId(snapshot.roomId().toString())
-            .setTenantId(snapshot.tenantId().toString())
-            .setGameInstanceId(snapshot.gameInstanceId().toString())
-            .setWorldSnapshotId(
-                readFence(snapshot.tenantId(), snapshot.gameInstanceId(), snapshot.roomId()))
-            .setRoomName(snapshot.roomName())
-            .setShortDescription(snapshot.shortDescription())
-            .setLongDescription(snapshot.longDescription());
+    RoomSnapshot.Builder builder = RoomSnapshot.newBuilder();
+    String runtimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(snapshot.roomId());
+    builder
+        .setRoomInstanceId(runtimeRoomInstanceId)
+        .setTenantId(snapshot.tenantId().toString())
+        .setGameInstanceId(snapshot.gameInstanceId().toString())
+        .setWorldSnapshotId(
+            readFence(snapshot.tenantId(), snapshot.gameInstanceId(), runtimeRoomInstanceId))
+        .setRoomName(snapshot.roomName())
+        .setShortDescription(snapshot.shortDescription())
+        .setLongDescription(snapshot.longDescription());
     snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
     if (snapshot.ambientState() != null) {
       applyAmbientState(builder, snapshot);
@@ -599,22 +600,23 @@ public class WorldManagementGrpcService
   }
 
   private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
-    RoomExitSnapshot.Builder builder =
-        RoomExitSnapshot.newBuilder()
-            .setExitId(exit.exitId().toString())
-            .setTargetRoomInstanceId(exit.targetRoomId().toString())
-            .setTargetRoomName(exit.targetRoomName())
-            .setDirection(exit.direction())
-            .setLabel(exit.label())
-            .setDescription(exit.description());
+    RoomExitSnapshot.Builder builder = RoomExitSnapshot.newBuilder();
+    String targetRuntimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(exit.targetRoomId());
+    builder
+        .setExitId(exit.exitId().toString())
+        .setTargetRoomInstanceId(targetRuntimeRoomInstanceId)
+        .setTargetRoomName(exit.targetRoomName())
+        .setDirection(exit.direction())
+        .setLabel(exit.label())
+        .setDescription(exit.description());
     if (exit.cost() != null) {
       builder.setCost(exit.cost());
     }
     return builder.build();
   }
 
-  private String readFence(long tenantId, long gameInstanceId, long roomInstanceRowId) {
-    return tenantId + ":" + gameInstanceId + ":" + roomInstanceRowId;
+  private String readFence(long tenantId, long gameInstanceId, String roomInstanceId) {
+    return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
   private String toJson(RoomDto dto) {
@@ -852,7 +854,7 @@ public class WorldManagementGrpcService
     return new GameplayRoomScope(
         tenantId,
         RequestIdValidation.requirePositiveLong(gameInstanceIdText, "gameInstanceId"),
-        RequestIdValidation.requirePositiveLong(roomInstanceIdText, "roomInstanceId"),
+        RuntimeRoomInstanceIds.requireRowId(roomInstanceIdText),
         tenantIdText,
         gameInstanceIdText,
         roomInstanceIdText);

@@ -141,14 +141,19 @@ Cross-service LOOK read consistency is fence-based:
 - Entity Management must either answer with a matching same-scope fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
 - If fences do not match, Game Logic retries composition instead of returning mixed-state output.
 
+Current World Management runtime room identity notes:
+
+- World Management emits canonical runtime room ids as opaque text in the form `R-<roomInstanceRowId>`.
+- World Management currently accepts legacy numeric-derived request forms like `R-1021`, `room-1021`, and `1021` at the gameplay bridge, but callers must treat the value as opaque and should not infer row-id semantics from that transitional shape.
+
 Illustrative `GetRoomSnapshot` fragments:
 
 ```json
 {
   "tenantId": "t1",
   "gameInstanceId": "g1",
-  "roomInstanceId": "room-antechamber",
-  "worldSnapshotId": "t1:g1:room-antechamber",
+  "roomInstanceId": "R-1021",
+  "worldSnapshotId": "t1:g1:R-1021",
   "roomName": "Candle-lit Antechamber"
 }
 ```
