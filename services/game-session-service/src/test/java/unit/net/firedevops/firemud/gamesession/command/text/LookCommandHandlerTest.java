@@ -54,7 +54,7 @@ class LookCommandHandlerTest {
           lookCacheService,
           outputRenderer);
   private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt");
+      new SessionContext(1L, 22L, 123L, 911L, 0L, "R-42", "jwt");
   private final LookResult lookResult =
       LookResult.newBuilder()
           .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
@@ -67,7 +67,7 @@ class LookCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext(
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
-    when(gameLogicClient.resolveLook(sessionContext, "room-42", "")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(sessionContext, "R-42", "")).thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(false),
@@ -115,7 +115,7 @@ class LookCommandHandlerTest {
 
   @Test
   void mapsLookErrorResponseToErrorPlayerOutput() {
-    when(gameLogicClient.resolveLook(sessionContext, "room-42", ""))
+    when(gameLogicClient.resolveLook(sessionContext, "R-42", ""))
         .thenReturn(
             lookResult.toBuilder()
                 .setError(
@@ -143,7 +143,7 @@ class LookCommandHandlerTest {
   void propagatesInfrastructureFailuresFromGrpcAsBefore() {
     StatusRuntimeException worldDown =
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
-    when(gameLogicClient.resolveLook(sessionContext, "room-42", "")).thenThrow(worldDown);
+    when(gameLogicClient.resolveLook(sessionContext, "R-42", "")).thenThrow(worldDown);
 
     PlayerOutput response = handler.describePlayerOutput("123", true);
 
@@ -217,10 +217,10 @@ class LookCommandHandlerTest {
   @Test
   void cachesRenderedLookByGameplayInstanceWhenAvailable() {
     SessionContext playedContext =
-        new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "room-42", "jwt");
+        new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "R-42", "jwt");
     when(sessionAuthenticationService.resolveSessionContext("played"))
         .thenReturn(Optional.of(playedContext));
-    when(gameLogicClient.resolveLook(playedContext, "room-42", "")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(playedContext, "R-42", "")).thenReturn(lookResult);
 
     handler.describePlayerOutput("played", true);
 
