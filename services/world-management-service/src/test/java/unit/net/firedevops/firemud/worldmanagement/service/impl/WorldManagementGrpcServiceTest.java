@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -586,6 +587,47 @@ class WorldManagementGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be numeric", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void getRoomReturnsRuntimeRoomJsonWithCanonicalRowIdFieldName() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    Mockito.when(roomService.getRoom(1L, 41L, 1L))
+        .thenReturn(new RuntimeRoomDto(1L, 1L, 7L, "Room A", "Seed room A"));
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
+
+    AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
+        new AtomicReference<>();
+    service.getRoom(
+        net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionAttestation("probe")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.worldmanagement.v1.GetRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(
+        "{\"roomInstanceRowId\":1,\"tenantId\":1,\"regionId\":7,\"name\":\"Room A\",\"description\":\"Seed room A\"}",
+        ref.get().getRoomJson());
   }
 
   @Test

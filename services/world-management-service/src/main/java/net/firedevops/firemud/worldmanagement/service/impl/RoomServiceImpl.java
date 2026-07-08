@@ -12,9 +12,9 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.i18n.LocalizedTextVariants;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
-import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
@@ -63,11 +63,11 @@ public class RoomServiceImpl implements RoomService {
 
   @Override
   @Timed(value = "room.get")
-  public RoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
+  public RuntimeRoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
     String key = cacheKey(tenantId, gameInstanceId, roomInstanceRowId);
     try {
       Object cached = redisTemplate.opsForValue().get(key);
-      if (cached instanceof RoomDto dto) {
+      if (cached instanceof RuntimeRoomDto dto) {
         cacheHitCounter.increment();
         return dto;
       }
@@ -75,7 +75,7 @@ public class RoomServiceImpl implements RoomService {
       LOG.warn("Room cache read failed for key {}", key, ex);
     }
     cacheMissCounter.increment();
-    RoomDto dto =
+    RuntimeRoomDto dto =
         roomInstanceRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
                 tenantId, gameInstanceId, roomInstanceRowId)
@@ -156,8 +156,8 @@ public class RoomServiceImpl implements RoomService {
     return "room:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceRowId;
   }
 
-  private RoomDto toDto(RoomInstance room) {
-    return new RoomDto(
+  private RuntimeRoomDto toDto(RoomInstance room) {
+    return new RuntimeRoomDto(
         room.getRoomInstanceRowId(),
         room.getTenantId(),
         room.getZoneInstance().getRegionInstance().getId(),

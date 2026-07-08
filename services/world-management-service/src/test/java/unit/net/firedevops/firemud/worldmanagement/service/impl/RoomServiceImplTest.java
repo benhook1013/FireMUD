@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.i18n.LocalizedTextVariants;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
-import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
@@ -64,13 +64,14 @@ class RoomServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
 
-    RoomDto first = service.getRoom(1L, 41L, 1L);
+    RuntimeRoomDto first = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", first.name());
+    assertEquals(1L, first.roomInstanceRowId());
     verify(valueOps).set("room:1:41:1", first, java.time.Duration.ofSeconds(1));
 
     when(valueOps.get("room:1:41:1")).thenReturn(first);
-    RoomDto second = service.getRoom(1L, 41L, 1L);
+    RuntimeRoomDto second = service.getRoom(1L, 41L, 1L);
     assertEquals("A", second.name());
     verify(repository, times(1)).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
   }
@@ -159,7 +160,7 @@ class RoomServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
 
-    RoomDto dto = service.getRoom(1L, 41L, 1L);
+    RuntimeRoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
     verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
@@ -174,7 +175,7 @@ class RoomServiceImplTest {
         .when(valueOps)
         .set(eq("room:1:41:1"), any(), eq(java.time.Duration.ofSeconds(1)));
 
-    RoomDto dto = service.getRoom(1L, 41L, 1L);
+    RuntimeRoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
     verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);

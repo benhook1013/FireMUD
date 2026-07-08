@@ -14,9 +14,9 @@ import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
-import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
@@ -620,7 +620,7 @@ public class WorldManagementGrpcService
     return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
-  private String toJson(RoomDto dto) {
+  private String toJson(RuntimeRoomDto dto) {
     try {
       return objectMapper.writeValueAsString(dto);
     } catch (JacksonException e) {
