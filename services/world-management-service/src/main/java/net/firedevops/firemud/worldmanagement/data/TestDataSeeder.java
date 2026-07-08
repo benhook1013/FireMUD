@@ -321,8 +321,9 @@ public class TestDataSeeder implements ApplicationRunner {
         exitsByFromRoomInstanceRecordId.computeIfAbsent(
             fromRoomInstance.getId(),
             ignored ->
-                roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
-                    tenantId, gameInstanceId, fromRoomInstance.getId()));
+                roomInstanceExitRepository
+                    .findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+                        tenantId, gameInstanceId, fromRoomInstance.getId()));
     RoomInstanceExit roomInstanceExit =
         existingExits.stream()
             .filter(

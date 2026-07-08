@@ -44,7 +44,7 @@ class RoomServiceImplTest {
     props = new WorldProperties();
     props.getRoom().setCacheTtlSeconds(1);
     exitRepository = mock(RoomInstanceExitRepository.class);
-    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
             anyLong(), anyLong(), anyLong()))
         .thenReturn(Collections.emptyList());
     service =
@@ -95,7 +95,7 @@ class RoomServiceImplTest {
     exit.setToRoomInstance(other);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 88L))
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(1L, 41L, 88L))
         .thenReturn(List.of(exit));
 
     RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "");
@@ -138,7 +138,7 @@ class RoomServiceImplTest {
     exit.setToRoomInstance(targetRoom);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 88L))
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(1L, 41L, 88L))
         .thenReturn(List.of(exit));
 
     RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "fr");

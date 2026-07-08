@@ -97,10 +97,11 @@ public class RoomServiceImpl implements RoomService {
         roomInstanceRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(tenantId, gameInstanceId, roomId)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+    long fromRoomInstanceRecordId = room.getId();
     List<RoomExitSnapshotDto> exits =
         roomInstanceExitRepository
-            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
-                tenantId, gameInstanceId, room.getId())
+            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+                tenantId, gameInstanceId, fromRoomInstanceRecordId)
             .stream()
             .map(exit -> toExitSnapshot(exit, preferredLocaleTag))
             .collect(Collectors.toList());

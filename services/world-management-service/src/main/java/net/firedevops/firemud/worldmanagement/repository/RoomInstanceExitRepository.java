@@ -22,8 +22,8 @@ public class RoomInstanceExitRepository {
     this.dsl = dsl;
   }
 
-  public List<RoomInstanceExit> findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
-      Long tenantId, Long gameInstanceId, Long roomInstanceId) {
+  public List<RoomInstanceExit> findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+      Long tenantId, Long gameInstanceId, Long fromRoomInstanceRecordId) {
     var toRoom = ROOM_INSTANCE.as("to_room");
     return dsl.select(ROOM_INSTANCE_EXIT.fields())
         .select(
@@ -41,7 +41,7 @@ public class RoomInstanceExitRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ROOM_INSTANCE_EXIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID.eq(roomInstanceId)))
+                .and(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID.eq(fromRoomInstanceRecordId)))
         .orderBy(ROOM_INSTANCE_EXIT.ID.asc())
         .fetch(record -> toEntity(record, toRoom));
   }

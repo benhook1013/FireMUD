@@ -246,7 +246,7 @@ class TestDataSeederTest {
         .thenReturn(List.of());
     when(roomInstanceRepository.save(any()))
         .thenAnswer(invocation -> withRoomInstanceRowId(invocation.getArgument(0)));
-    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
             1L, 1L, 1021L))
         .thenReturn(List.of());
     when(roomInstanceExitRepository.save(any()))
@@ -351,7 +351,7 @@ class TestDataSeederTest {
         .thenReturn(List.of());
     when(roomInstanceRepository.save(any()))
         .thenAnswer(invocation -> withRoomInstanceRowId(invocation.getArgument(0)));
-    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
             2L, 55L, 1021L))
         .thenReturn(List.of());
     when(roomInstanceExitRepository.save(any()))
