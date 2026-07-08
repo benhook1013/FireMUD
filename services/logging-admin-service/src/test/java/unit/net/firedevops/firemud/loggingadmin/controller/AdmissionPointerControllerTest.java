@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -163,6 +164,22 @@ class AdmissionPointerControllerTest {
   }
 
   @Test
+  void auditRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/not-a-number/demo/production/audit")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(admissionPointerService);
+  }
+
+  @Test
   void getRuntimeStateReturnsCanonicalRuntimeState() throws Exception {
     when(admissionPointerService.getRuntimeState(2L, 7L)).thenReturn(runtimeStateDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
@@ -190,6 +207,22 @@ class AdmissionPointerControllerTest {
             get("/admission-pointers/runtime-state/2/7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void getRuntimeStateRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/runtime-state/2/0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("gameInstanceId must be positive"));
+
+    verifyNoInteractions(admissionPointerService);
   }
 
   @Test
@@ -272,6 +305,23 @@ class AdmissionPointerControllerTest {
             get("/admission-pointers/version-upgrades/2/7/compatibility/9")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void validateInstanceCutoverCompatibilityRejectsMalformedTargetVersionIdBeforeDispatch()
+      throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/version-upgrades/2/7/compatibility/not-a-number")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("targetVersionId must be numeric"));
+
+    verifyNoInteractions(admissionPointerService);
   }
 
   private PreparedVersionUpgradeDto preparedUpgrade() {

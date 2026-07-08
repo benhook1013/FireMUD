@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -65,5 +66,41 @@ class AfkCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_PLAYING");
+  }
+
+  @Test
+  void afkRejectsPartialGameplayIdentityShellFromResolvedSession() {
+    SessionContext context =
+        new SessionContext(
+            7L, 22L, 123L, "demo@example.com", 0L, null, 1L, "1021", null, "en-NZ", 1L);
+    when(sessionAuthenticationService.resolveSessionContext("7")).thenReturn(Optional.of(context));
+
+    AfkCommandHandlingResult result =
+        handler.handle("7", new TextCommand(TextCommandType.AFK, java.util.List.of(), "AFK"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_PLAYING");
+    verifyNoInteractions(gameplayPresenceService);
+  }
+
+  @Test
+  void directAfkRejectsPartialGameplayIdentityShell() {
+    SessionContext context =
+        new SessionContext(
+            7L, 22L, 123L, "demo@example.com", 0L, null, 1L, "1021", null, "en-NZ", 1L);
+
+    AfkCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.AFK,
+                java.util.List.of("OFF"),
+                "AFK OFF",
+                "AFK",
+                new TextCommandPayload.AfkRequest(false)));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_PLAYING");
+    verifyNoInteractions(gameplayPresenceService);
   }
 }

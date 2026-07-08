@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolic
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -169,30 +170,34 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     }
     GameplayPresence effectivePresence =
         SessionContext.hasGameplayRegionBindingOrFalse(context) ? presence : null;
+    GameplayAdmissionPointerSnapshots.RoutingBundle effectivePresenceRoutingBundle =
+        effectivePresence == null
+            ? null
+            : GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+                effectivePresence.worldSlug(),
+                effectivePresence.realmSlug(),
+                effectivePresence.pointerVersion());
+    boolean usePresenceRouting =
+        effectivePresence != null && effectivePresenceRoutingBundle != null;
+    GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+        usePresenceRouting
+            ? effectivePresenceRoutingBundle
+            : GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+                context.worldSlug(), context.realmSlug(), context.pointerVersion());
     long gameInstanceId =
-        effectivePresence != null && effectivePresence.gameInstanceId() > 0
+        usePresenceRouting && effectivePresence.gameInstanceId() > 0
             ? effectivePresence.gameInstanceId()
-            : context.gameInstanceId() > 0 ? context.gameInstanceId() : 0L;
+            : context.gameInstanceId();
     return new RoutingSnapshot(
         context.tenantId(),
         context.accountId(),
         gameInstanceId > 0 ? gameInstanceId : null,
-        firstNonBlank(
-            effectivePresence == null ? null : effectivePresence.playableStateScope(),
-            context.playableStateScope()),
-        firstNonBlank(
-            effectivePresence == null ? null : effectivePresence.worldSlug(), context.worldSlug()),
-        firstNonBlank(
-            effectivePresence == null ? null : effectivePresence.realmSlug(), context.realmSlug()),
-        pointerVersion(context, effectivePresence));
-  }
-
-  private Long pointerVersion(SessionContext context, GameplayPresence presence) {
-    long pointerVersion =
-        presence != null && presence.pointerVersion() > 0
-            ? presence.pointerVersion()
-            : context.pointerVersion();
-    return pointerVersion > 0 ? pointerVersion : null;
+        usePresenceRouting
+            ? blankToNull(effectivePresence.playableStateScope())
+            : blankToNull(context.playableStateScope()),
+        routingBundle == null ? null : routingBundle.worldSlug(),
+        routingBundle == null ? null : routingBundle.realmSlug(),
+        routingBundle == null ? null : routingBundle.pointerVersion());
   }
 
   private GameplayPresenceRole effectivePresenceRole(
@@ -202,12 +207,9 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         : null;
   }
 
-  private String firstNonBlank(String primary, String fallback) {
-    if (primary != null && !primary.isBlank()) {
-      return primary;
-    }
-    if (fallback != null && !fallback.isBlank()) {
-      return fallback;
+  private String blankToNull(String value) {
+    if (value != null && !value.isBlank()) {
+      return value;
     }
     return null;
   }

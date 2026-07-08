@@ -181,8 +181,7 @@ public class CommunicationCommandHandler {
     boolean onlineInGame =
         sessionAuthenticationService
             .resolveByGameplayName(context.tenantId(), context.gameInstanceId(), targetName)
-            .filter(targetContext -> targetContext.gameInstanceId() > 0)
-            .filter(targetContext -> targetContext.characterId() > 0)
+            .filter(SessionContext::hasGameplayIdentity)
             .isPresent();
     if (!onlineInGame) {
       return new ParsedCommunication(

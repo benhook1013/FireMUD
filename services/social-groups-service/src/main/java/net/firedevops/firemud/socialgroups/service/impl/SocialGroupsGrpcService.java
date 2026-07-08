@@ -790,6 +790,14 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      SendMailResponse response =
+          SendMailResponse.newBuilder()
+              .setSuccess(false)
+              .setError(permissionDenied("SendMail", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       SendMailResponse response =
           SendMailResponse.newBuilder()

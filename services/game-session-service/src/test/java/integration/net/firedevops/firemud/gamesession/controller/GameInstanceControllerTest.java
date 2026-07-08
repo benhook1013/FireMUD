@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -114,5 +115,35 @@ class GameInstanceControllerTest {
   @Test
   void stopSessionRejectsUnauthenticatedCaller() throws Exception {
     mockMvc.perform(post("/sessions/1/stop")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void stopSessionRejectsMalformedSessionIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/sessions/not-a-number/stop")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("sessionId must be numeric"));
+
+    verifyNoInteractions(gameInstanceService);
+  }
+
+  @Test
+  void restartSessionRejectsZeroSessionIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/sessions/0/restart")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("sessionId must be positive"));
+
+    verifyNoInteractions(gameInstanceService);
   }
 }

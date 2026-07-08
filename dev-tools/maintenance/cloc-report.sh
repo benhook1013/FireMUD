@@ -8,29 +8,38 @@ set -euo pipefail
 #   footprint rather than deduplicated content.
 # - Treats source scope as buildSrc, dev-tools, gradle, protos, services,
 #   web-client, plus non-Markdown repo-root support files.
-# - Classifies tests broadly enough for this repo: src/test*, test fixtures,
-#   JS/TS test naming patterns, dev-tools/tests, and dev-tools/validation
-#   test_*.py helpers.
+# - Classifies tests for the currently supported repo layout: src/test,
+#   src/testFixtures, src/integrationTest, src/e2e, src/e2eTest, JS/TS test
+#   naming patterns, dev-tools/tests, and dev-tools/validation test_*.py
+#   helpers.
 # - Keeps wrapper banners on stderr so cloc structured output flags such as
-#   --json remain clean on stdout.
+#   --json remain clean on stdout, including empty direct scopes.
+# - `service-local-docs` counts service-local docs only
+#   (services/*/README.md and services/*/design/**). Canonical microservice
+#   architecture docs live under design/architecture/microservices/** and are
+#   covered by the broader architecture mode.
+# - `diff` reports the current-checkout footprint of added/copied/modified/
+#   renamed tracked files in a range. Deletions and any other range paths that
+#   are missing in the current checkout are omitted from counts and surfaced as
+#   a warning on stderr.
 
 usage() {
   cat <<'EOF'
-Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|summary|diff|markdown|design|architecture|service-docs] [extra args...]
+Usage: bash dev-tools/maintenance/cloc-report.sh [repo|source|prod|tests|debug|by-module|summary|diff|markdown|design|architecture|service-local-docs] [extra args...]
 
 Modes:
   repo      Broad repository footprint across source, docs, config, CI, and scripts.
   source    Source-focused count across build logic, scripts, protos, services, and web client code, including tests.
   prod      Source-focused count excluding files currently classified as tests.
-  tests     Test-only count across standard test directories, test fixtures, repo-owned contract tests, and validation-style test scripts.
+  tests     Test-only count across src/test, src/testFixtures, src/integrationTest, src/e2e, src/e2eTest, repo-owned contract tests, and validation-style test scripts.
   debug     Print tracked source-scope file classification as: bucket TAB rule TAB path.
   by-module Aggregate tracked source/prod/tests counts by FireMUD module bucket.
   summary   Print a compact repo/source/prod/tests/docs rollup for tracked files.
-  diff      Run summary output for changed tracked files in a git diff range; add --by-module for per-module output.
+  diff      Run summary output for the current-checkout footprint of added/copied/modified/renamed tracked files in a git diff range; add --by-module for per-module output. Deletions and other missing current-checkout paths are omitted and reported on stderr.
   markdown  Markdown-only count across the repository.
   design    Tracked files under design/.
   architecture Tracked files under design/architecture/.
-  service-docs Tracked service-local docs under services/*/README.md and services/*/design/.
+  service-local-docs Tracked service-local docs under services/*/README.md and services/*/design/. Alias: service-docs.
 
 Examples:
   bash dev-tools/maintenance/cloc-report.sh
@@ -46,7 +55,7 @@ Examples:
   bash dev-tools/maintenance/cloc-report.sh diff develop...HEAD --by-module --json
   bash dev-tools/maintenance/cloc-report.sh design
   bash dev-tools/maintenance/cloc-report.sh architecture --json
-  bash dev-tools/maintenance/cloc-report.sh service-docs
+  bash dev-tools/maintenance/cloc-report.sh service-local-docs
   bash dev-tools/maintenance/cloc-report.sh markdown --by-file
 EOF
 }
@@ -125,8 +134,24 @@ is_architecture_path() {
   [[ "$1" == design/architecture/* ]]
 }
 
-is_service_docs_path() {
-  [[ "$1" == services/*/README.md || "$1" == services/*/design/* ]]
+is_service_local_docs_path() {
+  [[ "$1" =~ ^services/[^/]+/README\.md$ || "$1" == services/*/design/* ]]
+}
+
+requests_json_output() {
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--json" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+emit_zero_cloc_json() {
+  cat <<'EOF'
+{"SUM":{"blank":0,"comment":0,"code":0,"nFiles":0}}
+EOF
 }
 
 is_source_root_file() {
@@ -262,8 +287,8 @@ should_include_file() {
     architecture)
       is_architecture_path "$path"
       ;;
-    service-docs)
-      is_service_docs_path "$path"
+    service-local-docs|service-docs)
+      is_service_local_docs_path "$path"
       ;;
     markdown)
       is_markdown_path "$path"
@@ -279,11 +304,19 @@ build_tracked_inventory_file() {
 build_diff_inventory_file() {
   local git_range="$1"
   local output_file="$2"
+  local omitted_count_file="$3"
   local changed_file
+  local omitted_count=0
 
   while IFS= read -r -d '' changed_file; do
-    printf '%s\n' "$changed_file" >>"$output_file"
-  done < <(git diff --name-only --diff-filter=ACMR -z "$git_range" --)
+    if [[ -e "$changed_file" ]]; then
+      printf '%s\n' "$changed_file" >>"$output_file"
+    else
+      omitted_count=$((omitted_count + 1))
+    fi
+  done < <(git diff --name-only --diff-filter=ACMRD -z "$git_range" --)
+
+  printf '%s\n' "$omitted_count" >"$omitted_count_file"
 }
 
 populate_mode_file_list_from_inventory() {
@@ -502,7 +535,7 @@ run_summary_mode_with_inventory() {
   local markdown_json
   local design_json
   local architecture_json
-  local service_docs_json
+  local service_local_docs_json
   local output_mode="table"
   local arg
   local status
@@ -526,7 +559,7 @@ run_summary_mode_with_inventory() {
   markdown_json="$(create_temp_file)"
   design_json="$(create_temp_file)"
   architecture_json="$(create_temp_file)"
-  service_docs_json="$(create_temp_file)"
+  service_local_docs_json="$(create_temp_file)"
 
   print_banner "Running summary rollup from $scope_label inventories..."
   build_mode_json_from_inventory repo "$inventory_file" "$repo_json"
@@ -536,11 +569,11 @@ run_summary_mode_with_inventory() {
   build_mode_json_from_inventory markdown "$inventory_file" "$markdown_json"
   build_mode_json_from_inventory design "$inventory_file" "$design_json"
   build_mode_json_from_inventory architecture "$inventory_file" "$architecture_json"
-  build_mode_json_from_inventory service-docs "$inventory_file" "$service_docs_json"
+  build_mode_json_from_inventory service-local-docs "$inventory_file" "$service_local_docs_json"
 
   python3 - \
     "$repo_json" "$source_json" "$prod_json" "$tests_json" \
-    "$markdown_json" "$design_json" "$architecture_json" "$service_docs_json" \
+    "$markdown_json" "$design_json" "$architecture_json" "$service_local_docs_json" \
     "$output_mode" <<'PY'
 import json
 import sys
@@ -556,7 +589,7 @@ labels = [
     ("markdown", paths[4]),
     ("design", paths[5]),
     ("architecture", paths[6]),
-    ("service_docs", paths[7]),
+    ("service_local_docs", paths[7]),
 ]
 
 rows = []
@@ -597,8 +630,10 @@ run_diff_mode() {
 
   local by_module="false"
   local output_mode="table"
+  local omitted_count
   local arg
   local inventory_file
+  local omitted_count_file
   local status
 
   if [[ -z "$git_range" ]]; then
@@ -622,7 +657,12 @@ run_diff_mode() {
   done
 
   inventory_file="$(create_temp_file)"
-  build_diff_inventory_file "$git_range" "$inventory_file"
+  omitted_count_file="$(create_temp_file)"
+  build_diff_inventory_file "$git_range" "$inventory_file" "$omitted_count_file"
+  omitted_count="$(<"$omitted_count_file")"
+  if [[ "$omitted_count" != "0" ]]; then
+    print_banner "Note: diff mode omitted $omitted_count tracked path(s) that are deleted or otherwise missing in the current checkout for $git_range."
+  fi
 
   if [[ "$by_module" == "true" ]]; then
     if [[ "$output_mode" == "json" ]]; then
@@ -657,8 +697,13 @@ run_cloc_mode_with_inventory() {
   print_banner "$banner"
   # Count tracked file footprint rather than deduplicated content so split
   # buckets remain additive and predictable across modes.
-  cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
-  status=$?
+  if [[ ! -s "$file_list" ]] && requests_json_output "$@"; then
+    emit_zero_cloc_json
+    status=0
+  else
+    cloc --quiet --skip-uniqueness --list-file="$file_list" "$@"
+    status=$?
+  fi
   return "$status"
 }
 
@@ -708,8 +753,8 @@ case "$mode" in
   architecture)
     run_cloc_mode architecture "Running cloc in architecture mode (tracked files under design/architecture/)..." "$@"
     ;;
-  service-docs)
-    run_cloc_mode service-docs "Running cloc in service-docs mode (tracked service-local docs under services/*/README.md and services/*/design/)..." "$@"
+  service-local-docs|service-docs)
+    run_cloc_mode service-local-docs "Running cloc in service-local-docs mode (tracked service-local docs under services/*/README.md and services/*/design/)..." "$@"
     ;;
   markdown)
     run_cloc_mode markdown "Running cloc in markdown mode (tracked Markdown files only)..." "$@"

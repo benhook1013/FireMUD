@@ -15,6 +15,12 @@ USAGE = (
 )
 
 
+def replace_or_die(text: str, target: str, replacement: str) -> str:
+    if target not in text:
+        raise ValueError(f"expected template token or text not found: {target}")
+    return text.replace(target, replacement)
+
+
 def main() -> int:
     if len(sys.argv) != 9:
         print(USAGE, file=sys.stderr)
@@ -47,19 +53,29 @@ def main() -> int:
     )
 
     text = template_path.read_text(encoding="utf-8")
-    text = text.replace("prNumber: 123", f"prNumber: {pr_number}")
-    text = text.replace("namespace: pr-123", f"namespace: {namespace}")
-    text = text.replace("releaseName: pr-123", f"releaseName: {release_name}")
-    text = text.replace("hostname: pr-123.preview.firedevops.net", f"hostname: {hostname}")
-    text = text.replace("telnetPort: 32000", f"telnetPort: {telnet_port}")
-    text = text.replace("defaultImageTag: pr-123-deadbeef", f"defaultImageTag: {image_tag}")
-    text = text.replace("signingKey: changeit-changeit-changeit-changeit", f"signingKey: {signing_key}")
-    text = text.replace("jwksJson: '{\"keys\":[]}'", "jwksJson: '" + jwks_json + "'")
-    text = text.replace(
-        "tlsSecretName: pr-123-preview-firedevops-net-tls",
-        f"tlsSecretName: {release_name}-tls",
-    )
-    text = text.replace("nodePort: 32000", f"nodePort: {telnet_port}")
+    replacements = {
+        "__PR_NUMBER__": pr_number,
+        "__NAMESPACE__": namespace,
+        "__RELEASE_NAME__": release_name,
+        "__HOSTNAME__": hostname,
+        "__TELNET_PORT__": telnet_port,
+        "__IMAGE_TAG__": image_tag,
+        "__TLS_SECRET_NAME__": f"{release_name}-tls",
+        "__JWT_SIGNING_KEY__": signing_key,
+        "__JWKS_JSON__": jwks_json,
+        "__SEED_GAME_NAME__": "Preview Demo Game",
+        "__SEED_GAME_DESCRIPTION__": "Hosted preview bootstrap seed game.",
+        "__SEED_VERSION_NOTES__": "Hosted preview seed version",
+        "__SEED_TEMPLATE_NAME__": "Preview Demo Template",
+        "__SEED_TEMPLATE_DESCRIPTION__": "Hosted preview bootstrap seed template.",
+        "__SEED_WORKFLOW_ID__": "preview-seed",
+        "__SEED_MANIFEST_HASH__": "preview-seed-manifest",
+        "__SEED_GENERATION_CONFIG_REVISION__": "genrev:preview-seed",
+    }
+    for target, replacement in replacements.items():
+        text = replace_or_die(text, target, replacement)
+    text = replace_or_die(text, "        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
+    text = replace_or_die(text, "        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
     output_path.write_text(text, encoding="utf-8")
     return 0
 

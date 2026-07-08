@@ -35,9 +35,18 @@ kubectl apply -f verify-backups-cronjob.yaml -n firemud
 
 ## Local Backup with MinIO
 
-If running backups locally, deploy MinIO on the cluster and configure Velero to use it as the backup storage location. The manifest `minio.yaml` starts a single-node MinIO instance with a `ClusterIP` service.
+If running backups locally, deploy MinIO on the cluster and configure Velero to use it as the backup storage location. The manifest `minio.yaml` starts a single-node MinIO instance with a `ClusterIP` service and expects a pre-created `minio-creds` secret in the `minio` namespace.
 
-Apply the manifest:
+Create the MinIO credentials secret first:
+
+```bash
+kubectl create namespace minio --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic minio-creds -n minio \
+  --from-literal=accesskey='<set-a-local-user>' \
+  --from-literal=secretkey='<set-a-local-password>'
+```
+
+Then apply the manifest:
 
 ```bash
 kubectl apply -f minio.yaml
@@ -67,11 +76,11 @@ Create the access secret:
 ```bash
 kubectl create secret generic velero-minio-creds -n velero \
   --from-literal=cloud='[default]
-aws_access_key_id=myaccesskey
-aws_secret_access_key=mysecretkey'
+aws_access_key_id=<same-local-user>
+aws_secret_access_key=<same-local-password>'
 ```
 
-Run the helper script to deploy MinIO, create the bucket, and install Velero:
+Run the helper script to deploy MinIO, create the bucket, and install Velero. The helper creates the `minio` and `velero` namespaces as needed, creates or updates `minio-creds` and `velero-minio-creds` for you, does not require `PG_DUMP_BUCKET`, and reuses the existing MinIO secret on reruns unless you explicitly override `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`:
 
 ```bash
 dev-tools/backups/setup-local-backup.sh

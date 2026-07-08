@@ -201,7 +201,7 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
-            k8s/helm/firemud/values-dev-demo.example.yaml \
+            k8s/helm/firemud/values-hosted-shared.example.yaml \
             /tmp/dev-demo-values.yaml \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}" \
@@ -278,26 +278,37 @@ jobs:
           echo "Dev-demo rollout failed during helm upgrade/install."
           exit 1
 
+      - name: Export demo smoke defaults
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        run: |
+          source ./dev-tools/smoke/demo-smoke-defaults.sh
+          {
+            echo "DEMO_SMOKE_EMAIL=${DEMO_SMOKE_EMAIL}"
+            echo "DEMO_SMOKE_PASSWORD=${DEMO_SMOKE_PASSWORD}"
+            echo "DEMO_SMOKE_USERNAME=${DEMO_SMOKE_USERNAME}"
+            echo "DEMO_SMOKE_WORLD=${DEMO_SMOKE_WORLD}"
+          } >> "$GITHUB_ENV"
+
       - name: Create dev-demo smoke account
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
-          PREVIEW_EMAIL: demo@example.com
-          PREVIEW_PASSWORD: swordfish
         run: |
           echo "DEV_DEMO_STAGE=bootstrap" >> "$GITHUB_ENV"
           BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
           cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
           import json
+          import os
           import time
           import urllib.error
           import urllib.request
 
           tenant_id = 1
           game_template_id = 1
-          email = "demo@example.com"
-          password = "swordfish"
+          email = os.environ["DEMO_SMOKE_EMAIL"]
+          password = os.environ["DEMO_SMOKE_PASSWORD"]
+          username = os.environ["DEMO_SMOKE_USERNAME"]
           control_plane_request_id = f"dev-demo-smoke-bootstrap-{int(time.time())}"
 
           def readiness_ok(url):
@@ -387,20 +398,20 @@ jobs:
               public_account_url("/accounts"),
               {
                 "tenantId": tenant_id,
-                "username": "demo",
+                "username": username,
                 "email": email,
                 "password": password,
               },
             )
             print(f"Demo account creation attempt returned {status}")
             if status < 400 or status == 409:
-              return
+              return True
             if status >= 500:
               print(
                 "Demo account creation returned a transient error; "
-                "retrying player bootstrap without reissuing account creation"
+                "will retry account creation on the next unauthorized bootstrap attempt"
               )
-              return
+              return False
             raise SystemExit(
               "Dev-demo account creation failed with status "
               f"{status}: {sanitize_error_body(body)}"
@@ -411,7 +422,7 @@ jobs:
             attempt = 1
             last_status = None
             last_body = None
-            account_create_attempted = False
+            account_create_confirmed = False
             while time.time() < deadline:
               status, bootstrap_body = post_json(
                 public_account_url("/auth/player-bootstrap"),
@@ -427,9 +438,8 @@ jobs:
               last_status = status
               last_body = bootstrap_body
               if status == 401:
-                if not account_create_attempted:
-                  ensure_demo_account()
-                  account_create_attempted = True
+                if not account_create_confirmed:
+                  account_create_confirmed = ensure_demo_account()
                 attempt += 1
                 time.sleep(2)
                 continue
@@ -510,8 +520,6 @@ jobs:
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
           TCP_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
           SMOKE_TARGET_LABEL: dev-demo
-          SMOKE_USERNAME: demo@example.com
-          SMOKE_PASSWORD: swordfish
         run: |
           echo "DEV_DEMO_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
@@ -533,7 +541,9 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
-            echo "- Demo login: demo@example.com / swordfish"
+            echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
+            echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"
+            echo "- Demo login password: ${DEMO_SMOKE_PASSWORD}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize dev-demo unavailability

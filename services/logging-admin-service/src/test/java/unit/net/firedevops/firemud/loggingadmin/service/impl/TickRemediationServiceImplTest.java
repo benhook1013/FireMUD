@@ -92,6 +92,29 @@ class TickRemediationServiceImplTest {
   }
 
   @Test
+  void getRuntimeOwnershipStatusRejectsZeroGameInstanceIdForRegionScope() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(gameSessionClient.getRuntimeOwnershipStatus(1L, null, "region-7"))
+        .thenReturn(
+            GetRuntimeOwnershipStatusResponse.newBuilder()
+                .setOwnership(
+                    RuntimeOwnershipStatus.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("0")
+                        .setRegionId("region-7")
+                        .build())
+                .build());
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, "region-7"))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("500 INTERNAL_SERVER_ERROR");
+  }
+
+  @Test
   void pauseForGameInstanceForwardsAndAudits() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
@@ -114,6 +137,22 @@ class TickRemediationServiceImplTest {
     assertThat(auditCaptor.getValue().tenantId()).isEqualTo(1L);
     assertThat(auditCaptor.getValue().accountId()).isEqualTo(42L);
     assertThat(auditCaptor.getValue().message()).contains("game_instance=7");
+  }
+
+  @Test
+  void pauseRejectsMalformedCurrentAccountClaimBeforeDispatchAndAudit() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    SessionContext.setContext("not-a-long", java.util.List.of("platformAdmin"), java.util.Map.of());
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(
+            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "7", null, "maint")))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("400 BAD_REQUEST");
+    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
   }
 
   @Test

@@ -91,6 +91,21 @@ class RemoteFollowupServiceImplTest {
   }
 
   @Test
+  void getRemoteFollowupRejectsZeroTargetGameInstanceIdInResponse() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowup(2L, "rf-1"))
+        .thenReturn(
+            GetRemoteFollowupResponse.newBuilder()
+                .setFollowup(remoteFollowup("2").toBuilder().setTargetGameInstanceId("0").build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRemoteFollowup(2L, "rf-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
   void getRemoteFollowupRequiresAccessibleTenant() {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 
@@ -265,6 +280,20 @@ class RemoteFollowupServiceImplTest {
         assertThrows(ResponseStatusException.class, () -> service.listRemoteFollowups(2L, request));
 
     assertEquals(400, ex.getStatusCode().value());
+    verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
+  void listRemoteFollowupsRejectsNonPositivePointerVersionBeforeDispatch() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    RemoteFollowupListRequest request = new RemoteFollowupListRequest();
+    request.setPointerVersion(0L);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.listRemoteFollowups(2L, request));
+
+    assertEquals("pointerVersion must be positive", ex.getMessage());
     verifyNoInteractions(gameSessionControlPlaneClient);
   }
 

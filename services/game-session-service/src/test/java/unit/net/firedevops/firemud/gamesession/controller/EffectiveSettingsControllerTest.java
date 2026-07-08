@@ -73,7 +73,7 @@ class EffectiveSettingsControllerTest {
                 ScopedSettingsOverrides.empty()));
 
     EffectiveSettingsController.EffectiveSettingsResponse response =
-        Objects.requireNonNull(controller.effectiveSettings(41L, null, null, null).getBody())
+        Objects.requireNonNull(controller.effectiveSettings("41", null, null, null).getBody())
             .data();
 
     assertThat(response.scope().persistedSession()).isTrue();

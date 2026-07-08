@@ -9,18 +9,20 @@ This directory contains the repository's Kubernetes-side deployment assets. The 
 
 The `base/` manifests set `metadata.namespace: firemud` directly in YAML, so `firemud` is the default shared namespace unless you apply namespace transforms via overlays.
 
+The command examples below assume you are running from the repository root.
+
 ```bash
-kubectl apply -n firemud -f base/account-service.yaml
-kubectl apply -n firemud -f base/automation-scripting-service.yaml
-kubectl apply -n firemud -f base/entity-management-service.yaml
-kubectl apply -n firemud -f base/game-design-service.yaml
-kubectl apply -n firemud -f base/game-logic-service.yaml
-kubectl apply -n firemud -f base/game-session-service.yaml
-kubectl apply -n firemud -f base/logging-admin-service.yaml
-kubectl apply -n firemud -f base/social-groups-service.yaml
-kubectl apply -n firemud -f base/tcp-proxy-service.yaml
-kubectl apply -n firemud -f base/world-management-service.yaml
-kubectl apply -n firemud -f base/spring-cloud-gateway.yaml
+kubectl apply -n firemud -f k8s/base/account-service.yaml
+kubectl apply -n firemud -f k8s/base/automation-scripting-service.yaml
+kubectl apply -n firemud -f k8s/base/entity-management-service.yaml
+kubectl apply -n firemud -f k8s/base/game-design-service.yaml
+kubectl apply -n firemud -f k8s/base/game-logic-service.yaml
+kubectl apply -n firemud -f k8s/base/game-session-service.yaml
+kubectl apply -n firemud -f k8s/base/logging-admin-service.yaml
+kubectl apply -n firemud -f k8s/base/social-groups-service.yaml
+kubectl apply -n firemud -f k8s/base/tcp-proxy-service.yaml
+kubectl apply -n firemud -f k8s/base/world-management-service.yaml
+kubectl apply -n firemud -f k8s/base/spring-cloud-gateway.yaml
 ```
 
 ## Kustomize overlays (staging/production)
@@ -47,8 +49,8 @@ The base manifests and overlays expect those names unless you intentionally cust
 The canonical internal-service network policies are part of `base/`. The `network-policies/` directory is documentation-only now; apply the policy manifests from `base/` if you are selectively applying files outside Kustomize:
 
 ```bash
-kubectl apply -n firemud -f base/internal-services-network-policy.yaml
-kubectl apply -n firemud -f base/internal-services-egress-network-policy.yaml
+kubectl apply -n firemud -f k8s/base/internal-services-network-policy.yaml
+kubectl apply -n firemud -f k8s/base/internal-services-egress-network-policy.yaml
 ```
 
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
@@ -68,10 +70,10 @@ The `monitoring/` folder provides example manifests for observability tools:
 Apply them with:
 
 ```bash
-kubectl apply -n firemud -f monitoring/redis-exporter.yaml
-kubectl apply -n firemud -f monitoring/otel-collector.yaml
-kubectl apply -n firemud -f monitoring/jaeger.yaml
-kubectl apply -n firemud -f monitoring/alertmanager.yaml
+kubectl apply -n firemud -f k8s/monitoring/redis-exporter.yaml
+kubectl apply -n firemud -f k8s/monitoring/otel-collector.yaml
+kubectl apply -n firemud -f k8s/monitoring/jaeger.yaml
+kubectl apply -n firemud -f k8s/monitoring/alertmanager.yaml
 ```
 
 Customize these manifests with proper image repositories and resource limits before running in production.
@@ -83,31 +85,35 @@ and the Spring Cloud Gateway is published on port `80`.
 
 ## Terraform Sample
 
-A sample Terraform module is available in [`terraform/`](./terraform) to spin up a local Kind cluster with a `firemud` namespace and admin RBAC. It can optionally install Redis via Helm.
+A sample Terraform module is available in [`k8s/terraform/`](terraform/) to spin up a local Kind cluster with a `firemud` namespace and admin RBAC. It can optionally install Redis via Helm.
 
 ## Persistent Storage
 
-The production Terraform modules provision persistent volumes for PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases. Default sizes are defined in `terraform-production/postgres-values.yaml`, `terraform-production/redis-coord-values.yaml`, and `terraform-production/redis-cache-values.yaml` as **10Gi**, **8Gi**, and **8Gi** respectively. Update these values to match your capacity planning when deploying to a real cluster.
+The production Terraform modules provision persistent volumes for PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases. Default sizes are defined in `terraform-production/postgres-values.yaml.tftpl`, `terraform-production/redis-coord-values.yaml`, and `terraform-production/redis-cache-values.yaml` as **10Gi**, **8Gi**, and **8Gi** respectively. Update these values and provide real Terraform credential inputs before deploying to a real cluster.
 
 ## Helm Charts
 
-The main Helm deployment path in this repository is [`k8s/helm/firemud`](./helm/firemud), which is used for the hosted preview and dev-demo environments. The top-level `k8s/helm/values-local.yaml` and `values-dev.yaml` files belong to the narrower example service charts under `k8s/helm/`; they are not the full-stack hosted chart contract.
+The main Helm deployment path in this repository is [`k8s/helm/firemud`](helm/firemud/), which is used for the hosted preview and dev-demo environments. The top-level `k8s/helm/values-local.yaml` and `values-dev.yaml` files belong to the narrower example service charts under `k8s/helm/`; they are not the full-stack hosted chart contract.
 
 ```bash
-helm install game-session ./helm/game-session-service -f helm/values-local.yaml
+helm install game-session ./k8s/helm/game-session-service -f k8s/helm/values-local.yaml
 ```
 
-For the hosted full-stack chart path, start from the environment-specific example values under `k8s/helm/firemud`:
+For the hosted full-stack chart path, render environment-specific values from the shared hosted template under `k8s/helm/firemud`:
 
 ```bash
-helm upgrade --install firemud ./helm/firemud -f helm/firemud/values-preview.example.yaml -n firemud --create-namespace
+python3 ./dev-tools/hosted/preview/render-preview-values.py \
+  k8s/helm/firemud/values-hosted-shared.example.yaml \
+  /tmp/preview-values.yaml \
+  123 pr-123 pr-123 pr-123.preview.firedevops.net pr-123-deadbeef 32000
+helm upgrade --install firemud ./k8s/helm/firemud -f /tmp/preview-values.yaml -n firemud --create-namespace
 ```
 
 The top-level `charts/firemud` chart is a narrower support chart rather than the main full-stack deployment surface.
 
 ## Preview Cluster Prerequisites
 
-The [`hosted/preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
+The [`k8s/preview/`](preview/) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
 
 - Let's Encrypt `ClusterIssuer` resources for Traefik-hosted preview URLs
 - the dedicated `preview-deployer` ServiceAccount and RBAC for GitHub Actions

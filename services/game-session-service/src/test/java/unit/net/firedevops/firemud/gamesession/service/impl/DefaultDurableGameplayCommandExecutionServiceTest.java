@@ -332,6 +332,48 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
+  void executeRejectsSessionlessCommandWhenTargetEntityIdIsMalformed() {
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    command.setSessionId(0L);
+    command.setTenantId(22L);
+    command.setGameInstanceId(7L);
+    command.setTargetEntityId("npc-alpha");
+    TickEffect effect = tickEffect("tfx-malformed", "cmd-malformed");
+    when(parser.parse("SAY Hello there"))
+        .thenReturn(
+            new TextCommand(
+                TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there"));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.failureCode()).isEqualTo("SESSION_NOT_FOUND");
+    verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void executeRejectsSessionlessCommandWhenTargetEntityIdIsNonPositive() {
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    command.setSessionId(0L);
+    command.setTenantId(22L);
+    command.setGameInstanceId(7L);
+    command.setTargetEntityId("0");
+    TickEffect effect = tickEffect("tfx-zero", "cmd-zero");
+    when(parser.parse("SAY Hello there"))
+        .thenReturn(
+            new TextCommand(
+                TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there"));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.failureCode()).isEqualTo("SESSION_NOT_FOUND");
+    verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
   void executeAppliesDurableAfkAndDeliversOutput() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");

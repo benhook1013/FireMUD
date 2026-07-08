@@ -65,16 +65,10 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static void validate(AdmissionRequest request) {
-    if (request.tenantId() == null || request.tenantId() <= 0) {
-      throw new IllegalArgumentException("tenant_id must be positive");
-    }
-    if (request.gameInstanceId() == null || request.gameInstanceId() <= 0) {
-      throw new IllegalArgumentException("game_instance_id must be positive");
-    }
+    ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
+    ControlPlaneRequestParser.requirePositive(request.gameInstanceId(), "game_instance_id");
     requireText(request.regionId(), "region_id is required");
-    if (request.regionEpoch() == null || request.regionEpoch() <= 0) {
-      throw new IllegalArgumentException("region_epoch must be positive");
-    }
+    ControlPlaneRequestParser.requirePositive(request.regionEpoch(), "region_epoch");
     requireText(request.sourceType(), "source_type is required");
     if ("AUTOMATION".equals(request.sourceType())) {
       requireText(request.automationDispatchId(), "automation_dispatch_id is required");
@@ -202,7 +196,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setTargetEntityId(request.targetEntityId());
     command.setRemoteCoordinatorId(blankToNull(request.remoteCoordinatorId()));
     command.setRemoteFollowupId(blankToNull(request.remoteFollowupId()));
-    command.setCharacterId(parseGameplayCharacterId(request.targetEntityId()));
+    command.setCharacterId(
+        GameplayCharacterIdParser.parseGameplayCharacterId(request.targetEntityId()));
     command.setRegionId(request.regionId());
     command.setRegionEpoch(request.regionEpoch());
     command.setDueTickId(request.dueTickId());
@@ -241,17 +236,6 @@ final class AutomationGameplayCommandAdmissionSupport {
       tickService.processTick(tenantId, gameInstanceId);
     } catch (RuntimeException ex) {
       // Best effort kick only; durable command row is already staged.
-    }
-  }
-
-  private static Long parseGameplayCharacterId(String targetEntityId) {
-    if (targetEntityId == null || targetEntityId.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(targetEntityId);
-    } catch (NumberFormatException ex) {
-      return null;
     }
   }
 

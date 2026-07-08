@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -37,5 +38,20 @@ class PositiveLongParsingTest {
 
     assertTrue(malformed.invalid());
     assertTrue(zero.invalid());
+  }
+
+  @Test
+  void requireOptionalTextRejectsMalformedAndNonPositiveValuesWithCanonicalMessages() {
+    IllegalArgumentException malformed =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> PositiveLongParsing.requireOptionalText("nope", "tenantId"));
+    IllegalArgumentException zero =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> PositiveLongParsing.requireOptionalText("0", "tenantId"));
+
+    assertEquals("tenantId must be numeric", malformed.getMessage());
+    assertEquals("tenantId must be positive", zero.getMessage());
   }
 }

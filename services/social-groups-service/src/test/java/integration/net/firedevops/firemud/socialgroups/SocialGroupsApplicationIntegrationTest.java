@@ -139,6 +139,35 @@ class SocialGroupsApplicationIntegrationTest {
   }
 
   @Test
+  void friendRosterRejectsMalformedTenantIdAsInvalidArgument() throws Exception {
+    String token = privilegedAccountToken(2L);
+
+    HttpResponse<String> response =
+        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=bad&accountId=2"));
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"tenantId must be numeric\"");
+  }
+
+  @Test
+  void friendRosterRejectsMalformedFilterAsInvalidArgument() throws Exception {
+    String token = privilegedAccountToken(2L);
+
+    HttpResponse<String> response =
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=2&filter=NOT_A_FILTER"));
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"filter is invalid\"");
+  }
+
+  @Test
   void duplicateEffectIdReturnsExistingChatMessageWithoutRepublishing() {
     SendMessageRequestDto request =
         new SendMessageRequestDto(

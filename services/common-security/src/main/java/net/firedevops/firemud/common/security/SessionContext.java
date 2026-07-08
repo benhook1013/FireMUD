@@ -106,6 +106,19 @@ public final class SessionContext {
         || (data.scopedRoles != null && !data.scopedRoles.isEmpty());
   }
 
+  /**
+   * Returns the current account id when present.
+   *
+   * <p>Blank or missing claims return {@code null}. Malformed or non-positive claims fail closed.
+   */
+  public static Long currentAccountIdOrNull() {
+    ClaimsData data = currentData();
+    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+      return null;
+    }
+    return JwtClaims.requireLong(data.accountId, "accountId", false);
+  }
+
   /** Throws 403 when the current caller cannot act on the provided tenant. */
   public static void requireTenantAccess(Long tenantId) {
     if (tenantId == null) {
@@ -118,16 +131,12 @@ public final class SessionContext {
 
   /** Returns whether the current caller matches the provided account id. */
   public static boolean isCurrentAccount(Long accountId) {
-    if (accountId == null) {
-      return false;
-    }
-    ClaimsData data = currentData();
-    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+    if (accountId == null || accountId <= 0L) {
       return false;
     }
     try {
-      return Long.parseLong(data.accountId) == accountId;
-    } catch (NumberFormatException ex) {
+      return currentAccountId() == accountId;
+    } catch (IllegalArgumentException ex) {
       return false;
     }
   }
@@ -162,6 +171,14 @@ public final class SessionContext {
       return false;
     }
     return data.globalRoles.contains("platformAdmin") || data.globalRoles.contains("moderator");
+  }
+
+  private static long currentAccountId() {
+    ClaimsData data = currentData();
+    if (data == null || data.accountId == null || data.accountId.isBlank()) {
+      throw new IllegalArgumentException("accountId is required");
+    }
+    return JwtClaims.requireLong(data.accountId, "accountId", false);
   }
 
   static Context grpcContextWith(SessionClaims claims) {

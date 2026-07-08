@@ -1531,6 +1531,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
       String pointerVersion,
       String suffix) {
     return java.util.Map.of(
+        "accountId",
+        "123",
         "tenantId",
         "22",
         "worldSlug",

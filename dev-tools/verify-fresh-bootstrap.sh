@@ -8,6 +8,7 @@ WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-sm
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
+ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
 
 # Prefer noninteractive compose output for AI/automation callers. PTY-backed runs
 # under Docker Desktop/WSL can hang in compose teardown even when the same command
@@ -19,6 +20,7 @@ FIREMUD_SMOKE_NO_CACHE_SERVICES="${FIREMUD_SMOKE_NO_CACHE_SERVICES:-}"
 FIREMUD_SMOKE_COMPOSE_SERVICES="${FIREMUD_SMOKE_COMPOSE_SERVICES:-}"
 FIREMUD_SMOKE_VALIDATE_ONLY="${FIREMUD_SMOKE_VALIDATE_ONLY:-0}"
 
+bash "$ENSURE_ENV_SCRIPT"
 if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
   readarray -t COMPOSE_SERVICES <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else

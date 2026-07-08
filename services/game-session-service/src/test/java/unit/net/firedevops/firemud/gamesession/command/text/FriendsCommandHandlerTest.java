@@ -649,6 +649,40 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
+  void friendsRemoveByOrdinalRejectsMalformedReturnedFriendAccountId() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.removeFriendByOrdinal(1L, 41L, 1))
+        .thenReturn(
+            RemoveFriendByOrdinalResponse.newBuilder()
+                .setSuccess(true)
+                .setRemovedFriend(
+                    FriendRosterEntry.newBuilder()
+                        .setOrdinal(1)
+                        .setFriendAccountId("abc")
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder()
+                                .setFriendAccountId("abc")
+                                .setCharacterName("Sora")
+                                .build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, java.util.List.of("REMOVE", "#1"), "FRIENDS REMOVE #1"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_REMOVE_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("Friend removal unavailable");
+  }
+
+  @Test
   void friendsShowReturnsCanonicalFriendDetailView() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
@@ -845,6 +879,97 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .extracting(PlayerOutput::text)
         .isEqualTo("ERROR FRIEND_TARGET_NOT_FOUND Character not found: Unknown");
+  }
+
+  @Test
+  void friendsAddRejectsMalformedResolvedCharacterAccountIdAsUnavailable() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(entityManagementClient.findCharacterByName(
+            Mockito.any(),
+            Mockito.eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+            Mockito.eq("Sora")))
+        .thenReturn(
+            Optional.of(Character.newBuilder().setName("Sora").setAccountId("abc").build()));
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, java.util.List.of("ADD", "Sora"), "FRIENDS ADD Sora"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_ADD_UNAVAILABLE");
+    assertThat(result.outputs())
+        .singleElement()
+        .extracting(PlayerOutput::text)
+        .isEqualTo("ERROR FRIEND_ADD_UNAVAILABLE Friend add unavailable");
+    Mockito.verifyNoInteractions(socialGroupsClient);
+  }
+
+  @Test
+  void friendsListTreatsMalformedFriendLinkIdAsAbsent() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(1L, 41L))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .addFriends(
+                    FriendRosterEntry.newBuilder()
+                        .setFriendLinkId("abc")
+                        .setFriendAccountId("77")
+                        .setStatus("active")
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder().setFriendAccountId("77").build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, java.util.List.of(), "FRIENDS"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    FriendPresenceViewOutput view =
+        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
+    assertThat(view.friends())
+        .singleElement()
+        .satisfies(entry -> assertThat(entry.friendLinkId()).isNull());
+  }
+
+  @Test
+  void friendsListRejectsMalformedFriendAccountIdPayload() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(1L, 41L))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .addFriends(
+                    FriendRosterEntry.newBuilder()
+                        .setFriendAccountId("abc")
+                        .setStatus("active")
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder().setFriendAccountId("abc").build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, java.util.List.of(), "FRIENDS"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_PRESENCE_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("Friend presence unavailable");
   }
 
   @Test

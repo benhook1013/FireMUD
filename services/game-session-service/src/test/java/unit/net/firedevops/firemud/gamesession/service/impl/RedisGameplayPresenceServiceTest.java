@@ -126,6 +126,34 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void listConnectedByGameInstancePrunesMalformedSessionIndexEntry() {
+    when(setOperations.members("gameplaypresence:22:7:sessions"))
+        .thenReturn(new LinkedHashSet<>(List.of("not-a-session", "1")));
+    when(valueOperations.get("gameplaypresence:session:1"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                1L,
+                22L,
+                7L,
+                "demo",
+                "production",
+                1L,
+                101L,
+                "Aster",
+                GameplayPresenceRole.GOD,
+                70L,
+                null,
+                null,
+                null));
+
+    var result = service.listConnectedByGameInstance(22L, 7L);
+
+    assertEquals(1, result.size());
+    assertEquals(1L, result.get(0).sessionId());
+    verify(setOperations).remove("gameplaypresence:22:7:sessions", "not-a-session");
+  }
+
+  @Test
   void removeBySessionIdRemovesValueAndSetMembership() {
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
@@ -306,5 +334,36 @@ class RedisGameplayPresenceServiceTest {
     assertEquals(2, result.get(102L).size());
     assertEquals(4L, result.get(102L).get(0).sessionId());
     assertEquals(3L, result.get(102L).get(1).sessionId());
+  }
+
+  @Test
+  void listConnectedByAccountIdsPrunesMalformedSessionIndexEntry() {
+    when(setOperations.members("gameplaypresence:22:account:102:sessions"))
+        .thenReturn(new LinkedHashSet<>(List.of("bad-session", "4")));
+    when(valueOperations.get("gameplaypresence:session:4"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                4L,
+                22L,
+                7L,
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                102L,
+                202L,
+                "Ben",
+                GameplayPresenceRole.PLAYER,
+                90L,
+                null,
+                110L,
+                120L));
+
+    var result = service.listConnectedByAccountIds(22L, List.of(102L));
+
+    assertEquals(1, result.size());
+    assertEquals(1, result.get(102L).size());
+    assertEquals(4L, result.get(102L).get(0).sessionId());
+    verify(setOperations).remove("gameplaypresence:22:account:102:sessions", "bad-session");
   }
 }

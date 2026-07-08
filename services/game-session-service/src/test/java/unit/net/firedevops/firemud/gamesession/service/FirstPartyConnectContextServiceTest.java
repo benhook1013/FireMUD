@@ -24,6 +24,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -79,6 +80,62 @@ class FirstPartyConnectContextServiceTest {
   }
 
   @Test
+  void parseRejectsZeroAccountClaim() {
+    FirstPartyConnectContextProperties properties = new FirstPartyConnectContextProperties();
+    properties.setJwtSecret("secret");
+    JwtUtil jwtUtil = mock(JwtUtil.class);
+    @SuppressWarnings("unchecked")
+    Jws<Claims> jws = mock(Jws.class);
+    Claims claims = mock(Claims.class);
+    when(jwtUtil.parseToken("token")).thenReturn(jws);
+    when(jws.getPayload()).thenReturn(claims);
+    when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("0");
+    when(claims.get("tenantId")).thenReturn(7L);
+    when(claims.get("worldSlug")).thenReturn("demo");
+    when(claims.get("realmSlug")).thenReturn("production");
+    when(claims.get("gameInstanceId")).thenReturn("9");
+    when(claims.get("pointerVersion")).thenReturn(17L);
+    when(claims.get("connectScopeId")).thenReturn("scope-1");
+    when(claims.get("connectTokenJti")).thenReturn("jti");
+    when(claims.get("connectRequestId")).thenReturn("request-connect-1");
+    when(claims.get("gatewayRequestId")).thenReturn("request-1");
+
+    FirstPartyConnectContextService service =
+        new FirstPartyConnectContextService(properties, jwtUtil);
+
+    assertTrue(service.parse("token").isEmpty());
+  }
+
+  @Test
+  void parseRejectsAccountSubjectMismatch() {
+    FirstPartyConnectContextProperties properties = new FirstPartyConnectContextProperties();
+    properties.setJwtSecret("secret");
+    JwtUtil jwtUtil = mock(JwtUtil.class);
+    @SuppressWarnings("unchecked")
+    Jws<Claims> jws = mock(Jws.class);
+    Claims claims = mock(Claims.class);
+    when(jwtUtil.parseToken("token")).thenReturn(jws);
+    when(jws.getPayload()).thenReturn(claims);
+    when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("41");
+    when(claims.get("tenantId")).thenReturn(7L);
+    when(claims.get("worldSlug")).thenReturn("demo");
+    when(claims.get("realmSlug")).thenReturn("production");
+    when(claims.get("gameInstanceId")).thenReturn("9");
+    when(claims.get("pointerVersion")).thenReturn(17L);
+    when(claims.get("connectScopeId")).thenReturn("scope-1");
+    when(claims.get("connectTokenJti")).thenReturn("jti");
+    when(claims.get("connectRequestId")).thenReturn("request-connect-1");
+    when(claims.get("gatewayRequestId")).thenReturn("request-1");
+
+    FirstPartyConnectContextService service =
+        new FirstPartyConnectContextService(properties, jwtUtil);
+
+    assertTrue(service.parse("token").isEmpty());
+  }
+
+  @Test
   void parseRejectsMalformedTenantClaim() {
     FirstPartyConnectContextProperties properties = new FirstPartyConnectContextProperties();
     properties.setJwtSecret("secret");
@@ -89,6 +146,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn("not-a-number");
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -116,6 +174,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(null);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -143,6 +202,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -170,6 +230,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("");
@@ -197,6 +258,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -224,6 +286,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -251,6 +314,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");
@@ -278,6 +342,7 @@ class FirstPartyConnectContextServiceTest {
     when(jwtUtil.parseToken("token")).thenReturn(jws);
     when(jws.getPayload()).thenReturn(claims);
     when(claims.getSubject()).thenReturn("42");
+    when(claims.get("accountId")).thenReturn("42");
     when(claims.get("tenantId")).thenReturn(7L);
     when(claims.get("worldSlug")).thenReturn("demo");
     when(claims.get("realmSlug")).thenReturn("production");

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -191,6 +192,36 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void setPointerRejectsMalformedCurrentAccountClaimBeforeMutation() {
+    SessionContext.setContext("not-a-long", List.of("platformAdmin"), Map.of());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () ->
+                service.setPointer(
+                    new SetAdmissionPointerRequest(
+                        "demo",
+                        "Demo World",
+                        "production",
+                        "Live Realm",
+                        2L,
+                        7L,
+                        true,
+                        true,
+                        false,
+                        "SHARED",
+                        "ALLOW_NEW",
+                        "cutover",
+                        "req-1",
+                        3L,
+                        "pvu-1")));
+
+    assertEquals(400, ex.getStatusCode().value());
+    verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
   void executePreparedVersionCutoverUsesSessionAccountIdAsActorPrincipal() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.executePreparedVersionCutover(any()))
@@ -277,6 +308,22 @@ class AdmissionPointerServiceImplTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     GameInstanceRuntimeState.newBuilder().setTenantId("8").setGameInstanceId("7"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.getRuntimeState(2L, 7L));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getRuntimeStateRejectsZeroControlPlaneGameInstanceId() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState(2L, 7L))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder().setTenantId("2").setGameInstanceId("0"))
                 .build());
 
     ResponseStatusException ex =

@@ -204,7 +204,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   @Transactional
   public void abandonFollowup(
       long tenantId, String followupId, String failureCode, String failureMessage) {
-    requirePositive(tenantId, "tenant_id");
+    ControlPlaneRequestParser.requirePositive(tenantId, "tenant_id");
     requireNotBlank(followupId, "followup_id");
     RemoteFollowup followup =
         remoteFollowupRepository
@@ -359,15 +359,17 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void validateScheduleRequest(ScheduleRequest request) {
-    requirePositive(request.tenantId(), "tenant_id");
+    ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
     requireNotBlank(request.commandId(), "command_id");
     requireNotBlank(request.coordinatorId(), "coordinator_id");
-    requirePositive(request.originGameInstanceId(), "origin_game_instance_id");
+    ControlPlaneRequestParser.requirePositive(
+        request.originGameInstanceId(), "origin_game_instance_id");
     requireNotBlank(request.originRegionId(), "origin_region_id");
-    requirePositive(request.originRegionEpoch(), "origin_region_epoch");
-    requirePositive(request.targetGameInstanceId(), "target_game_instance_id");
+    ControlPlaneRequestParser.requirePositive(request.originRegionEpoch(), "origin_region_epoch");
+    ControlPlaneRequestParser.requirePositive(
+        request.targetGameInstanceId(), "target_game_instance_id");
     requireNotBlank(request.targetRegionId(), "target_region_id");
-    requirePositive(request.targetRegionEpoch(), "target_region_epoch");
+    ControlPlaneRequestParser.requirePositive(request.targetRegionEpoch(), "target_region_epoch");
     requireNotBlank(request.followupId(), "followup_id");
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");
@@ -409,7 +411,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   }
 
   private static void validateResultRequest(ResultRequest request) {
-    requirePositive(request.tenantId(), "tenant_id");
+    ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
     requireNotBlank(request.resultId(), "result_id");
     requireNotBlank(request.coordinatorId(), "coordinator_id");
     requireNotBlank(request.followupId(), "followup_id");
@@ -585,12 +587,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static boolean sameLong(Long left, Long right) {
     return left == null ? right == null : left.equals(right);
-  }
-
-  private static void requirePositive(long value, String field) {
-    if (value <= 0) {
-      throw new IllegalArgumentException(field + " must be positive");
-    }
   }
 
   private static void requireNotBlank(String value, String field) {

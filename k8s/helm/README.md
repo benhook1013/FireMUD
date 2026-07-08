@@ -24,23 +24,31 @@ helm install account-service ./account-service \
   -f values-local.yaml
 ```
 
-To deploy all services at once through the full-stack chart path, start from the environment-specific example values shipped with that chart:
+To deploy all services at once through the full-stack chart path, render environment-specific values from the shared hosted template:
 
 ```bash
+python3 ../../dev-tools/hosted/preview/render-preview-values.py \
+  firemud/values-hosted-shared.example.yaml \
+  /tmp/preview-values.yaml \
+  123 pr-123 pr-123 pr-123.preview.firedevops.net pr-123-deadbeef 32000
 helm upgrade --install firemud ./firemud \
-  -f firemud/values-preview.example.yaml
+  -f /tmp/preview-values.yaml
 ```
 
 For hosted PR preview environments, start from:
 
 ```bash
+python3 ../../dev-tools/hosted/preview/render-preview-values.py \
+  firemud/values-hosted-shared.example.yaml \
+  /tmp/preview-values.yaml \
+  123 pr-123 pr-123 pr-123.preview.firedevops.net pr-123-deadbeef 32000
 helm upgrade --install pr-123 ./firemud \
-  -f firemud/values-preview.example.yaml \
+  -f /tmp/preview-values.yaml \
   --namespace pr-123 \
   --create-namespace
 ```
 
-`firemud/values-preview.example.yaml` documents the preview deployment contract:
+`firemud/values-hosted-shared.example.yaml` is the shared source template for the hosted deployment contract. `dev-tools/hosted/preview/render-preview-values.py` materializes preview-specific values from it:
 
 - PR number, namespace, release name, and preview hostname
 - immutable per-PR image tags from GHCR
@@ -49,7 +57,7 @@ helm upgrade --install pr-123 ./firemud \
 - conservative preview capacity assumptions for the single-node Hetzner host
 - stubbed first-create seed/bootstrap hooks that can be replaced once the runtime data model stabilizes
 
-`firemud/values-dev-demo.example.yaml` documents the fixed `develop` hosted environment contract:
+`dev-tools/hosted/dev-demo/render-dev-demo-values.py` materializes the fixed `develop` hosted environment values from the same shared template:
 
 - stable namespace/release/hostname for the shared `develop` branch environment
 - fixed TCP NodePort separate from the per-PR preview range

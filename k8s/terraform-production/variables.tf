@@ -9,6 +9,30 @@ variable "namespace" {
   default     = "firemud"
 }
 
+variable "postgres_superuser_password" {
+  description = "PostgreSQL superuser password for the production Helm release"
+  type        = string
+  sensitive   = true
+}
+
+variable "postgres_app_username" {
+  description = "Application PostgreSQL username for the production Helm release"
+  type        = string
+  default     = "firemud"
+}
+
+variable "postgres_app_password" {
+  description = "Application PostgreSQL password for the production Helm release"
+  type        = string
+  sensitive   = true
+}
+
+variable "postgres_database" {
+  description = "Application PostgreSQL database name for the production Helm release"
+  type        = string
+  default     = "firemud"
+}
+
 variable "velero_provider" {
   description = "Velero object storage provider (e.g., aws, gcp)"
   type        = string

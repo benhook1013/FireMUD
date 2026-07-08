@@ -1,10 +1,10 @@
 global:
   postgresql:
     auth:
-      postgresPassword: firemud
-      username: firemud
-      password: firemud
-      database: firemud
+      postgresPassword: ${postgres_superuser_password}
+      username: ${postgres_app_username}
+      password: ${postgres_app_password}
+      database: ${postgres_database}
 architecture: replication
 primary:
   persistence:

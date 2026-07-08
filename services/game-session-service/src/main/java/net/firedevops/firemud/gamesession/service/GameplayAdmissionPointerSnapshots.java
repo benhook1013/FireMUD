@@ -23,6 +23,20 @@ public final class GameplayAdmissionPointerSnapshots {
         context.worldSlug(), context.realmSlug(), context.pointerVersion());
   }
 
+  public static AdmittedRoutingBundle requireAdmittedRoutingBundle(
+      SessionContext context, String requestTarget) {
+    AdmittedRoutingBundle routingBundle = admittedRoutingBundle(context);
+    if (hasPartialAdmittedRoutingBundle(context)) {
+      throw new IllegalStateException(
+          "Incomplete admitted routing bundle on session context for " + requestTarget);
+    }
+    if (!routingBundle.isPresent()) {
+      throw new IllegalStateException(
+          "Missing admitted routing bundle on session context for " + requestTarget);
+    }
+    return routingBundle;
+  }
+
   public static boolean hasPartialAdmittedRoutingBundle(SessionContext context) {
     if (context == null) {
       return false;
@@ -33,6 +47,55 @@ public final class GameplayAdmissionPointerSnapshots {
         && (StringUtils.hasText(context.worldSlug())
             || StringUtils.hasText(context.realmSlug())
             || context.pointerVersion() > 0);
+  }
+
+  public static SessionContext repairGenericBootstrapShell(
+      SessionContext shell, List<GameplayAdmissionPointerSnapshot> runtimePointers) {
+    if (shell == null) {
+      return null;
+    }
+    List<GameplayAdmissionPointerSnapshot> filteredRuntimePointers =
+        runtimePointers == null
+            ? List.of()
+            : runtimePointers.stream().filter(pointer -> pointer != null).toList();
+    SessionContext normalizedShell = normalizePartialGenericRouting(shell);
+    if (hasCompleteRoutingBundle(normalizedShell)) {
+      if (filteredRuntimePointers.isEmpty()) {
+        return normalizedShell;
+      }
+      if (matchesCurrentRuntimeTarget(
+          filteredRuntimePointers,
+          normalizedShell.tenantId(),
+          normalizedShell.bootstrapGameInstanceId(),
+          normalizedShell.worldSlug(),
+          normalizedShell.realmSlug(),
+          normalizedShell.pointerVersion())) {
+        return normalizedShell;
+      }
+      return clearGenericBootstrapRouting(normalizedShell);
+    }
+    return singularCompletePointer(filteredRuntimePointers)
+        .map(
+            pointer ->
+                new SessionContext(
+                    normalizedShell.sessionId(),
+                    normalizedShell.tenantId(),
+                    normalizedShell.accountId(),
+                    normalizedShell.loginName(),
+                    normalizedShell.characterId(),
+                    normalizedShell.characterName(),
+                    normalizedShell.gameInstanceId(),
+                    normalizedShell.roomInstanceId(),
+                    normalizedShell.jwt(),
+                    normalizedShell.localeTag(),
+                    normalizedShell.bootstrapGameInstanceId(),
+                    pointer.worldSlug(),
+                    pointer.realmSlug(),
+                    pointer.pointerVersion(),
+                    normalizedShell.playableStateScope(),
+                    normalizedShell.connectScopeId(),
+                    normalizedShell.connectRequestId()))
+        .orElse(clearGenericBootstrapRouting(normalizedShell));
   }
 
   public static boolean hasCompleteRoutingBundle(GameplayAdmissionPointerSnapshot pointer) {
@@ -78,6 +141,40 @@ public final class GameplayAdmissionPointerSnapshots {
       return false;
     }
     return existing.pointerVersion() == incoming.pointerVersion();
+  }
+
+  public static boolean sameBootstrapRoute(
+      FirstPartyConnectContext existing,
+      long tenantId,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {
+    if (existing == null) {
+      return false;
+    }
+    if (existing.tenantId() != tenantId || existing.gameInstanceId() != bootstrapGameInstanceId) {
+      return false;
+    }
+    RoutingBundle existingRoutingBundle =
+        normalizeRoutingBundle(
+            existing.worldSlug(), existing.realmSlug(), Long.valueOf(existing.pointerVersion()));
+    RoutingBundle incomingRoutingBundle =
+        normalizeRoutingBundle(worldSlug, realmSlug, Long.valueOf(pointerVersion));
+    if ((existingRoutingBundle == null) != (incomingRoutingBundle == null)) {
+      return false;
+    }
+    if (incomingRoutingBundle == null) {
+      return true;
+    }
+    if (!sameRoutingIdentity(
+        existingRoutingBundle.worldSlug(),
+        existingRoutingBundle.realmSlug(),
+        incomingRoutingBundle.worldSlug(),
+        incomingRoutingBundle.realmSlug())) {
+      return false;
+    }
+    return existingRoutingBundle.pointerVersion().equals(incomingRoutingBundle.pointerVersion());
   }
 
   public static Optional<GameplayAdmissionPointerSnapshot> singularCompletePointer(
@@ -161,6 +258,34 @@ public final class GameplayAdmissionPointerSnapshots {
         && hasAnyRoutingValue(worldSlug, realmSlug, pointerVersion)) {
       throw new IllegalArgumentException(message);
     }
+  }
+
+  private static SessionContext clearGenericBootstrapRouting(SessionContext shell) {
+    return new SessionContext(
+        shell.sessionId(),
+        shell.tenantId(),
+        shell.accountId(),
+        shell.loginName(),
+        shell.characterId(),
+        shell.characterName(),
+        shell.gameInstanceId(),
+        shell.roomInstanceId(),
+        shell.jwt(),
+        shell.localeTag(),
+        shell.bootstrapGameInstanceId(),
+        null,
+        null,
+        0L,
+        shell.playableStateScope(),
+        shell.connectScopeId(),
+        shell.connectRequestId());
+  }
+
+  private static SessionContext normalizePartialGenericRouting(SessionContext shell) {
+    if (!hasPartialAdmittedRoutingBundle(shell)) {
+      return shell;
+    }
+    return clearGenericBootstrapRouting(shell);
   }
 
   private static String blankToNull(String value) {

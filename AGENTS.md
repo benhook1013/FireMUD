@@ -46,14 +46,49 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - If a change affects runtime behavior, startup, auth, wiring, migrations, or packaged artifacts, make sure the proof rebuilds and boots fresh images rather than reusing stale containers or images.
 - If multiple CI failures suggest the branch is no longer locally mirrored, run `./gradlew check` plus the appropriate canonical Docker smoke proof before pushing.
 
+## Subagent Models
+
+When using subagents, call `spawn_agent` with an explicit `agent_type`, a tightly scoped task, and a `model` override only when there is a clear reason not to inherit the parent model. Prefer these models for delegation:
+
+- `gpt-5.3-codex-spark`: Use for most bounded delegation. Main thread owns slice boundaries, integration, and final validation.
+- `gpt-5.4-mini`: Use for targeted tasks.
+- `gpt-5.5`: Use when delegation needs a smarter model for harder reasoning, ambiguous implementation work, or higher-risk synthesis.
+
+Typical call shape:
+
+```json
+{
+  "agent_type": "explorer",
+  "message": "Find where session tokens are issued and validated. Report exact files and entrypoints.",
+  "model": "gpt-5.3-codex-spark"
+}
+```
+
+```json
+{
+  "agent_type": "worker",
+  "message": "Own the auth middleware tests in <path>. Make the bounded fix, do not touch unrelated files, and report changed paths.",
+  "model": "gpt-5.4-mini"
+}
+```
+
+```json
+{
+  "agent_type": "worker",
+  "message": "Own the protocol validation refactor in <path>. Resolve the design cleanly, preserve in-flight edits from others, and report changed paths.",
+  "model": "gpt-5.5"
+}
+```
+
+If no model override is needed, omit `model` and let the subagent inherit the parent model.
+
 ## Execution Style
 
-- Prefer a single main-thread workflow for normal repository work.
-- Do all repository work on the currently active branch and in the current working tree unless a human explicitly asks for a different branch or worktree.
-- Treat the active main thread as the orchestrator for outstanding repository and slice work; keep end-to-end reasoning, integration, and final verification on that thread.
-- Use subagents selectively for bounded parallelizable work when delegation is clearly specified or materially improves cost or turnaround.
-- When subagents are useful, prefer cheaper mini-model workers if the available tooling exposes that choice, and give them narrowly scoped tasks with explicit success conditions.
-- Optimize for continuity of reasoning and direct convergence over unnecessary splitting across delegated workers.
+- Prefer a single main-thread workflow on the active branch and in the current working tree unless a human explicitly asks otherwise.
+- Keep orchestration, integration, end-to-end reasoning, and final verification on the main thread.
+- Use subagents only for bounded parallelizable work when delegation is explicitly requested or clearly improves turnaround.
+- When delegating, prefer `gpt-5.3-codex-spark` for most tasks, `gpt-5.4-mini` for targeted tasks, and `gpt-5.5` when stronger reasoning is needed; give each subagent a narrowly scoped task with explicit success conditions.
+- Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.
 - When rolling out or repairing a shared pattern, update the remaining in-scope adopters in the same pass when practical.
 

@@ -140,7 +140,7 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
       builder.setRealmSlug(request.getRealmSlug());
     }
     if (request.getPointerVersion() != null) {
-      builder.setPointerVersion(request.getPointerVersion());
+      builder.setPointerVersion(requirePositivePointerVersion(request.getPointerVersion()));
     }
     if (hasText(request.getResultErrorCode())) {
       builder.setResultErrorCode(request.getResultErrorCode());
@@ -268,8 +268,8 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
         optionalLong(result.getOriginDeadlineRegionEpoch()),
         optionalLong(result.getOriginDeadlineTickId()),
         blankToNull(result.getLateResultPolicy()),
-        blankToNull(result.getOriginGameInstanceId()),
-        blankToNull(result.getTargetGameInstanceId()),
+        parseOptionalLong(result.getOriginGameInstanceId(), "origin_game_instance_id"),
+        parseOptionalLong(result.getTargetGameInstanceId(), "target_game_instance_id"),
         blankToNull(result.getTargetEntityId()),
         blankToNull(result.getEffectKey()),
         blankToNull(result.getPayloadKind()),
@@ -297,8 +297,12 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
         optionalLong(result.getQueueSourceOrdinal()),
         optionalLong(result.getQueueSourceDueTickId()),
         optionalLong(result.getQueueSourceDueAtMs()),
-        blankToNull(result.getCurrentOriginRuntimeGameInstanceId()),
-        blankToNull(result.getCurrentTargetRuntimeGameInstanceId()),
+        parseOptionalLong(
+            result.getCurrentOriginRuntimeGameInstanceId(),
+            "current_origin_runtime_game_instance_id"),
+        parseOptionalLong(
+            result.getCurrentTargetRuntimeGameInstanceId(),
+            "current_target_runtime_game_instance_id"),
         result.getCurrentOriginRuntimePlayableStateScope().name(),
         blankToNull(result.getCurrentOriginRuntimeWorldSlug()),
         blankToNull(result.getCurrentOriginRuntimeRealmSlug()),
@@ -359,28 +363,11 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
   }
 
   private long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          field + " was not numeric in control-plane response",
-          ex);
-    }
+    return ControlPlaneResponseReaders.parseLong(value, field);
   }
 
   private Long parseOptionalLong(String value, String field) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          field + " was not numeric in control-plane response",
-          ex);
-    }
+    return ControlPlaneResponseReaders.parseOptionalLong(value, field);
   }
 
   private Long optionalLong(long value) {
@@ -397,5 +384,12 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
 
   private boolean hasText(String value) {
     return value != null && !value.isBlank();
+  }
+
+  private long requirePositivePointerVersion(Long pointerVersion) {
+    if (pointerVersion == null || pointerVersion <= 0) {
+      throw new IllegalArgumentException("pointerVersion must be positive");
+    }
+    return pointerVersion;
   }
 }

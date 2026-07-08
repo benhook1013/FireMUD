@@ -708,6 +708,46 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void nonPositiveDefaultRoutingBundleIsDroppedBeforeGatewayBootstrap() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    RecordingConnector connector = new RecordingConnector();
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            "demo",
+            "production",
+            "0",
+            lookCacheService);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+
+    assertEquals("1", connector.getSessionId());
+    assertEquals("1", connector.getTenantId());
+    assertNull(connector.getWorldSlug());
+    assertNull(connector.getRealmSlug());
+    assertNull(connector.getPointerVersion());
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void disconnectNotificationSentWhenSessionKnown() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);

@@ -154,6 +154,33 @@ class GameplaySessionAttestationServiceTest {
   }
 
   @Test
+  void requireGameplaySessionMatchRejectsSubjectClaimMismatch() {
+    String token =
+        jwtUtil.generateToken(
+            "gameplay-session:99",
+            Map.ofEntries(
+                Map.entry("attestationType", "GAMEPLAY_SESSION"),
+                Map.entry("tenantId", "22"),
+                Map.entry("sessionId", "41"),
+                Map.entry("accountId", "7"),
+                Map.entry("characterId", "123"),
+                Map.entry("gameInstanceId", "1"),
+                Map.entry("roomInstanceId", "1021"),
+                Map.entry("worldSlug", "demo"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("pointerVersion", "17"),
+                Map.entry("playableStateScope", "SHARED")));
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () -> service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "1021"));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("Gameplay session attestation subject does not match claims", ex.getMessage());
+  }
+
+  @Test
   void requireGameplaySessionMatchRejectsNonPositiveExpectedAccountId() {
     String token =
         service.issueGameplaySessionAttestation(
@@ -200,6 +227,33 @@ class GameplaySessionAttestationServiceTest {
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Malformed claim: tenantId", ex.getMessage());
+  }
+
+  @Test
+  void requireGameplayOrProbeMatchRejectsProbeSubjectClaimMismatch() {
+    String token =
+        jwtUtil.generateToken(
+            "gameplay-probe:22:99:1021",
+            Map.ofEntries(
+                Map.entry("attestationType", "INTERNAL_PROBE"),
+                Map.entry("tenantId", "22"),
+                Map.entry("sessionId", "0"),
+                Map.entry("accountId", "0"),
+                Map.entry("characterId", "0"),
+                Map.entry("gameInstanceId", "1"),
+                Map.entry("roomInstanceId", "1021"),
+                Map.entry("worldSlug", ""),
+                Map.entry("realmSlug", ""),
+                Map.entry("pointerVersion", ""),
+                Map.entry("playableStateScope", "")));
+
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () -> service.requireGameplayOrProbeMatch(token, "22", "1", "1021"));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("Gameplay session attestation subject does not match claims", ex.getMessage());
   }
 
   @Test

@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,9 +42,54 @@ class SessionContextTenantAccessTest {
     SessionContext.setContext("42", List.of(), Map.of());
 
     assertTrue(SessionContext.hasAccountAccess(7L, 42L));
+    assertTrue(SessionContext.isCurrentAccount(42L));
     assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, 42L));
     assertFalse(SessionContext.hasAccountAccess(7L, 43L));
+    assertFalse(SessionContext.isCurrentAccount(43L));
     assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 43L));
+  }
+
+  @Test
+  void currentAccountAccessRejectsNonPositiveAccountIds() {
+    SessionContext.setContext("0", List.of(), Map.of());
+
+    assertFalse(SessionContext.isCurrentAccount(0L));
+    assertFalse(SessionContext.hasAccountAccess(7L, 0L));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 0L));
+  }
+
+  @Test
+  void currentAccountAccessRejectsNonPositiveCurrentAccountClaim() {
+    SessionContext.setContext("-42", List.of(), Map.of());
+
+    assertFalse(SessionContext.isCurrentAccount(42L));
+    assertFalse(SessionContext.hasAccountAccess(7L, 42L));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 42L));
+  }
+
+  @Test
+  void currentAccountIdOrNullReturnsParsedAccountId() {
+    SessionContext.setContext("42", List.of(), Map.of());
+
+    assertTrue(SessionContext.currentAccountIdOrNull() == 42L);
+  }
+
+  @Test
+  void currentAccountIdOrNullReturnsNullWhenClaimMissing() {
+    SessionContext.clear();
+    assertNull(SessionContext.currentAccountIdOrNull());
+
+    SessionContext.setContext("   ", List.of(), Map.of());
+    assertNull(SessionContext.currentAccountIdOrNull());
+  }
+
+  @Test
+  void currentAccountIdOrNullRejectsMalformedOrNonPositiveClaim() {
+    SessionContext.setContext("not-a-long", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
+
+    SessionContext.setContext("0", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
   }
 
   @Test

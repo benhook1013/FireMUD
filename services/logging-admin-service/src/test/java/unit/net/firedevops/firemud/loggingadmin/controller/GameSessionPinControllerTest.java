@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -81,6 +82,40 @@ class GameSessionPinControllerTest {
     mockMvc
         .perform(get("/game-session-pins/1/7").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void getPinnedScriptPatchVersionRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/game-session-pins/not-a-number/7")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(gameSessionPinService);
+  }
+
+  @Test
+  void getGameSessionPinConvergenceRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/game-session-pins/1/0/convergence")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("gameInstanceId must be positive"));
+
+    verifyNoInteractions(gameSessionPinService);
   }
 
   private PinnedScriptPatchVersionDto pinnedVersionDto() {

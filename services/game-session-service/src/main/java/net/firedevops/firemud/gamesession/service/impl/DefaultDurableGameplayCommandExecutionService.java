@@ -151,7 +151,9 @@ public final class DefaultDurableGameplayCommandExecutionService
         return bySession;
       }
     }
-    Long characterId = gameplayCharacterId(command);
+    Long characterId =
+        GameplayCharacterIdParser.parseGameplayCharacterId(
+            command.getCharacterId(), command.getTargetEntityId());
     if (characterId == null
         || characterId <= 0
         || command.getTenantId() == null
@@ -162,20 +164,6 @@ public final class DefaultDurableGameplayCommandExecutionService
     }
     return sessionAuthenticationService.resolveByGameplayIdentity(
         command.getTenantId(), command.getGameInstanceId(), characterId);
-  }
-
-  private static Long gameplayCharacterId(GameplayCommand command) {
-    if (command.getCharacterId() != null && command.getCharacterId() > 0) {
-      return command.getCharacterId();
-    }
-    if (command.getTargetEntityId() == null || command.getTargetEntityId().isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(command.getTargetEntityId());
-    } catch (NumberFormatException ex) {
-      return null;
-    }
   }
 
   private DurableGameplayCommandExecutionResult executeItemMutation(

@@ -2,16 +2,25 @@ package net.firedevops.firemud.worldmanagement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.Map;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -27,6 +36,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     classes = WorldManagementServiceApplication.class,
     properties = "spring.grpc.server.port=0")
 class WorldManagementServiceApplicationIntegrationTest {
+  private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -43,6 +53,7 @@ class WorldManagementServiceApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+  @Autowired private JwtUtil jwtUtil;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private GameDesignClient gameDesignClient;
@@ -53,5 +64,63 @@ class WorldManagementServiceApplicationIntegrationTest {
   void pingEndpointReturnsPong() {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
+  }
+
+  @Test
+  void listRegionsRejectsMalformedTenantIdWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/regions?tenantId=bad-tenant"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"tenantId must be numeric\"");
+  }
+
+  @Test
+  void moveRegionRejectsMalformedShardIdWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/regions/4/move?tenantId=1&shardId=bad"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"shardId must be numeric\"");
+  }
+
+  @Test
+  void saveRuleRejectsMalformedBodyWithInvalidArgumentEnvelope() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":"bad","name":"room","scopeType":"ZONE_SUBTREE","scopeId":"12","value":"{}"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"Request body is malformed\"");
   }
 }

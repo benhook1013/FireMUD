@@ -516,8 +516,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         if (sanitized == null) {
           return;
         }
-        if ("HELP".equals(extractCommandName(sanitized)) && context != null) {
-          context.writeAndFlush(INITIAL_GUIDANCE_MESSAGE);
+        if ("HELP".equals(extractCommandName(sanitized))) {
+          ctx.writeAndFlush(INITIAL_GUIDANCE_MESSAGE);
           return;
         }
 

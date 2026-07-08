@@ -2,7 +2,6 @@ package net.firedevops.firemud.loggingadmin.controller;
 
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.GameSessionPinConvergenceDto;
 import net.firedevops.firemud.loggingadmin.dto.PinnedScriptPatchVersionDto;
 import net.firedevops.firemud.loggingadmin.service.GameSessionPinService;
@@ -26,11 +25,17 @@ public class GameSessionPinController {
       value = "getPinnedScriptPatchVersion",
       description = "Read current pinned script patch version for one runtime")
   public ResponseEntity<ApiResponse<PinnedScriptPatchVersionDto>> getPinnedScriptPatchVersion(
-      @PathVariable long tenantId, @PathVariable long gameInstanceId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            gameSessionPinService.getPinnedScriptPatchVersion(tenantId, gameInstanceId)));
+      @PathVariable String tenantId, @PathVariable String gameInstanceId) {
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          long parsedGameInstanceId =
+              LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  gameSessionPinService.getPinnedScriptPatchVersion(
+                      parsedTenantId, parsedGameInstanceId)));
+        });
   }
 
   @GetMapping("/{tenantId}/{gameInstanceId}/convergence")
@@ -38,10 +43,16 @@ public class GameSessionPinController {
       value = "getGameSessionPinConvergence",
       description = "Read persisted Game Session pin convergence for one runtime")
   public ResponseEntity<ApiResponse<GameSessionPinConvergenceDto>> getGameSessionPinConvergence(
-      @PathVariable long tenantId, @PathVariable long gameInstanceId) {
-    SessionContext.requireTenantAccess(tenantId);
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            gameSessionPinService.getGameSessionPinConvergence(tenantId, gameInstanceId)));
+      @PathVariable String tenantId, @PathVariable String gameInstanceId) {
+    return LoggingAdminRequestReaders.withBadRequest(
+        () -> {
+          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          long parsedGameInstanceId =
+              LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
+          return ResponseEntity.ok(
+              ApiResponse.success(
+                  gameSessionPinService.getGameSessionPinConvergence(
+                      parsedTenantId, parsedGameInstanceId)));
+        });
   }
 }

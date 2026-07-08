@@ -33,6 +33,26 @@ public final class JwtClaims {
     return parsed;
   }
 
+  public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
+    long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
+    long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);
+    if (subjectAccountId != claimedAccountId) {
+      throw new IllegalArgumentException(mismatchMessage);
+    }
+    return claimedAccountId;
+  }
+
+  public static SignedGameplayRoutingClaims requireSignedGameplayRoutingClaims(
+      Claims claims, String accountMismatchMessage) {
+    return new SignedGameplayRoutingClaims(
+        requireSignedActorAccountId(claims, accountMismatchMessage),
+        requireLong(claims.get("tenantId"), "tenantId", false),
+        requireText(claims.get("worldSlug"), "worldSlug"),
+        requireText(claims.get("realmSlug"), "realmSlug"),
+        requireLong(claims.get("gameInstanceId"), "gameInstanceId", false),
+        requireLong(claims.get("pointerVersion"), "pointerVersion", false));
+  }
+
   public static String claimText(Object value) {
     if (value == null) {
       return "";
@@ -58,4 +78,12 @@ public final class JwtClaims {
     }
     return "";
   }
+
+  public record SignedGameplayRoutingClaims(
+      long accountId,
+      long tenantId,
+      String worldSlug,
+      String realmSlug,
+      long gameInstanceId,
+      long pointerVersion) {}
 }

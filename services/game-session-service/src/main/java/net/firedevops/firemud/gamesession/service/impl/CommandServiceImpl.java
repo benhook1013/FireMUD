@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
@@ -82,7 +83,7 @@ public class CommandServiceImpl implements CommandService {
 
     long sessionId;
     try {
-      sessionId = ControlPlaneRequestParser.parsePositiveLong(sessionIdText, "sessionId");
+      sessionId = SessionIdParsing.require(sessionIdText);
     } catch (IllegalArgumentException ex) {
       return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
     }

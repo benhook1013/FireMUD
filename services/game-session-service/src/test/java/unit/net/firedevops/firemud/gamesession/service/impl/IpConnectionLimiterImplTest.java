@@ -87,6 +87,56 @@ class IpConnectionLimiterImplTest {
   }
 
   @Test
+  void canAcceptRejectsMalformedCounterValue() {
+    ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+
+    store.put("ipconn:1.2.3.4", "not-a-number");
+
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
+
+    assertFalse(limiter.canAccept("1.2.3.4"));
+  }
+
+  @Test
+  void canAcceptReplacementRejectsMalformedCounterValueForDifferentSessionIp() {
+    ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+
+    store.put("ipconn:1.2.3.4", "not-a-number");
+    store.put("sessionip:9", "2.3.4.5");
+
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
+
+    assertFalse(limiter.canAccept("1.2.3.4", 9L));
+  }
+
+  @Test
+  void canAcceptReplacementAllowsMalformedCounterValueForSameSessionIp() {
+    ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+
+    store.put("ipconn:1.2.3.4", "not-a-number");
+    store.put("sessionip:9", "1.2.3.4");
+
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
+
+    assertTrue(limiter.canAccept("1.2.3.4", 9L));
+  }
+
+  @Test
   void transferRegistrationMovesSessionReservationWithoutChangingCounter() {
     ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
     StringRedisTemplate redis = mock(StringRedisTemplate.class);

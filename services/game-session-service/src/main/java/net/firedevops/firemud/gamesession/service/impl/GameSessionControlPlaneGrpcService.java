@@ -296,6 +296,12 @@ public final class GameSessionControlPlaneGrpcService
               .setError(authorizationError("GetRemoteCommandCoordinator", ex))
               .build());
       responseObserver.onCompleted();
+    } catch (GameSessionRemoteControlPlaneService.NotFoundException ex) {
+      responseObserver.onNext(
+          GetRemoteCommandCoordinatorResponse.newBuilder()
+              .setError(notFoundError("GetRemoteCommandCoordinator", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetRemoteCommandCoordinatorResponse.newBuilder()

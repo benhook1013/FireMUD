@@ -76,8 +76,8 @@ jobs:
               "config/protobuf/",
               "config/security/",
               "config/spotbugs/",
-              "services/common-data-runtime/",
               "services/common-library/",
+              "services/common-data-runtime/",
               "services/common-platform-core/",
               "services/common-saga/",
               "services/common-security/",
@@ -255,17 +255,26 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: 📦 Install cloc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cloc
+
       - name: 📦 Install Python script dependencies
         run: python3 -m pip install --disable-pip-version-check PyYAML
 
       - name: 🧪 Validate dev tool contracts
         run: |
+          bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/secret-compliance-contract.sh
+          bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
+          bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
+          python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
 
   yaml-lint:
     name: YAML Lint
@@ -327,6 +336,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '20.11.0'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6

@@ -338,10 +338,15 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             duplicate_actionable_comments = extract_section_count(body, DUPLICATE_COMMENTS_MARKER)
 
     unresolved_total = unresolved_non_outdated + unresolved_outdated
+    latest_review_request_still_running = (
+        explicit_review_after_latest_commit
+        and not review_finished_after_latest_request
+    )
     retrigger_review_allowed = (
         unresolved_total == 0
         and outside_diff_actionable_comments == 0
         and duplicate_actionable_comments == 0
+        and not latest_review_request_still_running
     )
     must_resolve_outdated_threads = unresolved_outdated > 0
 

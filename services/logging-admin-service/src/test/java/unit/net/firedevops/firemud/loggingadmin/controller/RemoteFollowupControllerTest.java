@@ -72,6 +72,22 @@ class RemoteFollowupControllerTest {
   }
 
   @Test
+  void getRemoteFollowupRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/remote-followups/not-a-number/rf-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(remoteFollowupService);
+  }
+
+  @Test
   void listRemoteFollowupsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupService.listRemoteFollowups(
             org.mockito.ArgumentMatchers.eq(2L),
@@ -115,6 +131,38 @@ class RemoteFollowupControllerTest {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(remoteFollowupService);
+  }
+
+  @Test
+  void listRemoteFollowupsRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(get("/remote-followups/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(remoteFollowupService);
+  }
+
+  @Test
+  void listRemoteFollowupsRejectsZeroPointerVersionBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    when(remoteFollowupService.listRemoteFollowups(
+            org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalArgumentException("pointerVersion must be positive"));
+
+    mockMvc
+        .perform(
+            get("/remote-followups/2")
+                .param("pointerVersion", "0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("pointerVersion must be positive"));
   }
 
   private RemoteFollowupDto remoteFollowupDto() {

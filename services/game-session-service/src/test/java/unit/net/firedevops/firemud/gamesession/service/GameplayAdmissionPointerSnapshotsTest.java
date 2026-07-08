@@ -1,8 +1,10 @@
 package unit.net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -55,6 +57,35 @@ class GameplayAdmissionPointerSnapshotsTest {
         .isEqualTo(new GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle(null, null, null));
     assertThat(GameplayAdmissionPointerSnapshots.hasPartialAdmittedRoutingBundle(missingRouting))
         .isFalse();
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsPartialRoutingClaimsWithCallerSpecificMessage() {
+    SessionContext partialRouting =
+        new SessionContext(
+            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, "world", null, 17L, null);
+
+    assertThatThrownBy(
+            () ->
+                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                    partialRouting, "Game Logic request"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Incomplete admitted routing bundle on session context for Game Logic request");
+  }
+
+  @Test
+  void requireAdmittedRoutingBundleRejectsMissingRoutingClaimsWithCallerSpecificMessage() {
+    SessionContext missingRouting =
+        new SessionContext(
+            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, null, null, 0L, null);
+
+    assertThatThrownBy(
+            () ->
+                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                    missingRouting, "Entity Management request"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Missing admitted routing bundle on session context for Entity Management request");
   }
 
   @Test
@@ -320,6 +351,30 @@ class GameplayAdmissionPointerSnapshotsTest {
     SessionContext incoming = bootstrapShell(22L, 1L, "DEMO", "PRODUCTION", 7L);
 
     assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isTrue();
+  }
+
+  @Test
+  void sameBootstrapRouteRejectsFirstPartyConnectContextWhenRoutingIdentityChanges() {
+    FirstPartyConnectContext existing =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+
+    assertThat(
+            GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                existing, 22L, 1L, "sandbox", "production", 7L))
+        .isFalse();
+  }
+
+  @Test
+  void sameBootstrapRouteAcceptsFirstPartyConnectContextWithCaseInsensitiveRoutingIdentity() {
+    FirstPartyConnectContext existing =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+
+    assertThat(
+            GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                existing, 22L, 1L, "DEMO", "PRODUCTION", 7L))
+        .isTrue();
   }
 
   private static SessionContext bootstrapShell(

@@ -489,8 +489,12 @@ tasks.register<Exec>("generateDevCerts") {
     commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
 }
 
+tasks.register<Exec>("ensureLocalComposeEnv") {
+    commandLine("bash", "dev-tools/ensure-local-compose-env.sh")
+}
+
 tasks.register<Exec>("devUp") {
-    dependsOn("generateDevCerts", "buildDockerImages")
+    dependsOn("generateDevCerts", "buildDockerImages", "ensureLocalComposeEnv")
     commandLine(
         "docker",
         "compose",

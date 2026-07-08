@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
@@ -228,6 +229,12 @@ public final class GameSessionGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
   }
 
+  private List<Long> parseAccountIds(List<String> accountIds) {
+    return accountIds.stream()
+        .map(accountId -> ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId"))
+        .toList();
+  }
+
   private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
     requireTenantAccess(tenantId);
     if (isCurrentAccount(ownerAccountId)) {
@@ -241,8 +248,7 @@ public final class GameSessionGrpcService
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
-      long sessionId =
-          ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId");
+      long sessionId = SessionIdParsing.require(request.getSessionId());
       requireInstanceAccess(sessionId);
       gameInstanceService.stopSession(sessionId);
       ipConnectionLimiter.release(sessionId);
@@ -281,8 +287,7 @@ public final class GameSessionGrpcService
   public void restartSession(
       RestartSessionRequest request, StreamObserver<RestartSessionResponse> responseObserver) {
     try {
-      long sessionId =
-          ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId");
+      long sessionId = SessionIdParsing.require(request.getSessionId());
       requireInstanceAccess(sessionId);
       gameInstanceService.restartSession(sessionId);
       RestartSessionResponse response =
@@ -321,8 +326,7 @@ public final class GameSessionGrpcService
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
-      long sessionId =
-          ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId");
+      long sessionId = SessionIdParsing.require(request.getSessionId());
       requireInstanceAccess(sessionId);
       TextCommandInterpretationResult interpretation =
           textCommandInterpreter.interpret(
@@ -372,8 +376,7 @@ public final class GameSessionGrpcService
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
     try {
-      long sessionId =
-          ControlPlaneRequestParser.parsePositiveLong(request.getSessionId(), "sessionId");
+      long sessionId = SessionIdParsing.require(request.getSessionId());
       requireInstanceAccess(sessionId);
       String state = tickService.queryState(sessionId);
       QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
@@ -413,11 +416,10 @@ public final class GameSessionGrpcService
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
-      List<Long> accountIds =
-          request.getAccountIdsList().stream().map(Long::parseLong).filter(id -> id > 0).toList();
-      if (accountIds.size() > 100) {
+      if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
+      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
       QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
       for (var snapshot :
           accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {

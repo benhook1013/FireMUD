@@ -5,6 +5,7 @@ import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -543,7 +544,8 @@ public class InventoryServiceImpl implements InventoryService {
     if (item.isContainer()) {
       requireSingleContainerTransfer(quantity);
       if (containerInstanceId != null) {
-        long requestedContainerId = Long.parseLong(containerInstanceId);
+        long requestedContainerId =
+            RequestIdValidation.requirePositiveLong(containerInstanceId, "containerInstanceId");
         return candidates.stream()
             .filter(instance -> hasContainerInstanceId(instance, requestedContainerId))
             .findFirst()

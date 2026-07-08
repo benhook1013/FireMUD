@@ -24,7 +24,9 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -254,7 +256,13 @@ public class PlayCommandHandler {
         if (moderationFailure.isPresent()) {
           return moderationFailure.get();
         }
-        long characterId = resolveCharacterId(context, selectedRealm, character, characterName);
+        long characterId;
+        try {
+          characterId = resolveCharacterId(context, selectedRealm, character, characterName);
+        } catch (IllegalStateException ex) {
+          return characterIdentityUnavailableFailure(
+              selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), characterName, ex);
+        }
         try (GameplayLoggingContext gameplayContext =
             GameplayLoggingContext.open(
                 selectedTenantTag,
@@ -384,11 +392,13 @@ public class PlayCommandHandler {
                     connectContextInvalidFailure(
                         tenantTag, Long.toString(selectedRealm.gameInstanceId())));
               }
-              if (connectContext.tenantId() != selectedRealm.tenantId()
-                  || connectContext.gameInstanceId() != selectedRealm.gameInstanceId()
-                  || connectContext.pointerVersion() != selectedRealm.pointerVersion()
-                  || !selectedWorld.slug().equalsIgnoreCase(connectContext.worldSlug())
-                  || !selectedRealm.slug().equalsIgnoreCase(connectContext.realmSlug())) {
+              if (!GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                  connectContext,
+                  selectedRealm.tenantId(),
+                  selectedRealm.gameInstanceId(),
+                  selectedWorld.slug(),
+                  selectedRealm.slug(),
+                  selectedRealm.pointerVersion())) {
                 return Optional.of(
                     failure(
                         "CONNECT_SCOPE_MISMATCH",
@@ -462,8 +472,8 @@ public class PlayCommandHandler {
       Optional<net.firedevops.firemud.entitymanagement.v1.Character> character =
           entityManagementClient.findCharacterByName(
               context, toPlayableStateScope(selectedRealm), characterName.trim());
-      if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
-        return Long.parseLong(character.get().getId());
+      if (character.isPresent()) {
+        return requireResolvedCharacterId(character.get().getId());
       }
     }
     if (!StringUtils.hasText(requestedCharacter)) {
@@ -600,12 +610,16 @@ public class PlayCommandHandler {
       String tenantTag,
       String requestedCharacter) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
-    long requestedCharacterId =
-        resolveCharacterId(
-            context,
-            selectedRealm,
-            requestedCharacter,
-            resolveCharacterName(context, requestedCharacter));
+    String characterName = resolveCharacterName(context, requestedCharacter);
+    long requestedCharacterId;
+    try {
+      requestedCharacterId =
+          resolveCharacterId(context, selectedRealm, requestedCharacter, characterName);
+    } catch (IllegalStateException ex) {
+      return Optional.of(
+          characterIdentityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), characterName, ex));
+    }
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
             Long.toString(context.accountId()), Long.toString(selectedRealm.tenantId()), requestId);
@@ -632,6 +646,33 @@ public class PlayCommandHandler {
         selectedWorld,
         selectedRealm,
         requestedCharacterId);
+  }
+
+  private long requireResolvedCharacterId(String characterId) {
+    if (!StringUtils.hasText(characterId)) {
+      throw new IllegalStateException(
+          "Malformed resolved characterId from entity lookup: characterId is required");
+    }
+    try {
+      return PositiveLongParsing.requireOptionalText(characterId, "characterId")
+          .orElseThrow(() -> new IllegalArgumentException("characterId is required"));
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(
+          "Malformed resolved characterId from entity lookup: " + ex.getMessage(), ex);
+    }
+  }
+
+  private PlayCommandHandlingResult characterIdentityUnavailableFailure(
+      String tenantTag, String gameInstanceTag, String characterTag, RuntimeException ex) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_MESSAGE,
+        "error.play.identity-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        characterTag,
+        ex);
   }
 
   private Optional<PlayCommandHandlingResult> validateMembershipResponse(

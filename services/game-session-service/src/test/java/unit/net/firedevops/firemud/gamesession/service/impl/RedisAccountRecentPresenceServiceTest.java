@@ -275,4 +275,86 @@ class RedisAccountRecentPresenceServiceTest {
     assertEquals("fallback-realm", state.realmSlug());
     assertEquals(3L, state.pointerVersion());
   }
+
+  @Test
+  void recordDisconnectUsesContextRoutingWhenLivePresenceRoutingFieldsArePartial() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+    SessionRoutingNormalizationService sessionRoutingNormalizationService =
+        Mockito.mock(SessionRoutingNormalizationService.class);
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
+        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
+    PresenceProperties presenceProperties = new PresenceProperties();
+    presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
+
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            99L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            99L,
+            "fallback-world",
+            "fallback-realm",
+            3L,
+            "ISOLATED");
+    GameplayPresence livePresence =
+        new GameplayPresence(
+            41L,
+            22L,
+            101L,
+            "ISOLATED",
+            "demo",
+            null,
+            17L,
+            123L,
+            7001L,
+            "Emberline",
+            GameplayPresenceRole.PLAYER,
+            1000L,
+            null,
+            1200L,
+            1300L);
+
+    when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(gameplayPresenceService.findConnectedBySessionId(41L))
+        .thenReturn(Optional.of(livePresence));
+    when(visibilityPolicyResolver.resolve(22L, 123L, GameplayPresenceRole.PLAYER))
+        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
+
+    RedisAccountRecentPresenceService service =
+        new RedisAccountRecentPresenceService(
+            redisTemplate,
+            sessionRoutingNormalizationService,
+            gameplayPresenceService,
+            visibilityPolicyResolver,
+            presenceProperties,
+            () -> 1_700_000_000_000L);
+
+    service.recordDisconnect(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+
+    ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
+    verify(valueOperations)
+        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+
+    AccountRecentPresenceState state =
+        assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
+    assertEquals(99L, state.gameInstanceId());
+    assertEquals("ISOLATED", state.playableStateScope());
+    assertEquals("fallback-world", state.worldSlug());
+    assertEquals("fallback-realm", state.realmSlug());
+    assertEquals(3L, state.pointerVersion());
+  }
 }

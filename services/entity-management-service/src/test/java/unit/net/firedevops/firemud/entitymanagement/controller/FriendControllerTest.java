@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -109,6 +110,53 @@ class FriendControllerTest {
                 .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("9")))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void listRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/tenants/not-a-number/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(friendService);
+  }
+
+  @Test
+  void removeRejectsZeroFriendIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            delete("/tenants/1/characters/2/friends/0")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("friendId must be positive"));
+
+    verifyNoInteractions(friendService);
+  }
+
+  @Test
+  void addRejectsZeroFriendIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/tenants/1/characters/2/friends")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantToken("1"))
+                .content("{\"friendId\":0}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("friendId must be positive"));
+
+    verifyNoInteractions(friendService);
   }
 
   private String tenantToken(String tenantId) {

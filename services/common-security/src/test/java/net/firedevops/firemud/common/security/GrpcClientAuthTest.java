@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.protobuf.Empty;
 import io.grpc.CallOptions;
@@ -68,6 +69,18 @@ class GrpcClientAuthTest {
         .isEqualTo("service:game-logic-service");
     assertThat(jwtUtil.parseToken(secondToken).getPayload().get("internalService", Boolean.class))
         .isTrue();
+  }
+
+  @Test
+  void attachRejectsMalformedCurrentAccountClaim() {
+    CapturingChannel channel = new CapturingChannel();
+    TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
+    TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
+
+    SessionContext.setContext("not-a-long", List.of("player"), Map.of());
+
+    assertThrows(IllegalArgumentException.class, customized::invoke);
+    assertThat(channel.lastAuthorization()).isNull();
   }
 
   private static String bearerToken(String header) {

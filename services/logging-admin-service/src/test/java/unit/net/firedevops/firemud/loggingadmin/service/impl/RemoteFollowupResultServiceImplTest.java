@@ -60,9 +60,28 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals("rf-1", result.followupId()),
         () -> assertEquals("REMOTE_APPLIED", result.outcome()),
         () -> assertEquals("auto-1", result.resultCommandId()),
-        () -> assertEquals("7", result.currentOriginRuntimeGameInstanceId()),
-        () -> assertEquals("9", result.currentTargetRuntimeGameInstanceId()),
+        () -> assertEquals(7L, result.currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals(9L, result.currentTargetRuntimeGameInstanceId()),
         () -> assertEquals(31L, result.pluginPublication().publicationId()));
+  }
+
+  @Test
+  void getRemoteFollowupResultRejectsMalformedRuntimeGameInstanceIds() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowupResult(2L, "rr-1"))
+        .thenReturn(
+            GetRemoteFollowupResultResponse.newBuilder()
+                .setResult(remoteResult("2").toBuilder().setOriginGameInstanceId("not-a-number"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getRemoteFollowupResult(2L, "rr-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+    assertEquals(
+        "origin_game_instance_id was not a positive number in control-plane response",
+        ex.getReason());
   }
 
   @Test
@@ -87,6 +106,20 @@ class RemoteFollowupResultServiceImplTest {
             GetRemoteFollowupResultResponse.newBuilder()
                 .setResult(remoteResult("2", "rr-9"))
                 .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getRemoteFollowupResult(2L, "rr-1"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getRemoteFollowupResultRejectsZeroTenantIdInResponse() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteFollowupResult(2L, "rr-1"))
+        .thenReturn(
+            GetRemoteFollowupResultResponse.newBuilder().setResult(remoteResult("0")).build());
 
     ResponseStatusException ex =
         assertThrows(
@@ -244,8 +277,8 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals(2L, result.getFirst().tenantId()),
         () -> assertEquals("coord-1", result.getFirst().coordinatorId()),
         () -> assertEquals("rf-1", result.getFirst().followupId()),
-        () -> assertEquals("7", result.getFirst().originGameInstanceId()),
-        () -> assertEquals("9", result.getFirst().targetGameInstanceId()),
+        () -> assertEquals(7L, result.getFirst().originGameInstanceId()),
+        () -> assertEquals(9L, result.getFirst().targetGameInstanceId()),
         () -> assertEquals("REMOTE_APPLIED", result.getFirst().outcome()),
         () -> assertEquals("dispatch-1", result.getFirst().automationDispatchId()),
         () -> assertEquals("auto-1", result.getFirst().resultCommandId()),
@@ -254,8 +287,8 @@ class RemoteFollowupResultServiceImplTest {
         () -> assertEquals("entity:npc-7", result.getFirst().claimTargetAggregate()),
         () ->
             assertEquals("region-origin-current", result.getFirst().currentOriginRuntimeRegionId()),
-        () -> assertEquals("7", result.getFirst().currentOriginRuntimeGameInstanceId()),
-        () -> assertEquals("9", result.getFirst().currentTargetRuntimeGameInstanceId()),
+        () -> assertEquals(7L, result.getFirst().currentOriginRuntimeGameInstanceId()),
+        () -> assertEquals(9L, result.getFirst().currentTargetRuntimeGameInstanceId()),
         () ->
             assertEquals(
                 "PLAYABLE_STATE_SCOPE_SHARED",
@@ -297,6 +330,20 @@ class RemoteFollowupResultServiceImplTest {
             ResponseStatusException.class, () -> service.listRemoteFollowupResults(2L, request));
 
     assertEquals(400, ex.getStatusCode().value());
+    verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
+  void listRemoteFollowupResultsRejectsNonPositivePointerVersionBeforeDispatch() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    RemoteFollowupResultListRequest request = new RemoteFollowupResultListRequest();
+    request.setPointerVersion(0L);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.listRemoteFollowupResults(2L, request));
+
+    assertEquals("pointerVersion must be positive", ex.getMessage());
     verifyNoInteractions(gameSessionControlPlaneClient);
   }
 

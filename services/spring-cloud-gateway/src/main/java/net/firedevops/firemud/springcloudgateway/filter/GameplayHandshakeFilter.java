@@ -135,13 +135,13 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       if (!"gameplay-connect".equals(audience)) {
         throw new IllegalArgumentException("Invalid audience");
       }
-      String accountId = JwtClaims.requireText(payload.get("accountId"), "accountId");
-      RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(payload);
-      String tenantId =
-          Long.toString(JwtClaims.requireLong(payload.get("tenantId"), "tenantId", false));
-      String gameInstanceId =
-          Long.toString(
-              JwtClaims.requireLong(payload.get("gameInstanceId"), "gameInstanceId", false));
+      JwtClaims.SignedGameplayRoutingClaims routingClaims =
+          JwtClaims.requireSignedGameplayRoutingClaims(
+              payload, "Connect token account subject mismatch");
+      String accountId = Long.toString(routingClaims.accountId());
+      RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(routingClaims);
+      String tenantId = Long.toString(routingClaims.tenantId());
+      String gameInstanceId = Long.toString(routingClaims.gameInstanceId());
       String connectScopeId = requiredClaim(payload, "connectScopeId");
       String requestId = requiredClaim(payload, "requestId");
       String jti = requiredClaim(payload, "jti");
@@ -262,12 +262,12 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     }
   }
 
-  private static RoutingBundle parseRuntimeRoutingBundleFromClaims(Claims payload) {
-    return parseRuntimeRoutingBundle(
-        JwtClaims.claimText(payload.get("worldSlug")),
-        JwtClaims.claimText(payload.get("realmSlug")),
-        JwtClaims.claimText(payload.get("pointerVersion")),
-        false);
+  private static RoutingBundle parseRuntimeRoutingBundleFromClaims(
+      JwtClaims.SignedGameplayRoutingClaims routingClaims) {
+    return new RoutingBundle(
+        routingClaims.worldSlug(),
+        routingClaims.realmSlug(),
+        Long.toString(routingClaims.pointerVersion()));
   }
 
   private static RoutingBundle parseRuntimeRoutingBundleFromHeaders(ServerWebExchange exchange) {

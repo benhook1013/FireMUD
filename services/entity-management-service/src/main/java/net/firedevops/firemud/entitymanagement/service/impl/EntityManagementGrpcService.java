@@ -1479,6 +1479,9 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      Long containerInstanceId =
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getContainerInstanceId(), "containerInstanceId");
       int quantity = requirePositiveQuantity(request.getQuantity());
       PickupItemFromRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1495,7 +1498,7 @@ public class EntityManagementGrpcService
                         request.getRoomInstanceId(),
                         itemId,
                         itemInstanceId,
-                        request.getContainerInstanceId(),
+                        containerInstanceId == null ? null : Long.toString(containerInstanceId),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
                         blankToNull(request.getEffectId()),
@@ -1565,6 +1568,9 @@ public class EntityManagementGrpcService
       Long itemInstanceId =
           RequestIdValidation.parseOptionalPositiveLong(
               request.getItemInstanceId(), "itemInstanceId");
+      Long containerInstanceId =
+          RequestIdValidation.parseOptionalPositiveLong(
+              request.getContainerInstanceId(), "containerInstanceId");
       int quantity = requirePositiveQuantity(request.getQuantity());
       DropItemToRoomResponse response =
           entityMutationEffectReplayService.execute(
@@ -1581,7 +1587,7 @@ public class EntityManagementGrpcService
                         request.getRoomInstanceId(),
                         itemId,
                         itemInstanceId,
-                        request.getContainerInstanceId(),
+                        containerInstanceId == null ? null : Long.toString(containerInstanceId),
                         blankToNull(request.getStackFamilyKey()),
                         quantity,
                         blankToNull(request.getEffectId()),

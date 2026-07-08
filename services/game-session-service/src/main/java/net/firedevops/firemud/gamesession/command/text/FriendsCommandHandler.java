@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewO
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
@@ -124,9 +125,15 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", message)));
     }
+    FriendPresenceViewOutput view;
+    try {
+      view = toView(response, filter);
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
-        CommandEnqueueResult.success(), List.of(PlayerOutput.view(toView(response, filter))));
+        CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
   }
 
   private TextCommandInterpretationResult handleAdd(
@@ -196,8 +203,13 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
+    FriendPresenceViewOutput.Entry entry;
+    try {
+      entry = toEntry(0, response.getFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
+    }
     publishCommandEvent(context);
-    FriendPresenceViewOutput.Entry entry = toEntry(0, response.getFriend());
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
@@ -225,11 +237,16 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
+    FriendPresenceViewOutput.Entry entry;
+    try {
+      entry = toEntry(ordinal, response.getFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
-        List.of(
-            PlayerOutput.view(new FriendDetailViewOutput(toEntry(ordinal, response.getFriend())))));
+        List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
   }
 
   private TextCommandInterpretationResult handleSummary(SessionContext context) {
@@ -344,7 +361,12 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
-    FriendPresenceViewOutput.Entry removed = toEntry(ordinal, response.getRemovedFriend());
+    FriendPresenceViewOutput.Entry removed;
+    try {
+      removed = toEntry(ordinal, response.getRemovedFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_REMOVE_UNAVAILABLE", "Friend removal unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
@@ -358,6 +380,17 @@ public class FriendsCommandHandler {
   }
 
   private TextCommandInterpretationResult friendTargetError(String code, String message) {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
+  }
+
+  private TextCommandInterpretationResult friendUnavailable(
+      String code, String message, IllegalStateException ex) {
+    LOG.warn(
+        "Friend command failed due to malformed social payload code={} reason={}",
+        code,
+        message,
+        ex);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
@@ -402,7 +435,7 @@ public class FriendsCommandHandler {
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
     FriendPresenceEntry presence = entry.getPresence();
-    long friendAccountId = parseLong(entry.getFriendAccountId());
+    long friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
     String characterName =
         presence.getCharacterName().isBlank() ? null : presence.getCharacterName().trim();
     return new FriendPresenceViewOutput.Entry(
@@ -435,18 +468,24 @@ public class FriendsCommandHandler {
     };
   }
 
-  private long parseLong(String value) {
-    if (value == null || value.isBlank()) {
-      return 0L;
+  private long requireFriendAccountId(String value) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalStateException(
+          "Malformed friend roster friendAccountId: friendAccountId is required");
     }
-    return Long.parseLong(value);
+    try {
+      return PositiveLongParsing.requireOptionalText(value, "friendAccountId")
+          .orElseThrow(() -> new IllegalArgumentException("friendAccountId is required"));
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(
+          "Malformed friend roster friendAccountId: " + ex.getMessage(), ex);
+    }
   }
 
   private Long parseOptionalLong(String value) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    return Long.parseLong(value);
+    return PositiveLongParsing.parseOptionalText(value, "friendLinkId")
+        .optionalValue()
+        .orElse(null);
   }
 
   private String blankToNull(String value) {
@@ -561,8 +600,40 @@ public class FriendsCommandHandler {
           null,
           friendTargetError("FRIEND_TARGET_NOT_FOUND", notFoundMessage(action.targetToken())));
     }
-    return new ResolvedFriendTarget(
-        Long.parseLong(character.get().getAccountId()), character.get().getName(), null);
+    PositiveLongParsing.ParsedPositiveLong parsedAccountId =
+        PositiveLongParsing.parseOptionalText(character.get().getAccountId(), "friendAccountId");
+    if (!parsedAccountId.valid()) {
+      return new ResolvedFriendTarget(
+          0L, null, malformedResolvedTargetError(action, character.get().getAccountId()));
+    }
+    return new ResolvedFriendTarget(parsedAccountId.value(), character.get().getName(), null);
+  }
+
+  private TextCommandInterpretationResult malformedResolvedTargetError(
+      FriendAction action, String accountIdText) {
+    return switch (action.kind()) {
+      case ADD ->
+          friendUnavailable(
+              "FRIEND_ADD_UNAVAILABLE",
+              "Friend add unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      case REMOVE ->
+          friendUnavailable(
+              "FRIEND_REMOVE_UNAVAILABLE",
+              "Friend removal unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      case DETAIL ->
+          friendUnavailable(
+              "FRIEND_DETAIL_UNAVAILABLE",
+              "Friend detail unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      default ->
+          throw new IllegalStateException(
+              "Malformed resolved target is only valid for targeted friend actions");
+    };
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
@@ -618,14 +689,9 @@ public class FriendsCommandHandler {
   }
 
   private Long tryParseAccountId(String value) {
-    if (value == null || value.isBlank()) {
-      return null;
-    }
-    try {
-      return Long.parseLong(value.trim());
-    } catch (NumberFormatException ex) {
-      return null;
-    }
+    return PositiveLongParsing.parseOptionalText(value, "friendAccountId")
+        .optionalValue()
+        .orElse(null);
   }
 
   private boolean isOrdinalToken(String value) {
