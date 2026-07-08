@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 class ResolveLookPathProbeTest {
   private GameplaySessionAttestationService probeAttestationService() {
     GameplaySessionAttestationService service = mock(GameplaySessionAttestationService.class);
-    when(service.issueInternalProbeAttestation("1", "1", "1")).thenReturn("probe-token");
+    when(service.issueInternalProbeAttestation("1", "1", "R-1021")).thenReturn("probe-token");
     return service;
   }
 
@@ -46,7 +46,7 @@ class ResolveLookPathProbeTest {
     ResolveLookPathProbe probe =
         new ResolveLookPathProbe(worldStub, entityStub, probeAttestationService());
 
-    ProbeResult result = probe.probe("1", "1", "1");
+    ProbeResult result = probe.probe("1", "1", "R-1021");
 
     assertTrue(result.ready());
     @SuppressWarnings("unchecked")
@@ -89,7 +89,7 @@ class ResolveLookPathProbeTest {
     ResolveLookPathProbe probe =
         new ResolveLookPathProbe(worldStub, entityStub, probeAttestationService());
 
-    ProbeResult result = probe.probe("1", "1", "1");
+    ProbeResult result = probe.probe("1", "1", "R-1021");
 
     assertTrue(result.ready());
     @SuppressWarnings("unchecked")
@@ -114,7 +114,7 @@ class ResolveLookPathProbeTest {
         new ResolveLookPathProbe(
             worldStub, mock(EntityManagementServiceBlockingStub.class), probeAttestationService());
 
-    ProbeResult result = probe.probe("1", "1", "1");
+    ProbeResult result = probe.probe("1", "1", "R-1021");
 
     assertEquals(false, result.ready());
     assertEquals("worldManagementService", result.failingDependency());
