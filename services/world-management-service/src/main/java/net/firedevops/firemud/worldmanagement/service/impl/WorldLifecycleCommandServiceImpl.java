@@ -458,7 +458,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       RoomInstance roomInstance = new RoomInstance();
       roomInstance.setTenantId(tenantId);
       roomInstance.setGameInstanceId(gameInstanceId);
-      roomInstance.setRoomInstanceId(templateRoom.getId());
+      roomInstance.setRoomInstanceRowId(templateRoom.getId());
       roomInstance.setTemplateRoomId(templateRoom.getId());
       roomInstance.setRegionInstance(regionInstance);
       roomInstance.setZoneInstance(zoneInstance);

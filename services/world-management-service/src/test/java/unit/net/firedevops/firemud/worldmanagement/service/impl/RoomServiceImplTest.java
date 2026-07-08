@@ -60,8 +60,8 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomCachesResult() {
-    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
-    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+    RoomInstance entity = roomInstance(99L, 1L, 41L, 1L, 2L, "A");
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
 
     RoomDto first = service.getRoom(1L, 41L, 1L);
@@ -72,20 +72,20 @@ class RoomServiceImplTest {
     when(valueOps.get("room:1:41:1")).thenReturn(first);
     RoomDto second = service.getRoom(1L, 41L, 1L);
     assertEquals("A", second.name());
-    verify(repository, times(1)).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
+    verify(repository, times(1)).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
   }
 
   @Test
   void getRoomSnapshotIncludesExitsAndDescription() {
-    RoomInstance room = roomInstance(1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
+    RoomInstance room = roomInstance(88L, 1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
     String longDesc =
         "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth "
             + "from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.";
     room.setDescription(longDesc);
-    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1021L))
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1021L))
         .thenReturn(Optional.of(room));
 
-    RoomInstance other = roomInstance(1L, 41L, 2045L, 200L, "Crafting Hall of Ember");
+    RoomInstance other = roomInstance(89L, 1L, 41L, 2045L, 200L, "Crafting Hall of Ember");
 
     RoomInstanceExit exit = new RoomInstanceExit();
     exit.setId(5001L);
@@ -95,7 +95,7 @@ class RoomServiceImplTest {
     exit.setToRoomInstance(other);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 1021L))
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 88L))
         .thenReturn(List.of(exit));
 
     RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "");
@@ -108,7 +108,7 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomSnapshotResolvesLocalizedRoomTextWhenVariantsExist() throws Exception {
-    RoomInstance room = roomInstance(1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
+    RoomInstance room = roomInstance(88L, 1L, 41L, 1021L, 200L, "Candle-lit Antechamber");
     room.setDescription("Stalactites drip along the northern wall.");
     room.setNameLocalizedVariantsJson(
         new ObjectMapper()
@@ -120,10 +120,10 @@ class RoomServiceImplTest {
             .writeValueAsString(
                 LocalizedTextVariants.source("en-NZ", "Stalactites drip along the northern wall.")
                     .withVariant("fr", "Des stalactites perlent le long du mur nord.")));
-    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1021L))
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1021L))
         .thenReturn(Optional.of(room));
 
-    RoomInstance targetRoom = roomInstance(1L, 41L, 2045L, 200L, "North Hall");
+    RoomInstance targetRoom = roomInstance(89L, 1L, 41L, 2045L, 200L, "North Hall");
     targetRoom.setNameLocalizedVariantsJson(
         new ObjectMapper()
             .writeValueAsString(
@@ -138,7 +138,7 @@ class RoomServiceImplTest {
     exit.setToRoomInstance(targetRoom);
     exit.setDirection("NORTH");
     exit.setCost(1);
-    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 1021L))
+    when(exitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(1L, 41L, 88L))
         .thenReturn(List.of(exit));
 
     RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 41L, 1021L, "fr");
@@ -153,22 +153,22 @@ class RoomServiceImplTest {
 
   @Test
   void getRoomIgnoresCacheReadFailure() {
-    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
+    RoomInstance entity = roomInstance(99L, 1L, 41L, 1L, 2L, "A");
     when(valueOps.get("room:1:41:1"))
         .thenThrow(new RedisSystemException("boom", new RuntimeException()));
-    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
 
     RoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
-    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
+    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
   }
 
   @Test
   void getRoomIgnoresCacheWriteFailure() {
-    RoomInstance entity = roomInstance(1L, 41L, 1L, 2L, "A");
-    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L))
+    RoomInstance entity = roomInstance(99L, 1L, 41L, 1L, 2L, "A");
+    when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
     doThrow(new RedisSystemException("boom", new RuntimeException()))
         .when(valueOps)
@@ -177,19 +177,25 @@ class RoomServiceImplTest {
     RoomDto dto = service.getRoom(1L, 41L, 1L);
 
     assertEquals("A", dto.name());
-    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceId(1L, 41L, 1L);
+    verify(repository).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
   }
 
   private static RoomInstance roomInstance(
-      long tenantId, long gameInstanceId, long roomInstanceId, long regionInstanceId, String name) {
+      long id,
+      long tenantId,
+      long gameInstanceId,
+      long roomInstanceRowId,
+      long regionInstanceId,
+      String name) {
     RegionInstance regionInstance = new RegionInstance();
     regionInstance.setId(regionInstanceId);
     ZoneInstance zoneInstance = new ZoneInstance();
     zoneInstance.setRegionInstance(regionInstance);
     RoomInstance room = new RoomInstance();
+    room.setId(id);
     room.setTenantId(tenantId);
     room.setGameInstanceId(gameInstanceId);
-    room.setRoomInstanceId(roomInstanceId);
+    room.setRoomInstanceRowId(roomInstanceRowId);
     room.setZoneInstance(zoneInstance);
     room.setName(name);
     return room;

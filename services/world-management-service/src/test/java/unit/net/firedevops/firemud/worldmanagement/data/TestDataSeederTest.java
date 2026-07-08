@@ -242,10 +242,10 @@ class TestDataSeederTest {
         .thenReturn(Optional.empty());
     when(zoneInstanceRepository.save(any()))
         .thenAnswer(invocation -> withZoneInstanceId(invocation.getArgument(0)));
-    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(1L, 1L))
+    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceRowIdAsc(1L, 1L))
         .thenReturn(List.of());
     when(roomInstanceRepository.save(any()))
-        .thenAnswer(invocation -> withRoomInstanceId(invocation.getArgument(0)));
+        .thenAnswer(invocation -> withRoomInstanceRowId(invocation.getArgument(0)));
     when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
             1L, 1L, 1021L))
         .thenReturn(List.of());
@@ -261,8 +261,8 @@ class TestDataSeederTest {
     ArgumentCaptor<RoomInstance> roomCaptor = ArgumentCaptor.forClass(RoomInstance.class);
     verify(roomInstanceRepository, times(2)).save(roomCaptor.capture());
     List<RoomInstance> savedRooms = roomCaptor.getAllValues();
-    assertEquals(1021L, savedRooms.get(0).getRoomInstanceId());
-    assertEquals(2045L, savedRooms.get(1).getRoomInstanceId());
+    assertEquals(1021L, savedRooms.get(0).getRoomInstanceRowId());
+    assertEquals(2045L, savedRooms.get(1).getRoomInstanceRowId());
     ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
     verify(roomInstanceExitRepository).save(exitCaptor.capture());
     assertEquals("NORTH", exitCaptor.getValue().getDirection());
@@ -347,10 +347,10 @@ class TestDataSeederTest {
         .thenReturn(Optional.empty());
     when(zoneInstanceRepository.save(any()))
         .thenAnswer(invocation -> withZoneInstanceId(invocation.getArgument(0)));
-    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(2L, 55L))
+    when(roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceRowIdAsc(2L, 55L))
         .thenReturn(List.of());
     when(roomInstanceRepository.save(any()))
-        .thenAnswer(invocation -> withRoomInstanceId(invocation.getArgument(0)));
+        .thenAnswer(invocation -> withRoomInstanceRowId(invocation.getArgument(0)));
     when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
             2L, 55L, 1021L))
         .thenReturn(List.of());
@@ -391,9 +391,9 @@ class TestDataSeederTest {
     return zoneInstance;
   }
 
-  private RoomInstance withRoomInstanceId(RoomInstance roomInstance) {
+  private RoomInstance withRoomInstanceRowId(RoomInstance roomInstance) {
     if (roomInstance.getId() == null) {
-      roomInstance.setId(roomInstance.getRoomInstanceId());
+      roomInstance.setId(roomInstance.getRoomInstanceRowId());
     }
     return roomInstance;
   }

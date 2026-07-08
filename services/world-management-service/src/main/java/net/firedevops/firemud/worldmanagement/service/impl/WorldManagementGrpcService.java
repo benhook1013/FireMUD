@@ -422,7 +422,9 @@ public class WorldManagementGrpcService
       Optional<String> json =
           Optional.ofNullable(
                   roomService.getRoom(
-                      roomScope.tenantId(), roomScope.gameInstanceId(), roomScope.roomInstanceId()))
+                      roomScope.tenantId(),
+                      roomScope.gameInstanceId(),
+                      roomScope.roomInstanceRowId()))
               .map(this::toJson);
       if (json.isPresent()) {
         GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
@@ -488,7 +490,7 @@ public class WorldManagementGrpcService
           roomService.getRoomSnapshot(
               roomScope.tenantId(),
               roomScope.gameInstanceId(),
-              roomScope.roomInstanceId(),
+              roomScope.roomInstanceRowId(),
               request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
@@ -611,8 +613,8 @@ public class WorldManagementGrpcService
     return builder.build();
   }
 
-  private String readFence(long tenantId, long gameInstanceId, long roomInstanceId) {
-    return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
+  private String readFence(long tenantId, long gameInstanceId, long roomInstanceRowId) {
+    return tenantId + ":" + gameInstanceId + ":" + roomInstanceRowId;
   }
 
   private String toJson(RoomDto dto) {
@@ -880,7 +882,7 @@ public class WorldManagementGrpcService
   private record GameplayRoomScope(
       long tenantId,
       long gameInstanceId,
-      long roomInstanceId,
+      long roomInstanceRowId,
       String tenantIdText,
       String gameInstanceIdText,
       String roomInstanceIdText) {}

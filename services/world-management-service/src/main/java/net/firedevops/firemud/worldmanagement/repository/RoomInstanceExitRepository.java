@@ -114,7 +114,7 @@ public class RoomInstanceExitRepository {
     RoomInstance toRoomInstance =
         JooqWorldManagementRepositorySupport.partialRoomInstance(
             record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ID)));
-    toRoomInstance.setRoomInstanceId(
+    toRoomInstance.setRoomInstanceRowId(
         record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ROOM_INSTANCE_ID)));
     toRoomInstance.setName(
         record.get((org.jooq.Field<String>) toRoomAlias.field(ROOM_INSTANCE.NAME)));

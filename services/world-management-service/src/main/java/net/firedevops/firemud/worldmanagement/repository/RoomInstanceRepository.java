@@ -23,8 +23,8 @@ public class RoomInstanceRepository {
     this.dsl = dsl;
   }
 
-  public Optional<RoomInstance> findByTenantIdAndGameInstanceIdAndRoomInstanceId(
-      Long tenantId, Long gameInstanceId, Long roomInstanceId) {
+  public Optional<RoomInstance> findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
+      Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
     return dsl.select(ROOM_INSTANCE.fields())
         .select(ZONE_INSTANCE.REGION_INSTANCE_ID)
         .from(ROOM_INSTANCE)
@@ -35,11 +35,11 @@ public class RoomInstanceRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ROOM_INSTANCE.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(ROOM_INSTANCE.ROOM_INSTANCE_ID.eq(roomInstanceId)))
+                .and(ROOM_INSTANCE.ROOM_INSTANCE_ID.eq(roomInstanceRowId)))
         .fetchOptional(this::toEntity);
   }
 
-  public List<RoomInstance> findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
+  public List<RoomInstance> findByTenantIdAndGameInstanceIdOrderByRoomInstanceRowIdAsc(
       Long tenantId, Long gameInstanceId) {
     return dsl.select(ROOM_INSTANCE.fields())
         .select(ZONE_INSTANCE.REGION_INSTANCE_ID)
@@ -90,7 +90,7 @@ public class RoomInstanceRepository {
           dsl.insertInto(ROOM_INSTANCE)
               .set(ROOM_INSTANCE.TENANT_ID, entity.getTenantId())
               .set(ROOM_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
-              .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceId())
+              .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceRowId())
               .set(ROOM_INSTANCE.TEMPLATE_ROOM_ID, entity.getTemplateRoomId())
               .set(ROOM_INSTANCE.REGION_INSTANCE_ID, entity.getRegionInstance().getId())
               .set(ROOM_INSTANCE.NAME, entity.getName())
@@ -110,7 +110,7 @@ public class RoomInstanceRepository {
         dsl.update(ROOM_INSTANCE)
             .set(ROOM_INSTANCE.TENANT_ID, entity.getTenantId())
             .set(ROOM_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceId())
+            .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceRowId())
             .set(ROOM_INSTANCE.TEMPLATE_ROOM_ID, entity.getTemplateRoomId())
             .set(ROOM_INSTANCE.REGION_INSTANCE_ID, entity.getRegionInstance().getId())
             .set(ROOM_INSTANCE.NAME, entity.getName())
@@ -138,7 +138,7 @@ public class RoomInstanceRepository {
     entity.setId(record.get(ROOM_INSTANCE.ID));
     entity.setTenantId(record.get(ROOM_INSTANCE.TENANT_ID));
     entity.setGameInstanceId(record.get(ROOM_INSTANCE.GAME_INSTANCE_ID));
-    entity.setRoomInstanceId(record.get(ROOM_INSTANCE.ROOM_INSTANCE_ID));
+    entity.setRoomInstanceRowId(record.get(ROOM_INSTANCE.ROOM_INSTANCE_ID));
     entity.setTemplateRoomId(record.get(ROOM_INSTANCE.TEMPLATE_ROOM_ID));
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(

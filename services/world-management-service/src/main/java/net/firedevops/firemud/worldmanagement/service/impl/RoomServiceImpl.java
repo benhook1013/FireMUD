@@ -77,7 +77,7 @@ public class RoomServiceImpl implements RoomService {
     cacheMissCounter.increment();
     RoomDto dto =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(tenantId, gameInstanceId, roomId)
             .map(this::toDto)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     try {
@@ -95,11 +95,12 @@ public class RoomServiceImpl implements RoomService {
       Long tenantId, Long gameInstanceId, Long roomId, String preferredLocaleTag) {
     RoomInstance room =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(tenantId, gameInstanceId, roomId)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     List<RoomExitSnapshotDto> exits =
         roomInstanceExitRepository
-            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
+                tenantId, gameInstanceId, room.getId())
             .stream()
             .map(exit -> toExitSnapshot(exit, preferredLocaleTag))
             .collect(Collectors.toList());
@@ -110,7 +111,7 @@ public class RoomServiceImpl implements RoomService {
         resolveLocalizedText(
             room.getDescription(), room.getDescriptionLocalizedVariantsJson(), preferredLocaleTag);
     return new RoomSnapshotDto(
-        room.getRoomInstanceId(),
+        room.getRoomInstanceRowId(),
         room.getTenantId(),
         gameInstanceId,
         roomName,
@@ -130,7 +131,7 @@ public class RoomServiceImpl implements RoomService {
     String description = "Leads toward " + targetName;
     return new RoomExitSnapshotDto(
         exit.getId(),
-        exit.getToRoomInstance().getRoomInstanceId(),
+        exit.getToRoomInstance().getRoomInstanceRowId(),
         targetName,
         exit.getDirection(),
         exit.getDirection(),
@@ -154,7 +155,7 @@ public class RoomServiceImpl implements RoomService {
 
   private RoomDto toDto(RoomInstance room) {
     return new RoomDto(
-        room.getRoomInstanceId(),
+        room.getRoomInstanceRowId(),
         room.getTenantId(),
         room.getZoneInstance().getRegionInstance().getId(),
         room.getName(),

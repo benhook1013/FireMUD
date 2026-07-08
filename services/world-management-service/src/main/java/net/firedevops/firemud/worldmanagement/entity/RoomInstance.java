@@ -7,7 +7,7 @@ public class RoomInstance {
   private Long id;
   private Long tenantId;
   private Long gameInstanceId;
-  private Long roomInstanceId;
+  private Long roomInstanceRowId;
   private Long templateRoomId;
   private RegionInstance regionInstance;
   private ZoneInstance zoneInstance;
