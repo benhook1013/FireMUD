@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.service;
 import java.io.Serializable;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
@@ -26,14 +25,11 @@ public record SessionContext(
     String connectRequestId)
     implements Serializable {
   private static final long serialVersionUID = 1L;
-  private static final String CANONICAL_RUNTIME_ROOM_PREFIX = "R-";
-  private static final Pattern LEGACY_NUMERIC_RUNTIME_ROOM_ID_PATTERN =
-      Pattern.compile("^(?:room-)?([1-9][0-9]*)$", Pattern.CASE_INSENSITIVE);
 
   public SessionContext {
     loginName = loginName == null ? null : loginName.trim();
     characterName = characterName == null ? null : characterName.trim();
-    roomInstanceId = normalizeRoomInstanceId(roomInstanceId);
+    roomInstanceId = normalizeText(roomInstanceId);
     localeTag = normalizeLocaleTag(localeTag);
     worldSlug = normalizeSlug(worldSlug);
     realmSlug = normalizeSlug(realmSlug);
@@ -279,18 +275,6 @@ public record SessionContext(
       return null;
     }
     return text.trim();
-  }
-
-  private static String normalizeRoomInstanceId(String roomInstanceId) {
-    String normalized = normalizeText(roomInstanceId);
-    if (normalized == null) {
-      return null;
-    }
-    var matcher = LEGACY_NUMERIC_RUNTIME_ROOM_ID_PATTERN.matcher(normalized);
-    if (!matcher.matches()) {
-      return normalized;
-    }
-    return CANONICAL_RUNTIME_ROOM_PREFIX + matcher.group(1);
   }
 
   public boolean hasGameplayIdentity() {

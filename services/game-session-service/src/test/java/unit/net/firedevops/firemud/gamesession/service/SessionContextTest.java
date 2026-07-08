@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 class SessionContextTest {
 
   @Test
-  void normalizesNumericDerivedRuntimeRoomIdsButPreservesSyntheticProbeIds() {
+  void preservesLegacyAndSyntheticRuntimeRoomIdsVerbatim() {
     SessionContext legacyNumeric =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "1", "jwt");
     SessionContext legacyPrefixed =
@@ -22,9 +22,9 @@ class SessionContextTest {
         new SessionContext(
             1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "readiness-room-1", "jwt");
 
-    assertEquals("R-1", legacyNumeric.roomInstanceId());
-    assertEquals("R-1", legacyPrefixed.roomInstanceId());
-    assertEquals("R-1", legacyUppercasePrefixed.roomInstanceId());
+    assertEquals("1", legacyNumeric.roomInstanceId());
+    assertEquals("room-1", legacyPrefixed.roomInstanceId());
+    assertEquals("ROOM-1", legacyUppercasePrefixed.roomInstanceId());
     assertEquals("readiness-room-1", syntheticProbe.roomInstanceId());
   }
 
