@@ -75,6 +75,8 @@ jobs:
 
       - name: Derive preview identifiers
         id: derive
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
@@ -93,6 +95,12 @@ jobs:
             PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
             ACTION="${{ inputs.action }}"
             IMAGE_TAG="${{ inputs.image_tag }}"
+          fi
+          if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          fi
+          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
           fi
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"

@@ -260,6 +260,7 @@ jobs:
 
       - name: 🧪 Validate dev tool contracts
         run: |
+          bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
@@ -267,6 +268,7 @@ jobs:
           bash ./dev-tools/tests/secret-compliance-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
+          python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
 
   yaml-lint:
     name: YAML Lint

@@ -21,15 +21,6 @@ if [[ -n "${MINIO_ROOT_PASSWORD:-}" ]]; then
 fi
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-$MINIO_ROOT_USER_DEFAULT}"
 
-# Validate required environment variables for uploads
-if [[ -z "${PG_DUMP_BUCKET:-}" ]]; then
-  echo "PG_DUMP_BUCKET must be set before running this script" >&2
-  echo "Example:" >&2
-  echo "  export PG_DUMP_BUCKET=$BUCKET" >&2
-  echo "  export PG_DUMP_ENDPOINT=http://minio.minio.svc.cluster.local:9000  # optional; recommended for MinIO" >&2
-  exit 1
-fi
-
 # Ensure the namespace and local MinIO credentials secret exist before
 # applying the manifest that references them.
 kubectl create namespace minio --dry-run=client -o yaml | kubectl apply -f - >/dev/null
