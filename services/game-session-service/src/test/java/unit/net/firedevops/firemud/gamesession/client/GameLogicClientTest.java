@@ -131,6 +131,15 @@ class GameLogicClientTest {
   }
 
   @Test
+  void resolveLookRejectsLegacyRuntimeRoomIdsBeforeDispatch() {
+    GameLogicClient client = newClient();
+
+    assertThatThrownBy(() -> client.resolveLook(SESSION_CONTEXT, "room-1021", "fr"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
+  }
+
+  @Test
   void queryInventoryUsesGameLogicItemRuntimeRpc() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =

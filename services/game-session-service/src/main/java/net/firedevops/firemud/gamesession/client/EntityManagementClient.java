@@ -26,6 +26,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -166,6 +167,8 @@ public final class EntityManagementClient
   }
 
   public ListRoomEntitiesResponse listRoomEntities(SessionContext context, String roomInstanceId) {
+    String canonicalRoomId =
+        GameplayRuntimeRoomIds.requireCanonical(roomInstanceId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     ListRoomEntitiesRequest request =
@@ -175,9 +178,9 @@ public final class EntityManagementClient
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setGameInstanceId(gameInstanceId)
-                    .setRoomInstanceId(roomInstanceId)
+                    .setRoomInstanceId(canonicalRoomId)
                     .build())
-            .setSessionAttestation(sessionAttestation(context, gameInstanceId, roomInstanceId))
+            .setSessionAttestation(sessionAttestation(context, gameInstanceId, canonicalRoomId))
             .build();
     try {
       return callStub().listRoomEntities(request);

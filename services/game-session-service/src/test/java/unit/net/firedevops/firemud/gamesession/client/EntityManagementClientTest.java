@@ -68,6 +68,15 @@ class EntityManagementClientTest {
         .hasMessageContaining("Missing admitted routing bundle");
   }
 
+  @Test
+  void listRoomEntitiesRejectsLegacyRuntimeRoomIdsBeforeDispatch() {
+    EntityManagementClient client = newClient();
+
+    assertThatThrownBy(() -> client.listRoomEntities(SESSION_CONTEXT, "room-1021"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
+  }
+
   private static EntityManagementClient newClient() {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
