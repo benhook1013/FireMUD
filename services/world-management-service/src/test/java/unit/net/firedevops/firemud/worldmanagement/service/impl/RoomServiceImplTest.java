@@ -69,9 +69,9 @@ class RoomServiceImplTest {
     assertEquals("A", first.name());
     assertEquals(1L, first.roomInstanceRowId());
     assertEquals(41L, first.gameInstanceId());
-    verify(valueOps).set("room:1:41:1", first, java.time.Duration.ofSeconds(1));
+    verify(valueOps).set("room:1:41:R-1", first, java.time.Duration.ofSeconds(1));
 
-    when(valueOps.get("room:1:41:1")).thenReturn(first);
+    when(valueOps.get("room:1:41:R-1")).thenReturn(first);
     RuntimeRoomDto second = service.getRoom(1L, 41L, 1L);
     assertEquals("A", second.name());
     verify(repository, times(1)).findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L);
@@ -156,7 +156,7 @@ class RoomServiceImplTest {
   @Test
   void getRoomIgnoresCacheReadFailure() {
     RoomInstance entity = roomInstance(99L, 1L, 41L, 1L, 2L, "A");
-    when(valueOps.get("room:1:41:1"))
+    when(valueOps.get("room:1:41:R-1"))
         .thenThrow(new RedisSystemException("boom", new RuntimeException()));
     when(repository.findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(1L, 41L, 1L))
         .thenReturn(Optional.of(entity));
@@ -174,7 +174,7 @@ class RoomServiceImplTest {
         .thenReturn(Optional.of(entity));
     doThrow(new RedisSystemException("boom", new RuntimeException()))
         .when(valueOps)
-        .set(eq("room:1:41:1"), any(), eq(java.time.Duration.ofSeconds(1)));
+        .set(eq("room:1:41:R-1"), any(), eq(java.time.Duration.ofSeconds(1)));
 
     RuntimeRoomDto dto = service.getRoom(1L, 41L, 1L);
 

@@ -153,7 +153,12 @@ public class RoomServiceImpl implements RoomService {
   }
 
   private String cacheKey(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
-    return "room:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceRowId;
+    return "room:"
+        + tenantId
+        + ":"
+        + gameInstanceId
+        + ":"
+        + RuntimeRoomInstanceIds.canonical(roomInstanceRowId);
   }
 
   private RuntimeRoomDto toDto(RoomInstance room) {
