@@ -125,9 +125,15 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", message)));
     }
+    FriendPresenceViewOutput view;
+    try {
+      view = toView(response, filter);
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
-        CommandEnqueueResult.success(), List.of(PlayerOutput.view(toView(response, filter))));
+        CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
   }
 
   private TextCommandInterpretationResult handleAdd(
@@ -197,8 +203,13 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
+    FriendPresenceViewOutput.Entry entry;
+    try {
+      entry = toEntry(0, response.getFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
+    }
     publishCommandEvent(context);
-    FriendPresenceViewOutput.Entry entry = toEntry(0, response.getFriend());
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
@@ -226,11 +237,16 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
+    FriendPresenceViewOutput.Entry entry;
+    try {
+      entry = toEntry(ordinal, response.getFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
-        List.of(
-            PlayerOutput.view(new FriendDetailViewOutput(toEntry(ordinal, response.getFriend())))));
+        List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
   }
 
   private TextCommandInterpretationResult handleSummary(SessionContext context) {
@@ -345,7 +361,12 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
-    FriendPresenceViewOutput.Entry removed = toEntry(ordinal, response.getRemovedFriend());
+    FriendPresenceViewOutput.Entry removed;
+    try {
+      removed = toEntry(ordinal, response.getRemovedFriend());
+    } catch (IllegalStateException ex) {
+      return friendUnavailable("FRIEND_REMOVE_UNAVAILABLE", "Friend removal unavailable", ex);
+    }
     publishCommandEvent(context);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
@@ -359,6 +380,17 @@ public class FriendsCommandHandler {
   }
 
   private TextCommandInterpretationResult friendTargetError(String code, String message) {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
+  }
+
+  private TextCommandInterpretationResult friendUnavailable(
+      String code, String message, IllegalStateException ex) {
+    LOG.warn(
+        "Friend command failed due to malformed social payload code={} reason={}",
+        code,
+        message,
+        ex);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
@@ -403,7 +435,7 @@ public class FriendsCommandHandler {
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
     FriendPresenceEntry presence = entry.getPresence();
-    long friendAccountId = parseLong(entry.getFriendAccountId());
+    long friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
     String characterName =
         presence.getCharacterName().isBlank() ? null : presence.getCharacterName().trim();
     return new FriendPresenceViewOutput.Entry(
@@ -436,10 +468,18 @@ public class FriendsCommandHandler {
     };
   }
 
-  private long parseLong(String value) {
-    return PositiveLongParsing.parseOptionalText(value, "friendAccountId")
-        .optionalValue()
-        .orElse(0L);
+  private long requireFriendAccountId(String value) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalStateException(
+          "Malformed friend roster friendAccountId: friendAccountId is required");
+    }
+    try {
+      return PositiveLongParsing.requireOptionalText(value, "friendAccountId")
+          .orElseThrow(() -> new IllegalArgumentException("friendAccountId is required"));
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(
+          "Malformed friend roster friendAccountId: " + ex.getMessage(), ex);
+    }
   }
 
   private Long parseOptionalLong(String value) {

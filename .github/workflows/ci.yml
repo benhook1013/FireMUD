@@ -271,6 +271,7 @@ jobs:
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/secret-compliance-contract.sh
+          bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
