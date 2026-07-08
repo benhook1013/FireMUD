@@ -26,7 +26,12 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ResponseStatusException.class)
   public ResponseEntity<ApiResponse<ErrorDetail>> handleResponseStatus(ResponseStatusException ex) {
     HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-    String code = status == HttpStatus.FORBIDDEN ? "FORBIDDEN" : status.name();
+    String code =
+        switch (status) {
+          case BAD_REQUEST -> "INVALID_ARGUMENT";
+          case FORBIDDEN -> "FORBIDDEN";
+          default -> status.name();
+        };
     String message = ex.getReason() == null ? status.getReasonPhrase() : ex.getReason();
     ErrorDetail detail = new ErrorDetail(code, message);
     return new ResponseEntity<>(ApiResponse.error(detail), status);

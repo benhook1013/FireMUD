@@ -140,7 +140,7 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
       builder.setRealmSlug(request.getRealmSlug());
     }
     if (request.getPointerVersion() != null) {
-      builder.setPointerVersion(request.getPointerVersion());
+      builder.setPointerVersion(requirePositivePointerVersion(request.getPointerVersion()));
     }
     if (hasText(request.getResultErrorCode())) {
       builder.setResultErrorCode(request.getResultErrorCode());
@@ -380,5 +380,12 @@ public class RemoteFollowupResultServiceImpl implements RemoteFollowupResultServ
 
   private boolean hasText(String value) {
     return value != null && !value.isBlank();
+  }
+
+  private long requirePositivePointerVersion(Long pointerVersion) {
+    if (pointerVersion == null || pointerVersion <= 0) {
+      throw new IllegalArgumentException("pointerVersion must be positive");
+    }
+    return pointerVersion;
   }
 }

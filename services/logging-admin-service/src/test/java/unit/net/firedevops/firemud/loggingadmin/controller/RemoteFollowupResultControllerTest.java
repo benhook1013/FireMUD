@@ -144,6 +144,24 @@ class RemoteFollowupResultControllerTest {
     verifyNoInteractions(remoteFollowupResultService);
   }
 
+  @Test
+  void listRemoteFollowupResultsRejectZeroPointerVersionBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    when(remoteFollowupResultService.listRemoteFollowupResults(
+            org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalArgumentException("pointerVersion must be positive"));
+
+    mockMvc
+        .perform(
+            get("/remote-followup-results/2")
+                .param("pointerVersion", "0")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("pointerVersion must be positive"));
+  }
+
   private RemoteFollowupResultDto remoteResultDto() {
     return new RemoteFollowupResultDto(
         "rr-1",

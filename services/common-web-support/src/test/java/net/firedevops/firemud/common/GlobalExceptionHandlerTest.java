@@ -60,4 +60,20 @@ class GlobalExceptionHandlerTest {
     assertEquals("NOT_FOUND", response.error().code());
     assertEquals("Missing thing", response.error().message());
   }
+
+  @Test
+  void handleResponseStatusNormalizesBadRequestToInvalidArgument() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    ApiResponse<ErrorDetail> response =
+        handler
+            .handleResponseStatus(
+                new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "pointerVersion must be positive"))
+            .getBody();
+
+    Assertions.assertNotNull(response);
+    assertEquals("INVALID_ARGUMENT", response.error().code());
+    assertEquals("pointerVersion must be positive", response.error().message());
+  }
 }

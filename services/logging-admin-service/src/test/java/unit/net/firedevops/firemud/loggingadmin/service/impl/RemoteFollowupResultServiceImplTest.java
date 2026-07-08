@@ -315,6 +315,20 @@ class RemoteFollowupResultServiceImplTest {
   }
 
   @Test
+  void listRemoteFollowupResultsRejectsNonPositivePointerVersionBeforeDispatch() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    RemoteFollowupResultListRequest request = new RemoteFollowupResultListRequest();
+    request.setPointerVersion(0L);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.listRemoteFollowupResults(2L, request));
+
+    assertEquals("pointerVersion must be positive", ex.getMessage());
+    verifyNoInteractions(gameSessionControlPlaneClient);
+  }
+
+  @Test
   void listRemoteFollowupResultsRejectsMismatchedTenantRow() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.listRemoteFollowupResults(

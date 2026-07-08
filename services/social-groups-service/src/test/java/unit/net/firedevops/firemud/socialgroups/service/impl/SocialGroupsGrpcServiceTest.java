@@ -989,4 +989,46 @@ class SocialGroupsGrpcServiceTest {
     assertEquals("recipientAccountId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(mail);
   }
+
+  @Test
+  void sendMailReturnsPermissionDeniedForUnauthorizedSender() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(false);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<SendMailResponse> ref = new AtomicReference<>();
+    service.sendMail(
+        net.firedevops.firemud.socialgroups.v1.SendMailRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderAccountId("2")
+            .setRecipientAccountId("3")
+            .setSubject("hi")
+            .setContent("body")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMailResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("Account access required", ref.get().getError().getMessage());
+    verifyNoInteractions(mail);
+  }
 }
