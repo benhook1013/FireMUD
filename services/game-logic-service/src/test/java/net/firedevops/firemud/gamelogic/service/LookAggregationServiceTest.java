@@ -48,10 +48,10 @@ class LookAggregationServiceTest {
   void setUp() {
     RoomSnapshot.Builder snapshotBuilder =
         RoomSnapshot.newBuilder()
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setTenantId("tenant-1")
             .setGameInstanceId("game-1")
-            .setWorldSnapshotId("tenant-1:game-1:1021")
+            .setWorldSnapshotId("tenant-1:game-1:R-1021")
             .setRoomName("Candle-lit Antechamber")
             .setShortDescription("short desc")
             .setLongDescription("long desc")
@@ -59,7 +59,7 @@ class LookAggregationServiceTest {
                 RoomExitSnapshot.newBuilder()
                     .setDirection("NORTH")
                     .setLabel("NORTH")
-                    .setTargetRoomInstanceId("2045")
+                    .setTargetRoomInstanceId("R-2045")
                     .setDescription("arch")
                     .build())
             .addRoomFlags("isQuestArea");
@@ -77,8 +77,8 @@ class LookAggregationServiceTest {
         ListRoomEntitiesResponse.newBuilder()
             .setTenantId("tenant-1")
             .setGameInstanceId("game-1")
-            .setRoomInstanceId("1021")
-            .setEntitySnapshotId("tenant-1:game-1:1021")
+            .setRoomInstanceId("R-1021")
+            .setEntitySnapshotId("tenant-1:game-1:R-1021")
             .addEntities(entity)
             .build();
     when(worldStub.getRoomSnapshot(any()))
@@ -95,7 +95,7 @@ class LookAggregationServiceTest {
                 RoomInstanceRef.newBuilder()
                     .setTenantId("tenant-1")
                     .setGameInstanceId("game-1")
-                    .setRoomInstanceId("1021")
+                    .setRoomInstanceId("R-1021")
                     .build())
             .build();
   }
@@ -103,12 +103,12 @@ class LookAggregationServiceTest {
   @Test
   void resolvesLookResultFromSnapshotAndEntities() {
     LookResult result = service.resolve(request);
-    assertThat(result.getRoomInstance().getRoomInstanceId()).isEqualTo("1021");
+    assertThat(result.getRoomInstance().getRoomInstanceId()).isEqualTo("R-1021");
     assertThat(result.getRoomName()).isEqualTo("Candle-lit Antechamber");
     assertThat(result.getShortDescription()).isEqualTo("short desc");
     assertThat(result.getExitsList())
         .extracting(LookExit::getTargetRoomInstanceId)
-        .containsExactly("2045");
+        .containsExactly("R-2045");
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
     assertThat(result.getEntitiesList().get(0).getStateFlagsList()).containsExactly("isAlert");
@@ -136,8 +136,8 @@ class LookAggregationServiceTest {
             ListRoomEntitiesResponse.newBuilder()
                 .setTenantId("tenant-1")
                 .setGameInstanceId("game-1")
-                .setRoomInstanceId("1021")
-                .setEntitySnapshotId("tenant-1:game-1:1021")
+                .setRoomInstanceId("R-1021")
+                .setEntitySnapshotId("tenant-1:game-1:R-1021")
                 .addEntities(item)
                 .build());
 
@@ -155,7 +155,7 @@ class LookAggregationServiceTest {
             ListRoomEntitiesResponse.newBuilder()
                 .setTenantId("tenant-1")
                 .setGameInstanceId("game-1")
-                .setRoomInstanceId("1021")
+                .setRoomInstanceId("R-1021")
                 .setEntitySnapshotId("tenant-1:game-1:other-room")
                 .build());
 
