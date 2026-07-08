@@ -15,7 +15,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void admittedRoutingBundleReturnsNormalizedBundleWhenRoutingClaimsAreComplete() {
     SessionContext completeContext =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, "world", "realm", 17L,
+            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", "realm", 17L,
             null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
@@ -33,7 +33,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void admittedRoutingBundleReturnsEmptyForPartialRoutingClaims() {
     SessionContext partialRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, "world", null, 17L, null);
+            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L, null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
         GameplayAdmissionPointerSnapshots.admittedRoutingBundle(partialRouting);
@@ -48,7 +48,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void admittedRoutingBundleReturnsEmptyWhenRoutingClaimsAreAbsent() {
     SessionContext missingRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, null, null, 0L, null);
+            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
         GameplayAdmissionPointerSnapshots.admittedRoutingBundle(missingRouting);
@@ -63,7 +63,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void requireAdmittedRoutingBundleRejectsPartialRoutingClaimsWithCallerSpecificMessage() {
     SessionContext partialRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, "world", null, 17L, null);
+            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L, null);
 
     assertThatThrownBy(
             () ->
@@ -77,7 +77,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void requireAdmittedRoutingBundleRejectsMissingRoutingClaimsWithCallerSpecificMessage() {
     SessionContext missingRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "1021", null, null, 1L, null, null, 0L, null);
+            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
 
     assertThatThrownBy(
             () ->

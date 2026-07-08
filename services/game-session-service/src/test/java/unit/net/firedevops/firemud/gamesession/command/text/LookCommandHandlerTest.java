@@ -57,7 +57,7 @@ class LookCommandHandlerTest {
       new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt");
   private final LookResult lookResult =
       LookResult.newBuilder()
-          .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+          .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
           .build();
 
   @BeforeEach
@@ -78,7 +78,7 @@ class LookCommandHandlerTest {
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021",
+                    "R-1021",
                     "Quick Hall",
                     "Quick hall short",
                     "Quick hall long",
@@ -94,7 +94,7 @@ class LookCommandHandlerTest {
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021",
+                    "R-1021",
                     "Login Hall",
                     "OK LOOK text",
                     "Detailed look text",
@@ -159,16 +159,16 @@ class LookCommandHandlerTest {
         .cache(
             eq(22L),
             eq(1L),
-            eq("1021"),
+            eq("R-1021"),
             eq(
-                "Room: Login Hall (ID: 1021)\n"
+                "Room: Login Hall (ID: R-1021)\n"
                     + "Short: OK LOOK text\n"
                     + "Long: Detailed look text\n"
                     + "Exits: \n"
                     + "Entities:"),
             eq(
                 "OK LOOK\n"
-                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Room: Login Hall (ID: R-1021)\n"
                     + "Short: OK LOOK text\n"
                     + "Long: Detailed look text\n"
                     + "Exits: \n"
@@ -181,7 +181,7 @@ class LookCommandHandlerTest {
         .isEqualTo(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021",
+                    "R-1021",
                     "Quick Hall",
                     "Quick hall short",
                     "Quick hall long",
@@ -200,15 +200,15 @@ class LookCommandHandlerTest {
         .cache(
             eq(22L),
             eq(1L),
-            eq("1021"),
+            eq("R-1021"),
             eq(
-                "Room: Quick Hall (ID: 1021)\n"
+                "Room: Quick Hall (ID: R-1021)\n"
                     + "Short: Quick hall short\n"
                     + "Exits: \n"
                     + "Entities:"),
             eq(
                 "OK LOOK\n"
-                    + "Room: Quick Hall (ID: 1021)\n"
+                    + "Room: Quick Hall (ID: R-1021)\n"
                     + "Short: Quick hall short\n"
                     + "Exits: \n"
                     + "Entities:\n\n"));
@@ -228,16 +228,16 @@ class LookCommandHandlerTest {
         .cache(
             eq(22L),
             eq(77L),
-            eq("1021"),
+            eq("R-1021"),
             eq(
-                "Room: Login Hall (ID: 1021)\n"
+                "Room: Login Hall (ID: R-1021)\n"
                     + "Short: OK LOOK text\n"
                     + "Long: Detailed look text\n"
                     + "Exits: \n"
                     + "Entities:"),
             eq(
                 "OK LOOK\n"
-                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Room: Login Hall (ID: R-1021)\n"
                     + "Short: OK LOOK text\n"
                     + "Long: Detailed look text\n"
                     + "Exits: \n"

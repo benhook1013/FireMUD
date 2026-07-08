@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 class EntityManagementClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void listRoomEntitiesFailsClosedWhenSessionContextDropsPartOfAdmittedRoutingBundle() {
@@ -37,7 +37,7 @@ class EntityManagementClientTest {
             0L,
             SESSION_CONTEXT.playableStateScope());
 
-    assertThatThrownBy(() -> client.listRoomEntities(partialRouting, "1021"))
+    assertThatThrownBy(() -> client.listRoomEntities(partialRouting, "R-1021"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Incomplete admitted routing bundle");
   }
@@ -63,7 +63,7 @@ class EntityManagementClientTest {
             0L,
             SESSION_CONTEXT.playableStateScope());
 
-    assertThatThrownBy(() -> client.listRoomEntities(missingRouting, "1021"))
+    assertThatThrownBy(() -> client.listRoomEntities(missingRouting, "R-1021"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Missing admitted routing bundle");
   }

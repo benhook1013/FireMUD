@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -54,7 +54,7 @@ class GameLogicClientTest {
                     RoomInstanceRef.newBuilder()
                         .setTenantId("22")
                         .setGameInstanceId("1")
-                        .setRoomInstanceId("1021")
+                        .setRoomInstanceId("R-1021")
                         .build())
                 .setSessionAttestation("attestation")
                 .build()))
@@ -64,12 +64,12 @@ class GameLogicClientTest {
                     RoomInstanceRef.newBuilder()
                         .setTenantId("22")
                         .setGameInstanceId("1")
-                        .setRoomInstanceId("1021")
+                        .setRoomInstanceId("R-1021")
                         .build())
                 .build());
     setStub(client, stub);
 
-    LookResult result = client.resolveLook(SESSION_CONTEXT, "1021", "fr");
+    LookResult result = client.resolveLook(SESSION_CONTEXT, "R-1021", "fr");
 
     assertThat(result.getRoomInstance().getGameInstanceId()).isEqualTo("1");
   }
@@ -90,7 +90,7 @@ class GameLogicClientTest {
                     RoomInstanceRef.newBuilder()
                         .setTenantId("22")
                         .setGameInstanceId("1")
-                        .setRoomInstanceId("1021")
+                        .setRoomInstanceId("R-1021")
                         .build())
                 .setDirection("north")
                 .setSessionAttestation("attestation")
@@ -98,7 +98,7 @@ class GameLogicClientTest {
         .thenReturn(MoveResult.newBuilder().setSuccess(true).build());
     setStub(client, stub);
 
-    MoveResult result = client.resolveMove(SESSION_CONTEXT, "1021", "north", "");
+    MoveResult result = client.resolveMove(SESSION_CONTEXT, "R-1021", "north", "");
 
     assertThat(result.getSuccess()).isTrue();
   }
@@ -118,14 +118,14 @@ class GameLogicClientTest {
                     RoomInstanceRef.newBuilder()
                         .setTenantId("22")
                         .setGameInstanceId("1")
-                        .setRoomInstanceId("1021")
+                        .setRoomInstanceId("R-1021")
                         .build())
                 .setSessionAttestation("probe-attestation")
                 .build()))
         .thenReturn(LookResult.newBuilder().build());
     setStub(client, stub);
 
-    client.resolveLookForReadiness("22", "41", "123", "1", "1021");
+    client.resolveLookForReadiness("22", "41", "123", "1", "R-1021");
 
     assertThat(true).isTrue();
   }
@@ -170,7 +170,7 @@ class GameLogicClientTest {
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setItemId("7")
             .setItemInstanceId("item-7")
             .setContainerInstanceId("ground-1021")
@@ -193,7 +193,7 @@ class GameLogicClientTest {
 
     PickupItemFromRoomResponse response =
         client.pickupItemFromRoom(
-            SESSION_CONTEXT, "1021", "7", "item-7", "ground-1021", "iron", 2, "effect-1");
+            SESSION_CONTEXT, "R-1021", "7", "item-7", "ground-1021", "iron", 2, "effect-1");
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Arrow");
   }
@@ -212,7 +212,7 @@ class GameLogicClientTest {
             .setAccountId("0")
             .setCharacterId("123")
             .setGameInstanceId("1")
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setItemReference("torch1")
             .setQuantity(1)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -242,7 +242,7 @@ class GameLogicClientTest {
         ListRoomGroundInventoryRequest.newBuilder()
             .setTenantId("22")
             .setGameInstanceId("1")
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setSessionAttestation("attestation")
             .build();
     when(stub.listRoomGroundInventory(request))
@@ -257,7 +257,7 @@ class GameLogicClientTest {
     setStub(client, stub);
 
     ListRoomGroundInventoryResponse response =
-        client.listRoomGroundInventory(SESSION_CONTEXT, "1021");
+        client.listRoomGroundInventory(SESSION_CONTEXT, "R-1021");
 
     assertThat(response.getItemsList())
         .extracting(RoomGroundInventoryItem::getItemName)
@@ -276,7 +276,7 @@ class GameLogicClientTest {
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setItemId("7")
             .setItemInstanceId("item-7")
             .setContainerInstanceId("container-7")
@@ -299,7 +299,7 @@ class GameLogicClientTest {
 
     DropItemToRoomResponse response =
         client.dropItemToRoom(
-            SESSION_CONTEXT, "1021", "7", "item-7", "container-7", "iron", 2, "effect-1");
+            SESSION_CONTEXT, "R-1021", "7", "item-7", "container-7", "iron", 2, "effect-1");
 
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Arrow");
   }
@@ -317,7 +317,7 @@ class GameLogicClientTest {
             .setAccountId("0")
             .setCharacterId("123")
             .setGameInstanceId("1")
-            .setRoomInstanceId("1021")
+            .setRoomInstanceId("R-1021")
             .setItemReference("torch1")
             .setQuantity(1)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -419,9 +419,9 @@ class GameLogicClientTest {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "1021", "world", "realm", "17", "SHARED"))
+            "22", "41", "0", "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
-    when(attestationService.issueInternalProbeAttestation("22", "1", "1021"))
+    when(attestationService.issueInternalProbeAttestation("22", "1", "R-1021"))
         .thenReturn("probe-attestation");
     return new GameLogicClient(
         new ServiceEndpointsProperties(),

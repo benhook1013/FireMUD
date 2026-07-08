@@ -33,7 +33,8 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void registerConnectedUpdatesLiveAndRecentPresence() {
     SessionContext context =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", "");
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
 
     service.registerConnected(context);
 
@@ -52,7 +53,8 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void clearGameplayBindingPublishesExitAndRemovesLivePresenceWithoutDisconnecting() {
     SessionContext context =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", "");
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
 
     service.clearGameplayBinding(context, "STALE_ADMISSION_POINTER");
 
@@ -83,7 +85,8 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void recordDisconnectedWritesRecentPresenceBeforeRemovingLivePresence() {
     whenGameplayContextPresent(
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", ""));
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", ""));
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
 
@@ -105,7 +108,8 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void recordDisconnectedPreservesCanonicalLogoutEventId() {
     SessionContext context =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "1021", "");
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
     whenGameplayContextPresent(context);
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
