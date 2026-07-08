@@ -34,7 +34,7 @@ public class TestDataSeeder implements ApplicationRunner {
   private static final String SHARED_LIVE_PLAYABLE_STATE = "shared-live";
   private static final String DEMO_CHARACTER_NAME = "demo";
   private static final String DEMO_GAME_INSTANCE_ID = "1";
-  private static final String STARTER_ROOM_INSTANCE_ID = "1021";
+  private static final String STARTER_RUNTIME_ROOM_INSTANCE_ID = "R-1021";
 
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
@@ -167,7 +167,7 @@ public class TestDataSeeder implements ApplicationRunner {
               ContainerInstance container = new ContainerInstance();
               container.setTenantId(DEMO_TENANT_ID);
               container.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
-              container.setRoomInstanceId(STARTER_ROOM_INSTANCE_ID);
+              container.setRoomInstanceId(STARTER_RUNTIME_ROOM_INSTANCE_ID);
               container.setItem(item);
               container.setItemInstance(itemInstance);
               return containerInstanceRepository.save(container);
@@ -216,7 +216,7 @@ public class TestDataSeeder implements ApplicationRunner {
     instance.setTenantId(DEMO_TENANT_ID);
     instance.setItem(item);
     instance.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
-    instance.setRoomInstanceId(STARTER_ROOM_INSTANCE_ID);
+    instance.setRoomInstanceId(STARTER_RUNTIME_ROOM_INSTANCE_ID);
     instance.setVisibleRefToken(token);
     instance.setVisibleRefSequence(sequence);
     instance.setVisibleRef(visibleRef);
