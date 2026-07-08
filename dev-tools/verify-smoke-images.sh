@@ -42,6 +42,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+merge_env_vars() {
+  local source_file="$1"
+  local target_file="$2"
+  [[ -f "$source_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    upsert_env_var "$target_file" "$key" "$value"
+  done <"$source_file"
+}
+
 upsert_env_var() {
   local file="$1"
   local key="$2"
@@ -76,19 +88,33 @@ echo "Smoke image proof: destroy local compose state, resolve smoke-image tags v
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   echo "Local-only mode enabled: compose will reuse matching local images and skip remote pulls."
 fi
-printf 'SMOKE_IMAGE_TAG=%s\n' "$SMOKE_IMAGE_TAG" >"$DOCKER_ENV_FILE"
+
 if [[ -f "$ROOT_ENV_FILE" ]]; then
   ROOT_ENV_BACKUP="$(mktemp)"
   cp "$ROOT_ENV_FILE" "$ROOT_ENV_BACKUP"
-elif [[ -f "$ROOT_ENV_SAMPLE" ]]; then
+fi
+
+if [[ -f "$ROOT_ENV_SAMPLE" ]]; then
   cp "$ROOT_ENV_SAMPLE" "$ROOT_ENV_FILE"
+elif [[ -n "$ROOT_ENV_BACKUP" && -f "$ROOT_ENV_BACKUP" ]]; then
+  cp "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
 else
   echo ".env.sample is missing; cannot seed local compose defaults for smoke images." >&2
   exit 1
 fi
+
+if [[ -n "$ROOT_ENV_BACKUP" && -f "$ROOT_ENV_BACKUP" ]]; then
+  merge_env_vars "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
+fi
+
+cp "$ROOT_ENV_FILE" "$DOCKER_ENV_FILE"
 upsert_env_var "$ROOT_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
+upsert_env_var "$DOCKER_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 
 docker compose "${COMPOSE_FILES[@]}" config >/dev/null
+if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
+  exit 0
+fi
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$ENSURE_CERTS_SCRIPT"
 compose_up_with_retry
