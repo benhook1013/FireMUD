@@ -204,12 +204,11 @@ public class LookAggregationService {
   }
 
   private RoomInstanceRef resolveRoomInstance(LookRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw Status.INVALID_ARGUMENT
-          .withDescription("room_instance.room_instance_id is required")
-          .asRuntimeException();
+    try {
+      return RuntimeRoomInstanceRefs.requireCanonical(request.getRoomInstance());
+    } catch (IllegalArgumentException ex) {
+      throw Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException();
     }
-    return request.getRoomInstance();
   }
 
   private RoomEntity toRoomEntity(net.firedevops.firemud.entitymanagement.v1.RoomEntity entity) {

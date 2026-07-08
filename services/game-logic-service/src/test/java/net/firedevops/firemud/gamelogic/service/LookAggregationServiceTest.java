@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
@@ -118,6 +119,21 @@ class LookAggregationServiceTest {
             net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest.class);
     org.mockito.Mockito.verify(worldStub).getRoomSnapshot(captor.capture());
     assertThat(captor.getValue().getPreferredLocale()).isEqualTo("fr");
+  }
+
+  @Test
+  void rejectsLegacyRuntimeRoomIdsBeforeDownstreamCalls() {
+    LookRequest legacyRequest =
+        request.toBuilder()
+            .setRoomInstance(
+                request.getRoomInstance().toBuilder().setRoomInstanceId("room-1021").build())
+            .build();
+
+    assertThatThrownBy(() -> service.resolve(legacyRequest))
+        .isInstanceOf(StatusRuntimeException.class)
+        .hasMessageContaining(
+            "room_instance.room_instance_id must be a runtime room id like R-1021");
+    verifyNoInteractions(worldStub, entityStub);
   }
 
   @Test

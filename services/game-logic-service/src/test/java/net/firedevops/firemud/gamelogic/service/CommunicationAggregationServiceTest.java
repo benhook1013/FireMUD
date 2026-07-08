@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,6 +85,27 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSuccess()).isFalse();
     assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
     assertThat(resp.getError().getMessage()).isEqualTo("SAY is disabled by operator policy");
+  }
+
+  @Test
+  void rejectsLegacyRuntimeRoomIdsBeforeAudienceLookup() {
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .build());
+
+    assertThat(resp.getSuccess()).isFalse();
+    assertThat(resp.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(resp.getError().getMessage())
+        .contains("room_instance.room_instance_id must be a runtime room id like R-1021");
+    verify(entityStub, never()).listRoomEntities(any());
+    verify(socialStub, never()).sendMessage(any());
   }
 
   @Test

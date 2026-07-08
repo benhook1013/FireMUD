@@ -108,6 +108,30 @@ class MoveAggregationServiceTest {
   }
 
   @Test
+  void resolveRejectsLegacyRuntimeRoomIdsBeforeWorldLookup() {
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId(LookTestFixtures.TENANT)
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId(LookTestFixtures.TENANT)
+                        .setRoomInstanceId("room-1021")
+                        .build())
+                .setDirection("east")
+                .build());
+
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.getError().getMessage())
+        .contains("room_instance.room_instance_id must be a runtime room id like R-1021");
+    verify(worldStub, never()).getRoomSnapshot(any());
+    verify(lookAggregationService, never()).resolve(any());
+  }
+
+  @Test
   void resolveFallsBackToRequestGameInstanceIdWhenSnapshotOmitsIt() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
