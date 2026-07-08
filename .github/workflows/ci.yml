@@ -255,6 +255,11 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: 📦 Install cloc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cloc
+
       - name: 📦 Install Python script dependencies
         run: python3 -m pip install --disable-pip-version-check PyYAML
 

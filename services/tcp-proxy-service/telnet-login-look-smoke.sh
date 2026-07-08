@@ -7,7 +7,7 @@ source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
 SMOKE_HOST=${SMOKE_TELNET_HOST:-localhost}
-SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_EMAIL}
+SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_USERNAME}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
 SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
 SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
@@ -60,7 +60,7 @@ from smoke_common import (
 
 host = os.environ.get("SMOKE_TELNET_HOST", "localhost")
 port = int(os.environ.get("TCP_PORT", "2323"))
-username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_EMAIL"])
+username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_USERNAME"])
 password = os.environ.get("SMOKE_PASSWORD", os.environ["DEMO_SMOKE_PASSWORD"])
 session_id = os.environ.get("SMOKE_SESSION_ID", "1")
 tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
