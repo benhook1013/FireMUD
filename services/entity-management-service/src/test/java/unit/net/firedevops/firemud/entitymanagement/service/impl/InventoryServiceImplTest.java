@@ -215,6 +215,38 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void listRoomGroundItemsRejectsLegacyRuntimeRoomIdsBeforeRepoLookup() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.listRoomGroundItems(11L, "GI-1", "room-1", Pageable.unpaged()));
+
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
+    verify(itemInstanceRepo, never())
+        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+            anyLong(), any(), any(), any());
+    verify(itemStackRepo, never())
+        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+            anyLong(), any(), any(), any());
+  }
+
+  @Test
   void addItemRejectsCrossTenantOwnership() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =
@@ -280,6 +312,36 @@ class InventoryServiceImplTest {
     assertEquals("R-1", first.getRoomInstanceId());
     assertEquals(41L, dropped.itemInstanceId());
     verify(itemInstanceRepo).save(first);
+  }
+
+  @Test
+  void dropItemRejectsLegacyRuntimeRoomIdsBeforeStateLookup() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.dropItemToRoom(
+                    1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "room-1", 2L, null, null, null, 1));
+
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
+    verify(characterRepo, never()).findByIdAndTenantId(anyLong(), anyLong());
+    verify(itemRepo, never()).findByIdAndTenantId(anyLong(), anyLong());
   }
 
   @Test
@@ -557,6 +619,36 @@ class InventoryServiceImplTest {
         () ->
             service.dropItemToRoom(
                 1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "R-1", 2L, null, null, null, 1));
+  }
+
+  @Test
+  void pickupItemRejectsLegacyRuntimeRoomIdsBeforeStateLookup() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.pickupItemFromRoom(
+                    1L, 1L, "GI-1", PLAYABLE_STATE_SCOPE, "room-1", 2L, null, null, null, 1));
+
+    assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
+    verify(characterRepo, never()).findByIdAndTenantId(anyLong(), anyLong());
+    verify(itemRepo, never()).findByIdAndTenantId(anyLong(), anyLong());
   }
 
   @Test
