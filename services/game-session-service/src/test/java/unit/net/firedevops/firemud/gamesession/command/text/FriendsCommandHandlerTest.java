@@ -882,7 +882,7 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
-  void friendsMutationRejectsCharacterTargetWithMalformedResolvedAccountId() {
+  void friendsAddRejectsMalformedResolvedCharacterAccountIdAsUnavailable() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
     FriendsCommandHandler handler =
@@ -902,11 +902,11 @@ class FriendsCommandHandlerTest {
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_TARGET_NOT_FOUND");
+    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_ADD_UNAVAILABLE");
     assertThat(result.outputs())
         .singleElement()
         .extracting(PlayerOutput::text)
-        .isEqualTo("ERROR FRIEND_TARGET_NOT_FOUND Character not found: Sora");
+        .isEqualTo("ERROR FRIEND_ADD_UNAVAILABLE Friend add unavailable");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
 

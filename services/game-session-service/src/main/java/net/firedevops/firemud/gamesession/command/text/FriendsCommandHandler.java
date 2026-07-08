@@ -604,11 +604,36 @@ public class FriendsCommandHandler {
         PositiveLongParsing.parseOptionalText(character.get().getAccountId(), "friendAccountId");
     if (!parsedAccountId.valid()) {
       return new ResolvedFriendTarget(
-          0L,
-          null,
-          friendTargetError("FRIEND_TARGET_NOT_FOUND", notFoundMessage(action.targetToken())));
+          0L, null, malformedResolvedTargetError(action, character.get().getAccountId()));
     }
     return new ResolvedFriendTarget(parsedAccountId.value(), character.get().getName(), null);
+  }
+
+  private TextCommandInterpretationResult malformedResolvedTargetError(
+      FriendAction action, String accountIdText) {
+    return switch (action.kind()) {
+      case ADD ->
+          friendUnavailable(
+              "FRIEND_ADD_UNAVAILABLE",
+              "Friend add unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      case REMOVE ->
+          friendUnavailable(
+              "FRIEND_REMOVE_UNAVAILABLE",
+              "Friend removal unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      case DETAIL ->
+          friendUnavailable(
+              "FRIEND_DETAIL_UNAVAILABLE",
+              "Friend detail unavailable",
+              new IllegalStateException(
+                  "Malformed resolved friendAccountId from character lookup: " + accountIdText));
+      default ->
+          throw new IllegalStateException(
+              "Malformed resolved target is only valid for targeted friend actions");
+    };
   }
 
   private PlayableStateScope resolvePlayableStateScope(SessionContext context) {
