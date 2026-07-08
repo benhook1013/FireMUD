@@ -244,7 +244,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
             .setRoomName("Login Hall")
             .setShortDescription("A narrow testing hall")
             .setLongDescription("A narrow testing hall used for login verification.")
@@ -336,19 +336,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("fr")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "R-1021")), eq("R-1021"), eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "R-1021")), eq("R-1021"), eq("")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -481,21 +487,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService).enqueue("41", "LOOK", false);
     verify(gameLogicClient)
         .resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq(""));
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq(""));
     verify(lookCacheService)
         .cache(
             eq(22L),
             eq(1L),
-            eq("1021"),
+            eq("R-1021"),
             eq(
-                "Room: Login Hall (ID: 1021)\n"
+                "Room: Login Hall (ID: R-1021)\n"
                     + "Short: A narrow testing hall\n"
                     + "Long: A narrow testing hall used for login verification.\n"
                     + "Exits: \n"
                     + "Entities:"),
             eq(
                 "OK LOOK\n"
-                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Room: Login Hall (ID: R-1021)\n"
                     + "Short: A narrow testing hall\n"
                     + "Long: A narrow testing hall used for login verification.\n"
                     + "Exits: \n"
@@ -674,7 +682,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .build())
             .build();
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("fr")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -736,7 +746,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
-        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("1021"));
+        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("R-1021"));
   }
 
   @Test

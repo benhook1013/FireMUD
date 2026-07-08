@@ -6,5 +6,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Data
 @ConfigurationProperties(prefix = "game.logic")
 public class GameLogicProperties {
-  private String defaultRoomId = "1021";
+  private String defaultRoomId = "R-1021";
 }

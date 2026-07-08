@@ -402,10 +402,10 @@ class TextCommandInterpreterTest {
 
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
             .build();
     when(gameLogicClient.resolveLook(
-            Mockito.any(SessionContext.class), Mockito.eq("1021"), Mockito.anyString()))
+            Mockito.any(SessionContext.class), Mockito.eq("R-1021"), Mockito.anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
@@ -418,7 +418,7 @@ class TextCommandInterpreterTest {
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021",
+                    "R-1021",
                     "Login Hall",
                     "Short text",
                     "Long text",
@@ -436,7 +436,7 @@ class TextCommandInterpreterTest {
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021",
+                    "R-1021",
                     "Login Hall",
                     "Short text",
                     "Long text",

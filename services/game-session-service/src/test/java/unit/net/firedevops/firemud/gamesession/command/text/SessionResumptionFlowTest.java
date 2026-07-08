@@ -228,7 +228,7 @@ class SessionResumptionFlowTest {
             new TextPlayerOutputRenderer(new PresentationProperties()));
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
             .build();
     when(gameLogicClient.resolveLook(
             org.mockito.ArgumentMatchers.any(SessionContext.class), anyString(), anyString()))
@@ -244,7 +244,13 @@ class SessionResumptionFlowTest {
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(
-                    "1021", "Resume Hall", "Short text", "Long text", true, List.of(), List.of())));
+                    "R-1021",
+                    "Resume Hall",
+                    "Short text",
+                    "Long text",
+                    true,
+                    List.of(),
+                    List.of())));
     playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -377,7 +383,7 @@ class SessionResumptionFlowTest {
                     context.sessionId() == 1L
                         && context.gameInstanceId() == 1L
                         && context.characterId() == 77L
-                        && "1021".equals(context.roomInstanceId())),
+                        && "R-1021".equals(context.roomInstanceId())),
             Mockito.eq("disconnect:takeover:1:1:77"),
             Mockito.eq("TAKEOVER"));
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
@@ -403,7 +409,7 @@ class SessionResumptionFlowTest {
                     context.sessionId() == 1L
                         && context.gameInstanceId() == 1L
                         && context.characterId() == 77L
-                        && "1021".equals(context.roomInstanceId())),
+                        && "R-1021".equals(context.roomInstanceId())),
             Mockito.eq("logout:1:1:77"),
             Mockito.eq("LOGOUT"));
 
