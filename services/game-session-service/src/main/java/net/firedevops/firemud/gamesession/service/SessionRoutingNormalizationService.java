@@ -74,12 +74,7 @@ public final class SessionRoutingNormalizationService {
     if (context.gameInstanceId() <= 0 || context.roomInstanceId() == null) {
       return true;
     }
-    try {
-      GameplayRuntimeRoomIds.requireCanonical(context.roomInstanceId(), "roomInstanceId");
-      return true;
-    } catch (IllegalArgumentException ex) {
-      return false;
-    }
+    return GameplayRuntimeRoomIds.isCanonical(context.roomInstanceId());
   }
 
   private boolean currentAdmissionPointerMatches(SessionContext context) {

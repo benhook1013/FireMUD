@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +33,10 @@ public final class RedisMovementEffectIdempotencyService
   @Override
   public MoveEffectApplyResult apply(
       String effectId, SessionContext expectedContext, String destinationRoomInstanceId) {
+    if (!isCanonicalMovementRoom(expectedContext.roomInstanceId())
+        || !isCanonicalMovementRoom(destinationRoomInstanceId)) {
+      return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, null);
+    }
     for (int attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
       MoveEffectApplyResult result =
           redisTemplate.execute(
@@ -56,8 +61,16 @@ public final class RedisMovementEffectIdempotencyService
                       operations.unwatch();
                       return new MoveEffectApplyResult(MoveEffectApplyStatus.NOT_FOUND, null);
                     }
+                    if (!isCanonicalMovementRoom(current.roomInstanceId())) {
+                      operations.unwatch();
+                      return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, current);
+                    }
                     SessionContext replayed = readContext(operations, effectKey);
                     if (replayed != null) {
+                      if (!isCanonicalMovementRoom(replayed.roomInstanceId())) {
+                        operations.unwatch();
+                        return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, replayed);
+                      }
                       operations.unwatch();
                       return new MoveEffectApplyResult(MoveEffectApplyStatus.REPLAYED, replayed);
                     }
@@ -116,6 +129,10 @@ public final class RedisMovementEffectIdempotencyService
 
   private boolean roomMatches(String currentRoomId, String expectedRoomId) {
     return java.util.Objects.equals(normalizeRoom(currentRoomId), normalizeRoom(expectedRoomId));
+  }
+
+  private boolean isCanonicalMovementRoom(String roomId) {
+    return GameplayRuntimeRoomIds.isCanonical(roomId);
   }
 
   private String normalizeRoom(String roomId) {

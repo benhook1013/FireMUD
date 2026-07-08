@@ -110,6 +110,43 @@ class RedisMovementEffectIdempotencyServiceTest {
     verify(redisTemplate, never()).delete(anyString());
   }
 
+  @Test
+  void applyRejectsLegacyExpectedRoomBeforeRedisLookup() {
+    SessionContext legacyExpected = withRoom(baselineContext(), "room-1021");
+
+    MoveEffectApplyResult result = service.apply("tfx-1", legacyExpected, "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
+    verify(valueOperations, never()).get(anyString());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
+  @Test
+  void applyRejectsLegacyStoredCurrentRoomBeforeWrite() {
+    SessionContext legacyCurrent = withRoom(baselineContext(), "room-1021");
+    when(valueOperations.get("sessionctx:22:41:context")).thenReturn(legacyCurrent);
+
+    MoveEffectApplyResult result = service.apply("tfx-1", baselineContext(), "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
+    assertEquals(legacyCurrent, result.context());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
+  @Test
+  void applyRejectsLegacyReplayedRoomBeforeReturningReplay() {
+    SessionContext current = baselineContext();
+    SessionContext legacyReplay = withRoom(current, "room-2045");
+    when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
+    when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(legacyReplay);
+
+    MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
+    assertEquals(legacyReplay, result.context());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
   private SessionContext baselineContext() {
     return new SessionContext(
         41L,

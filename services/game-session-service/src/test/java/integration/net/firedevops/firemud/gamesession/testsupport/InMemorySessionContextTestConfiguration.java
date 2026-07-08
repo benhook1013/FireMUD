@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.testsupport;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -112,13 +113,23 @@ public class InMemorySessionContextTestConfiguration {
     @Override
     public synchronized MoveEffectApplyResult apply(
         String effectId, SessionContext expectedContext, String destinationRoomInstanceId) {
+      if (!GameplayRuntimeRoomIds.isCanonical(expectedContext.roomInstanceId())
+          || !GameplayRuntimeRoomIds.isCanonical(destinationRoomInstanceId)) {
+        return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, null);
+      }
       SessionContext current =
           sessionContextService.findBySessionId(expectedContext.sessionId()).orElse(null);
       if (current == null) {
         return new MoveEffectApplyResult(MoveEffectApplyStatus.NOT_FOUND, null);
       }
+      if (!GameplayRuntimeRoomIds.isCanonical(current.roomInstanceId())) {
+        return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, current);
+      }
       SessionContext replayed = appliedEffects.get(effectKey(expectedContext, effectId));
       if (replayed != null) {
+        if (!GameplayRuntimeRoomIds.isCanonical(replayed.roomInstanceId())) {
+          return new MoveEffectApplyResult(MoveEffectApplyStatus.CONFLICT, replayed);
+        }
         return new MoveEffectApplyResult(MoveEffectApplyStatus.REPLAYED, replayed);
       }
       if (current.gameInstanceId() != expectedContext.gameInstanceId()

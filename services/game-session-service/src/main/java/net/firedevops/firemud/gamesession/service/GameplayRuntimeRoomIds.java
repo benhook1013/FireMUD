@@ -9,4 +9,16 @@ public final class GameplayRuntimeRoomIds {
   public static String requireCanonical(String roomInstanceId, String fieldName) {
     return RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, fieldName);
   }
+
+  public static boolean isCanonical(String roomInstanceId) {
+    if (roomInstanceId == null || roomInstanceId.isBlank()) {
+      return false;
+    }
+    try {
+      requireCanonical(roomInstanceId, "roomInstanceId");
+      return true;
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
 }
