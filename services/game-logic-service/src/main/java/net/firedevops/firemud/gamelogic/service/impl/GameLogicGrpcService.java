@@ -221,6 +221,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     String description = ex.getStatus().getDescription();
     String mappedCode =
         switch (code) {
+          case INVALID_ARGUMENT -> "INVALID_ARGUMENT";
           case NOT_FOUND -> "ROOM_NOT_FOUND";
           case UNAVAILABLE ->
               description != null && description.contains("EntityManagement")
