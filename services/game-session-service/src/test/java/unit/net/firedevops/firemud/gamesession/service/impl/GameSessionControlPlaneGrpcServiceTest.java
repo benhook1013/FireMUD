@@ -4207,6 +4207,33 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getRemoteCommandCoordinatorReturnsNotFoundForMissingRow() {
+    RemoteCommandCoordinatorRepository repository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    Mockito.when(repository.findByTenantIdAndCoordinatorId(1L, "coord-404"))
+        .thenReturn(Optional.empty());
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(null, repository, null, null, null, null, gameDesignClient());
+
+    AtomicReference<GetRemoteCommandCoordinatorResponse> responseRef = new AtomicReference<>();
+    service.getRemoteCommandCoordinator(
+        GetRemoteCommandCoordinatorRequest.newBuilder()
+            .setTenantId("1")
+            .setCoordinatorId("coord-404")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteCommandCoordinatorResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("NOT_FOUND", responseRef.get().getError().getCode());
+    assertEquals("Remote command coordinator not found", responseRef.get().getError().getMessage());
+  }
+
+  @Test
   void getRemoteFollowupResultReturnsCanonicalRowForAdminCaller() {
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setResultId("rr-1");

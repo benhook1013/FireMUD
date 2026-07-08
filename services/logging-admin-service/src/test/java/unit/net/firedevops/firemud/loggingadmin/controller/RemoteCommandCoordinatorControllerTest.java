@@ -69,7 +69,9 @@ class RemoteCommandCoordinatorControllerTest {
         .perform(
             get("/remote-command-coordinators/2/coord-123")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
+        .andExpect(jsonPath("$.error.message").value("Tenant access required"));
   }
 
   @Test

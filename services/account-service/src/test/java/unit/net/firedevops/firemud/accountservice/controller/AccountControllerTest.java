@@ -90,7 +90,9 @@ class AccountControllerTest {
 
     mockMvc
         .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
+        .andExpect(jsonPath("$.error.message").value("Account access required"));
   }
 
   @Test

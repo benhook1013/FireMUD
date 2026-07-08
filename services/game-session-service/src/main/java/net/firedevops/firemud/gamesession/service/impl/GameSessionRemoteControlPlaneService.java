@@ -98,8 +98,7 @@ final class GameSessionRemoteControlPlaneService {
     RemoteCommandCoordinator coordinator =
         remoteCommandCoordinatorRepository
             .findByTenantIdAndCoordinatorId(tenantId, coordinatorId)
-            .orElseThrow(
-                () -> new IllegalArgumentException("Remote command coordinator not found"));
+            .orElseThrow(() -> new NotFoundException("Remote command coordinator not found"));
     RemoteFollowup followup =
         remoteFollowupRepository
             .findByTenantIdAndFollowupId(tenantId, coordinator.getFollowupId())

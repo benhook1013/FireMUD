@@ -29,7 +29,7 @@ public class GlobalExceptionHandler {
     String code =
         switch (status) {
           case BAD_REQUEST -> "INVALID_ARGUMENT";
-          case FORBIDDEN -> "FORBIDDEN";
+          case FORBIDDEN -> "PERMISSION_DENIED";
           default -> status.name();
         };
     String message = ex.getReason() == null ? status.getReasonPhrase() : ex.getReason();

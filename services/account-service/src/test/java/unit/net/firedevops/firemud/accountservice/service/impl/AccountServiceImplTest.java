@@ -392,6 +392,38 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapWorldsRejectsWorldWithMalformedRuntimeRealmRow() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("broken")
+                    .setDisplayName("Broken Realm")
+                    .setTenantId("bad")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+  }
+
+  @Test
   void issueConnectTokenRejectsMalformedConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
@@ -1303,7 +1335,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapRealmsDropsRealmWithMalformedTenantId() {
+  void listBootstrapRealmsRejectsRealmWithMalformedTenantId() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1345,10 +1377,9 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
-    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
-
-    assertEquals(1, realms.size());
-    assertEquals("production", realms.getFirst().realmSlug());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
   }
 
   @Test

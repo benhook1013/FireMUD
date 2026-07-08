@@ -135,6 +135,28 @@ class RemoteCommandCoordinatorServiceImplTest {
   }
 
   @Test
+  void getRemoteCommandCoordinatorPropagatesNotFoundErrorAs404() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getRemoteCommandCoordinator(2L, "coord-404"))
+        .thenReturn(
+            GetRemoteCommandCoordinatorResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("NOT_FOUND")
+                        .setMessage("Remote command coordinator not found")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.getRemoteCommandCoordinator(2L, "coord-404"));
+
+    assertEquals(404, ex.getStatusCode().value());
+    assertEquals("Remote command coordinator not found", ex.getReason());
+  }
+
+  @Test
   void listRemoteCommandCoordinatorsBuildsBoundedFilterRequestAndMapsRows() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     RemoteCommandCoordinatorListRequest request = new RemoteCommandCoordinatorListRequest();
