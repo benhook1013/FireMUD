@@ -19,7 +19,6 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -61,7 +60,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScreenBufferService screenBufferService;
-  private final TextPlayerOutputRenderer outputRenderer;
   private final WebSocketOutputProjector outputProjector;
   private final PromptBurstCoordinator promptBurstCoordinator;
   private final PromptComposer promptComposer;
@@ -81,7 +79,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       ScreenBufferService screenBufferService,
-      TextPlayerOutputRenderer outputRenderer,
       WebSocketOutputProjector outputProjector,
       PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
@@ -98,7 +95,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
     this.screenBufferService = screenBufferService;
-    this.outputRenderer = outputRenderer;
     this.outputProjector = outputProjector;
     this.promptBurstCoordinator = promptBurstCoordinator;
     this.promptComposer = promptComposer;
@@ -468,7 +464,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String localeTag,
       PresentationProperties effectivePresentation) {
     return ReplayableScreenBufferEntries.fromOutputs(
-        outputs, outputRenderer, outputProjector, localeTag, effectivePresentation);
+        outputs, outputProjector, localeTag, effectivePresentation);
   }
 
   private boolean shouldBuffer(

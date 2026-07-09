@@ -25,7 +25,6 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -61,8 +60,6 @@ class GameSessionWebSocketHandlerTest {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
-  private final TextPlayerOutputRenderer outputRenderer =
-      Mockito.mock(TextPlayerOutputRenderer.class);
   private final WebSocketOutputProjector outputProjector =
       Mockito.mock(WebSocketOutputProjector.class);
   private final PromptBurstCoordinator promptBurstCoordinator =
@@ -90,7 +87,6 @@ class GameSessionWebSocketHandlerTest {
             gameplayAdmissionPointerAuthorityService,
             gameplayPresenceLifecycleService,
             screenBufferService,
-            outputRenderer,
             outputProjector,
             promptBurstCoordinator,
             promptComposer,

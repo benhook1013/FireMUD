@@ -71,15 +71,20 @@ public final class WebSocketOutputProjector {
       String localeTag,
       PresentationProperties effectivePresentation) {
     if (!isFirstPartyWeb(session)) {
-      if (output.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW) {
-        return textRenderer.renderSuccessfulForCommandType(
-            TextCommandType.LOOK, List.of(output), localeTag, effectivePresentation);
-      }
-      return textRenderer.render(output, localeTag, effectivePresentation);
+      return renderClassicPlayerOutput(output, localeTag, effectivePresentation);
     }
     return toJson(
         new FirstPartyEnvelope(
             "player_output", null, null, null, null, null, List.of(toEnvelope(output))));
+  }
+
+  public String renderClassicPlayerOutput(
+      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
+    if (output.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW) {
+      return textRenderer.renderSuccessfulForCommandType(
+          TextCommandType.LOOK, List.of(output), localeTag, effectivePresentation);
+    }
+    return textRenderer.render(output, localeTag, effectivePresentation);
   }
 
   public String projectTranscriptChunk(WebSocketSession session, String label, String text) {

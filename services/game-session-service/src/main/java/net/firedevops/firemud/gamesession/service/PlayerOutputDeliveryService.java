@@ -12,7 +12,6 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +29,6 @@ public final class PlayerOutputDeliveryService {
 
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
-  private final TextPlayerOutputRenderer outputRenderer;
   private final EffectiveSettingsResolver settingsResolver;
   private final WebSocketOutputProjector outputProjector;
   private final PromptComposer promptComposer;
@@ -40,7 +38,6 @@ public final class PlayerOutputDeliveryService {
   public PlayerOutputDeliveryService(
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService,
-      TextPlayerOutputRenderer outputRenderer,
       EffectiveSettingsResolver settingsResolver,
       WebSocketOutputProjector outputProjector,
       PromptComposer promptComposer,
@@ -48,7 +45,6 @@ public final class PlayerOutputDeliveryService {
       MeterRegistry meterRegistry) {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
-    this.outputRenderer = outputRenderer;
     this.settingsResolver = settingsResolver;
     this.outputProjector = outputProjector;
     this.promptComposer = promptComposer;
@@ -97,7 +93,7 @@ public final class PlayerOutputDeliveryService {
       PresentationProperties effectivePresentation) {
     List<ScreenBufferService.BufferedEntry> replayEntries =
         ReplayableScreenBufferEntries.fromOutputs(
-            outputs, outputRenderer, outputProjector, localeTag, effectivePresentation);
+            outputs, outputProjector, localeTag, effectivePresentation);
     if (replayEntries.isEmpty() || context.gameInstanceId() <= 0 || context.characterId() <= 0) {
       return;
     }

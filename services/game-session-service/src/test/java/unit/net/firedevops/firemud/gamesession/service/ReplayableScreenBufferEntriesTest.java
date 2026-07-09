@@ -20,7 +20,7 @@ class ReplayableScreenBufferEntriesTest {
   private final TextPlayerOutputRenderer outputRenderer =
       Mockito.mock(TextPlayerOutputRenderer.class);
   private final WebSocketOutputProjector outputProjector =
-      new WebSocketOutputProjector(outputRenderer);
+      Mockito.spy(new WebSocketOutputProjector(outputRenderer));
   private final PresentationProperties presentation = new PresentationProperties();
 
   @Test
@@ -31,8 +31,7 @@ class ReplayableScreenBufferEntriesTest {
     when(outputRenderer.render(output, "en-NZ", presentation)).thenReturn("You say, \"hello\"");
 
     var entry =
-        ReplayableScreenBufferEntries.fromOutput(
-            output, outputRenderer, outputProjector, "en-NZ", presentation);
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
 
     assertThat(entry).isPresent();
     assertThat(entry.orElseThrow().text()).isEqualTo("You say, \"hello\"\n");
@@ -45,8 +44,7 @@ class ReplayableScreenBufferEntriesTest {
     PlayerOutput output = PlayerOutput.notice("offline only");
 
     var entry =
-        ReplayableScreenBufferEntries.fromOutput(
-            output, outputRenderer, outputProjector, "en-NZ", presentation);
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
 
     assertThat(entry).isEmpty();
     verify(outputRenderer, never()).render(output, "en-NZ", presentation);
@@ -63,11 +61,11 @@ class ReplayableScreenBufferEntriesTest {
         .thenReturn("Room One\nLong desc");
 
     var entry =
-        ReplayableScreenBufferEntries.fromOutput(
-            output, outputRenderer, outputProjector, "en-NZ", presentation);
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
 
     assertThat(entry).isPresent();
     assertThat(entry.orElseThrow().text()).isEqualTo("Room One\nLong desc\n");
+    verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
     verify(outputRenderer)
         .renderSuccessfulForCommandType(
             TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
