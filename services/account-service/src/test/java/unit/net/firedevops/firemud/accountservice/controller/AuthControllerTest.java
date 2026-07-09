@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.controller;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -55,6 +56,22 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.accountId").value(1))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
+  }
+
+  @Test
+  void loginRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    LoginRequest request = new LoginRequest(0L, "demo", "password", null);
+
+    mockMvc
+        .perform(
+            post("/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
@@ -197,6 +214,23 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void requestEmailVerificationRejectsZeroAccountIdBeforeDispatch() throws Exception {
+    net.firedevops.firemud.accountservice.dto.AccountIdRequest req =
+        new net.firedevops.firemud.accountservice.dto.AccountIdRequest(0L);
+
+    mockMvc
+        .perform(
+            post("/auth/request-email-verification")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
