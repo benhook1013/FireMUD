@@ -177,6 +177,31 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllUsesCanonicalCommandIdForAcceptedAuthoredCommandWithoutOutputs() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "wave-salute",
+                TextCommandType.AUTHORED,
+                List.of("captain"),
+                "WAVE-SALUTE captain",
+                "WAVE-SALUTE",
+                new TextCommandPayload.AuthoredActionInvocation("wave-salute", List.of("captain"))),
+            CommandEnqueueResult.success(),
+            List.of());
+
+    assertThat(rendered).isEqualTo("OK WAVE-SALUTE");
+  }
+
+  @Test
   void renderAllFormatsEquipmentViewThroughNormalRendererPath() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -371,7 +396,7 @@ class TextPlayerOutputRendererTest {
             CommandEnqueueResult.success(),
             List.of(PlayerOutput.message("You wave hello."), PlayerOutput.prompt("demo> ")));
 
-    assertThat(rendered).isEqualTo("OK AUTHORED\nYou wave hello.\n\ndemo> ");
+    assertThat(rendered).isEqualTo("OK WAVE\nYou wave hello.\n\ndemo> ");
   }
 
   @Test

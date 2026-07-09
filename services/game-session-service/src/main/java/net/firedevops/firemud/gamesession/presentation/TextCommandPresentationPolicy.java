@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.presentation;
 
 import java.util.List;
+import java.util.Locale;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Resolves renderer-facing command semantics from the canonical command metadata contract. */
 @Component
@@ -41,7 +43,7 @@ final class TextCommandPresentationPolicy {
             .anyMatch(view -> view.refreshReason() == LookViewOutput.RefreshReason.MOVE_REFRESH)) {
       return TextCommandType.LOOK.name();
     }
-    return command.type().name();
+    return canonicalResponseLabel(command);
   }
 
   private boolean isCommunicationAction(TextCommand command) {
@@ -49,6 +51,13 @@ final class TextCommandPresentationPolicy {
         .resolve(command.commandId())
         .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.COMMUNICATION))
         .orElse(false);
+  }
+
+  private String canonicalResponseLabel(TextCommand command) {
+    if (StringUtils.hasText(command.commandId())) {
+      return command.commandId().toUpperCase(Locale.ROOT);
+    }
+    return command.type().name();
   }
 
   private boolean isViewOutput(PlayerOutput output) {

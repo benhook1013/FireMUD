@@ -162,11 +162,13 @@ public class TextPlayerOutputRenderer {
     String prompt = renderTrailingPrompt(outputs, effectivePresentationProperties, localeTag);
     java.util.List<PlayerOutput> nonPromptOutputs =
         outputs.stream().filter(output -> output.kind() != PlayerOutputKind.PROMPT).toList();
+    String commandLabel =
+        textCommandPresentationPolicy.responseCommandLabel(command, nonPromptOutputs);
     if (nonPromptOutputs.isEmpty()) {
       if (StringUtils.hasText(prompt)) {
         return prompt;
       }
-      return "OK " + command.type().name();
+      return "OK " + commandLabel;
     }
     if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).kind() == PlayerOutputKind.NOTICE) {
       String rendered =
@@ -184,10 +186,8 @@ public class TextPlayerOutputRenderer {
       if (StringUtils.hasText(prompt)) {
         return prompt;
       }
-      return "OK " + command.type().name();
+      return "OK " + commandLabel;
     }
-    String commandLabel =
-        textCommandPresentationPolicy.responseCommandLabel(command, nonPromptOutputs);
     if (textCommandPresentationPolicy.rendersInlineMessageOnlyResponse(command, nonPromptOutputs)) {
       return appendPrompt(body, prompt, true);
     }
