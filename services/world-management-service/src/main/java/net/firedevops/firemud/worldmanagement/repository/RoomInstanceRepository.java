@@ -35,7 +35,7 @@ public class RoomInstanceRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ROOM_INSTANCE.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(ROOM_INSTANCE.ROOM_INSTANCE_ID.eq(roomInstanceRowId)))
+                .and(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID.eq(roomInstanceRowId)))
         .fetchOptional(this::toEntity);
   }
 
@@ -51,7 +51,7 @@ public class RoomInstanceRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ROOM_INSTANCE.GAME_INSTANCE_ID.eq(gameInstanceId)))
-        .orderBy(ROOM_INSTANCE.ROOM_INSTANCE_ID.asc())
+        .orderBy(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -90,7 +90,7 @@ public class RoomInstanceRepository {
           dsl.insertInto(ROOM_INSTANCE)
               .set(ROOM_INSTANCE.TENANT_ID, entity.getTenantId())
               .set(ROOM_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
-              .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceRowId())
+              .set(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID, entity.getRoomInstanceRowId())
               .set(ROOM_INSTANCE.TEMPLATE_ROOM_ID, entity.getTemplateRoomId())
               .set(ROOM_INSTANCE.REGION_INSTANCE_ID, entity.getRegionInstance().getId())
               .set(ROOM_INSTANCE.NAME, entity.getName())
@@ -110,7 +110,7 @@ public class RoomInstanceRepository {
         dsl.update(ROOM_INSTANCE)
             .set(ROOM_INSTANCE.TENANT_ID, entity.getTenantId())
             .set(ROOM_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(ROOM_INSTANCE.ROOM_INSTANCE_ID, entity.getRoomInstanceRowId())
+            .set(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID, entity.getRoomInstanceRowId())
             .set(ROOM_INSTANCE.TEMPLATE_ROOM_ID, entity.getTemplateRoomId())
             .set(ROOM_INSTANCE.REGION_INSTANCE_ID, entity.getRegionInstance().getId())
             .set(ROOM_INSTANCE.NAME, entity.getName())
@@ -138,7 +138,7 @@ public class RoomInstanceRepository {
     entity.setId(record.get(ROOM_INSTANCE.ID));
     entity.setTenantId(record.get(ROOM_INSTANCE.TENANT_ID));
     entity.setGameInstanceId(record.get(ROOM_INSTANCE.GAME_INSTANCE_ID));
-    entity.setRoomInstanceRowId(record.get(ROOM_INSTANCE.ROOM_INSTANCE_ID));
+    entity.setRoomInstanceRowId(record.get(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID));
     entity.setTemplateRoomId(record.get(ROOM_INSTANCE.TEMPLATE_ROOM_ID));
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(

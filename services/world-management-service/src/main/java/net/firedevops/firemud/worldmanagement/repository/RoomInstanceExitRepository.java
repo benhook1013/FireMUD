@@ -28,7 +28,7 @@ public class RoomInstanceExitRepository {
     return dsl.select(ROOM_INSTANCE_EXIT.fields())
         .select(
             toRoom.ID,
-            toRoom.ROOM_INSTANCE_ID,
+            toRoom.ROOM_INSTANCE_ROW_ID,
             toRoom.NAME,
             toRoom.DESCRIPTION,
             toRoom.NAME_LOCALIZED_VARIANTS_JSON,
@@ -116,7 +116,7 @@ public class RoomInstanceExitRepository {
     RoomInstance toRoomInstance =
         JooqWorldManagementRepositorySupport.partialRoomInstanceRecord(toRoomInstanceRecordId);
     toRoomInstance.setRoomInstanceRowId(
-        record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ROOM_INSTANCE_ID)));
+        record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID)));
     toRoomInstance.setName(
         record.get((org.jooq.Field<String>) toRoomAlias.field(ROOM_INSTANCE.NAME)));
     toRoomInstance.setDescription(
