@@ -36,7 +36,7 @@ class SessionRoutingNormalizationServiceTest {
             7001L,
             "Emberline",
             1L,
-            "room-1",
+            "R-1",
             "jwt",
             "en-NZ",
             41L,

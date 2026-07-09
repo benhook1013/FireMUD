@@ -58,7 +58,7 @@ class AutomationScriptEventPublisherTest {
 
     GameplayCommand command = command("cmd-1", "LOOK");
     command.setCommandText("l");
-    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command);
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -104,7 +104,7 @@ class AutomationScriptEventPublisherTest {
             builtInAliasResolver(),
             Runnable::run);
 
-    publisher.publishCommandEvent(sharedGameplayContext("room"), command("cmd-1", "LOOK"));
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
   }
@@ -141,7 +141,7 @@ class AutomationScriptEventPublisherTest {
     command.setRealmSlug("staged-realm");
     command.setPointerVersion(17L);
 
-    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command);
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -184,7 +184,7 @@ class AutomationScriptEventPublisherTest {
             Runnable::run);
 
     publisher.publishSpawnEvent(
-        sharedGameplayContext("room"), "play_entry", "play-spawn:17:99:44:7");
+        sharedGameplayContext("R-1"), "play_entry", "play-spawn:17:99:44:7");
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -398,7 +398,7 @@ class AutomationScriptEventPublisherTest {
     GameplayCommand command = command("authored-1", "wave");
     command.setCommandText("wave");
     command.setExecutionHook("runtime.workflow.wave");
-    publisher.publishCommandEvent(sharedGameplayContext("room"), command);
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command);
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);

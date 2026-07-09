@@ -81,7 +81,7 @@ class SessionAuthenticationServiceTest {
   void resolveSessionContextClearsGameplayBindingWhenRoutingBundleIsIncomplete() {
     SessionContext incomplete =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "room-1", "jwt");
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1", "jwt");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(incomplete));
     when(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .thenReturn(Optional.of(incomplete));
@@ -265,7 +265,7 @@ class SessionAuthenticationServiceTest {
             7001L,
             "Emberline",
             1L,
-            "room-1",
+            "R-1",
             "jwt",
             "en-NZ",
             41L,

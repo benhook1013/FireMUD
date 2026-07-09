@@ -63,7 +63,7 @@ class ContainerIdentitySupportTest {
   void roomEntityReferencesAcceptCompactContainerReference() {
     RoomEntity entity =
         RoomEntity.newBuilder()
-            .setEntityId("22:77:room-7:10")
+            .setEntityId("22:77:R-7:10")
             .setDisplayName("Old Chest")
             .setVisibleRef("oldchest12")
             .addStateFlags("container-instance:container-42")

@@ -56,8 +56,7 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayIdentity() {
     SessionContext actor =
-        new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -86,8 +85,7 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayName() {
     SessionContext actor =
-        new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -116,8 +114,7 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsMalformed() {
     SessionContext actor =
-        new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -143,8 +140,7 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsNonPositive() {
     SessionContext actor =
-        new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -168,8 +164,7 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenStructuredRecipientIdDoesNotResolve() {
     SessionContext actor =
-        new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "room-1", "jwt");
+        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
