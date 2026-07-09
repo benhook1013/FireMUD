@@ -13,6 +13,7 @@ import java.util.Map;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -75,12 +76,42 @@ class WebSocketOutputProjectorTest {
     JsonNode json = objectMapper.readTree(payload);
     assertThat(json.path("eventType").asText()).isEqualTo("command_result");
     assertThat(json.path("commandType").asText()).isEqualTo("LOOK");
+    assertThat(json.path("commandId").asText()).isEqualTo("look");
     assertThat(json.path("accepted").asBoolean()).isTrue();
     assertThat(json.path("outputs")).hasSize(1);
     assertThat(json.path("outputs").get(0).path("kind").asText()).isEqualTo("PROMPT");
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("prompt");
     assertThat(json.path("outputs").get(0).path("payload").path("text").asText())
         .isEqualTo("demo> ");
+  }
+
+  @Test
+  void firstPartyWebReceivesCanonicalAuthoredCommandId() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(
+                "wave",
+                TextCommandType.AUTHORED,
+                List.of("hello"),
+                "wave hello",
+                "wave",
+                new TextCommandPayload.AuthoredActionInvocation("wave", List.of("hello"))),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(PlayerOutput.message("You wave hello."))),
+            List.of(PlayerOutput.message("You wave hello.")),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("commandType").asText()).isEqualTo("AUTHORED");
+    assertThat(json.path("commandId").asText()).isEqualTo("wave");
   }
 
   @Test

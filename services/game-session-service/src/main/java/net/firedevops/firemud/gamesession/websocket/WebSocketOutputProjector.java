@@ -58,6 +58,7 @@ public final class WebSocketOutputProjector {
         new FirstPartyEnvelope(
             "command_result",
             command.type().name(),
+            command.commandId(),
             interpretation.commandResult().accepted(),
             interpretation.commandResult().errorCode(),
             interpretation.commandResult().errorMessage(),
@@ -75,7 +76,7 @@ public final class WebSocketOutputProjector {
     }
     return toJson(
         new FirstPartyEnvelope(
-            "player_output", null, null, null, null, null, List.of(toEnvelope(output))));
+            "player_output", null, null, null, null, null, null, List.of(toEnvelope(output))));
   }
 
   public String renderClassicPlayerOutput(
@@ -181,6 +182,7 @@ public final class WebSocketOutputProjector {
   private record FirstPartyEnvelope(
       String eventType,
       String commandType,
+      String commandId,
       Boolean accepted,
       String errorCode,
       String errorMessage,
