@@ -17,6 +17,6 @@ final class WhoTextCommandDispatchHandler implements TextCommandDispatchHandler 
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    return whoHandler.handle(request.sessionContext().orElseThrow());
+    return whoHandler.handle(request.command(), request.sessionContext().orElseThrow());
   }
 }

@@ -37,20 +37,20 @@ public class WhoCommandHandler {
   }
 
   @Timed(value = "gamesession.command.who")
-  public TextCommandInterpretationResult handle(SessionContext context) {
+  public TextCommandInterpretationResult handle(TextCommand command, SessionContext context) {
     List<GameplayPresence> presences =
         gameplayPresenceService.listConnectedByGameInstance(
             context.tenantId(), context.gameInstanceId());
     WhoViewOutput body = toView(presences);
-    publishCommandEvent(context);
+    publishCommandEvent(context, command);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(body)));
   }
 
-  private void publishCommandEvent(SessionContext context) {
+  private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
       scriptEventPublisher.publishCommandEvent(
-          context, ScriptEventGameplayCommands.synthetic("who", TextCommandType.WHO.name(), "WHO"));
+          context, ScriptEventGameplayCommands.synthetic("who", command));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Who script event publish failed tenantId={} gameInstanceId={} characterId={}",

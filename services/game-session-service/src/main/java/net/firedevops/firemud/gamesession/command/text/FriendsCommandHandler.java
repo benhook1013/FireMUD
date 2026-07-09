@@ -62,29 +62,30 @@ public class FriendsCommandHandler {
 
   @Timed(value = "gamesession.command.friends")
   public TextCommandInterpretationResult handle(TextCommand command, SessionContext context) {
+    String rawCommandText = command.rawLine();
     FriendAction action = parseAction(command);
     if (action.kind() == FriendActionKind.INVALID) {
       return invalidUsage(action.invalidUsage());
     }
     if (action.kind() == FriendActionKind.LIST) {
-      return handleList(context, action.listFilter());
+      return handleList(context, action.listFilter(), rawCommandText);
     }
     if (action.kind() == FriendActionKind.SUMMARY) {
-      return handleSummary(context);
+      return handleSummary(context, rawCommandText);
     }
     if (action.kind() == FriendActionKind.VISIBILITY) {
       return StringUtils.hasText(action.targetToken())
-          ? handleVisibilityUpdate(context, action.targetToken())
-          : handleVisibilityView(context);
+          ? handleVisibilityUpdate(context, action.targetToken(), rawCommandText)
+          : handleVisibilityView(context, rawCommandText);
     }
     if (action.kind() == FriendActionKind.DETAIL && !StringUtils.hasText(action.targetToken())) {
       return invalidUsage("FRIENDS SHOW <friendAccountId|characterName|#entryNumber>");
     }
     if (action.kind() == FriendActionKind.REMOVE && isOrdinalToken(action.targetToken())) {
-      return handleRemoveByOrdinal(context, action.targetToken());
+      return handleRemoveByOrdinal(context, action.targetToken(), rawCommandText);
     }
     if (action.kind() == FriendActionKind.DETAIL && isOrdinalToken(action.targetToken())) {
-      return handleDetailByOrdinal(context, action.targetToken());
+      return handleDetailByOrdinal(context, action.targetToken(), rawCommandText);
     }
     if (!StringUtils.hasText(action.targetToken())) {
       return invalidUsage("FRIENDS " + action.keyword() + " <friendAccountId|characterName>");
@@ -94,18 +95,18 @@ public class FriendsCommandHandler {
       return resolvedTarget.errorResult();
     }
     return switch (action.kind()) {
-      case ADD -> handleAdd(context, resolvedTarget);
-      case REMOVE -> handleRemove(context, resolvedTarget);
-      case DETAIL -> handleDetail(context, resolvedTarget);
-      case SUMMARY -> handleSummary(context);
+      case ADD -> handleAdd(context, resolvedTarget, rawCommandText);
+      case REMOVE -> handleRemove(context, resolvedTarget, rawCommandText);
+      case DETAIL -> handleDetail(context, resolvedTarget, rawCommandText);
+      case SUMMARY -> handleSummary(context, rawCommandText);
       case VISIBILITY -> throw new IllegalStateException("Visibility branch should have returned");
-      case LIST -> handleList(context, action.listFilter());
+      case LIST -> handleList(context, action.listFilter(), rawCommandText);
       case INVALID -> throw new IllegalStateException("Invalid branch should have returned");
     };
   }
 
   private TextCommandInterpretationResult handleList(
-      SessionContext context, FriendListFilter filter) {
+      SessionContext context, FriendListFilter filter, String rawCommandText) {
     ListFriendsResponse response =
         filter == FriendListFilter.ALL
             ? socialGroupsClient.listFriends(context.tenantId(), context.accountId())
@@ -129,13 +130,13 @@ public class FriendsCommandHandler {
     } catch (IllegalStateException ex) {
       return friendUnavailable("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable", ex);
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
   }
 
   private TextCommandInterpretationResult handleAdd(
-      SessionContext context, ResolvedFriendTarget target) {
+      SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
     if (target.friendAccountId() == context.accountId()) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
@@ -152,14 +153,14 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_ADD_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_ADD_UNAVAILABLE", message)));
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.notice(friendMutation("ADD", target))));
   }
 
   private TextCommandInterpretationResult handleRemove(
-      SessionContext context, ResolvedFriendTarget target) {
+      SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
     if (target.friendAccountId() == context.accountId()) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
@@ -176,14 +177,14 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_REMOVE_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_REMOVE_UNAVAILABLE", message)));
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.notice(friendMutation("REMOVE", target))));
   }
 
   private TextCommandInterpretationResult handleDetail(
-      SessionContext context, ResolvedFriendTarget target) {
+      SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
     GetFriendResponse response =
         socialGroupsClient.getFriend(
             context.tenantId(), context.accountId(), target.friendAccountId());
@@ -207,14 +208,14 @@ public class FriendsCommandHandler {
     } catch (IllegalStateException ex) {
       return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
   }
 
   private TextCommandInterpretationResult handleDetailByOrdinal(
-      SessionContext context, String targetToken) {
+      SessionContext context, String targetToken, String rawCommandText) {
     int ordinal = parseOrdinal(targetToken);
     if (ordinal <= 0) {
       return invalidUsage("FRIENDS SHOW <friendAccountId|characterName|#entryNumber>");
@@ -241,13 +242,14 @@ public class FriendsCommandHandler {
     } catch (IllegalStateException ex) {
       return friendUnavailable("FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable", ex);
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(new FriendDetailViewOutput(entry))));
   }
 
-  private TextCommandInterpretationResult handleSummary(SessionContext context) {
+  private TextCommandInterpretationResult handleSummary(
+      SessionContext context, String rawCommandText) {
     GetFriendRosterSummaryResponse response =
         socialGroupsClient.getFriendRosterSummary(context.tenantId(), context.accountId());
     if (response.hasError()) {
@@ -259,7 +261,7 @@ public class FriendsCommandHandler {
           CommandEnqueueResult.failure("FRIEND_SUMMARY_UNAVAILABLE", message),
           List.of(PlayerOutput.error("FRIEND_SUMMARY_UNAVAILABLE", message)));
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(
@@ -279,7 +281,8 @@ public class FriendsCommandHandler {
                     response.getSummary().getUnspecifiedScopeCount()))));
   }
 
-  private TextCommandInterpretationResult handleVisibilityView(SessionContext context) {
+  private TextCommandInterpretationResult handleVisibilityView(
+      SessionContext context, String rawCommandText) {
     GetFriendPresencePolicyResponse response =
         socialGroupsClient.getFriendPresencePolicy(context.tenantId(), context.accountId());
     if (response.hasError()) {
@@ -294,14 +297,14 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.view(friendPresencePolicyView(response.getCurrentPolicy()))));
   }
 
   private TextCommandInterpretationResult handleVisibilityUpdate(
-      SessionContext context, String targetToken) {
+      SessionContext context, String targetToken, String rawCommandText) {
     net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy visibilityPolicy =
         parseVisibilityPolicy(targetToken);
     if (visibilityPolicy == null) {
@@ -328,7 +331,7 @@ public class FriendsCommandHandler {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(
@@ -340,7 +343,7 @@ public class FriendsCommandHandler {
   }
 
   private TextCommandInterpretationResult handleRemoveByOrdinal(
-      SessionContext context, String targetToken) {
+      SessionContext context, String targetToken, String rawCommandText) {
     int ordinal = parseOrdinal(targetToken);
     if (ordinal <= 0) {
       return invalidUsage("FRIENDS REMOVE <friendAccountId|characterName|#entryNumber>");
@@ -365,7 +368,7 @@ public class FriendsCommandHandler {
     } catch (IllegalStateException ex) {
       return friendUnavailable("FRIEND_REMOVE_UNAVAILABLE", "Friend removal unavailable", ex);
     }
-    publishCommandEvent(context);
+    publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
         List.of(PlayerOutput.notice(friendMutation("REMOVE", removed))));
@@ -393,12 +396,12 @@ public class FriendsCommandHandler {
         CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
 
-  private void publishCommandEvent(SessionContext context) {
+  private void publishCommandEvent(SessionContext context, String rawCommandText) {
     try {
       scriptEventPublisher.publishCommandEvent(
           context,
           ScriptEventGameplayCommands.synthetic(
-              "friends", TextCommandType.FRIENDS.name(), "FRIENDS"));
+              "friends", TextCommandType.FRIENDS.name(), rawCommandText));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Friends script event publish failed tenantId={} gameInstanceId={} characterId={}",

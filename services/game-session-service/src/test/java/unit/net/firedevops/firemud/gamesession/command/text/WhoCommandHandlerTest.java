@@ -33,6 +33,7 @@ class WhoCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
+            new TextCommand(TextCommandType.WHO, java.util.List.of(), "who"),
             new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -43,7 +44,7 @@ class WhoCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "WHO".equals(gameplayCommand.getCommandName())
-                        && "WHO".equals(gameplayCommand.getCommandText())
+                        && "who".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("who-")));
   }
@@ -74,6 +75,7 @@ class WhoCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
+            new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
             new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -95,6 +97,7 @@ class WhoCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
+            new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
             new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -121,6 +124,7 @@ class WhoCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
+            new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
             new SessionContext(1L, 22L, 1L, "active@example.com", 101L, "Aster", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();

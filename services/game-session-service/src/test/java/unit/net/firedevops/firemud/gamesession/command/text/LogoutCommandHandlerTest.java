@@ -69,12 +69,12 @@ class LogoutCommandHandlerTest {
             "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("quit"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
     verify(scriptEventPublisher)
-        .publishCommandEvent(context, command("logout-command:41:1:123", "LOGOUT"));
+        .publishCommandEvent(context, command("logout-command:41:1:123", "LOGOUT", "quit"));
     verify(scriptEventPublisher, never())
         .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -107,7 +107,7 @@ class LogoutCommandHandlerTest {
             "ISOLATED");
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService).stopSession(7L);
@@ -151,7 +151,7 @@ class LogoutCommandHandlerTest {
                     "SHARED",
                     "ALLOW_NEW")));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -180,7 +180,7 @@ class LogoutCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(normalizedContext));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -210,7 +210,7 @@ class LogoutCommandHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(java.util.List.of());
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -267,7 +267,7 @@ class LogoutCommandHandlerTest {
                     "SHARED",
                     "ALLOW_NEW")));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -311,7 +311,7 @@ class LogoutCommandHandlerTest {
                     "",
                     "ALLOW_NEW")));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -339,7 +339,7 @@ class LogoutCommandHandlerTest {
             null);
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(partial));
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
@@ -354,7 +354,7 @@ class LogoutCommandHandlerTest {
   void logoutBeforeLoginReturnsBoundedFailure() {
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.empty());
 
-    LogoutCommandHandlingResult result = handler.handle("41");
+    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand("LOGOUT"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
@@ -366,13 +366,17 @@ class LogoutCommandHandlerTest {
     verify(sessionContextService, never()).deleteBySessionId(Mockito.anyLong(), Mockito.anyLong());
   }
 
+  private static TextCommand logoutCommand(String rawLine) {
+    return new TextCommand(TextCommandType.LOGOUT, java.util.List.of(), rawLine);
+  }
+
   private static net.firedevops.firemud.gamesession.entity.GameplayCommand command(
-      String commandId, String commandName) {
+      String commandId, String commandName, String commandText) {
     net.firedevops.firemud.gamesession.entity.GameplayCommand gameplayCommand =
         new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     gameplayCommand.setCommandId(commandId);
     gameplayCommand.setCommandName(commandName);
-    gameplayCommand.setCommandText(commandName);
+    gameplayCommand.setCommandText(commandText);
     return gameplayCommand;
   }
 }
