@@ -695,17 +695,24 @@ public class GameLogicClient
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
         GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
             context, "Game Logic request");
+    String canonicalRoomId = optionalCanonicalRoomId(roomId);
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
-        roomId,
+        canonicalRoomId,
         routingBundle.worldSlug(),
         routingBundle.realmSlug(),
         routingBundle.pointerVersion(),
         context.playableStateScope());
+  }
+
+  private String optionalCanonicalRoomId(String roomId) {
+    return StringUtils.hasText(roomId)
+        ? GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId")
+        : roomId;
   }
 
   private ErrorDetail error(String code, String message) {

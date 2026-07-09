@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
@@ -73,6 +74,35 @@ class EntityManagementClientTest {
     EntityManagementClient client = newClient();
 
     assertThatThrownBy(() -> client.listRoomEntities(SESSION_CONTEXT, "room-1021"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
+  }
+
+  @Test
+  void findCharacterByNameRejectsLegacyRuntimeRoomIdsInSessionContextBeforeDispatch() {
+    EntityManagementClient client = newClient();
+    SessionContext legacyRoomContext =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            "room-1021",
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            SESSION_CONTEXT.pointerVersion(),
+            SESSION_CONTEXT.playableStateScope());
+
+    assertThatThrownBy(
+            () ->
+                client.findCharacterByName(
+                    legacyRoomContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
   }

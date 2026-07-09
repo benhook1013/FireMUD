@@ -219,16 +219,23 @@ public final class EntityManagementClient
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
         GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
             context, "Entity Management request");
+    String canonicalRoomId = optionalCanonicalRoomId(roomInstanceId);
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         gameInstanceId,
-        roomInstanceId,
+        canonicalRoomId,
         routingBundle.worldSlug(),
         routingBundle.realmSlug(),
         routingBundle.pointerVersion(),
         context.playableStateScope());
+  }
+
+  private String optionalCanonicalRoomId(String roomInstanceId) {
+    return StringUtils.hasText(roomInstanceId)
+        ? GameplayRuntimeRoomIds.requireCanonical(roomInstanceId, "roomInstanceId")
+        : roomInstanceId;
   }
 }

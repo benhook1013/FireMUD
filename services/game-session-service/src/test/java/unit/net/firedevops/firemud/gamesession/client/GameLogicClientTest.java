@@ -168,6 +168,32 @@ class GameLogicClientTest {
   }
 
   @Test
+  void queryInventoryRejectsLegacyRuntimeRoomIdsInSessionContextBeforeDispatch() {
+    GameLogicClient client = newClient();
+    SessionContext legacyRoomContext =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            "room-1021",
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            SESSION_CONTEXT.pointerVersion(),
+            SESSION_CONTEXT.playableStateScope());
+
+    assertThatThrownBy(() -> client.queryInventory(legacyRoomContext))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
+  }
+
+  @Test
   void pickupItemForwardsRoomAndEffectContextThroughGameLogic() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
