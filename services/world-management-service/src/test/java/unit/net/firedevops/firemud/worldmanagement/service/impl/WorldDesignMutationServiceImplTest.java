@@ -183,6 +183,40 @@ class WorldDesignMutationServiceImplTest {
   }
 
   @Test
+  void scopedRegionMutationRejectsZeroDeclaredScopeIdBeforeSave() {
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-region-scope", "revision-region-scope", "UPSERT", "REGION", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionCreateRequestWithScope("REGION_SUBTREE", "0")));
+
+    assertEquals("INVALID_ARGUMENT: scope_id must be positive", ex.getMessage());
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void scopedZoneMutationRejectsZeroDeclaredScopeIdBeforeSave() {
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-zone-scope", "revision-zone-scope", "UPSERT", "ZONE", ""))
+        .thenReturn(Optional.empty());
+    when(regionRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 44L))
+        .thenReturn(Optional.of(region(44L)));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(zoneCreateRequestWithScope("ZONE_SUBTREE", "0")));
+
+    assertEquals("INVALID_ARGUMENT: scope_id must be positive", ex.getMessage());
+    verify(zoneRepository, never()).save(any(Zone.class));
+  }
+
+  @Test
   void staleNaturalKeySpawnBindingEpochFailsBeforeReplaceScopeDelete() {
     Zone zone = zone(12L, 99L);
     Room targetRoom = room(12L, zone);
@@ -796,6 +830,31 @@ class WorldDesignMutationServiceImplTest {
         null);
   }
 
+  private WorldDesignMutationRequestDto regionCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-region-scope",
+        "revision-region-scope",
+        "UPSERT",
+        "REGION",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        new WorldDesignMutationRequestDto.RegionMutationDto(
+            "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
   private WorldDesignMutationRequestDto regionDeleteRequestWithPolicy(String scopeMutationPolicy) {
     return new WorldDesignMutationRequestDto(
         1L,
@@ -812,6 +871,30 @@ class WorldDesignMutationServiceImplTest {
         scopeMutationPolicy,
         null,
         null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private WorldDesignMutationRequestDto zoneCreateRequestWithScope(
+      String scopeType, String scopeId) {
+    return new WorldDesignMutationRequestDto(
+        1L,
+        7L,
+        "commit-zone-scope",
+        "revision-zone-scope",
+        "UPSERT",
+        "ZONE",
+        "",
+        0L,
+        scopeType,
+        scopeId,
+        0L,
+        "REPLACE_SCOPE",
+        null,
+        new WorldDesignMutationRequestDto.ZoneMutationDto("Market", "44"),
         null,
         null,
         null,
@@ -938,6 +1021,14 @@ class WorldDesignMutationServiceImplTest {
                 .setVersionStateEpoch(1L)
                 .build())
         .build();
+  }
+
+  private Region region(long regionId) {
+    Region region = new Region();
+    region.setId(regionId);
+    region.setTenantId(1L);
+    region.setVersionId(7L);
+    return region;
   }
 
   private Zone zone(long zoneId, long regionId) {

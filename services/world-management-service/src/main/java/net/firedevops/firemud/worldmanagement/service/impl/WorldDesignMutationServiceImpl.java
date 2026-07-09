@@ -163,8 +163,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     region.setGeneratorParams(blankToNull(payload.generatorParams()));
     region.setSpacingMultiplier(
         payload.spacingMultiplier() == 0.0d ? 1.0d : payload.spacingMultiplier());
+    validateRegionWithinScope(request, region);
     Region saved = regionRepository.save(region);
-    validateRegionWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -192,8 +192,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                 request.versionId(),
                 parseId(payload.regionId(), "zone.region_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "region not found")));
+    validateZoneWithinScope(request, zone);
     Zone saved = zoneRepository.save(zone);
-    validateZoneWithinScope(request, saved);
     return saved.getId();
   }
 
