@@ -26,6 +26,42 @@ fi
 
 mode="${1:-all}"
 
+KUBECONFORM_RETRY_ATTEMPTS="${KUBECONFORM_RETRY_ATTEMPTS:-3}"
+KUBECONFORM_RETRY_DELAY_SECONDS="${KUBECONFORM_RETRY_DELAY_SECONDS:-2}"
+
+run_kubeconform_with_retry() {
+  local rendered_file="$1"
+  local cache_dir="$2"
+  local attempt=1
+  local output_file
+  output_file="$(mktemp)"
+
+  while true; do
+    if kubeconform -cache "${cache_dir}" -strict -summary -ignore-missing-schemas < "${rendered_file}" >"${output_file}" 2>&1; then
+      cat "${output_file}"
+      rm -f "${output_file}"
+      return 0
+    fi
+
+    if ! grep -q "failed downloading schema" "${output_file}"; then
+      cat "${output_file}" >&2
+      rm -f "${output_file}"
+      return 1
+    fi
+
+    cat "${output_file}" >&2
+    if [ "${attempt}" -ge "${KUBECONFORM_RETRY_ATTEMPTS}" ]; then
+      echo "kubeconform schema download failed after ${KUBECONFORM_RETRY_ATTEMPTS} attempts." >&2
+      rm -f "${output_file}"
+      return 1
+    fi
+
+    echo "kubeconform schema download failed on attempt ${attempt}/${KUBECONFORM_RETRY_ATTEMPTS}; retrying after ${KUBECONFORM_RETRY_DELAY_SECONDS}s" >&2
+    attempt=$((attempt + 1))
+    sleep "${KUBECONFORM_RETRY_DELAY_SECONDS}"
+  done
+}
+
 render_hosted_values_samples() {
   local preview_output="$1"
   local dev_demo_output="$2"
@@ -79,7 +115,8 @@ render_and_validate() {
   local release_name="$1"
   local chart_path="$2"
   local namespace="$3"
-  shift 3
+  local cache_dir="$4"
+  shift 4
 
   local rendered_file
   rendered_file="$(mktemp)"
@@ -89,16 +126,20 @@ render_and_validate() {
     rm -f "${rendered_file}"
     exit 1
   fi
-  kubeconform -strict -summary -ignore-missing-schemas < "${rendered_file}"
+  run_kubeconform_with_retry "${rendered_file}" "${cache_dir}"
   rm -f "${rendered_file}"
 }
 
 run_render_validation() {
+  local kubeconform_cache_dir
+  kubeconform_cache_dir="$(mktemp -d)"
+  trap 'rm -rf "${kubeconform_cache_dir}"' RETURN
+
   echo "==> helm template account-service"
-  render_and_validate "account-service-lint" "k8s/helm/account-service" "helm-lint"
+  render_and_validate "account-service-lint" "k8s/helm/account-service" "helm-lint" "${kubeconform_cache_dir}"
 
   echo "==> helm template game-session-service"
-  render_and_validate "game-session-service-lint" "k8s/helm/game-session-service" "helm-lint"
+  render_and_validate "game-session-service-lint" "k8s/helm/game-session-service" "helm-lint" "${kubeconform_cache_dir}"
 
   local preview_values
   local dev_demo_values
@@ -112,7 +153,7 @@ run_render_validation() {
   local values_file
   for values_file in "${firemud_values[@]}"; do
     echo "==> helm template firemud with ${values_file}"
-    render_and_validate "firemud-lint" "k8s/helm/firemud" "helm-lint" -f "${values_file}"
+    render_and_validate "firemud-lint" "k8s/helm/firemud" "helm-lint" "${kubeconform_cache_dir}" -f "${values_file}"
   done
   rm -f "${preview_values}" "${dev_demo_values}"
 }
