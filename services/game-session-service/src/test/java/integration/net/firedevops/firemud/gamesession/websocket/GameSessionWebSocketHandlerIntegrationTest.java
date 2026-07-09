@@ -535,6 +535,30 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void repeatedWhoStillShowsPromptInsideBurstWindow() throws Exception {
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
+      client.send("WHO");
+      client.awaitStartsWith("OK WHO");
+      client.send("WHO");
+      client.awaitMatching(
+          payload ->
+              client.responses().stream()
+                      .filter(response -> response.startsWith("OK WHO") && response.endsWith("> "))
+                      .count()
+                  >= 2,
+          "two prompt-terminated WHO responses");
+      payloads = client.responses();
+    }
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(
+            payloads.stream()
+                .filter(payload -> payload.startsWith("OK WHO") && payload.endsWith("> ")))
+        .hasSizeGreaterThanOrEqualTo(2);
+  }
+
+  @Test
   void websocketQuickLookUsesDistinctCommandLabelAndPrompt() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
