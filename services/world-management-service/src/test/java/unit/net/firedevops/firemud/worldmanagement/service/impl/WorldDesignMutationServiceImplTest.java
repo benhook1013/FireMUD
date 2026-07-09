@@ -460,6 +460,24 @@ class WorldDesignMutationServiceImplTest {
   }
 
   @Test
+  void scopedRoomMutationRejectsZeroDeclaredScopeIdBeforeSave() {
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L))
+        .thenReturn(Optional.of(zone(13L, 99L)));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomCreateRequestWithScope("ZONE_SUBTREE", "0")));
+
+    assertEquals("INVALID_ARGUMENT: scope_id must be positive", ex.getMessage());
+    verify(roomRepository, never()).save(any(Room.class));
+  }
+
+  @Test
   void scopedRoomMutationAllowsRoomInsideDeclaredRegionSubtree() {
     Zone zone = zone(13L, 99L);
     when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
@@ -513,6 +531,29 @@ class WorldDesignMutationServiceImplTest {
 
     assertEquals("OUT_OF_SYNC: room exit mutation is outside the declared scope", ex.getMessage());
     verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
+  @Test
+  void scopedRoomExitRejectsZeroDeclaredScopeIdBeforeSave() {
+    Zone zone = zone(12L, 99L);
+    Room fromRoom = room(21L, zone);
+    Room toRoom = room(22L, zone);
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 21L))
+        .thenReturn(Optional.of(fromRoom));
+    when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 22L))
+        .thenReturn(Optional.of(toRoom));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L, 7L, "commit-exit", "revision-exit", "UPSERT", "ROOM_EXIT", ""))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(roomExitCreateRequestWithScope("ZONE_SUBTREE", "0")));
+
+    assertEquals("INVALID_ARGUMENT: scope_id must be positive", ex.getMessage());
+    verify(roomExitRepository, never()).save(any(RoomExit.class));
   }
 
   @Test

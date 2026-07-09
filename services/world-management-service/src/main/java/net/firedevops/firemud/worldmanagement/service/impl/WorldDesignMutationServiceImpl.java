@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
@@ -222,8 +223,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
             .findByTenantIdAndVersionIdAndId(
                 request.tenantId(), request.versionId(), parseId(payload.zoneId(), "room.zone_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "zone not found")));
+    validateRoomWithinScope(request, room);
     Room saved = roomRepository.save(room);
-    validateRoomWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -260,8 +261,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                 request.versionId(),
                 parseId(payload.toRoomId(), "room_exit.to_room_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "to room not found")));
+    validateRoomExitWithinScope(request, exit);
     RoomExit saved = roomExitRepository.save(exit);
-    validateRoomExitWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -978,9 +979,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long parseId(String value, String field) {
     try {
-      return Long.parseLong(requireText(value, field));
-    } catch (NumberFormatException ex) {
-      throw appError("INVALID_ARGUMENT", field + " must be numeric");
+      return RequestIdValidation.requirePositiveLong(requireText(value, field), field);
+    } catch (IllegalArgumentException ex) {
+      throw appError("INVALID_ARGUMENT", ex.getMessage());
     }
   }
 
