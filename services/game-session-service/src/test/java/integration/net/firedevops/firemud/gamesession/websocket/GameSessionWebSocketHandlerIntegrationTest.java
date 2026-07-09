@@ -840,16 +840,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                GameplayStructuredCommandAssertions.isStructuredCommand(
+                    payload, "LOGIN", "login", "META", "SESSION"));
     JsonNode realmsResult =
         payloads.stream()
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "REALMS".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "REALMS", "realms", "META", "WORLD_BROWSE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        realmsResult, "REALMS", "realms", "META", "WORLD_BROWSE", "UI");
     assertThat(realmsResult.path("accepted").asBoolean()).isTrue();
     assertThat(realmsResult.path("outputs").get(0).path("payloadType").asText())
         .isEqualTo("realms_view");
@@ -882,10 +888,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "CHARS".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "CHARS", "chars", "META", "WORLD_BROWSE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        charsResult, "CHARS", "chars", "META", "WORLD_BROWSE", "UI");
     assertThat(charsResult.path("accepted").asBoolean()).isTrue();
     assertThat(charsResult.path("outputs").get(0).path("payloadType").asText())
         .isEqualTo("characters_view");
@@ -938,10 +946,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "WHO".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "WHO", "who", "META", "SOCIAL_PRESENCE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        whoResult, "WHO", "who", "META", "SOCIAL_PRESENCE", "UI");
     assertThat(whoResult.path("accepted").asBoolean()).isTrue();
     assertThat(whoResult.path("outputs").get(0).path("payloadType").asText()).isEqualTo("who_view");
     assertThat(whoResult.path("outputs").get(0).path("payload").path("players")).hasSize(1);
@@ -997,8 +1007,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
-    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
+    assertThat(
+            GameplayStructuredCommandAssertions.isStructuredCommand(
+                payloads.get(0), "LOGIN", "login", "META", "SESSION"))
+        .isTrue();
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                GameplayStructuredCommandAssertions.isStructuredCommand(
+                    payload, "PLAY", "play", "META", "SESSION"));
     assertThat(payloads)
         .anyMatch(
             payload ->
