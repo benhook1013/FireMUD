@@ -47,6 +47,29 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  void handleBindExceptionNormalizesPositiveConstraintMessage() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    BeanPropertyBindingResult bindingResult =
+        new BeanPropertyBindingResult(new Object(), "request");
+    bindingResult.addError(
+        new FieldError(
+            "request",
+            "tenantId",
+            0L,
+            false,
+            new String[] {"Positive"},
+            null,
+            "must be greater than 0"));
+
+    ApiResponse<ErrorDetail> response =
+        handler.handleBindException(new BindException(bindingResult)).getBody();
+
+    Assertions.assertNotNull(response);
+    assertEquals("INVALID_ARGUMENT", response.error().code());
+    assertEquals("tenantId must be positive", response.error().message());
+  }
+
+  @Test
   void handleResponseStatusPreservesCanonicalNotFoundEnvelope() {
     GlobalExceptionHandler handler = new GlobalExceptionHandler();
 

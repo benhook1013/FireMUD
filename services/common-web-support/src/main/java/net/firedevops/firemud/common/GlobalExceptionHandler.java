@@ -92,7 +92,8 @@ public class GlobalExceptionHandler {
     if (fieldError == null) {
       return "Request body is invalid";
     }
-    String defaultMessage = Objects.toString(fieldError.getDefaultMessage(), "is invalid");
+    String defaultMessage =
+        normalizeConstraintMessage(Objects.toString(fieldError.getDefaultMessage(), "is invalid"));
     return fieldError.getField() + " " + defaultMessage;
   }
 
@@ -144,5 +145,9 @@ public class GlobalExceptionHandler {
     String defaultMessage = Objects.toString(fieldError.getDefaultMessage(), "");
     return defaultMessage.contains("Failed to convert property value of type")
         || defaultMessage.contains("failed to convert value of type");
+  }
+
+  private String normalizeConstraintMessage(String defaultMessage) {
+    return "must be greater than 0".equals(defaultMessage) ? "must be positive" : defaultMessage;
   }
 }
