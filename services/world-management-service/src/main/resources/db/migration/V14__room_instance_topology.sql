@@ -17,12 +17,12 @@ CREATE TABLE room_instance_exit (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
     game_instance_id BIGINT NOT NULL,
-    from_room_instance_id BIGINT NOT NULL REFERENCES room_instance(id),
-    to_room_instance_id BIGINT NOT NULL REFERENCES room_instance(id),
+    from_room_instance_record_id BIGINT NOT NULL REFERENCES room_instance(id),
+    to_room_instance_record_id BIGINT NOT NULL REFERENCES room_instance(id),
     direction VARCHAR(32) NOT NULL,
     cost INT NOT NULL DEFAULT 1,
     version INT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_room_instance_tenant_game ON room_instance(tenant_id, game_instance_id);
-CREATE INDEX idx_room_instance_exit_from ON room_instance_exit(from_room_instance_id);
+CREATE INDEX idx_room_instance_exit_from_record ON room_instance_exit(from_room_instance_record_id);
