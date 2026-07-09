@@ -26,43 +26,67 @@ public class EquipmentController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterEquipmentEntryDto>>> list(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    SessionContext.requireTenantAccess(tenantId);
-    Page<CharacterEquipmentEntryDto> list =
-        equipmentService.listEquipment(
-            tenantId, characterId, gameInstanceId, playableStateScope, pageable);
-    return ResponseEntity.ok(ApiResponse.success(list));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          SessionContext.requireTenantAccess(scope.tenantId());
+          Page<CharacterEquipmentEntryDto> list =
+              equipmentService.listEquipment(
+                  scope.tenantId(),
+                  scope.characterId(),
+                  gameInstanceId,
+                  playableStateScope,
+                  pageable);
+          return ResponseEntity.ok(ApiResponse.success(list));
+        });
   }
 
   @PostMapping
   public ResponseEntity<ApiResponse<CharacterEquipmentEntryDto>> wear(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody WearEquipmentItemRequest request) {
-    SessionContext.requireTenantAccess(tenantId);
-    CharacterEquipmentEntryDto dto =
-        equipmentService.wearItem(
-            tenantId, characterId, gameInstanceId, playableStateScope, request.itemId(), null);
-    return ResponseEntity.ok(ApiResponse.success(dto));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          SessionContext.requireTenantAccess(scope.tenantId());
+          CharacterEquipmentEntryDto dto =
+              equipmentService.wearItem(
+                  scope.tenantId(),
+                  scope.characterId(),
+                  gameInstanceId,
+                  playableStateScope,
+                  request.itemId(),
+                  null);
+          return ResponseEntity.ok(ApiResponse.success(dto));
+        });
   }
 
   @DeleteMapping("/{slot}")
   public ResponseEntity<ApiResponse<CharacterEquipmentEntryDto>> remove(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
       @PathVariable String slot,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    SessionContext.requireTenantAccess(tenantId);
-    CharacterEquipmentEntryDto dto =
-        equipmentService.removeWornItem(
-            tenantId, characterId, gameInstanceId, playableStateScope, slot);
-    return ResponseEntity.ok(ApiResponse.success(dto));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          SessionContext.requireTenantAccess(scope.tenantId());
+          CharacterEquipmentEntryDto dto =
+              equipmentService.removeWornItem(
+                  scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, slot);
+          return ResponseEntity.ok(ApiResponse.success(dto));
+        });
   }
 }

@@ -26,46 +26,72 @@ public class InventoryController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<InventoryEntryDto>>> list(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    SessionContext.requireTenantAccess(tenantId);
-    Page<InventoryEntryDto> list =
-        inventoryService.listInventory(
-            tenantId, characterId, gameInstanceId, playableStateScope, pageable);
-    return ResponseEntity.ok(ApiResponse.success(list));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          SessionContext.requireTenantAccess(scope.tenantId());
+          Page<InventoryEntryDto> list =
+              inventoryService.listInventory(
+                  scope.tenantId(),
+                  scope.characterId(),
+                  gameInstanceId,
+                  playableStateScope,
+                  pageable);
+          return ResponseEntity.ok(ApiResponse.success(list));
+        });
   }
 
   @PostMapping
   public ResponseEntity<ApiResponse<InventoryEntryDto>> addItem(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody AddInventoryItemRequest request) {
-    SessionContext.requireTenantAccess(tenantId);
-    InventoryEntryDto dto =
-        inventoryService.addItem(
-            tenantId,
-            characterId,
-            gameInstanceId,
-            playableStateScope,
-            request.itemId(),
-            request.quantity());
-    return ResponseEntity.ok(ApiResponse.success(dto));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          SessionContext.requireTenantAccess(scope.tenantId());
+          InventoryEntryDto dto =
+              inventoryService.addItem(
+                  scope.tenantId(),
+                  scope.characterId(),
+                  gameInstanceId,
+                  playableStateScope,
+                  request.itemId(),
+                  request.quantity());
+          return ResponseEntity.ok(ApiResponse.success(dto));
+        });
   }
 
   @DeleteMapping("/{itemId}")
   public ResponseEntity<ApiResponse<Void>> remove(
-      @PathVariable Long tenantId,
-      @PathVariable Long characterId,
-      @PathVariable Long itemId,
+      @PathVariable String tenantId,
+      @PathVariable String characterId,
+      @PathVariable String itemId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    SessionContext.requireTenantAccess(tenantId);
-    inventoryService.removeItem(tenantId, characterId, gameInstanceId, playableStateScope, itemId);
-    return ResponseEntity.ok(ApiResponse.success(null));
+    return EntityManagementRequestReaders.withBadRequest(
+        () -> {
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+          long parsedItemId =
+              EntityManagementRequestReaders.requirePositivePathId(itemId, "itemId");
+          SessionContext.requireTenantAccess(scope.tenantId());
+          inventoryService.removeItem(
+              scope.tenantId(),
+              scope.characterId(),
+              gameInstanceId,
+              playableStateScope,
+              parsedItemId);
+          return ResponseEntity.ok(ApiResponse.success(null));
+        });
   }
 }
