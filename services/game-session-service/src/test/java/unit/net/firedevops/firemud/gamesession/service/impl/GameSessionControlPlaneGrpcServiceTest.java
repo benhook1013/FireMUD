@@ -4841,6 +4841,36 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listRemoteCommandCoordinatorsRejectsZeroPointerVersionBeforeDispatch() {
+    RemoteCommandCoordinatorRepository repository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            null, repository, null, null, null, null, gameDesignClient(), meterRegistry);
+
+    AtomicReference<ListRemoteCommandCoordinatorsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteCommandCoordinators(
+        ListRemoteCommandCoordinatorsRequest.newBuilder()
+            .setTenantId("1")
+            .setPointerVersion(0L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteCommandCoordinatorsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals("pointerVersion must be positive", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
   void listRemoteCommandCoordinatorsRejectsZeroOriginGameInstanceId() {
     RemoteCommandCoordinatorRepository repository =
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
@@ -5299,6 +5329,32 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listRemoteFollowupsRejectsZeroPointerVersionBeforeDispatch() {
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            repository, null, null, null, null, null, gameDesignClient(), meterRegistry);
+
+    AtomicReference<ListRemoteFollowupsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowups(
+        ListRemoteFollowupsRequest.newBuilder().setTenantId("1").setPointerVersion(0L).build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals("pointerVersion must be positive", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
   void listRemoteFollowupsRejectsZeroTargetGameInstanceId() {
     RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -5528,6 +5584,32 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals("game_instance_id must be positive", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+    Mockito.verifyNoInteractions(runtimeService);
+  }
+
+  @Test
+  void scheduleRemoteFollowupRejectsZeroPointerVersionBeforeDispatch() {
+    RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            null, null, null, null, null, runtimeService, gameDesignClient(), meterRegistry);
+
+    AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.scheduleRemoteFollowup(
+        scheduleRemoteFollowupRequest().toBuilder().setPointerVersion(0L).build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ScheduleRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals("pointerVersion must be positive", responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(runtimeService);
@@ -5891,6 +5973,35 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         "routing filter must include world_slug, realm_slug, and pointer_version together",
         responseRef.get().getError().getMessage());
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void listRemoteFollowupResultsRejectsZeroPointerVersionBeforeDispatch() {
+    RemoteFollowupResultRepository repository = Mockito.mock(RemoteFollowupResultRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            null, null, repository, null, null, null, gameDesignClient(), meterRegistry);
+
+    AtomicReference<ListRemoteFollowupResultsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowupResults(
+        ListRemoteFollowupResultsRequest.newBuilder()
+            .setTenantId("1")
+            .setPointerVersion(0L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupResultsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals("pointerVersion must be positive", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(repository);
   }
 

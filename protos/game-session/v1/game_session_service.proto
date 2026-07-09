@@ -690,7 +690,7 @@ message ListRemoteCommandCoordinatorsRequest {
   entity_management.v1.PlayableStateScope playable_state_scope = 17;
   string world_slug = 18;
   string realm_slug = 19;
-  int64 pointer_version = 20;
+  optional int64 pointer_version = 20;
   string target_entity_id = 21;
   string effect_key = 22;
   string payload_kind = 23;
@@ -753,7 +753,7 @@ message ScheduleRemoteFollowupRequest {
   entity_management.v1.PlayableStateScope playable_state_scope = 21;
   string world_slug = 22;
   string realm_slug = 23;
-  int64 pointer_version = 24;
+  optional int64 pointer_version = 24;
   string script_patch_version = 25;
   string plugin_id = 26;
   string plugin_version_id = 27;
@@ -801,7 +801,7 @@ message ListRemoteFollowupsRequest {
   entity_management.v1.PlayableStateScope playable_state_scope = 17;
   string world_slug = 18;
   string realm_slug = 19;
-  int64 pointer_version = 20;
+  optional int64 pointer_version = 20;
   string payload_kind = 21;
   string origin_source_kind = 22;
   string automation_work_item_id = 23;
@@ -947,7 +947,7 @@ message ListRemoteFollowupResultsRequest {
   entity_management.v1.PlayableStateScope playable_state_scope = 18;
   string world_slug = 19;
   string realm_slug = 20;
-  int64 pointer_version = 21;
+  optional int64 pointer_version = 21;
   string result_error_code = 22;
   string automation_work_item_id = 23;
   string result_command_id = 24;

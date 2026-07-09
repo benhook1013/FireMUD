@@ -165,16 +165,19 @@ final class GameSessionRemoteControlPlaneService {
 
   ListRemoteCommandCoordinatorsResponse listRemoteCommandCoordinators(
       long tenantId, ListRemoteCommandCoordinatorsRequest request) {
+    Long requestedPointerVersion =
+        parseOptionalPositivePointerVersion(
+            request.hasPointerVersion(), request.getPointerVersion());
     GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
         blankToEmpty(request.getWorldSlug()),
         blankToEmpty(request.getRealmSlug()),
-        request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+        requestedPointerVersion,
         "routing filter must include world_slug, realm_slug, and pointer_version together");
     RoutingBundle filterRoutingBundle =
         GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            requestedPointerVersion);
     List<RemoteCommandCoordinator> coordinators =
         remoteCommandCoordinatorRepository.findForControlPlane(
             tenantId,
@@ -259,16 +262,19 @@ final class GameSessionRemoteControlPlaneService {
     if (remoteFollowupRuntimeService == null) {
       throw new IllegalStateException("Remote followup runtime service is not configured");
     }
+    Long requestedPointerVersion =
+        parseOptionalPositivePointerVersion(
+            request.hasPointerVersion(), request.getPointerVersion());
     GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
         normalizeBlank(request.getWorldSlug()),
         normalizeBlank(request.getRealmSlug()),
-        request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+        requestedPointerVersion,
         "routing bundle must include world_slug, realm_slug, and pointer_version together");
     RoutingBundle requestRoutingBundle =
         GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             normalizeBlank(request.getWorldSlug()),
             normalizeBlank(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            requestedPointerVersion);
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         remoteFollowupRuntimeService.scheduleFollowup(
             new RemoteFollowupRuntimeService.ScheduleRequest(
@@ -323,16 +329,19 @@ final class GameSessionRemoteControlPlaneService {
 
   ListRemoteFollowupsResponse listRemoteFollowups(
       long tenantId, ListRemoteFollowupsRequest request) {
+    Long requestedPointerVersion =
+        parseOptionalPositivePointerVersion(
+            request.hasPointerVersion(), request.getPointerVersion());
     GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
         blankToEmpty(request.getWorldSlug()),
         blankToEmpty(request.getRealmSlug()),
-        request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+        requestedPointerVersion,
         "routing filter must include world_slug, realm_slug, and pointer_version together");
     RoutingBundle filterRoutingBundle =
         GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            requestedPointerVersion);
     List<RemoteFollowup> followups =
         remoteFollowupRepository.findForControlPlane(
             tenantId,
@@ -406,16 +415,19 @@ final class GameSessionRemoteControlPlaneService {
 
   ListRemoteFollowupResultsResponse listRemoteFollowupResults(
       long tenantId, ListRemoteFollowupResultsRequest request) {
+    Long requestedPointerVersion =
+        parseOptionalPositivePointerVersion(
+            request.hasPointerVersion(), request.getPointerVersion());
     GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
         blankToEmpty(request.getWorldSlug()),
         blankToEmpty(request.getRealmSlug()),
-        request.getPointerVersion() > 0 ? request.getPointerVersion() : null,
+        requestedPointerVersion,
         "routing filter must include world_slug, realm_slug, and pointer_version together");
     RoutingBundle filterRoutingBundle =
         GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
-            request.getPointerVersion() > 0 ? request.getPointerVersion() : null);
+            requestedPointerVersion);
     List<RemoteFollowupResult> results =
         remoteFollowupResultRepository.findForControlPlane(
             tenantId,
@@ -501,6 +513,16 @@ final class GameSessionRemoteControlPlaneService {
       return null;
     }
     return parseGameInstanceId(gameInstanceId);
+  }
+
+  private Long parseOptionalPositivePointerVersion(boolean hasPointerVersion, long pointerVersion) {
+    if (!hasPointerVersion) {
+      return null;
+    }
+    if (pointerVersion <= 0) {
+      throw new IllegalArgumentException("pointerVersion must be positive");
+    }
+    return pointerVersion;
   }
 
   private void requireText(String value, String message) {
