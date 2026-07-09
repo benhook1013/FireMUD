@@ -24,11 +24,12 @@ public class RegionController {
 
   @PostMapping("/{id}/move")
   public ResponseEntity<ApiResponse<RegionDto>> moveRegion(
-      @PathVariable String id, @RequestParam String tenantId, @RequestParam Integer shardId) {
+      @PathVariable String id, @RequestParam String tenantId, @RequestParam String shardId) {
     long parsedTenantId = WorldManagementRequestReaders.requireTenantId(tenantId);
     long parsedRegionId = WorldManagementRequestReaders.requireRegionId(id);
+    int parsedShardId = WorldManagementRequestReaders.requireShardId(shardId);
     SessionContext.requireTenantAccess(parsedTenantId);
-    RegionDto result = regionService.moveRegion(parsedTenantId, parsedRegionId, shardId);
+    RegionDto result = regionService.moveRegion(parsedTenantId, parsedRegionId, parsedShardId);
     return ResponseEntity.ok(ApiResponse.success(result));
   }
 }

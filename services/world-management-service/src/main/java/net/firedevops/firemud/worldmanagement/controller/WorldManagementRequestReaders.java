@@ -12,4 +12,8 @@ final class WorldManagementRequestReaders {
   static long requireRegionId(String regionId) {
     return RequestIdValidation.requirePositiveLong(regionId, "id");
   }
+
+  static int requireShardId(String shardId) {
+    return RequestIdValidation.requirePositiveInt(shardId, "shardId");
+  }
 }
