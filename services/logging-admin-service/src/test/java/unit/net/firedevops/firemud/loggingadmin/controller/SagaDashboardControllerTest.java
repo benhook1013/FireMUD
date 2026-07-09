@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -67,5 +68,41 @@ class SagaDashboardControllerTest {
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].name").value("step"));
+  }
+
+  @Test
+  void listStepsRejectsMalformedIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/sagas/not-a-number/steps")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer "
+                        + jwtUtil.generateToken(
+                            "user",
+                            java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("id must be numeric"));
+
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void listStepsRejectsZeroIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/sagas/0/steps")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer "
+                        + jwtUtil.generateToken(
+                            "user",
+                            java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("id must be positive"));
+
+    verifyNoInteractions(service);
   }
 }

@@ -43,13 +43,18 @@ public class SagaDashboardController {
 
   @GetMapping("/{id}/steps")
   @Timed(value = "listSagaSteps", description = "List saga steps for instance")
-  public ResponseEntity<ApiResponse<List<SagaStepDto>>> listSteps(@PathVariable Long id) {
+  public ResponseEntity<ApiResponse<List<SagaStepDto>>> listSteps(@PathVariable String id) {
     if (sagaDashboardService == null) {
       return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
           .body(
               ApiResponse.error(
                   new ErrorDetail("SAGA_DASHBOARD_UNAVAILABLE", "Saga dashboard is unavailable")));
     }
-    return ResponseEntity.ok(ApiResponse.success(sagaDashboardService.listSteps(id)));
+    return LoggingAdminRequestReaders.withBadRequest(
+        () ->
+            ResponseEntity.ok(
+                ApiResponse.success(
+                    sagaDashboardService.listSteps(
+                        LoggingAdminRequestReaders.requirePositiveLong(id, "id")))));
   }
 }
