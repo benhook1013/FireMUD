@@ -2,10 +2,6 @@ package net.firedevops.firemud.automationscripting.controller;
 
 import net.firedevops.firemud.automationscripting.service.FactionService;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.ErrorDetail;
-import net.firedevops.firemud.common.security.RequestIdValidation;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,22 +23,20 @@ public class FactionController {
       @PathVariable String id,
       @RequestParam String characterId,
       @RequestParam String gameInstanceId,
-      @RequestParam PlayableStateScope playableStateScope,
-      @RequestParam int delta,
+      @RequestParam String playableStateScope,
+      @RequestParam String delta,
       @RequestParam String tenantId) {
-    try {
-      int result =
-          factionService.adjustReputation(
-              RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
-              RequestIdValidation.requirePositiveLong(characterId, "characterId"),
-              gameInstanceId,
-              playableStateScope,
-              RequestIdValidation.requirePositiveLong(id, "factionId"),
-              delta);
-      return ResponseEntity.ok(ApiResponse.success(result));
-    } catch (IllegalArgumentException ex) {
-      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-          .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));
-    }
+    return AutomationScriptingRequestReaders.withBadRequest(
+        () -> {
+          int result =
+              factionService.adjustReputation(
+                  AutomationScriptingRequestReaders.requirePositiveLong(tenantId, "tenantId"),
+                  AutomationScriptingRequestReaders.requirePositiveLong(characterId, "characterId"),
+                  gameInstanceId,
+                  AutomationScriptingRequestReaders.requirePlayableStateScope(playableStateScope),
+                  AutomationScriptingRequestReaders.requirePositiveLong(id, "factionId"),
+                  AutomationScriptingRequestReaders.requireInteger(delta, "delta"));
+          return ResponseEntity.ok(ApiResponse.success(result));
+        });
   }
 }
