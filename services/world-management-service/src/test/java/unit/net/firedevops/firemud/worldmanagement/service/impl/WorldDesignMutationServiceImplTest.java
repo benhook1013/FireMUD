@@ -639,6 +639,71 @@ class WorldDesignMutationServiceImplTest {
   }
 
   @Test
+  void scopedGenerationRuleNormalizesDeclaredScopeIdAcrossLookupAndEpochWrites() {
+    Zone zone = zone(12L, 99L);
+    when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.of(zone));
+    when(ledgerRepository
+            .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
+                1L,
+                7L,
+                "commit-generation-normalized",
+                "revision-generation-normalized",
+                "UPSERT",
+                "GENERATION_RULE",
+                ""))
+        .thenReturn(Optional.empty());
+    WorldDesignScopeEpoch scopeEpoch = new WorldDesignScopeEpoch();
+    scopeEpoch.setTenantId(1L);
+    scopeEpoch.setVersionId(7L);
+    scopeEpoch.setScopeType("ZONE_SUBTREE");
+    scopeEpoch.setScopeId("12");
+    scopeEpoch.setDraftScopeRevisionEpoch(1L);
+    when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(Optional.of(scopeEpoch));
+    GenerationRule existing = generationRule(70L, "ZONE_SUBTREE", "12", "population");
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdAndName(
+            1L, 7L, "ZONE_SUBTREE", "12", "population"))
+        .thenReturn(Optional.of(existing));
+    when(generationRuleRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeIdOrderByIdAsc(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(List.of(existing));
+    when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
+            1L, 7L, "GENERATION_RULE", 70L))
+        .thenReturn(Optional.empty());
+    when(generationRuleRepository.save(any(GenerationRule.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.applyMutation(
+            new WorldDesignMutationRequestDto(
+                1L,
+                7L,
+                "commit-generation-normalized",
+                "revision-generation-normalized",
+                "UPSERT",
+                "GENERATION_RULE",
+                "",
+                0L,
+                "ZONE_SUBTREE",
+                "012",
+                1L,
+                "REPLACE_SCOPE",
+                null,
+                null,
+                null,
+                null,
+                new WorldDesignMutationRequestDto.GenerationRuleMutationDto("population", "dense"),
+                null,
+                null));
+
+    assertEquals("APPLIED", result.result());
+    assertEquals(2L, result.draftScopeRevisionEpoch());
+    verify(generationRuleRepository).save(any(GenerationRule.class));
+    assertEquals("12", existing.getScopeId());
+  }
+
+  @Test
   void scopedGenerationRuleRejectsMissingDeclaredScope() {
     when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 12L)).thenReturn(Optional.empty());
     when(ledgerRepository

@@ -291,7 +291,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     rule.setVersionId(request.versionId());
     rule.setName(ruleName);
     rule.setScopeType(blankToNull(request.scopeType()));
-    rule.setScopeId(blankToNull(request.scopeId()));
+    rule.setScopeId(normalizedScopeIdOrNull(request));
     rule.setValue(blankToNull(payload.value()));
     return generationRuleRepository.save(rule).getId();
   }
@@ -410,7 +410,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return;
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     Long currentEpoch =
         scopeEpochRepository
             .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
@@ -467,7 +467,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
               request.tenantId(),
               request.versionId(),
               request.scopeType(),
-              request.scopeId(),
+              requireNormalizedScopeId(request),
               ruleName)
           .map(
               existing -> {
@@ -483,7 +483,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private void deleteExistingGenerationRulesInScope(
       WorldDesignMutationRequestDto request, GenerationRule selectedRule) {
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(scopeType)) {
       throw appError(
           "UNSUPPORTED_SCOPE",
@@ -511,7 +511,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return;
     }
     if (!request.scopeType().equals(rule.getScopeType())
-        || !request.scopeId().equals(rule.getScopeId())) {
+        || !requireNormalizedScopeId(request).equals(rule.getScopeId())) {
       throw appError("OUT_OF_SYNC", "generation rule is outside the declared scope");
     }
     if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(request.scopeType())) {
@@ -596,7 +596,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                   request.tenantId(),
                   request.versionId(),
                   request.scopeType(),
-                  request.scopeId(),
+                  requireNormalizedScopeId(request),
                   ruleName)
               .orElseGet(GenerationRule::new);
       if (isSeedAppendOnlyPolicy(request) && rule.getId() != null) {
@@ -607,7 +607,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       rule.setVersionId(request.versionId());
       rule.setName(ruleName);
       rule.setScopeType(request.scopeType());
-      rule.setScopeId(request.scopeId());
+      rule.setScopeId(requireNormalizedScopeId(request));
       rule.setValue(blankToNull(rulePayload.value()));
       generationRuleRepository.save(rule);
     }
@@ -732,7 +732,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return null;
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     WorldDesignScopeEpoch scopeEpoch =
         scopeEpochRepository
             .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
@@ -983,6 +983,17 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     } catch (IllegalArgumentException ex) {
       throw appError("INVALID_ARGUMENT", ex.getMessage());
     }
+  }
+
+  private String normalizedScopeIdOrNull(WorldDesignMutationRequestDto request) {
+    if (!StringUtils.hasText(request.scopeId())) {
+      return null;
+    }
+    return requireNormalizedScopeId(request);
+  }
+
+  private String requireNormalizedScopeId(WorldDesignMutationRequestDto request) {
+    return Long.toString(parseId(request.scopeId(), "scope_id"));
   }
 
   private String normalizeId(String value) {
