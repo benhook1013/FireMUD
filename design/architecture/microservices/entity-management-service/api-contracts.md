@@ -101,8 +101,8 @@ Illustrative `ListRoomEntities` fragments:
 {
   "tenantId": "t1",
   "gameInstanceId": "g1",
-  "roomInstanceId": "room-antechamber",
-  "entitySnapshotId": "t1:g1:room-antechamber",
+  "roomInstanceId": "R-1021",
+  "entitySnapshotId": "t1:g1:R-1021",
   "entities": [
     {
       "entityId": "char-mara",
