@@ -90,6 +90,25 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketSayPushesRoomListenerViewToLiveRecipient() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    try (GameplayWebSocketScenarios.TwoPlayerScenario scenario =
+        GameplayWebSocketScenarios.openReadyPair(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "actor-say-conn",
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
+            "target-say-conn",
+            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+      scenario.actor().send("SAY hello travelers");
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalSayText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalSayListenerText());
+    }
+  }
+
+  @Test
   void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();

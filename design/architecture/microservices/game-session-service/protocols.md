@@ -215,9 +215,10 @@ The text protocol remains the canonical wire format for Telnet and generic text 
 The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
 
 ```text
-You say, "Hello travelers"
-You whisper to Sora, "Keep quiet"
-You tell Sora, "Meet me at the forge"
+You say, "Hello travelers."
+Emberline says, "Hello travelers."
+You whisper to Sora, "Keep quiet."
+You tell Sora, "Meet me at the forge."
 ```
 
 Explicit type, recipient, and delivery metadata still exists on the shared downstream communication path for deterministic tests, logging, and later fanout behavior, but that metadata is no longer exposed as the canonical user-facing success transcript.
@@ -247,6 +248,7 @@ The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` inc
 Canonical baseline prose for the built-in communication modes is:
 
 - `say` sender view: `You say, "Hello travelers"`
+- `say` listener view: `Emberline says, "Hello travelers"`
 - `whisper` sender view: `You whisper to Sora, "Keep quiet"`
 - `whisper` target view: `Emberline whispers to you, "Keep quiet"`
 - `whisper` metadata-only observer view: `Emberline whispers something to Sora.`
@@ -368,13 +370,14 @@ Entities:
 - Player "Sora" (half-hidden in the shadowed niche)
 
 SAY Hello travelers
-You say, "Hello travelers"
+You say, "Hello travelers."
+Emberline says, "Hello travelers."
 
 WHISPER Sora Keep quiet
-You whisper to Sora, "Keep quiet"
+You whisper to Sora, "Keep quiet."
 
 TELL Sora Meet me at the forge
-You tell Sora, "Meet me at the forge"
+You tell Sora, "Meet me at the forge."
 
 DANCE
 ERROR UNKNOWN_COMMAND DANCE

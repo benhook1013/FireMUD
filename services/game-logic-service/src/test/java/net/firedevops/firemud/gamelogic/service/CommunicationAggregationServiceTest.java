@@ -192,9 +192,26 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getMessage()).isEqualTo("Hello travelers");
     assertThat(resp.getDeliveredToList()).containsExactly("Emberline", "Kobold Scout", "Sora");
     assertThat(resp.getNpcEchoesList()).containsExactly("Kobold Scout");
-    assertThat(resp.getRecipientViewsList()).hasSize(1);
-    assertThat(resp.getRecipientViews(0).getRole())
-        .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+    assertThat(resp.getRecipientViewsList()).hasSize(2);
+    assertThat(resp.getRecipientViewsList().get(0))
+        .satisfies(
+            view -> {
+              assertThat(view.getRecipientId()).isEqualTo("player-0");
+              assertThat(view.getRecipientName()).isEqualTo("Emberline");
+              assertThat(view.getRole())
+                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+            });
+    assertThat(resp.getRecipientViewsList().get(1))
+        .satisfies(
+            view -> {
+              assertThat(view.getRecipientId()).isEqualTo("player-1");
+              assertThat(view.getRecipientName()).isEqualTo("Sora");
+              assertThat(view.getRole())
+                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
+              assertThat(view.getPerception())
+                  .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT);
+              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+            });
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());

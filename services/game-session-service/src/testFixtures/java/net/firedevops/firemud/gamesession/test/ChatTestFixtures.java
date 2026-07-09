@@ -84,6 +84,10 @@ public final class ChatTestFixtures {
     return "You say, \"Hello travelers.\"";
   }
 
+  public static String canonicalSayListenerText() {
+    return "Emberline says, \"Hello travelers.\"";
+  }
+
   public static String canonicalWhisperText() {
     return "You whisper to Sora, \"Keep quiet.\"";
   }

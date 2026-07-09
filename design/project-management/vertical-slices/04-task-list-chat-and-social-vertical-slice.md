@@ -2,7 +2,7 @@
 
 ## Goal and Status
 
-Goal: establish the first implementation of the shared communication infrastructure so WebSocket and Telnet behaviour and observability stay in lockstep across Game Session, Game Logic, and Social/Groups services. The first standard built-ins are `say`, `whisper`, and `tell`, with room-local `say` as the first fully implemented mode. Status: key pieces of the initial room-speech path and its tests are implemented; this document describes the broader target-state behaviour, with up-to-date implementation details captured in the associated microservice design docs and regression test plans.
+Goal: establish the first implementation of the shared communication infrastructure so WebSocket and Telnet behaviour and observability stay in lockstep across Game Session, Game Logic, and Social/Groups services. The first standard built-ins are `say`, `whisper`, and `tell`, with room-local `say` as the first fully implemented mode. Status: room-local `say` now resolves live player listeners plus NPC echoes through the shared communication path, while the broader configurable communication model remains follow-on work described here and in the associated microservice design docs.
 
 Follow-up design direction agreed after the main slice landed:
 
@@ -69,7 +69,7 @@ TELL Sora Meet me at the forge
 You tell Sora, "Meet me at the forge"
 ```
 
-The initiating-player transcript is now direct prose, while Game Logic and Social & Groups still exchange deterministic type and recipient metadata for ordering, audit, and later fanout behavior.
+The initiating-player transcript is now direct prose, while room listeners receive canonical prose derived from the same shared communication payload and Game Logic plus Social & Groups still exchange deterministic type and recipient metadata for ordering, audit, and later fanout behavior.
 
 WebSocket - Emberline's connection (emitter) observes the same initiating-player transcript, while Social & Groups receives the normalized metadata:
 
@@ -83,7 +83,7 @@ WebSocket - Emberline's connection (emitter) observes the same initiating-player
 }
 ```
 
-These transcripts demonstrate how both transports preserve the same initiating-player prose and deterministic downstream metadata, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
+These transcripts demonstrate how both transports preserve the same initiating-player prose, canonical listener prose, and deterministic downstream metadata, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
 
 ## 2. Game Logic Service: Communication Aggregation
 

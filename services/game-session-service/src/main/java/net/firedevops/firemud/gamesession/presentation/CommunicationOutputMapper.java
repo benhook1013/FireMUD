@@ -67,6 +67,12 @@ public class CommunicationOutputMapper {
           "communication.tell.target",
           Map.of("speakerName", speakerName, "message", normalizedMessage));
     }
+    if (type == CommunicationType.SAY) {
+      return PlayerOutput.message(
+          speakerName + " says, \"" + normalizedMessage + "\"",
+          "communication.say.listener",
+          Map.of("speakerName", speakerName, "message", normalizedMessage));
+    }
     return PlayerOutput.message(
         fallbackRecipientText(type, view, normalizedMessage, speakerName, targetName));
   }
@@ -103,6 +109,7 @@ public class CommunicationOutputMapper {
       String speakerName,
       String targetName) {
     return switch (type) {
+      case SAY -> speakerName + " says, \"" + message + "\"";
       case WHISPER ->
           view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET
               ? speakerName + " whispers to you, \"" + message + "\""
