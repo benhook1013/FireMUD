@@ -99,7 +99,7 @@ class GuildControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("tenantId must be greater than 0"));
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
 
     verifyNoInteractions(guildService);
   }
@@ -118,7 +118,7 @@ class GuildControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("guildId must be greater than 0"));
+        .andExpect(jsonPath("$.error.message").value("guildId must be positive"));
 
     verifyNoInteractions(guildService);
   }

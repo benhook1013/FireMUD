@@ -72,7 +72,7 @@ class VoiceChatControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be greater than 0"));
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
 
     verifyNoInteractions(service, socialAccessGuard);
   }
