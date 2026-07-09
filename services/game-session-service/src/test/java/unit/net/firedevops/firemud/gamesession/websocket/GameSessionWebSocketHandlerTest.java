@@ -730,6 +730,77 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void handleMessageForcesPromptBurstByUiActionMetadata() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.WHO, List.of(), "WHO");
+    PlayerOutput output = PlayerOutput.message("Presence: online in Demo World / Live Realm");
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("WHO")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(context), eq(List.of(output)), eq(true)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK WHO");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(
+            ScreenBufferService.BufferedEntry.fromText(
+                "Presence: online in Demo World / Live Realm\n"));
+
+    handler.handleMessage(session, new TextMessage("WHO"));
+
+    verify(promptBurstCoordinator)
+        .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(true));
+  }
+
+  @Test
+  void handleMessageKeepsNonUiCommunicationUnderNormalPromptBurstPolicy() throws Exception {
+    TextCommand command =
+        new TextCommand(TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers");
+    PlayerOutput output = PlayerOutput.message("You say, \"hello travelers\"");
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("SAY hello travelers")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(context), eq(List.of(output)), eq(false)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK SAY");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(ScreenBufferService.BufferedEntry.fromText("You say, \"hello travelers\"\n"));
+
+    handler.handleMessage(session, new TextMessage("SAY hello travelers"));
+
+    verify(promptBurstCoordinator)
+        .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(false));
+  }
+
+  @Test
   void handleMessageDoesNotReplayReconnectBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext clearedShell =

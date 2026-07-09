@@ -6,11 +6,14 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -66,6 +69,44 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final EffectiveSettingsResolver settingsResolver;
   private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser;
+  private final TextCommandMetadataResolver textCommandMetadataResolver;
+
+  public GameSessionWebSocketHandler(
+      TextCommandInterpreter interpreter,
+      LookCommandHandler lookHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      ActiveTransportSessionRegistry activeTransportSessionRegistry,
+      FirstPartyConnectContextService firstPartyConnectContextService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScreenBufferService screenBufferService,
+      WebSocketOutputProjector outputProjector,
+      PromptBurstCoordinator promptBurstCoordinator,
+      PromptComposer promptComposer,
+      EffectiveSettingsResolver settingsResolver,
+      RuntimeIdentity runtimeIdentity,
+      TextCommandParser parser) {
+    this(
+        interpreter,
+        lookHandler,
+        sessionAuthenticationService,
+        sessionContextService,
+        activeTransportSessionRegistry,
+        firstPartyConnectContextService,
+        firstPartyConnectContextRegistry,
+        gameplayAdmissionPointerAuthorityService,
+        gameplayPresenceLifecycleService,
+        screenBufferService,
+        outputProjector,
+        promptBurstCoordinator,
+        promptComposer,
+        settingsResolver,
+        runtimeIdentity,
+        parser,
+        BuiltInTextCommandMetadataResolvers.builtInOnly());
+  }
 
   @Autowired
   public GameSessionWebSocketHandler(
@@ -84,7 +125,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       PromptComposer promptComposer,
       EffectiveSettingsResolver settingsResolver,
       RuntimeIdentity runtimeIdentity,
-      TextCommandParser parser) {
+      TextCommandParser parser,
+      TextCommandMetadataResolver textCommandMetadataResolver) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionAuthenticationService = sessionAuthenticationService;
@@ -101,6 +143,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.settingsResolver = settingsResolver;
     this.runtimeIdentity = runtimeIdentity;
     this.parser = parser;
+    this.textCommandMetadataResolver = textCommandMetadataResolver;
   }
 
   @Override
@@ -300,7 +343,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted()) {
       return false;
     }
-    if (command.type() == TextCommandType.LOOK || command.type() == TextCommandType.QUICKLOOK) {
+    if (isUiTaggedCommand(command)) {
       return true;
     }
     if (command.type() == TextCommandType.PLAY && !interpretation.reconnectRedrawRecommended()) {
@@ -308,6 +351,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     return interpretation.outputs().stream()
         .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
+  }
+
+  private boolean isUiTaggedCommand(TextCommand command) {
+    return textCommandMetadataResolver
+        .resolve(command.commandId())
+        .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.UI))
+        .orElse(false);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {
