@@ -298,6 +298,8 @@ class TextPlayerOutputRendererTest {
             "wave".equals(commandId)
                 ? java.util.Optional.of(
                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
                         TextCommandActionCategory.SOCIAL,
                         List.of(TextCommandActionTag.COMMUNICATION)))
                 : java.util.Optional.empty();

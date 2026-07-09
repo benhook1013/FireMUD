@@ -50,7 +50,9 @@ class AutomationScriptEventPublisherTest {
         commandToken ->
             Optional.of(
                 new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                    TextCommandActionCategory.META, java.util.List.of(TextCommandActionTag.UI)));
+                    net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup.LOOK,
+                    TextCommandActionCategory.META,
+                    java.util.List.of(TextCommandActionTag.UI)));
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
             client,
@@ -390,6 +392,8 @@ class AutomationScriptEventPublisherTest {
             "wave".equals(commandToken)
                 ? Optional.of(
                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
                         TextCommandActionCategory.SOCIAL,
                         java.util.List.of(TextCommandActionTag.COMMUNICATION)))
                 : Optional.empty();

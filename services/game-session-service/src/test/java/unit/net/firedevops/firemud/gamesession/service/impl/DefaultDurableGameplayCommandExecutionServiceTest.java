@@ -11,12 +11,17 @@ import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
+import net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -58,6 +63,8 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final ScriptEventPublisher scriptEventPublisher =
       Mockito.mock(ScriptEventPublisher.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final TextCommandMetadataResolver builtInMetadataResolver =
+      BuiltInTextCommandMetadataResolvers.builtInOnly();
 
   private DefaultDurableGameplayCommandExecutionService service;
 
@@ -73,6 +80,19 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             communicationCommandHandler,
             afkCommandHandler,
             actionStateCommandHandler,
+            commandId ->
+                builtInMetadataResolver
+                    .resolve(commandId)
+                    .or(
+                        () ->
+                            "wave".equalsIgnoreCase(commandId)
+                                    || "wave-salute".equalsIgnoreCase(commandId)
+                                ? Optional.of(
+                                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                                        TextCommandDispatchGroup.AUTHORED,
+                                        TextCommandActionCategory.SOCIAL,
+                                        java.util.List.of(TextCommandActionTag.COMMUNICATION)))
+                                : Optional.empty()),
             authoredActionCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
@@ -373,18 +393,18 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   void executeAppliesDurableAfkAndDeliversOutput() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
-    GameplayCommand command = gameplayCommand("AFK", "AFK");
+    GameplayCommand command = gameplayCommand("BRB", "BRB");
     TickEffect effect = tickEffect("tfx-5", "cmd-5");
     TextCommand parsed =
         new TextCommand(
             TextCommandType.AFK,
             java.util.List.of(),
-            "AFK",
-            "AFK",
+            "BRB",
+            "BRB",
             new net.firedevops.firemud.gamesession.command.text.TextCommandPayload.AfkRequest(
                 true));
     PlayerOutput output = PlayerOutput.notice("AFK enabled.");
-    when(parser.parse("AFK")).thenReturn(parsed);
+    when(parser.parse("BRB")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-5")).thenReturn(Optional.empty());
@@ -408,11 +428,12 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   void executeAppliesDurableBlockAndStoresReplay() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
-    GameplayCommand command = gameplayCommand("BLOCK", "BLOCK");
+    GameplayCommand command = gameplayCommand("GUARD", "GUARD");
     TickEffect effect = tickEffect("tfx-6", "cmd-6");
-    TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "GUARD", "GUARD", null);
     PlayerOutput output = PlayerOutput.notice("You brace for the next blow.");
-    when(parser.parse("BLOCK")).thenReturn(parsed);
+    when(parser.parse("GUARD")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-6")).thenReturn(Optional.empty());

@@ -42,10 +42,15 @@ class WebSocketOutputProjectorTest {
             case "look" ->
                 java.util.Optional.of(
                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                        TextCommandActionCategory.META, List.of(TextCommandActionTag.UI)));
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .LOOK,
+                        TextCommandActionCategory.META,
+                        List.of(TextCommandActionTag.UI)));
             case "wave" ->
                 java.util.Optional.of(
                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
                         TextCommandActionCategory.SOCIAL,
                         List.of(
                             TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION)));

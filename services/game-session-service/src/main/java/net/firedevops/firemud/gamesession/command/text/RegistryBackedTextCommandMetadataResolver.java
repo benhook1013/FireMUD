@@ -22,6 +22,8 @@ final class RegistryBackedTextCommandMetadataResolver implements TextCommandMeta
         .map(
             definition ->
                 new ResolvedTextCommandMetadata(
-                    definition.actionCategory(), definition.actionTags()));
+                    definition.dispatchGroup(),
+                    definition.actionCategory(),
+                    definition.actionTags()));
   }
 }
