@@ -376,6 +376,21 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartySayUsesStructuredCommunicationMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("say-first-party")) {
+      int baseline = client.responses().size();
+      client.send("SAY hello travelers");
+      JsonNode say = awaitStructuredCommand(client, baseline, "SAY");
+      GameplayStructuredCommandAssertions.requireStructuredCommand(
+          say, "SAY", "say", "SOCIAL", "COMMUNICATION");
+      assertThat(say.path("accepted").asBoolean()).isTrue();
+    }
+  }
+
+  @Test
   void websocketFirstPartyFriendsViewsUseStructuredCanonicalPayloads() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
@@ -721,9 +736,13 @@ class CommunicationWebSocketCrossServiceTest {
     GameplayWebSocketDriver client = openFirstPartyClient(transportSessionId);
     client.send("LOGIN");
     JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        login, "LOGIN", "login", "META", "SESSION");
     assertThat(login.path("accepted").asBoolean()).withFailMessage(login.toPrettyString()).isTrue();
     client.send("PLAY demo");
     JsonNode play = awaitStructuredCommand(client, 1, "PLAY");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        play, "PLAY", "play", "META", "SESSION");
     assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
     return client;
   }
