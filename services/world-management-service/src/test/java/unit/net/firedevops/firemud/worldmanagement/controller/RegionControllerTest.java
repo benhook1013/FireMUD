@@ -80,6 +80,28 @@ class RegionControllerTest {
     verifyNoInteractions(regionService);
   }
 
+  @Test
+  void moveRejectsMalformedRegionIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(post("/regions/not-a-number/move").param("tenantId", "1").param("shardId", "3"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("id must be numeric"));
+
+    verifyNoInteractions(regionService);
+  }
+
+  @Test
+  void moveRejectsZeroRegionIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(post("/regions/0/move").param("tenantId", "1").param("shardId", "3"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("id must be positive"));
+
+    verifyNoInteractions(regionService);
+  }
+
   private void installTenantContext(Map<String, List<String>> scopedRoles) {
     SessionContext.setContext("test-account", List.of(), scopedRoles);
   }
