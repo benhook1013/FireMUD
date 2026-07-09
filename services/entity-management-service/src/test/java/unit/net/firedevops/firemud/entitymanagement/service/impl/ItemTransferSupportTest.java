@@ -21,19 +21,19 @@ class ItemTransferSupportTest {
     support.transfer(
         instance,
         support.inventory(1L, 11L),
-        support.room("GI-1", "ROOM-2"),
+        support.room("GI-1", "R-2"),
         support.audit("DROP", 11L));
 
     assertNull(instance.getCharacter());
     assertNull(instance.getEquipmentSlot());
     assertEquals("GI-1", instance.getGameInstanceId());
-    assertEquals("ROOM-2", instance.getRoomInstanceId());
+    assertEquals("R-2", instance.getRoomInstanceId());
     assertNull(instance.getContainerInstance());
   }
 
   @Test
   void rejectsStaleRoomSourceMismatch() {
-    ItemInstance instance = roomInstance(41L, 1L, "GI-OTHER", "ROOM-9");
+    ItemInstance instance = roomInstance(41L, 1L, "GI-OTHER", "R-9");
 
     IllegalArgumentException ex =
         assertThrows(
@@ -41,13 +41,13 @@ class ItemTransferSupportTest {
             () ->
                 support.transfer(
                     instance,
-                    support.room(1L, "GI-1", "ROOM-2"),
+                    support.room(1L, "GI-1", "R-2"),
                     support.inventory(character(11L, 1L)),
                     support.audit("GET", 11L)));
 
     assertEquals("Item no longer on expected room ground source", ex.getMessage());
     assertEquals("GI-OTHER", instance.getGameInstanceId());
-    assertEquals("ROOM-9", instance.getRoomInstanceId());
+    assertEquals("R-9", instance.getRoomInstanceId());
   }
 
   @Test
