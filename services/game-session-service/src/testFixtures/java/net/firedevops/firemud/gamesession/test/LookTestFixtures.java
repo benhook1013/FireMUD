@@ -13,6 +13,7 @@ public final class LookTestFixtures {
   public static final String TENANT = "demo";
   public static final String ROOM_ID = "R-1021";
   public static final String DESTINATION_ROOM_ID = "R-2045";
+  public static final String SECONDARY_DESTINATION_ROOM_ID = "R-3042";
   public static final String ROOM_INSTANCE_ID = ROOM_ID;
   public static final String GAME_INSTANCE_ID = "game-inst-demo";
   public static final String ROOM_NAME = "Candle-lit Antechamber";
@@ -60,7 +61,7 @@ public final class LookTestFixtures {
             RoomExitSnapshot.newBuilder()
                 .setDirection("EAST")
                 .setLabel("EAST")
-                .setTargetRoomInstanceId("room-inst-3042")
+                .setTargetRoomInstanceId(SECONDARY_DESTINATION_ROOM_ID)
                 .setDescription("narrow fissure descending toward the forges")
                 .build())
         .build();
@@ -181,7 +182,7 @@ public final class LookTestFixtures {
     LookExit secondaryExit =
         LookExit.newBuilder()
             .setLabel("EAST")
-            .setTargetRoomInstanceId("room-inst-3042")
+            .setTargetRoomInstanceId(SECONDARY_DESTINATION_ROOM_ID)
             .setDescription("narrow fissure descending toward the forges")
             .build();
     net.firedevops.firemud.gamelogic.v1.RoomEntity koboldEntity =
