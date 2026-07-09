@@ -1,10 +1,8 @@
 package net.firedevops.firemud.gamesession.presentation;
 
 import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -14,18 +12,7 @@ import org.springframework.stereotype.Component;
 @Component
 final class TextCommandPresentationPolicy {
   private static final TextCommandMetadataResolver FALLBACK_METADATA_RESOLVER =
-      commandId -> {
-        if (commandId == null || commandId.isBlank()) {
-          return Optional.empty();
-        }
-        String normalized = commandId.trim().toLowerCase(Locale.ROOT);
-        if (normalized.equals("say") || normalized.equals("whisper") || normalized.equals("tell")) {
-          return Optional.of(
-              new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                  TextCommandActionCategory.SOCIAL, List.of(TextCommandActionTag.COMMUNICATION)));
-        }
-        return Optional.empty();
-      };
+      BuiltInTextCommandMetadataResolvers.builtInOnly();
 
   private final TextCommandMetadataResolver textCommandMetadataResolver;
 
@@ -61,12 +48,7 @@ final class TextCommandPresentationPolicy {
     return textCommandMetadataResolver
         .resolve(command.commandId())
         .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.COMMUNICATION))
-        .orElseGet(
-            () ->
-                switch (command.type()) {
-                  case SAY, WHISPER, TELL -> true;
-                  default -> false;
-                });
+        .orElse(false);
   }
 
   private boolean isViewOutput(PlayerOutput output) {

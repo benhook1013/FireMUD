@@ -327,6 +327,25 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllUsesBuiltInCommunicationFallbackMetadataForInlineSayProse() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.SAY, List.of("hello"), "SAY hello"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.message("You say, \"Hello.\""), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("You say, \"Hello.\"\ndemo> ");
+  }
+
+  @Test
   void renderAllKeepsCommandEnvelopeForNonCommunicationAuthoredMessages() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
