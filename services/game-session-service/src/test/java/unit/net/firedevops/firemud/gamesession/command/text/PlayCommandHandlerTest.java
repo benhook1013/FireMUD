@@ -1125,6 +1125,7 @@ class PlayCommandHandlerTest {
     GameplayCommand gameplayCommand = new GameplayCommand();
     gameplayCommand.setCommandId(commandId);
     gameplayCommand.setCommandName(commandName);
+    gameplayCommand.setCommandText(commandName);
     return gameplayCommand;
   }
 }

@@ -111,16 +111,15 @@ public final class LogoutCommandHandler {
   }
 
   private static GameplayCommand logoutCommand(SessionContext context) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId(
+    return ScriptEventGameplayCommands.syntheticWithId(
         "logout-command:"
             + context.sessionId()
             + ":"
             + context.gameInstanceId()
             + ":"
-            + context.characterId());
-    gameplayCommand.setCommandName(TextCommandType.LOGOUT.name());
-    return gameplayCommand;
+            + context.characterId(),
+        TextCommandType.LOGOUT.name(),
+        "LOGOUT");
   }
 
   private boolean shouldStopSession(SessionContext context, SessionContext persistedContext) {

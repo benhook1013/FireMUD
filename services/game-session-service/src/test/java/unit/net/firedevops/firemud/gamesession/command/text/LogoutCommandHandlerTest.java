@@ -372,6 +372,7 @@ class LogoutCommandHandlerTest {
         new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     gameplayCommand.setCommandId(commandId);
     gameplayCommand.setCommandName(commandName);
+    gameplayCommand.setCommandText(commandName);
     return gameplayCommand;
   }
 }

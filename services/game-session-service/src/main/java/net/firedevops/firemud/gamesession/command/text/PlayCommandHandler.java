@@ -589,8 +589,7 @@ public class PlayCommandHandler {
   }
 
   private static GameplayCommand scriptEventCommand(SessionContext context) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId(
+    return ScriptEventGameplayCommands.syntheticWithId(
         "play-command:"
             + context.sessionId()
             + ":"
@@ -598,9 +597,9 @@ public class PlayCommandHandler {
             + ":"
             + context.characterId()
             + ":"
-            + context.pointerVersion());
-    gameplayCommand.setCommandName(TextCommandType.PLAY.name());
-    return gameplayCommand;
+            + context.pointerVersion(),
+        TextCommandType.PLAY.name(),
+        "PLAY");
   }
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(

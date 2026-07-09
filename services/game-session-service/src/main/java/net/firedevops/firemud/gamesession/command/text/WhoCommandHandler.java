@@ -4,9 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -51,10 +49,8 @@ public class WhoCommandHandler {
 
   private void publishCommandEvent(SessionContext context) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("who-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(TextCommandType.WHO.name());
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context, ScriptEventGameplayCommands.synthetic("who", TextCommandType.WHO.name(), "WHO"));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Who script event publish failed tenantId={} gameInstanceId={} characterId={}",

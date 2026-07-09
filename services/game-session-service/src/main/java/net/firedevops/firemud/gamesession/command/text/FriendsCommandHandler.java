@@ -5,12 +5,10 @@ import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.FriendDetailViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
@@ -397,10 +395,10 @@ public class FriendsCommandHandler {
 
   private void publishCommandEvent(SessionContext context) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("friends-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(TextCommandType.FRIENDS.name());
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context,
+          ScriptEventGameplayCommands.synthetic(
+              "friends", TextCommandType.FRIENDS.name(), "FRIENDS"));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Friends script event publish failed tenantId={} gameInstanceId={} characterId={}",

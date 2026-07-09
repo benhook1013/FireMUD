@@ -130,6 +130,7 @@ class FriendsCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "FRIENDS".equals(gameplayCommand.getCommandName())
+                        && "FRIENDS".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("friends-")));
   }
