@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
+import net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntries;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -476,26 +477,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       java.util.List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentation) {
-    return outputs.stream()
-        .filter(PlayerOutput::screenBufferEligible)
-        .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
-        .filter(entry -> StringUtils.hasText(entry.text()))
-        .toList();
-  }
-
-  private ScreenBufferService.BufferedEntry bufferedEntry(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    return outputProjector.toBufferedEntry(
-        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
-  }
-
-  private String renderReplayableOutput(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    if (output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          TextCommandType.LOOK, java.util.List.of(output), localeTag, effectivePresentation);
-    }
-    return outputRenderer.render(output, localeTag, effectivePresentation);
+    return ReplayableScreenBufferEntries.fromOutputs(
+        outputs, outputRenderer, outputProjector, localeTag, effectivePresentation);
   }
 
   private boolean shouldBuffer(

@@ -115,14 +115,14 @@ public final class CommunicationRecipientDeliveryService {
 
   private void appendReplayableOutput(
       SessionContext recipient, PlayerOutput output, String rendered) {
-    if (!output.screenBufferEligible()) {
-      return;
-    }
-    screenBufferService.append(
-        recipient.tenantId(),
-        recipient.gameInstanceId(),
-        recipient.characterId(),
-        java.util.List.of(outputProjector.toBufferedEntry(output, rendered + "\n")));
+    ReplayableScreenBufferEntries.fromRenderedOutput(output, outputProjector, rendered)
+        .ifPresent(
+            entry ->
+                screenBufferService.append(
+                    recipient.tenantId(),
+                    recipient.gameInstanceId(),
+                    recipient.characterId(),
+                    java.util.List.of(entry)));
   }
 
   private Optional<SessionContext> resolveRecipient(

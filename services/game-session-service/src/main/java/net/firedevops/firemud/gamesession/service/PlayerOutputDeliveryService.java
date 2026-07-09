@@ -98,34 +98,13 @@ public final class PlayerOutputDeliveryService {
       String localeTag,
       PresentationProperties effectivePresentation) {
     List<ScreenBufferService.BufferedEntry> replayEntries =
-        outputs.stream()
-            .filter(PlayerOutput::screenBufferEligible)
-            .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
-            .filter(entry -> StringUtils.hasText(entry.text()))
-            .toList();
+        ReplayableScreenBufferEntries.fromOutputs(
+            outputs, outputRenderer, outputProjector, localeTag, effectivePresentation);
     if (replayEntries.isEmpty() || context.gameInstanceId() <= 0 || context.characterId() <= 0) {
       return;
     }
     screenBufferService.append(
         context.tenantId(), context.gameInstanceId(), context.characterId(), replayEntries);
-  }
-
-  private ScreenBufferService.BufferedEntry bufferedEntry(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    return outputProjector.toBufferedEntry(
-        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
-  }
-
-  private String renderReplayableOutput(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    if (output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK,
-          List.of(output),
-          localeTag,
-          effectivePresentation);
-    }
-    return outputRenderer.render(output, localeTag, effectivePresentation);
   }
 
   private void pushOutputs(
