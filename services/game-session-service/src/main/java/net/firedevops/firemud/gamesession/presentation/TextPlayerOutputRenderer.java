@@ -16,17 +16,32 @@ import org.springframework.util.StringUtils;
 public class TextPlayerOutputRenderer {
   private final PresentationProperties presentationProperties;
   private final PresentationMessageCatalog presentationMessageCatalog;
+  private final TextCommandPresentationPolicy textCommandPresentationPolicy;
 
   public TextPlayerOutputRenderer(PresentationProperties presentationProperties) {
-    this(presentationProperties, new PresentationMessageCatalog());
+    this(
+        presentationProperties,
+        new PresentationMessageCatalog(),
+        TextCommandPresentationPolicy.fallback());
+  }
+
+  public TextPlayerOutputRenderer(
+      PresentationProperties presentationProperties,
+      PresentationMessageCatalog presentationMessageCatalog) {
+    this(
+        presentationProperties,
+        presentationMessageCatalog,
+        TextCommandPresentationPolicy.fallback());
   }
 
   @Autowired
   public TextPlayerOutputRenderer(
       PresentationProperties presentationProperties,
-      PresentationMessageCatalog presentationMessageCatalog) {
+      PresentationMessageCatalog presentationMessageCatalog,
+      TextCommandPresentationPolicy textCommandPresentationPolicy) {
     this.presentationProperties = presentationProperties;
     this.presentationMessageCatalog = presentationMessageCatalog;
+    this.textCommandPresentationPolicy = textCommandPresentationPolicy;
   }
 
   public String render(PlayerOutput output) {
@@ -111,8 +126,8 @@ public class TextPlayerOutputRenderer {
       java.util.List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentationProperties) {
-    return renderAllForCommandType(
-        command.type(), result, outputs, localeTag, effectivePresentationProperties);
+    return renderAllForCommand(
+        command, result, outputs, localeTag, effectivePresentationProperties);
   }
 
   public String renderAllForCommandType(
@@ -121,7 +136,16 @@ public class TextPlayerOutputRenderer {
       java.util.List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentationProperties) {
-    TextCommand command = syntheticCommand(commandType);
+    return renderAllForCommand(
+        syntheticCommand(commandType), result, outputs, localeTag, effectivePresentationProperties);
+  }
+
+  private String renderAllForCommand(
+      TextCommand command,
+      CommandEnqueueResult result,
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
     if (!result.accepted()) {
       String renderedError =
           outputs.stream()
@@ -162,14 +186,9 @@ public class TextPlayerOutputRenderer {
       }
       return "OK " + command.type().name();
     }
-    String commandLabel = responseCommandLabel(command, nonPromptOutputs);
-    boolean plainMessageOnly =
-        nonPromptOutputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.MESSAGE);
-    boolean proseCommand =
-        command.type().name().equals("SAY")
-            || command.type().name().equals("WHISPER")
-            || command.type().name().equals("TELL");
-    if (plainMessageOnly && proseCommand) {
+    String commandLabel =
+        textCommandPresentationPolicy.responseCommandLabel(command, nonPromptOutputs);
+    if (textCommandPresentationPolicy.rendersInlineMessageOnlyResponse(command, nonPromptOutputs)) {
       return appendPrompt(body, prompt, true);
     }
     return appendPrompt("OK " + commandLabel + "\n" + body + "\n\n", prompt, false);
@@ -626,7 +645,8 @@ public class TextPlayerOutputRenderer {
       String localeTag,
       PresentationProperties effectivePresentationProperties) {
     String body = render(output, localeTag, effectivePresentationProperties);
-    String commandLabel = responseCommandLabel(command, java.util.List.of(output));
+    String commandLabel =
+        textCommandPresentationPolicy.responseCommandLabel(command, java.util.List.of(output));
     if (body.contains("\n")) {
       return "OK " + commandLabel + "\n" + body + "\n\n";
     }
@@ -712,22 +732,6 @@ public class TextPlayerOutputRenderer {
       return prompt;
     }
     return inline ? base + "\n" + prompt : base + prompt;
-  }
-
-  private String responseCommandLabel(TextCommand command, java.util.List<PlayerOutput> outputs) {
-    if (command.type() == net.firedevops.firemud.gamesession.command.text.TextCommandType.MOVE
-        && outputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.VIEW)) {
-      return net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK.name();
-    }
-    if (outputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.VIEW)
-        && outputs.stream()
-            .map(PlayerOutput::payload)
-            .filter(LookViewOutput.class::isInstance)
-            .map(LookViewOutput.class::cast)
-            .anyMatch(view -> view.refreshReason() == LookViewOutput.RefreshReason.MOVE_REFRESH)) {
-      return net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK.name();
-    }
-    return command.type().name();
   }
 
   private boolean shouldUseBriefRendering(
