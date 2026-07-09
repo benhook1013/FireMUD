@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -225,6 +226,7 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
     assertTrue(command.viewRequestPayload().isPresent());
     assertEquals("WORLDS", command.viewRequestPayload().orElseThrow().viewName());
+    assertTrue(command.viewRequestPayload().orElseThrow().includeLongDescription());
   }
 
   @Test
@@ -569,6 +571,7 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
     assertTrue(command.viewRequestPayload().isPresent());
     assertEquals("LOOK", command.viewRequestPayload().orElseThrow().viewName());
+    assertTrue(command.viewRequestPayload().orElseThrow().includeLongDescription());
   }
 
   @Test
@@ -582,6 +585,7 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
     assertTrue(command.viewRequestPayload().isPresent());
     assertEquals("LOOK", command.viewRequestPayload().orElseThrow().viewName());
+    assertTrue(command.viewRequestPayload().orElseThrow().includeLongDescription());
   }
 
   @Test
@@ -595,6 +599,7 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
     assertTrue(command.viewRequestPayload().isPresent());
     assertEquals("QUICKLOOK", command.viewRequestPayload().orElseThrow().viewName());
+    assertFalse(command.viewRequestPayload().orElseThrow().includeLongDescription());
   }
 
   @Test

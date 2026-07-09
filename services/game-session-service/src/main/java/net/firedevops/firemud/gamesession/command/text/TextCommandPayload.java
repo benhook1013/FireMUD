@@ -61,15 +61,19 @@ public sealed interface TextCommandPayload
     }
   }
 
-  record ViewRequest(String viewName) implements TextCommandPayload {}
+  record ViewRequest(String viewName, boolean includeLongDescription)
+      implements TextCommandPayload {
+    ViewRequest(String viewName) {
+      this(viewName, true);
+    }
+  }
 
   static TextCommandPayload fromLegacy(TextCommandType type, List<String> args) {
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
       case NOOP, LOGOUT, BLOCK -> new None();
       case AFK -> new AfkRequest(true);
-      case WORLDS, LOOK, QUICKLOOK, WHO, FRIENDS, INVENTORY, EQUIPMENT ->
-          new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, WHO, FRIENDS, INVENTORY, EQUIPMENT -> viewRequestFor(type);
       case REALMS ->
           parseRealmBrowseRequest(safeArgs)
               .<TextCommandPayload>map(request -> request)
@@ -142,6 +146,10 @@ public sealed interface TextCommandPayload
       return java.util.Optional.empty();
     }
     return java.util.Optional.of(new ItemReference(reference, Integer.parseInt(first)));
+  }
+
+  private static ViewRequest viewRequestFor(TextCommandType type) {
+    return new ViewRequest(type.name(), type != TextCommandType.QUICKLOOK);
   }
 
   private static java.util.Optional<ContainerTransfer> parseContainerTransfer(

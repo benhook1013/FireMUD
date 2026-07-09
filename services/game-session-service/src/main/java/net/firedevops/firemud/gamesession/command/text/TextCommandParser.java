@@ -65,7 +65,7 @@ public class TextCommandParser {
     ParsedCommandData parsed =
         switch (type) {
           case WORLDS ->
-              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS", true));
           case REALMS -> parseRealms(tokens);
           case CHARS -> parseChars(tokens);
           case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
@@ -73,10 +73,12 @@ public class TextCommandParser {
           case BLOCK ->
               new ParsedCommandData(parseRemainingTokens(tokens), new TextCommandPayload.None());
           case HELP -> parseHelp(tokens);
-          case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
+          case WHO ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO", true));
           case FRIENDS ->
               new ParsedCommandData(
-                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("FRIENDS"));
+                  parseRemainingTokens(tokens),
+                  new TextCommandPayload.ViewRequest("FRIENDS", true));
           case AUTHORED ->
               new ParsedCommandData(
                   parseRemainingTokens(tokens),
@@ -84,16 +86,20 @@ public class TextCommandParser {
                       commandId, parseRemainingTokens(tokens)));
           case INVENTORY ->
               new ParsedCommandData(
-                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("INVENTORY"));
+                  parseRemainingTokens(tokens),
+                  new TextCommandPayload.ViewRequest("INVENTORY", true));
           case EQUIPMENT ->
               new ParsedCommandData(
-                  parseRemainingTokens(tokens), new TextCommandPayload.ViewRequest("EQUIPMENT"));
+                  parseRemainingTokens(tokens),
+                  new TextCommandPayload.ViewRequest("EQUIPMENT", true));
           case CONTAINER -> parseContainerView(tokens);
           case GET, DROP, WEAR, REMOVE -> parseItemReference(type, tokens);
           case PUT, TAKE -> parseContainerTransfer(type, tokens);
-          case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
+          case LOOK ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK", true));
           case QUICKLOOK ->
-              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
+              new ParsedCommandData(
+                  List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK", false));
           case NOOP -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case LOGIN -> parseLogin(tokens);
           case PLAY -> parsePlay(tokens);
