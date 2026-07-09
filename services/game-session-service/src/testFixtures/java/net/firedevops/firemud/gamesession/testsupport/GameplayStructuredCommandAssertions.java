@@ -20,25 +20,48 @@ public final class GameplayStructuredCommandAssertions {
   }
 
   public static boolean isStructuredCommand(String payload, String commandType) {
+    return isStructuredCommand(payload, commandType, null);
+  }
+
+  public static boolean isStructuredCommand(String payload, String commandType, String commandId) {
     JsonNode json = parseStructuredResponse(payload);
     return "command_result".equals(json.path("eventType").asText())
-        && commandType.equals(json.path("commandType").asText());
+        && commandType.equals(json.path("commandType").asText())
+        && (commandId == null || commandId.equals(json.path("commandId").asText()));
   }
 
   public static JsonNode awaitStructuredCommand(
       GameplayWebSocketDriver client, int responseBaseline, String commandType) throws Exception {
-    return awaitStructuredCommand(client, responseBaseline, commandType, client.waitTimeout());
+    return awaitStructuredCommand(
+        client, responseBaseline, commandType, null, client.waitTimeout());
+  }
+
+  public static JsonNode awaitStructuredCommand(
+      GameplayWebSocketDriver client, int responseBaseline, String commandType, String commandId)
+      throws Exception {
+    return awaitStructuredCommand(
+        client, responseBaseline, commandType, commandId, client.waitTimeout());
   }
 
   public static JsonNode awaitStructuredCommand(
       GameplayWebSocketDriver client, int responseBaseline, String commandType, Duration timeout)
+      throws Exception {
+    return awaitStructuredCommand(client, responseBaseline, commandType, null, timeout);
+  }
+
+  public static JsonNode awaitStructuredCommand(
+      GameplayWebSocketDriver client,
+      int responseBaseline,
+      String commandType,
+      String commandId,
+      Duration timeout)
       throws Exception {
     long deadline = System.currentTimeMillis() + timeout.toMillis();
     while (System.currentTimeMillis() < deadline) {
       List<String> responses = client.responses();
       for (int index = responseBaseline; index < responses.size(); index++) {
         String payload = responses.get(index);
-        if (isStructuredCommand(payload, commandType)) {
+        if (isStructuredCommand(payload, commandType, commandId)) {
           return parseStructuredResponse(payload);
         }
       }
@@ -47,6 +70,7 @@ public final class GameplayStructuredCommandAssertions {
     throw new AssertionError(
         "Expected structured "
             + commandType
+            + (commandId == null ? "" : " commandId=" + commandId)
             + " response after baseline "
             + responseBaseline
             + ", got: "

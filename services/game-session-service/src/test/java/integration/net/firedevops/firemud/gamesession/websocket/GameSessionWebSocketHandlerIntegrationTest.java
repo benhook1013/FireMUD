@@ -764,11 +764,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     assertThat(json(payloads.get(0)).path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(json(payloads.get(0)).path("commandId").asText()).isEqualTo("login");
     assertThat(json(payloads.get(0)).path("accepted").asBoolean()).isTrue();
     assertThat(payloads)
         .anyMatch(
             payload ->
                 json(payload).path("commandType").asText().equals("PLAY")
+                    && json(payload).path("commandId").asText().equals("play")
                     && json(payload).path("accepted").asBoolean());
     assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
@@ -1251,11 +1253,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     JsonNode loginFailure = json(payloads.get(0));
     assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
     assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(loginFailure.path("commandId").asText()).isEqualTo("login");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
     JsonNode playFailure = json(payloads.get(1));
     assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
     assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
+    assertThat(playFailure.path("commandId").asText()).isEqualTo("play");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
     assertThat(playFailure.path("outputs").isArray()).isTrue();
@@ -1278,6 +1282,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     JsonNode loginFailure = json(payloads.getFirst());
     assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
     assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(loginFailure.path("commandId").asText()).isEqualTo("login");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }
@@ -1424,11 +1429,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     JsonNode loginSuccess = json(payloads.getFirst());
     assertThat(loginSuccess.path("eventType").asText()).isEqualTo("command_result");
     assertThat(loginSuccess.path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(loginSuccess.path("commandId").asText()).isEqualTo("login");
     assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
 
     JsonNode playFailure = json(payloads.getLast());
     assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
     assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
+    assertThat(playFailure.path("commandId").asText()).isEqualTo("play");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }
