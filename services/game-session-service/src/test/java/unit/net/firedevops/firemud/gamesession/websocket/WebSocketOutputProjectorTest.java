@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,6 +21,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutpu
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
@@ -105,6 +108,29 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("text_message");
     assertThat(json.path("outputs").get(0).path("payload").path("messageKey").asText())
         .isEqualTo("communication.whisper.actor");
+  }
+
+  @Test
+  void genericWebSocketProjectsViewOutputThroughLookRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new LookViewOutput(
+                "room-1", "Room One", "Short desc", "Long desc", true, List.of(), List.of()));
+    when(renderer.renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation))
+        .thenReturn("Room One\nLong desc");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload).isEqualTo("Room One\nLong desc");
+    verify(renderer)
+        .renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
+    verify(renderer, never()).render(output, "en-NZ", presentation);
   }
 
   @Test

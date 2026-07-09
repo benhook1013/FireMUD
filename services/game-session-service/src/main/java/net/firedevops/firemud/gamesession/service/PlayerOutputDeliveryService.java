@@ -10,7 +10,6 @@ import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
-import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -28,7 +27,6 @@ import org.springframework.web.socket.WebSocketSession;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class PlayerOutputDeliveryService {
   private static final Logger LOG = LoggerFactory.getLogger(PlayerOutputDeliveryService.class);
-  private static final String CONNECTION_MODE_ATTR = "firemud.websocket.connectionMode";
 
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
@@ -145,18 +143,6 @@ public final class PlayerOutputDeliveryService {
       PlayerOutput output,
       String localeTag,
       PresentationProperties effectivePresentation) {
-    if (!isFirstPartyWeb(session) && output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK,
-          List.of(output),
-          localeTag,
-          effectivePresentation);
-    }
     return outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation);
-  }
-
-  private boolean isFirstPartyWeb(WebSocketSession session) {
-    Object mode = session.getAttributes().get(CONNECTION_MODE_ATTR);
-    return "first_party_web".equals(mode);
   }
 }

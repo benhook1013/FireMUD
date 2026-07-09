@@ -454,16 +454,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String label) {
     try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       try {
-        if (!outputProjector.isFirstPartyWeb(session) && output.kind() == PlayerOutputKind.VIEW) {
-          sendProtocolMessage(
-              session,
-              outputRenderer.renderSuccessfulForCommandType(
-                  TextCommandType.LOOK,
-                  java.util.List.of(output),
-                  localeTag,
-                  effectivePresentation));
-          return;
-        }
         sendProtocolMessage(
             session,
             outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation));
