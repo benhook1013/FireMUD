@@ -578,6 +578,59 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllUsesMovementTagForAuthoredViewLabel() {
+    TextCommandMetadataResolver metadataResolver =
+        commandId ->
+            "stride".equals(commandId)
+                ? java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
+                        TextCommandActionCategory.GAMEPLAY,
+                        List.of(TextCommandActionTag.MOVEMENT)))
+                : java.util.Optional.empty();
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)),
+            new PresentationMessageCatalog(),
+            new TextCommandPresentationPolicy(metadataResolver));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "stride",
+                TextCommandType.AUTHORED,
+                List.of("north"),
+                "stride north",
+                "stride",
+                new TextCommandPayload.AuthoredActionInvocation("stride", List.of("north"))),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        List.of(),
+                        List.of()))));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK LOOK\n"
+                + "Room: North Hall (ID: R-205)\n"
+                + "Short: North Hall text\n"
+                + "Long: Detailed north hall text\n"
+                + "Exits: \n"
+                + "Entities:\n\n");
+  }
+
+  @Test
   void moveRefreshUsesBriefStyleLongDescriptionSuppressionByDefault() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
