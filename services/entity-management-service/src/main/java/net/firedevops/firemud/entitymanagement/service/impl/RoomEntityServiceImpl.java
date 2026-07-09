@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
@@ -43,9 +44,10 @@ public class RoomEntityServiceImpl implements RoomEntityService {
   }
 
   @Override
-  public List<RoomEntityDto> listEntities(String tenantId, String gameInstanceId, String roomId) {
+  public List<RoomEntityDto> listEntities(long tenantId, String gameInstanceId, String roomId) {
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     Map<String, LookProperties.LookRoom> rooms = lookProperties.getRooms();
-    LookProperties.LookRoom room = rooms.getOrDefault(regionKey(tenantId, roomId), null);
+    LookProperties.LookRoom room = rooms.getOrDefault(regionKey(tenantKey, roomId), null);
     List<RoomEntityDto> configuredEntities =
         room == null
             ? List.of()
@@ -66,13 +68,13 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     Page<ItemInstance> roomGroundPage =
         itemInstanceRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
-                Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
+                tenantKey, gameInstanceId, roomId, Pageable.unpaged());
     List<RoomEntityDto> roomGroundEntities =
         roomGroundPage.map(this::toRoomGroundEntity).getContent();
     Page<ItemStack> roomGroundStackPage =
         itemStackRepository
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
-                Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
+                tenantKey, gameInstanceId, roomId, Pageable.unpaged());
     List<RoomEntityDto> roomGroundStackEntities =
         roomGroundStackPage.map(this::toRoomGroundEntity).getContent();
     if (configuredEntities.isEmpty()) {
@@ -87,7 +89,7 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         .toList();
   }
 
-  private String regionKey(String tenantId, String roomId) {
+  private String regionKey(long tenantId, String roomId) {
     return tenantId + ":" + roomId;
   }
 

@@ -1649,7 +1649,7 @@ public class EntityManagementGrpcService
           roomScope.roomInstanceId());
       var entities =
           roomEntityService.listEntities(
-              roomScope.tenantIdText(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
+              roomScope.tenantId(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
       var builder =
           ListRoomEntitiesResponse.newBuilder()
               .setTenantId(roomScope.tenantIdText())

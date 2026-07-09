@@ -152,7 +152,7 @@ class EquipmentControllerTest {
                 .content("{\"itemId\":0}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("itemId must be greater than 0"));
+        .andExpect(jsonPath("$.error.message").value("itemId must be positive"));
 
     verifyNoInteractions(equipmentService);
   }

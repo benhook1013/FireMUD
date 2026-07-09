@@ -1224,7 +1224,7 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
-    Mockito.when(roomEntityService.listEntities("1", "2", "R-3"))
+    Mockito.when(roomEntityService.listEntities(1L, "2", "R-3"))
         .thenReturn(
             List.of(
                 new RoomEntityDto(
