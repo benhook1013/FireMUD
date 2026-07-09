@@ -5,12 +5,8 @@ import static org.mockito.Mockito.verify;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.handler.codec.LineBasedFrameDecoder;
-import io.netty.handler.codec.string.StringDecoder;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -69,10 +65,7 @@ class TelnetServerHandlerSpringBootTest {
             Mockito.mock(LookCacheService.class));
 
     EmbeddedChannel channel =
-        new EmbeddedChannel(
-            new LineBasedFrameDecoder(1024, false, true),
-            new StringDecoder(StandardCharsets.ISO_8859_1),
-            handler) {
+        new EmbeddedChannel(handler) {
           @Override
           public InetSocketAddress remoteAddress() {
             return clientAddress;
@@ -82,8 +75,6 @@ class TelnetServerHandlerSpringBootTest {
     channel.pipeline().fireChannelActive();
 
     try {
-      channel.writeInbound(Unpooled.copiedBuffer("look\r\n", StandardCharsets.ISO_8859_1));
-
       verify(eventService, timeout(1000))
           .recordConnectEvent(sessionId, tenantId, clientAddress.getAddress().getHostAddress());
     } finally {
