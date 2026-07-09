@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
@@ -27,6 +28,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(InventoryController.class)
+@org.springframework.context.annotation.Import(GlobalExceptionHandler.class)
 class InventoryControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -121,6 +123,22 @@ class InventoryControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(jsonPath("$.error.message").value("itemId must be positive"));
+
+    verifyNoInteractions(inventoryService);
+  }
+
+  @Test
+  void addRejectsZeroItemIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/tenants/1/characters/2/inventory")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"itemId\":0,\"quantity\":1}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("itemId must be greater than 0"));
 
     verifyNoInteractions(inventoryService);
   }
