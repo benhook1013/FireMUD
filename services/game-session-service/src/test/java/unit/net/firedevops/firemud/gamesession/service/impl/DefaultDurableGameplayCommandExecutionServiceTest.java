@@ -32,7 +32,6 @@ import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -41,8 +40,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final TextCommandParser parser = Mockito.mock(TextCommandParser.class);
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
   private final MoveCommandHandler moveCommandHandler = Mockito.mock(MoveCommandHandler.class);
   private final ItemCommandHandler itemCommandHandler = Mockito.mock(ItemCommandHandler.class);
   private final CommunicationCommandHandler communicationCommandHandler =
@@ -71,7 +68,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             meterRegistry,
             parser,
             sessionAuthenticationService,
-            sessionContextService,
             moveCommandHandler,
             itemCommandHandler,
             communicationCommandHandler,
@@ -497,6 +493,34 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(afkCommandHandler, never())
         .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+  }
+
+  @Test
+  void executeReplaysStoredBlockWithoutInvokingHandler() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("BLOCK", "BLOCK");
+    TickEffect effect = tickEffect("tfx-7b", "cmd-7b");
+    TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
+    PlayerOutput output = PlayerOutput.notice("You brace for the next blow.");
+    when(parser.parse("BLOCK")).thenReturn(parsed);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-7b"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
+    assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
+    verify(actionStateCommandHandler, never())
+        .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class), Mockito.any());
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   @Test

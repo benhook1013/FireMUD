@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
@@ -15,8 +16,10 @@ import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService;
 import net.firedevops.firemud.gamesession.service.DurableGameplayReplayService;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService;
@@ -25,7 +28,6 @@ import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -37,7 +39,6 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
   private final SessionAuthenticationService sessionAuthenticationService;
-  private final SessionContextService sessionContextService;
   private final MoveCommandHandler moveCommandHandler;
   private final ItemCommandHandler itemCommandHandler;
   private final CommunicationCommandHandler communicationCommandHandler;
@@ -53,7 +54,6 @@ public final class DefaultDurableGameplayCommandExecutionService
       MeterRegistry meterRegistry,
       TextCommandParser textCommandParser,
       SessionAuthenticationService sessionAuthenticationService,
-      SessionContextService sessionContextService,
       MoveCommandHandler moveCommandHandler,
       ItemCommandHandler itemCommandHandler,
       CommunicationCommandHandler communicationCommandHandler,
@@ -67,7 +67,6 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
     this.sessionAuthenticationService = sessionAuthenticationService;
-    this.sessionContextService = sessionContextService;
     this.moveCommandHandler = moveCommandHandler;
     this.itemCommandHandler = itemCommandHandler;
     this.communicationCommandHandler = communicationCommandHandler;
@@ -106,17 +105,49 @@ public final class DefaultDurableGameplayCommandExecutionService
     }
     if (isDurableCommunication(parsed.type())) {
       return Optional.of(
-          executeCommunicationMutation(context, parsed, command, effect.getEffectId()));
+          executeReplayBackedLocalMutation(
+              context,
+              command,
+              effect.getEffectId(),
+              () -> {
+                var result =
+                    communicationCommandHandler.handle(context, parsed, effect.getEffectId());
+                return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+              }));
     }
     if (parsed.type() == TextCommandType.AFK) {
-      return Optional.of(executeAfkMutation(context, parsed, command, effect.getEffectId()));
+      return Optional.of(
+          executeReplayBackedLocalMutation(
+              context,
+              command,
+              effect.getEffectId(),
+              () -> {
+                var result = afkCommandHandler.handle(context, parsed);
+                return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+              }));
     }
     if (parsed.type() == TextCommandType.BLOCK) {
       return Optional.of(
-          executeActionStateMutation(context, parsed, command, effect.getEffectId()));
+          executeReplayBackedLocalMutation(
+              context,
+              command,
+              effect.getEffectId(),
+              () -> {
+                var result =
+                    actionStateCommandHandler.handle(context, parsed, effect.getEffectId());
+                return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+              }));
     }
     if (parsed.type() == TextCommandType.AUTHORED) {
-      return Optional.of(executeAuthoredMutation(context, parsed, command, effect.getEffectId()));
+      return Optional.of(
+          executeReplayBackedLocalMutation(
+              context,
+              command,
+              effect.getEffectId(),
+              () -> {
+                var result = authoredActionCommandHandler.handle(parsed);
+                return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+              }));
     }
     publishCommandEventForLiveExecution(context, command);
     PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
@@ -187,8 +218,11 @@ public final class DefaultDurableGameplayCommandExecutionService
             result.commandResult().errorMessage()));
   }
 
-  private DurableGameplayCommandExecutionResult executeCommunicationMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
+  private DurableGameplayCommandExecutionResult executeReplayBackedLocalMutation(
+      SessionContext context,
+      GameplayCommand command,
+      String effectId,
+      Supplier<ReplayBackedMutationResult> liveExecution) {
     Optional<DurableGameplayReplayService.ReplayRecord> replay =
         durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
     if (replay.isPresent()) {
@@ -199,95 +233,14 @@ public final class DefaultDurableGameplayCommandExecutionService
       return recordResult(command, replayResult(record));
     }
     publishCommandEventForLiveExecution(context, command);
-    var result = communicationCommandHandler.handle(context, parsed, effectId);
+    ReplayBackedMutationResult result = liveExecution.get();
     durableGameplayReplayService.save(
         context.tenantId(),
         context.sessionId(),
         effectId,
-        result.commandResult().accepted(),
-        result.commandResult().errorCode(),
-        result.commandResult().errorMessage(),
-        result.outputs());
-    if (!result.outputs().isEmpty()) {
-      playerOutputDeliveryService.deliver(context, result.outputs(), true);
-    }
-    return recordResult(command, resultForCommandResult(result.commandResult()));
-  }
-
-  private DurableGameplayCommandExecutionResult executeAfkMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
-    Optional<DurableGameplayReplayService.ReplayRecord> replay =
-        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
-    if (replay.isPresent()) {
-      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
-      if (!record.actorOutputs().isEmpty()) {
-        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
-      }
-      return recordResult(command, replayResult(record));
-    }
-    publishCommandEventForLiveExecution(context, command);
-    var result = afkCommandHandler.handle(context, parsed);
-    durableGameplayReplayService.save(
-        context.tenantId(),
-        context.sessionId(),
-        effectId,
-        result.commandResult().accepted(),
-        result.commandResult().errorCode(),
-        result.commandResult().errorMessage(),
-        result.outputs());
-    if (!result.outputs().isEmpty()) {
-      playerOutputDeliveryService.deliver(context, result.outputs(), true);
-    }
-    return recordResult(command, resultForCommandResult(result.commandResult()));
-  }
-
-  private DurableGameplayCommandExecutionResult executeActionStateMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
-    Optional<DurableGameplayReplayService.ReplayRecord> replay =
-        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
-    if (replay.isPresent()) {
-      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
-      if (!record.actorOutputs().isEmpty()) {
-        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
-      }
-      return recordResult(command, replayResult(record));
-    }
-    publishCommandEventForLiveExecution(context, command);
-    var result = actionStateCommandHandler.handle(context, parsed, effectId);
-    durableGameplayReplayService.save(
-        context.tenantId(),
-        context.sessionId(),
-        effectId,
-        result.commandResult().accepted(),
-        result.commandResult().errorCode(),
-        result.commandResult().errorMessage(),
-        result.outputs());
-    if (!result.outputs().isEmpty()) {
-      playerOutputDeliveryService.deliver(context, result.outputs(), true);
-    }
-    return recordResult(command, resultForCommandResult(result.commandResult()));
-  }
-
-  private DurableGameplayCommandExecutionResult executeAuthoredMutation(
-      SessionContext context, TextCommand parsed, GameplayCommand command, String effectId) {
-    Optional<DurableGameplayReplayService.ReplayRecord> replay =
-        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
-    if (replay.isPresent()) {
-      DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
-      if (!record.actorOutputs().isEmpty()) {
-        playerOutputDeliveryService.deliver(context, record.actorOutputs(), true);
-      }
-      return recordResult(command, replayResult(record));
-    }
-    publishCommandEventForLiveExecution(context, command);
-    var result = authoredActionCommandHandler.handle(parsed);
-    durableGameplayReplayService.save(
-        context.tenantId(),
-        context.sessionId(),
-        effectId,
-        result.commandResult().accepted(),
-        result.commandResult().errorCode(),
-        result.commandResult().errorMessage(),
+        result.commandResult.accepted(),
+        result.commandResult.errorCode(),
+        result.commandResult.errorMessage(),
         result.outputs());
     if (!result.outputs().isEmpty()) {
       playerOutputDeliveryService.deliver(context, result.outputs(), true);
@@ -373,6 +326,9 @@ public final class DefaultDurableGameplayCommandExecutionService
       SessionContext context, GameplayCommand command) {
     scriptEventPublisher.publishCommandEvent(context, command);
   }
+
+  private record ReplayBackedMutationResult(
+      CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
 
   private boolean isDurableItemMutation(TextCommandType type) {
     return switch (type) {
