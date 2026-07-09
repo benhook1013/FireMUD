@@ -57,6 +57,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "WORLDS".equals(gameplayCommand.getCommandName())
+                        && "WORLDS".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("worlds-")));
   }
@@ -83,7 +84,10 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(gameplayCommand -> "REALMS".equals(gameplayCommand.getCommandName())));
+            Mockito.argThat(
+                gameplayCommand ->
+                    "REALMS".equals(gameplayCommand.getCommandName())
+                        && "REALMS sandbox".equals(gameplayCommand.getCommandText())));
   }
 
   @Test
@@ -120,7 +124,10 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(gameplayCommand -> "CHARS".equals(gameplayCommand.getCommandName())));
+            Mockito.argThat(
+                gameplayCommand ->
+                    "CHARS".equals(gameplayCommand.getCommandName())
+                        && "CHARS demo".equals(gameplayCommand.getCommandText())));
   }
 
   @Test

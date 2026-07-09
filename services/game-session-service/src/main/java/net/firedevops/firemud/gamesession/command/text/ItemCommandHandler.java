@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -114,9 +113,6 @@ public class ItemCommandHandler {
   }
 
   private GameplayCommand scriptEventCommand(TextCommand command) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId("item-" + UUID.randomUUID());
-    gameplayCommand.setCommandName(command.type().name());
-    return gameplayCommand;
+    return ScriptEventGameplayCommands.synthetic("item", command);
   }
 }

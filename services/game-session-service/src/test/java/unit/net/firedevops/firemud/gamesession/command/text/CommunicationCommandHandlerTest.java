@@ -96,7 +96,7 @@ class CommunicationCommandHandlerTest {
         handler.handle(
             sessionContext,
             new TextCommand(
-                TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers"));
+                TextCommandType.SAY, List.of("hello travelers"), "say hello travelers"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -119,6 +119,7 @@ class CommunicationCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "SAY".equals(gameplayCommand.getCommandName())
+                        && "say hello travelers".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("comm-")));
   }
