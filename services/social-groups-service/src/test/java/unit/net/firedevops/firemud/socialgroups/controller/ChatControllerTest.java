@@ -1,7 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,10 +11,8 @@ import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
-import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
-import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
-import net.firedevops.firemud.socialgroups.service.MailService;
+import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,59 +22,41 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import tools.jackson.databind.ObjectMapper;
 
-@WebMvcTest(MailController.class)
+@WebMvcTest(ChatController.class)
 @Import({
   GlobalExceptionHandler.class,
   CommonSecurityAutoConfiguration.class,
   CommonSecurityServletAutoConfiguration.class
 })
 @WithFiremudHttpAuthTestProperties
-class MailControllerTest {
+class ChatControllerTest {
+
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
-  private final ObjectMapper objectMapper = new ObjectMapper();
 
-  @MockitoBean private MailService mailService;
+  @MockitoBean private ChatService chatService;
   @MockitoBean private SocialAccessGuard socialAccessGuard;
 
   @Test
-  void sendMailReturnsDto() throws Exception {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "test body");
-    MailMessageDto response = new MailMessageDto(1L, 1L, 2L, 3L, "hello", "test body", null, null);
-    when(mailService.sendMail(request)).thenReturn(response);
-
+  void sendMessageRejectsZeroTenantIdBeforeAccessCheckAndDispatch() throws Exception {
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
-    mockMvc
-        .perform(
-            post("/mail")
-                .contentType(MediaType.APPLICATION_JSON)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.subject").value("hello"));
-  }
-
-  @Test
-  void sendMailRejectsZeroSenderAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String body =
+        """
+        {"tenantId":0,"senderAccountId":2,"type":"SAY","content":"hello"}
+        """;
 
     mockMvc
         .perform(
-            post("/mail")
+            post("/chat")
                 .contentType(MediaType.APPLICATION_JSON)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .content(
-                    """
-                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":3,"subject":"hello","content":"test body"}
-                    """))
+                .content(body)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("senderAccountId must be greater than 0"));
+        .andExpect(jsonPath("$.error.message").value("tenantId must be greater than 0"));
 
-    verifyNoInteractions(mailService, socialAccessGuard);
+    verifyNoInteractions(chatService, socialAccessGuard);
   }
 }
