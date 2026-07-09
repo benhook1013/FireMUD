@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.socialgroups.v1.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
@@ -39,6 +40,8 @@ public final class SocialGroupsStubServer implements AutoCloseable {
   private final Server server;
   private final int port;
   private final AtomicReference<SendMessageRequest> lastRequest = new AtomicReference<>();
+  private final CopyOnWriteArrayList<SendMessageRequest> messageRequests =
+      new CopyOnWriteArrayList<>();
   private final AtomicReference<ListFriendsRequest> lastFriendsRequest = new AtomicReference<>();
   private final AtomicReference<GetFriendRequest> lastGetFriendRequest = new AtomicReference<>();
   private final AtomicReference<GetFriendByOrdinalRequest> lastGetFriendByOrdinalRequest =
@@ -77,6 +80,7 @@ public final class SocialGroupsStubServer implements AutoCloseable {
                       SendMessageRequest request,
                       StreamObserver<SendMessageResponse> responseObserver) {
                     lastRequest.set(request);
+                    messageRequests.add(request);
                     SendMessageResponse response =
                         SendMessageResponse.newBuilder().setSuccess(true).build();
                     responseObserver.onNext(response);
@@ -261,6 +265,10 @@ public final class SocialGroupsStubServer implements AutoCloseable {
     return Optional.ofNullable(lastRequest.get());
   }
 
+  public List<SendMessageRequest> messageRequests() {
+    return List.copyOf(messageRequests);
+  }
+
   public Optional<ListFriendPresenceRequest> lastPresenceRequest() {
     return Optional.ofNullable(lastPresenceRequest.get());
   }
@@ -330,6 +338,7 @@ public final class SocialGroupsStubServer implements AutoCloseable {
 
   public void resetState() {
     lastRequest.set(null);
+    messageRequests.clear();
     lastFriendsRequest.set(null);
     lastGetFriendRequest.set(null);
     lastGetFriendByOrdinalRequest.set(null);
