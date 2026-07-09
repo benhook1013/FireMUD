@@ -391,6 +391,21 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartyAuthoredCommunicationUsesStructuredMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("authored-first-party")) {
+      int baseline = client.responses().size();
+      client.send("SALUTE captain");
+      JsonNode authored = awaitStructuredCommand(client, baseline, "AUTHORED");
+      GameplayStructuredCommandAssertions.requireStructuredCommand(
+          authored, "AUTHORED", "wave-salute", "SOCIAL", "AUTHORING", "COMMUNICATION");
+      assertThat(authored.path("accepted").asBoolean()).isTrue();
+    }
+  }
+
+  @Test
   void websocketFirstPartyFriendsViewsUseStructuredCanonicalPayloads() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
@@ -659,7 +674,25 @@ class CommunicationWebSocketCrossServiceTest {
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withGameSessionProps(
-                  Map.of("firemud.gateway.connect-context.jwt-secret", FIRST_PARTY_CONNECT_SECRET))
+                  Map.of(
+                      "firemud.gateway.connect-context.jwt-secret",
+                      FIRST_PARTY_CONNECT_SECRET,
+                      "game-session.authored-actions.actions[0].action-id",
+                      "wave-salute",
+                      "game-session.authored-actions.actions[0].command-id",
+                      "wave-salute",
+                      "game-session.authored-actions.actions[0].aliases[0]",
+                      "salute",
+                      "game-session.authored-actions.actions[0].stage-requirement",
+                      "GAMEPLAY",
+                      "game-session.authored-actions.actions[0].prompt-policy",
+                      "WHEN_GAMEPLAY",
+                      "game-session.authored-actions.actions[0].action-category",
+                      "SOCIAL",
+                      "game-session.authored-actions.actions[0].action-tags[0]",
+                      "AUTHORING",
+                      "game-session.authored-actions.actions[0].action-tags[1]",
+                      "COMMUNICATION"))
               .withInitialFriendPresenceResponse(
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(
