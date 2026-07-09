@@ -28,7 +28,7 @@ class PersistentItemTransferAuditWriterTest {
         3,
         "ammo/iron",
         transferSupport.inventoryHolder(1L, 11L),
-        transferSupport.roomHolder(1L, "realm-live", "room-1"),
+        transferSupport.roomHolder(1L, "realm-live", "R-1"),
         transferSupport.audit("DROP", 11L));
     writer.recordStackTransfer(
         1L,
@@ -36,7 +36,7 @@ class PersistentItemTransferAuditWriterTest {
         3,
         "ammo/iron",
         transferSupport.inventoryHolder(1L, 11L),
-        transferSupport.roomHolder(1L, "realm-live", "room-1"),
+        transferSupport.roomHolder(1L, "realm-live", "R-1"),
         transferSupport.audit("DROP", 11L));
 
     ArgumentCaptor<ItemTransferAudit> captor = ArgumentCaptor.forClass(ItemTransferAudit.class);
