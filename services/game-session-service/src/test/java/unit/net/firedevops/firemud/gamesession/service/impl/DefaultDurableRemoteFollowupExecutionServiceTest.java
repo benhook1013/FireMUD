@@ -546,7 +546,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setScriptEventId("remote-enter-1");
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -586,8 +586,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("onEnterRegion", request.getEventType());
     assertEquals("remote-enter-1", request.getScriptEventId());
     assertEquals("v1", request.getEventSchemaVersion());
-    assertEquals(
-        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}", request.getPayloadJson());
+    assertEquals("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}", request.getPayloadJson());
     assertEquals("demo", request.getWorldSlug());
     assertEquals("production", request.getRealmSlug());
     assertEquals("17", request.getPointerVersion());
@@ -752,7 +751,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setScriptEventId("remote-enter-1");
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
@@ -805,7 +804,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setScriptEventId("remote-enter-1");
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);

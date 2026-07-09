@@ -4531,7 +4531,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setScriptEventId("evt-1");
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:evt-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     followup.setQueueSourceKind("REMOTE_FOLLOWUP");
     followup.setQueueSourceState("TARGET_REGION_CLAIMED");
     followup.setQueueSourceOrdinal(1L);
@@ -5003,7 +5003,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setScriptEventId("evt-1");
     followup.setTriggerMode("TRIGGER_MODE_CATCH_UP");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:evt-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     followup.setQueueSourceKind("REMOTE_FOLLOWUP");
     followup.setQueueSourceState("TARGET_REGION_CLAIMED");
     followup.setQueueSourceOrdinal(2L);
@@ -5213,7 +5213,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         "game-session:onEnterRegion:9:8:evt-1",
         responseRef.get().getFollowups(0).getReadSnapshotToken());
     assertEquals(
-        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
+        "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}",
         responseRef.get().getFollowups(0).getEventPayloadJson());
     assertEquals("region-b", responseRef.get().getFollowups(0).getTargetRegionId());
     assertEquals(55L, responseRef.get().getFollowups(0).getDueTickId());
@@ -5628,7 +5628,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setScriptEventId("remote-enter-1");
     followup.setTriggerMode("DIRECT");
     followup.setReadSnapshotToken("game-session:onEnterRegion:7:3:remote-enter-1");
-    followup.setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     followup.setQueueSourceKind("REMOTE_FOLLOWUP");
     followup.setQueueSourceState("TARGET_REGION_CLAIMED");
     followup.setQueueSourceOrdinal(3L);
@@ -5848,7 +5848,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         "game-session:onEnterRegion:7:3:remote-enter-1",
         responseRef.get().getResults(0).getReadSnapshotToken());
     assertEquals(
-        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
+        "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}",
         responseRef.get().getResults(0).getEventPayloadJson());
     assertEquals("patch-1", responseRef.get().getResults(0).getScriptPatchVersion());
     assertEquals("plugin-1", responseRef.get().getResults(0).getPluginId());

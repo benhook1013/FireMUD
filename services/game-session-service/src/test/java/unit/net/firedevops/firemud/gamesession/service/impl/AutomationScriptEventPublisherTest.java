@@ -227,7 +227,7 @@ class AutomationScriptEventPublisherTest {
             Runnable::run);
 
     publisher.publishRegionTransitionEvents(
-        sharedGameplayContext("room-a"), sharedGameplayContext("room-b"), "effect-1");
+        sharedGameplayContext("R-101"), sharedGameplayContext("R-102"), "effect-1");
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -254,9 +254,37 @@ class AutomationScriptEventPublisherTest {
         .extracting(TriggerScriptEventRequest::getPayloadJson)
         .allSatisfy(
             payload -> {
-              assertThat(payload).contains("\"fromRegionId\":\"room-a\"");
-              assertThat(payload).contains("\"toRegionId\":\"room-b\"");
+              assertThat(payload).contains("\"fromRegionId\":\"R-101\"");
+              assertThat(payload).contains("\"toRegionId\":\"R-102\"");
             });
+  }
+
+  @Test
+  void skipsRegionTransitionEventsWhenRuntimeRoomIdsAreLegacy() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishRegionTransitionEvents(
+        sharedGameplayContext("room-a"), sharedGameplayContext("R-102"), "effect-1");
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
   }
 
   @Test
@@ -284,7 +312,7 @@ class AutomationScriptEventPublisherTest {
             Runnable::run);
 
     publisher.publishRegionExitEvent(
-        sharedGameplayContext("room-a"), "disconnect:transport_loss:17:99:44", "TRANSPORT_LOSS");
+        sharedGameplayContext("R-101"), "disconnect:transport_loss:17:99:44", "TRANSPORT_LOSS");
 
     ArgumentCaptor<TriggerScriptEventRequest> captor =
         ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
@@ -294,9 +322,37 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getScriptEventId()).isEqualTo("disconnect:transport_loss:17:99:44");
     assertThat(request.getReadSnapshotToken())
         .isEqualTo("game-session:onLeaveRegion:99:7:disconnect:transport_loss:17:99:44");
-    assertThat(request.getPayloadJson()).contains("\"fromRegionId\":\"room-a\"");
+    assertThat(request.getPayloadJson()).contains("\"fromRegionId\":\"R-101\"");
     assertThat(request.getPayloadJson()).contains("\"toRegionId\":\"\"");
     assertThat(request.getPayloadJson()).contains("\"exitReason\":\"TRANSPORT_LOSS\"");
+  }
+
+  @Test
+  void skipsRegionExitEventWhenRuntimeRoomIdIsLegacy() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishRegionExitEvent(
+        sharedGameplayContext("room-a"), "disconnect:transport_loss:17:99:44", "TRANSPORT_LOSS");
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
   }
 
   private static GameplayCommand command(String commandId, String commandName) {
