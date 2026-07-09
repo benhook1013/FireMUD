@@ -541,13 +541,9 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
-<<<<<<< HEAD
             echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
             echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"
             echo "- Demo login password: ${DEMO_SMOKE_PASSWORD}"
-=======
-            echo "- Demo login: ${DEMO_SMOKE_EMAIL} / ${DEMO_SMOKE_PASSWORD}"
->>>>>>> 6555c6872 (Centralize demo smoke defaults)
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize dev-demo unavailability
