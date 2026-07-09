@@ -1,6 +1,8 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -67,5 +69,77 @@ class InternalRuntimeControllerTest {
         .andExpect(jsonPath("$.data.created").value(true))
         .andExpect(jsonPath("$.data.requestId").value("req-1"))
         .andExpect(jsonPath("$.data.replayed").value(false));
+  }
+
+  @Test
+  void ensurePublicProductionMembershipRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+    PublicProductionMembershipRequest request =
+        new PublicProductionMembershipRequest(11L, 0L, "demo", "production", "req-1");
+
+    mockMvc
+        .perform(
+            post("/internal/runtime/public-production-membership")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void grantRealmAccessRejectsZeroAccountIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/internal/runtime/realm-access-grants")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "accountId": 0,
+                      "tenantId": 7,
+                      "worldSlug": "demo",
+                      "realmSlug": "production",
+                      "grantedBy": "operator",
+                      "grantReason": "test",
+                      "requestId": "req-2"
+                    }
+                    """))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void revokeRealmAccessRejectsMalformedAccountIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            delete("/internal/runtime/realm-access-grants")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .param("accountId", "not-a-number")
+                .param("tenantId", "7")
+                .param("worldSlug", "demo")
+                .param("realmSlug", "production"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+
+    verifyNoInteractions(accountService);
   }
 }
