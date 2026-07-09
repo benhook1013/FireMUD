@@ -544,4 +544,31 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
     assertThat(json.path("text").asText()).isEqualTo("Legacy safe text\n");
   }
+
+  @Test
+  void firstPartyWebFallsBackToTranscriptChunkForIncompleteBufferedMetadata() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    ScreenBufferService.BufferedEntry entry =
+        new ScreenBufferService.BufferedEntry(
+            "Legacy safe text\n",
+            1,
+            "Legacy safe text\n".getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+            System.currentTimeMillis(),
+            "MESSAGE",
+            null,
+            "DEFAULT",
+            "text_message",
+            "{\"text\":\"Legacy safe text\"}");
+
+    String payload = projector.projectTranscriptEntry(session, "screen buffer", entry);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
+    assertThat(json.path("text").asText()).isEqualTo("Legacy safe text\n");
+  }
 }
