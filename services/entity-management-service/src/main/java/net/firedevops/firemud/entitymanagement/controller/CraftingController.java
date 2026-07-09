@@ -23,8 +23,12 @@ public class CraftingController {
   }
 
   @GetMapping("/{id}")
-  public ResponseEntity<ApiResponse<CraftingRecipeDto>> get(@PathVariable Long id) {
-    CraftingRecipeDto result = craftingService.getRecipe(id);
-    return ResponseEntity.ok(ApiResponse.success(result));
+  public ResponseEntity<ApiResponse<CraftingRecipeDto>> get(@PathVariable String id) {
+    return EntityManagementRequestReaders.withBadRequest(
+        () ->
+            ResponseEntity.ok(
+                ApiResponse.success(
+                    craftingService.getRecipe(
+                        EntityManagementRequestReaders.requirePositivePathId(id, "id")))));
   }
 }
