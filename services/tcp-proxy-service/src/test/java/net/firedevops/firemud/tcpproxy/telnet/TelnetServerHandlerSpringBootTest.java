@@ -12,31 +12,10 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-@SpringBootTest(classes = TelnetServerHandlerSpringBootTest.TestConfig.class)
 class TelnetServerHandlerSpringBootTest {
-
-  @SpringBootConfiguration
-  static class TestConfig {
-    @Bean
-    MeterRegistry meterRegistry() {
-      return new SimpleMeterRegistry();
-    }
-
-    @Bean
-    LookCacheService lookCacheService() {
-      return Mockito.mock(LookCacheService.class);
-    }
-  }
-
-  @Autowired private MeterRegistry meterRegistry;
-
-  @MockitoBean private TcpProxyEventService eventService;
+  private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
 
   @Test
   void recordsConnectEventWhenHiddenBootstrapDefaultsApply() {
