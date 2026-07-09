@@ -12,7 +12,10 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -33,8 +36,23 @@ class WebSocketOutputProjectorTest {
 
   private final PresentationProperties presentation = new PresentationProperties();
   private final ObjectMapper objectMapper = new ObjectMapper();
+  private final TextCommandMetadataResolver metadataResolver =
+      commandId ->
+          switch (commandId) {
+            case "look" ->
+                java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        TextCommandActionCategory.META, List.of(TextCommandActionTag.UI)));
+            case "wave" ->
+                java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        TextCommandActionCategory.SOCIAL,
+                        List.of(
+                            TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION)));
+            default -> java.util.Optional.empty();
+          };
   private final WebSocketOutputProjector projector =
-      new WebSocketOutputProjector(new TextPlayerOutputRenderer(presentation));
+      new WebSocketOutputProjector(new TextPlayerOutputRenderer(presentation), metadataResolver);
 
   @Test
   void genericWebSocketStillReceivesClassicText() {
@@ -77,6 +95,8 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("eventType").asText()).isEqualTo("command_result");
     assertThat(json.path("commandType").asText()).isEqualTo("LOOK");
     assertThat(json.path("commandId").asText()).isEqualTo("look");
+    assertThat(json.path("actionCategory").asText()).isEqualTo("META");
+    assertThat(json.path("actionTags")).extracting(JsonNode::asText).containsExactly("UI");
     assertThat(json.path("accepted").asBoolean()).isTrue();
     assertThat(json.path("outputs")).hasSize(1);
     assertThat(json.path("outputs").get(0).path("kind").asText()).isEqualTo("PROMPT");
@@ -112,6 +132,10 @@ class WebSocketOutputProjectorTest {
     JsonNode json = objectMapper.readTree(payload);
     assertThat(json.path("commandType").asText()).isEqualTo("AUTHORED");
     assertThat(json.path("commandId").asText()).isEqualTo("wave");
+    assertThat(json.path("actionCategory").asText()).isEqualTo("SOCIAL");
+    assertThat(json.path("actionTags"))
+        .extracting(JsonNode::asText)
+        .containsExactly("AUTHORING", "COMMUNICATION");
   }
 
   @Test

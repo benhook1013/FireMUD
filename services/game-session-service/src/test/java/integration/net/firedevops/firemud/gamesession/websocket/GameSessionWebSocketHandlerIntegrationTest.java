@@ -765,12 +765,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(json(payloads.get(0)).path("commandType").asText()).isEqualTo("LOGIN");
     assertThat(json(payloads.get(0)).path("commandId").asText()).isEqualTo("login");
+    assertThat(json(payloads.get(0)).path("actionCategory").asText()).isEqualTo("META");
+    assertThat(json(payloads.get(0)).path("actionTags").get(0).asText()).isEqualTo("SESSION");
     assertThat(json(payloads.get(0)).path("accepted").asBoolean()).isTrue();
     assertThat(payloads)
         .anyMatch(
             payload ->
                 json(payload).path("commandType").asText().equals("PLAY")
                     && json(payload).path("commandId").asText().equals("play")
+                    && json(payload).path("actionCategory").asText().equals("META")
+                    && json(payload).path("actionTags").get(0).asText().equals("SESSION")
                     && json(payload).path("accepted").asBoolean());
     assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
