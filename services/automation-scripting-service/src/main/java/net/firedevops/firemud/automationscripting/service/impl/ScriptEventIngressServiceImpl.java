@@ -162,6 +162,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
     long tenantKey = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
+    validateGameplayRoutingBundleShape(request, sourceService);
     String schemaVersion = schemaVersion(request);
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
@@ -376,7 +377,22 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         || request.getPointerVersion().isBlank()) {
       return rejected("missing_gameplay_routing_bundle");
     }
+    validateGameplayRoutingBundleShape(request, sourceService);
     return null;
+  }
+
+  private void validateGameplayRoutingBundleShape(
+      TriggerScriptEventRequest request, String sourceService) {
+    if (!"game-session-service".equals(sourceService)
+        || request.getGameInstanceId().isBlank()
+        || request.getPlayableStateScopeValue() == 0
+        || request.getWorldSlug().isBlank()
+        || request.getRealmSlug().isBlank()
+        || request.getPointerVersion().isBlank()) {
+      return;
+    }
+    RoutingBundleSupport.normalize(
+        request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
   }
 
   private TriggerAdmission validatePinnedPatch(TriggerScriptEventRequest request) {
