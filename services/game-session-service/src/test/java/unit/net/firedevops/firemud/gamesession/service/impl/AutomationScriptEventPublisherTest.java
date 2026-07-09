@@ -23,9 +23,13 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class AutomationScriptEventPublisherTest {
   @Test
   void publishesCommandEventWithRuntimeFenceAndPinnedPatch() {
@@ -260,7 +264,7 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
-  void skipsRegionTransitionEventsWhenRuntimeRoomIdsAreLegacy() {
+  void skipsRegionTransitionEventsWhenRuntimeRoomIdsAreLegacy(CapturedOutput output) {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
@@ -285,6 +289,9 @@ class AutomationScriptEventPublisherTest {
         sharedGameplayContext("room-a"), sharedGameplayContext("R-102"), "effect-1");
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(output.getOut() + output.getErr())
+        .contains("Skipping script event room id because it is not canonical")
+        .contains("roomInstanceId=room-a");
   }
 
   @Test

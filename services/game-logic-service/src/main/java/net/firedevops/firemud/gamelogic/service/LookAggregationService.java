@@ -204,11 +204,8 @@ public class LookAggregationService {
   }
 
   private RoomInstanceRef resolveRoomInstance(LookRequest request) {
-    try {
-      return RuntimeRoomInstanceRefs.requireCanonical(request.getRoomInstance());
-    } catch (IllegalArgumentException ex) {
-      throw Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException();
-    }
+    return RuntimeRoomInstanceRefs.requireCanonicalOrThrowInvalidArgument(
+        request.getRoomInstance());
   }
 
   private RoomEntity toRoomEntity(net.firedevops.firemud.entitymanagement.v1.RoomEntity entity) {

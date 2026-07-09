@@ -503,6 +503,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     try {
       return GameplayRuntimeRoomIds.requireCanonical(normalized, "roomInstanceId");
     } catch (IllegalArgumentException ex) {
+      LOG.warn(
+          "Skipping script event room id because it is not canonical roomInstanceId={} message={}",
+          normalized,
+          ex.getMessage());
       return "";
     }
   }

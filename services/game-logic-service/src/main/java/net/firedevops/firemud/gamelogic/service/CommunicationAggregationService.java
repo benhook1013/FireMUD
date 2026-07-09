@@ -410,11 +410,8 @@ public class CommunicationAggregationService {
   }
 
   private RoomInstanceRef resolveRoomInstance(SendCommunicationRequest request) {
-    try {
-      return RuntimeRoomInstanceRefs.requireCanonical(request.getRoomInstance());
-    } catch (IllegalArgumentException ex) {
-      throw io.grpc.Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException();
-    }
+    return RuntimeRoomInstanceRefs.requireCanonicalOrThrowInvalidArgument(
+        request.getRoomInstance());
   }
 
   private boolean requiresRoomAudience(CommunicationType type) {
