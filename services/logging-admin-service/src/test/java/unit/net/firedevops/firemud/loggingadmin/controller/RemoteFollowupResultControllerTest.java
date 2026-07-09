@@ -228,7 +228,7 @@ class RemoteFollowupResultControllerTest {
         "remote-enter-1",
         "DIRECT",
         "game-session:onEnterRegion:7:3:remote-enter-1",
-        "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}",
+        "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}",
         "entity:npc-7",
         "region-origin-current",
         13L,

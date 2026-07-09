@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -26,7 +28,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(VoiceChatController.class)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  GlobalExceptionHandler.class,
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class
+})
 @WithFiremudHttpAuthTestProperties
 class VoiceChatControllerTest {
 
@@ -50,5 +56,24 @@ class VoiceChatControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void createTokenRejectsZeroAccountIdBeforeAccessCheckAndDispatch() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String body = "{\"tenantId\":1,\"accountId\":0,\"channelId\":\"guild-1\"}";
+
+    mockMvc
+        .perform(
+            post("/voice/token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+
+    verifyNoInteractions(service, socialAccessGuard);
   }
 }

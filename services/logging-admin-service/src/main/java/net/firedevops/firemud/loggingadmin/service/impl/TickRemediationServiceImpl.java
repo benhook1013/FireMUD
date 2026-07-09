@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
@@ -40,7 +41,7 @@ public class TickRemediationServiceImpl implements TickRemediationService {
   @Override
   public RuntimeOwnershipStatusDto getRuntimeOwnershipStatus(
       long tenantId, String gameInstanceId, String regionId) {
-    validateScope(gameInstanceId, regionId);
+    Long requestedGameInstanceId = validateScope(gameInstanceId, regionId);
     GetRuntimeOwnershipStatusResponse response =
         gameSessionControlPlaneClient.getRuntimeOwnershipStatus(tenantId, gameInstanceId, regionId);
     requireNoError(response.getError());
@@ -50,9 +51,9 @@ public class TickRemediationServiceImpl implements TickRemediationService {
           HttpStatus.INTERNAL_SERVER_ERROR,
           "control-plane runtime ownership response did not match requested tenant_id");
     }
-    if (hasText(gameInstanceId)
+    if (requestedGameInstanceId != null
         && parseResponseLong(ownership.getGameInstanceId(), "game_instance_id")
-            != parseLong(gameInstanceId, "gameInstanceId")) {
+            != requestedGameInstanceId) {
       throw new ResponseStatusException(
           HttpStatus.INTERNAL_SERVER_ERROR,
           "control-plane runtime ownership response did not match requested gameInstanceId");
@@ -175,12 +176,20 @@ public class TickRemediationServiceImpl implements TickRemediationService {
         error.getMessage());
   }
 
-  private void validateScope(String gameInstanceId, String regionId) {
+  private Long validateScope(String gameInstanceId, String regionId) {
     boolean hasGameInstance = hasText(gameInstanceId);
     boolean hasRegion = hasText(regionId);
     if (hasGameInstance == hasRegion) {
       throw new ResponseStatusException(
           HttpStatus.BAD_REQUEST, "Exactly one of gameInstanceId or regionId is required");
+    }
+    if (!hasGameInstance) {
+      return null;
+    }
+    try {
+      return RequestIdValidation.requirePositiveLong(gameInstanceId, "gameInstanceId");
+    } catch (IllegalArgumentException ex) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex);
     }
   }
 
@@ -223,14 +232,5 @@ public class TickRemediationServiceImpl implements TickRemediationService {
 
   private long parseResponseLong(String value, String field) {
     return ControlPlaneResponseReaders.parseLong(value, field);
-  }
-
-  private long parseLong(String value, String field) {
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ex) {
-      throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, field + " was not numeric in control-plane response");
-    }
   }
 }

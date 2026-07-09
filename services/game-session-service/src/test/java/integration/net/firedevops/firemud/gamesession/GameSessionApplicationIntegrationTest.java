@@ -274,7 +274,7 @@ class GameSessionApplicationIntegrationTest {
             55L,
             "Player",
             7L,
-            "room-1",
+            "R-1",
             "jwt-token",
             "en-NZ",
             7L));

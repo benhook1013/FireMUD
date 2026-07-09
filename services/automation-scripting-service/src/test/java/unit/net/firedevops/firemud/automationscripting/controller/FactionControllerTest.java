@@ -71,4 +71,38 @@ class FactionControllerTest {
 
     verifyNoInteractions(factionService);
   }
+
+  @Test
+  void adjustReputationRejectsMalformedPlayableStateScopeBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            patch("/factions/3/reputation")
+                .param("characterId", "2")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "BROKEN_SCOPE")
+                .param("delta", "5")
+                .param("tenantId", "1"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("playableStateScope is invalid"));
+
+    verifyNoInteractions(factionService);
+  }
+
+  @Test
+  void adjustReputationRejectsMalformedDeltaBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            patch("/factions/3/reputation")
+                .param("characterId", "2")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .param("delta", "bad-delta")
+                .param("tenantId", "1"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("delta must be numeric"));
+
+    verifyNoInteractions(factionService);
+  }
 }

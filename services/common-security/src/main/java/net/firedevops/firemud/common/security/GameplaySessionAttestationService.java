@@ -27,6 +27,7 @@ public class GameplaySessionAttestationService {
       String realmSlug,
       String pointerVersion,
       String playableStateScope) {
+    String normalizedRoomInstanceId = requireOptionalCanonicalRuntimeRoomId(roomInstanceId);
     requireText(tenantId, "tenantId");
     requireText(sessionId, "sessionId");
     requireText(accountId, "accountId");
@@ -44,7 +45,7 @@ public class GameplaySessionAttestationService {
             Map.entry("accountId", accountId),
             Map.entry("characterId", characterId),
             Map.entry("gameInstanceId", gameInstanceId),
-            Map.entry("roomInstanceId", blankToEmpty(roomInstanceId)),
+            Map.entry("roomInstanceId", normalizedRoomInstanceId),
             Map.entry("worldSlug", blankToEmpty(worldSlug)),
             Map.entry("realmSlug", blankToEmpty(realmSlug)),
             Map.entry("pointerVersion", blankToEmpty(pointerVersion)),
@@ -53,11 +54,12 @@ public class GameplaySessionAttestationService {
 
   public String issueInternalProbeAttestation(
       String tenantId, String gameInstanceId, String roomInstanceId) {
+    String normalizedRoomInstanceId =
+        RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, "roomInstanceId");
     requireText(tenantId, "tenantId");
     requireText(gameInstanceId, "gameInstanceId");
-    requireText(roomInstanceId, "roomInstanceId");
     return jwtUtil.generateToken(
-        "gameplay-probe:" + tenantId + ":" + gameInstanceId + ":" + roomInstanceId,
+        "gameplay-probe:" + tenantId + ":" + gameInstanceId + ":" + normalizedRoomInstanceId,
         Map.ofEntries(
             Map.entry("attestationType", INTERNAL_PROBE),
             Map.entry("tenantId", tenantId),
@@ -65,7 +67,7 @@ public class GameplaySessionAttestationService {
             Map.entry("accountId", "0"),
             Map.entry("characterId", "0"),
             Map.entry("gameInstanceId", gameInstanceId),
-            Map.entry("roomInstanceId", roomInstanceId),
+            Map.entry("roomInstanceId", normalizedRoomInstanceId),
             Map.entry("worldSlug", ""),
             Map.entry("realmSlug", ""),
             Map.entry("pointerVersion", ""),
@@ -90,7 +92,8 @@ public class GameplaySessionAttestationService {
     String accountId = requireClaim(claims, "accountId");
     String characterId = requireClaim(claims, "characterId");
     String gameInstanceId = requireClaim(claims, "gameInstanceId");
-    String roomInstanceId = claimText(claims.get("roomInstanceId"));
+    String roomInstanceId =
+        requireOptionalCanonicalRuntimeRoomClaim(claimText(claims.get("roomInstanceId")));
     String worldSlug = claimText(claims.get("worldSlug"));
     String realmSlug = claimText(claims.get("realmSlug"));
     String pointerVersion = claimText(claims.get("pointerVersion"));
@@ -248,6 +251,24 @@ public class GameplaySessionAttestationService {
     } catch (IllegalArgumentException ex) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", "Gameplay session attestation is missing " + name, ex);
+    }
+  }
+
+  private String requireOptionalCanonicalRuntimeRoomId(String roomInstanceId) {
+    return StringUtils.hasText(roomInstanceId)
+        ? RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, "roomInstanceId")
+        : "";
+  }
+
+  private String requireOptionalCanonicalRuntimeRoomClaim(String roomInstanceId) {
+    if (!StringUtils.hasText(roomInstanceId)) {
+      return roomInstanceId;
+    }
+    try {
+      return RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, "roomInstanceId");
+    } catch (IllegalArgumentException ex) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);
     }
   }
 

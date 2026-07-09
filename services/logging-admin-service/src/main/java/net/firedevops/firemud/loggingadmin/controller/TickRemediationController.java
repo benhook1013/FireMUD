@@ -37,10 +37,13 @@ public class TickRemediationController {
     return LoggingAdminRequestReaders.withBadRequest(
         () -> {
           long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          String normalizedGameInstanceId =
+              LoggingAdminRequestReaders.requireOptionalPositiveLongText(
+                  gameInstanceId, "gameInstanceId");
           return ResponseEntity.ok(
               ApiResponse.success(
                   tickRemediationService.getRuntimeOwnershipStatus(
-                      parsedTenantId, gameInstanceId, regionId)));
+                      parsedTenantId, normalizedGameInstanceId, regionId)));
         });
   }
 
@@ -48,25 +51,34 @@ public class TickRemediationController {
   @Timed(value = "tickRemediationPause", description = "Pause ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> pause(
       @Valid @RequestBody TickRemediationRequest request) {
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            tickRemediationService.pauseTicksForScope(
-                requestWithAuthorizedTenant(request, request.tenantId()))));
+    return LoggingAdminRequestReaders.withBadRequest(
+        () ->
+            ResponseEntity.ok(
+                ApiResponse.success(
+                    tickRemediationService.pauseTicksForScope(
+                        requestWithAuthorizedTenant(request, request.tenantId())))));
   }
 
   @PostMapping("/resume")
   @Timed(value = "tickRemediationResume", description = "Resume ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> resume(
       @Valid @RequestBody TickRemediationRequest request) {
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            tickRemediationService.resumeTicksForScope(
-                requestWithAuthorizedTenant(request, request.tenantId()))));
+    return LoggingAdminRequestReaders.withBadRequest(
+        () ->
+            ResponseEntity.ok(
+                ApiResponse.success(
+                    tickRemediationService.resumeTicksForScope(
+                        requestWithAuthorizedTenant(request, request.tenantId())))));
   }
 
   private TickRemediationRequest requestWithAuthorizedTenant(
       TickRemediationRequest request, Long tenantId) {
     SessionContext.requireTenantAccess(tenantId);
-    return request;
+    return new TickRemediationRequest(
+        request.tenantId(),
+        LoggingAdminRequestReaders.requireOptionalPositiveLongText(
+            request.gameInstanceId(), "gameInstanceId"),
+        request.regionId(),
+        request.reason());
   }
 }

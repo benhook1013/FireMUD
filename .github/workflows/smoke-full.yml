@@ -54,7 +54,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: smoke-full-${{ inputs.pr_number != '' && format('pr-{0}-full', inputs.pr_number) || github.ref }}
+  group: smoke-full-${{ inputs.pr_number != '' && format('pr-{0}-sha-{1}-full', inputs.pr_number, inputs.head_sha) || github.ref }}
   cancel-in-progress: true
 
 jobs:

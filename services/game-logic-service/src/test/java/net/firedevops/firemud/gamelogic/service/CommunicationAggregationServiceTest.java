@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -76,7 +77,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
                 .build());
@@ -84,6 +85,27 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSuccess()).isFalse();
     assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
     assertThat(resp.getError().getMessage()).isEqualTo("SAY is disabled by operator policy");
+  }
+
+  @Test
+  void rejectsLegacyRuntimeRoomIdsBeforeAudienceLookup() {
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .build());
+
+    assertThat(resp.getSuccess()).isFalse();
+    assertThat(resp.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(resp.getError().getMessage())
+        .contains("room_instance.room_instance_id must be a runtime room id like R-1021");
+    verify(entityStub, never()).listRoomEntities(any());
+    verify(socialStub, never()).sendMessage(any());
   }
 
   @Test
@@ -119,7 +141,7 @@ class CommunicationAggregationServiceTest {
                 .setGameInstanceId("7")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
                 .build());
@@ -161,7 +183,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("  Hello travelers  ")
                 .build());
@@ -170,9 +192,26 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getMessage()).isEqualTo("Hello travelers");
     assertThat(resp.getDeliveredToList()).containsExactly("Emberline", "Kobold Scout", "Sora");
     assertThat(resp.getNpcEchoesList()).containsExactly("Kobold Scout");
-    assertThat(resp.getRecipientViewsList()).hasSize(1);
-    assertThat(resp.getRecipientViews(0).getRole())
-        .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+    assertThat(resp.getRecipientViewsList()).hasSize(2);
+    assertThat(resp.getRecipientViewsList().get(0))
+        .satisfies(
+            view -> {
+              assertThat(view.getRecipientId()).isEqualTo("player-0");
+              assertThat(view.getRecipientName()).isEqualTo("Emberline");
+              assertThat(view.getRole())
+                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+            });
+    assertThat(resp.getRecipientViewsList().get(1))
+        .satisfies(
+            view -> {
+              assertThat(view.getRecipientId()).isEqualTo("player-1");
+              assertThat(view.getRecipientName()).isEqualTo("Sora");
+              assertThat(view.getRole())
+                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
+              assertThat(view.getPerception())
+                  .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT);
+              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+            });
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
@@ -201,7 +240,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
                 .setEffectId("fx-comm-9")
@@ -240,7 +279,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
                 .setText("Keep quiet")
@@ -322,7 +361,7 @@ class CommunicationAggregationServiceTest {
             .setGameInstanceId("7")
             .setSessionId("sess-1")
             .setCharacterId("player-0")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
             .setType(CommunicationType.WHISPER)
             .setTargetCharacterName("Sora")
             .setText("Keep quiet")
@@ -373,7 +412,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
                 .setText("Keep quiet")
@@ -440,7 +479,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
                 .setText("Keep quiet")
@@ -510,7 +549,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("   ")
                 .build());
@@ -542,7 +581,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hi")
                 .build());

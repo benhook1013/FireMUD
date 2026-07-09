@@ -1,10 +1,11 @@
 package net.firedevops.firemud.gamesession.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 /** Request payload for starting a new game session. */
 public record StartSessionRequest(
-    @NotNull Long tenantId,
-    @NotNull Long gameTemplateId,
+    @NotNull @Positive Long tenantId,
+    @NotNull @Positive Long gameTemplateId,
     @NotNull String controlPlaneRequestId,
-    @NotNull Long ownerAccountId) {}
+    @NotNull @Positive Long ownerAccountId) {}

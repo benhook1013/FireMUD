@@ -30,6 +30,21 @@ class CommunicationOutputMapperTest {
   }
 
   @Test
+  void sayRecipientPresentationNormalizesSpeech() {
+    PlayerOutput output =
+        mapper.recipientOutput(
+            CommunicationType.SAY,
+            CommunicationRecipientView.newBuilder()
+                .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+                .setPerception(CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT)
+                .setSpeakerName("Emberline")
+                .build(),
+            " hello travelers ");
+
+    assertThat(output.text()).isEqualTo("Emberline says, \"Hello travelers.\"");
+  }
+
+  @Test
   void whisperRecipientPresentationNormalizesSpeech() {
     PlayerOutput output =
         mapper.recipientOutput(

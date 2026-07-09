@@ -25,7 +25,7 @@ class ContainerCommandHandlerTest {
   private final ContainerCommandHandler handler = new ContainerCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
+          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
 
   @Test
   void containerViewReturnsStructuredContents() {
@@ -359,7 +359,7 @@ class ContainerCommandHandlerTest {
   void containerViewResolvesRoomGroundContainer() {
     when(gameLogicClient.queryInventory(context))
         .thenReturn(QueryInventoryResponse.newBuilder().build());
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -396,7 +396,7 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("torch3")
                         .build())
                 .build());
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -428,7 +428,7 @@ class ContainerCommandHandlerTest {
   void takeFromRoomGroundContainerUsesRoomResolution() {
     when(gameLogicClient.queryInventory(context))
         .thenReturn(QueryInventoryResponse.newBuilder().build());
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(

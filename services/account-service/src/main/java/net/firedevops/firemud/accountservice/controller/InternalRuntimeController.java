@@ -34,31 +34,52 @@ public class InternalRuntimeController {
       ensurePublicProductionMembership(
           @Valid @RequestBody PublicProductionMembershipRequest request) {
     SessionContext.requireGlobalPrivilegedRole();
+    PublicProductionMembershipRequest normalizedRequest =
+        new PublicProductionMembershipRequest(
+            AccountRequestReaders.requireAccountId(request.accountId()),
+            AccountRequestReaders.requireTenantId(request.tenantId()),
+            request.worldSlug(),
+            request.realmSlug(),
+            request.requestId());
     return ResponseEntity.ok(
         ApiResponse.success(
             accountService.ensurePublicProductionPlayerMembership(
-                request.accountId(),
-                request.tenantId(),
-                request.worldSlug(),
-                request.realmSlug(),
-                request.requestId())));
+                normalizedRequest.accountId(),
+                normalizedRequest.tenantId(),
+                normalizedRequest.worldSlug(),
+                normalizedRequest.realmSlug(),
+                normalizedRequest.requestId())));
   }
 
   @PostMapping("/realm-access-grants")
   public ResponseEntity<ApiResponse<RealmAccessGrantResult>> grantRealmAccess(
       @Valid @RequestBody RealmAccessGrantRequest request) {
     SessionContext.requireGlobalPrivilegedRole();
-    return ResponseEntity.ok(ApiResponse.success(accountService.grantRealmAccess(request)));
+    RealmAccessGrantRequest normalizedRequest =
+        new RealmAccessGrantRequest(
+            AccountRequestReaders.requireAccountId(request.accountId()),
+            AccountRequestReaders.requireTenantId(request.tenantId()),
+            request.worldSlug(),
+            request.realmSlug(),
+            request.grantedBy(),
+            request.grantReason(),
+            request.requestId());
+    return ResponseEntity.ok(
+        ApiResponse.success(accountService.grantRealmAccess(normalizedRequest)));
   }
 
   @DeleteMapping("/realm-access-grants")
   public ResponseEntity<ApiResponse<Void>> revokeRealmAccess(
-      @RequestParam("accountId") Long accountId,
-      @RequestParam("tenantId") Long tenantId,
+      @RequestParam("accountId") String accountId,
+      @RequestParam("tenantId") String tenantId,
       @RequestParam("worldSlug") String worldSlug,
       @RequestParam("realmSlug") String realmSlug) {
     SessionContext.requireGlobalPrivilegedRole();
-    accountService.revokeRealmAccess(accountId, tenantId, worldSlug, realmSlug);
+    accountService.revokeRealmAccess(
+        AccountRequestReaders.requireAccountId(accountId),
+        AccountRequestReaders.requireTenantId(tenantId),
+        worldSlug,
+        realmSlug);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

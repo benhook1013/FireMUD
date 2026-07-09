@@ -10,10 +10,8 @@ import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
-import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,11 +26,9 @@ import org.springframework.web.socket.WebSocketSession;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class PlayerOutputDeliveryService {
   private static final Logger LOG = LoggerFactory.getLogger(PlayerOutputDeliveryService.class);
-  private static final String CONNECTION_MODE_ATTR = "firemud.websocket.connectionMode";
 
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
-  private final TextPlayerOutputRenderer outputRenderer;
   private final EffectiveSettingsResolver settingsResolver;
   private final WebSocketOutputProjector outputProjector;
   private final PromptComposer promptComposer;
@@ -42,7 +38,6 @@ public final class PlayerOutputDeliveryService {
   public PlayerOutputDeliveryService(
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService,
-      TextPlayerOutputRenderer outputRenderer,
       EffectiveSettingsResolver settingsResolver,
       WebSocketOutputProjector outputProjector,
       PromptComposer promptComposer,
@@ -50,7 +45,6 @@ public final class PlayerOutputDeliveryService {
       MeterRegistry meterRegistry) {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
-    this.outputRenderer = outputRenderer;
     this.settingsResolver = settingsResolver;
     this.outputProjector = outputProjector;
     this.promptComposer = promptComposer;
@@ -98,34 +92,13 @@ public final class PlayerOutputDeliveryService {
       String localeTag,
       PresentationProperties effectivePresentation) {
     List<ScreenBufferService.BufferedEntry> replayEntries =
-        outputs.stream()
-            .filter(PlayerOutput::screenBufferEligible)
-            .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
-            .filter(entry -> StringUtils.hasText(entry.text()))
-            .toList();
+        ReplayableScreenBufferEntries.fromOutputs(
+            outputs, outputProjector, localeTag, effectivePresentation);
     if (replayEntries.isEmpty() || context.gameInstanceId() <= 0 || context.characterId() <= 0) {
       return;
     }
     screenBufferService.append(
         context.tenantId(), context.gameInstanceId(), context.characterId(), replayEntries);
-  }
-
-  private ScreenBufferService.BufferedEntry bufferedEntry(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    return outputProjector.toBufferedEntry(
-        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
-  }
-
-  private String renderReplayableOutput(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    if (output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK,
-          List.of(output),
-          localeTag,
-          effectivePresentation);
-    }
-    return outputRenderer.render(output, localeTag, effectivePresentation);
   }
 
   private void pushOutputs(
@@ -166,18 +139,6 @@ public final class PlayerOutputDeliveryService {
       PlayerOutput output,
       String localeTag,
       PresentationProperties effectivePresentation) {
-    if (!isFirstPartyWeb(session) && output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK,
-          List.of(output),
-          localeTag,
-          effectivePresentation);
-    }
     return outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation);
-  }
-
-  private boolean isFirstPartyWeb(WebSocketSession session) {
-    Object mode = session.getAttributes().get(CONNECTION_MODE_ATTR);
-    return "first_party_web".equals(mode);
   }
 }

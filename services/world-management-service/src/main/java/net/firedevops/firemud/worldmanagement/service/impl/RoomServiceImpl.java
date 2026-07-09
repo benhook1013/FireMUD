@@ -12,9 +12,9 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.i18n.LocalizedTextVariants;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
-import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
@@ -63,11 +63,11 @@ public class RoomServiceImpl implements RoomService {
 
   @Override
   @Timed(value = "room.get")
-  public RoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomId) {
-    String key = cacheKey(tenantId, gameInstanceId, roomId);
+  public RuntimeRoomDto getRoom(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
+    String key = cacheKey(tenantId, gameInstanceId, roomInstanceRowId);
     try {
       Object cached = redisTemplate.opsForValue().get(key);
-      if (cached instanceof RoomDto dto) {
+      if (cached instanceof RuntimeRoomDto dto) {
         cacheHitCounter.increment();
         return dto;
       }
@@ -75,9 +75,10 @@ public class RoomServiceImpl implements RoomService {
       LOG.warn("Room cache read failed for key {}", key, ex);
     }
     cacheMissCounter.increment();
-    RoomDto dto =
+    RuntimeRoomDto dto =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
+                tenantId, gameInstanceId, roomInstanceRowId)
             .map(this::toDto)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     try {
@@ -92,14 +93,17 @@ public class RoomServiceImpl implements RoomService {
   @Timed(value = "room.snapshot")
   @Transactional(readOnly = true)
   public RoomSnapshotDto getRoomSnapshot(
-      Long tenantId, Long gameInstanceId, Long roomId, String preferredLocaleTag) {
+      Long tenantId, Long gameInstanceId, Long roomInstanceRowId, String preferredLocaleTag) {
     RoomInstance room =
         roomInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceRowId(
+                tenantId, gameInstanceId, roomInstanceRowId)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+    long fromRoomInstanceRecordId = room.getId();
     List<RoomExitSnapshotDto> exits =
         roomInstanceExitRepository
-            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(tenantId, gameInstanceId, roomId)
+            .findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+                tenantId, gameInstanceId, fromRoomInstanceRecordId)
             .stream()
             .map(exit -> toExitSnapshot(exit, preferredLocaleTag))
             .collect(Collectors.toList());
@@ -110,7 +114,7 @@ public class RoomServiceImpl implements RoomService {
         resolveLocalizedText(
             room.getDescription(), room.getDescriptionLocalizedVariantsJson(), preferredLocaleTag);
     return new RoomSnapshotDto(
-        room.getRoomInstanceId(),
+        room.getRoomInstanceRowId(),
         room.getTenantId(),
         gameInstanceId,
         roomName,
@@ -130,7 +134,7 @@ public class RoomServiceImpl implements RoomService {
     String description = "Leads toward " + targetName;
     return new RoomExitSnapshotDto(
         exit.getId(),
-        exit.getToRoomInstance().getRoomInstanceId(),
+        exit.getToRoomInstance().getRoomInstanceRowId(),
         targetName,
         exit.getDirection(),
         exit.getDirection(),
@@ -148,14 +152,20 @@ public class RoomServiceImpl implements RoomService {
     return description.substring(0, SHORT_DESCRIPTION_LENGTH) + "...";
   }
 
-  private String cacheKey(Long tenantId, Long gameInstanceId, Long roomId) {
-    return "room:" + tenantId + ":" + gameInstanceId + ":" + roomId;
+  private String cacheKey(Long tenantId, Long gameInstanceId, Long roomInstanceRowId) {
+    return "room:"
+        + tenantId
+        + ":"
+        + gameInstanceId
+        + ":"
+        + RuntimeRoomInstanceIds.canonical(roomInstanceRowId);
   }
 
-  private RoomDto toDto(RoomInstance room) {
-    return new RoomDto(
-        room.getRoomInstanceId(),
+  private RuntimeRoomDto toDto(RoomInstance room) {
+    return new RuntimeRoomDto(
+        room.getRoomInstanceRowId(),
         room.getTenantId(),
+        room.getGameInstanceId(),
         room.getZoneInstance().getRegionInstance().getId(),
         room.getName(),
         room.getDescription());

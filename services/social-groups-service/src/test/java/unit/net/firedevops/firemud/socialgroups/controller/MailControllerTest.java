@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -7,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -26,7 +28,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(MailController.class)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  GlobalExceptionHandler.class,
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class
+})
 @WithFiremudHttpAuthTestProperties
 class MailControllerTest {
   @Autowired private MockMvc mockMvc;
@@ -52,5 +58,26 @@ class MailControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.subject").value("hello"));
+  }
+
+  @Test
+  void sendMailRejectsZeroSenderAccountIdBeforeAccessCheckAndDispatch() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            post("/mail")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .content(
+                    """
+                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":3,"subject":"hello","content":"test body"}
+                    """))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("senderAccountId must be positive"));
+
+    verifyNoInteractions(mailService, socialAccessGuard);
   }
 }

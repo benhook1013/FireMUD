@@ -48,7 +48,7 @@ class CommunicationCommandHandlerTest {
           911L,
           "Emberline",
           1L,
-          "room-7",
+          "R-7",
           "jwt-token",
           null,
           1L,
@@ -107,7 +107,7 @@ class CommunicationCommandHandlerTest {
         .sendCommunication(
             sessionContext,
             "Emberline",
-            "room-7",
+            "R-7",
             CommunicationType.SAY,
             "hello travelers",
             "",

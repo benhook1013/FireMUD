@@ -30,7 +30,7 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 
 ## Current Scope Notes
 
-- The current gameplay-connected communication slice is intentionally narrow in implementation: it proves room-local `say` delivery from Game Session through Game Logic into Social & Groups while establishing the broader shared communication model.
+- The current gameplay-connected communication slice is intentionally narrow in implementation: it proves room-local `say` delivery from Game Session through Game Logic into Social & Groups, including canonical sender/listener room speech, while establishing the broader shared communication model.
 - Future communication work is expected to broaden this into a richer communication model that distinguishes:
   - the communication act/type (`say`, `whisper`, `tell`, `shout`, guild/system/game-defined variants),
   - the target or propagation scope (room, area, region, map, continent, guild/group, account-directed, and other configured channels),

@@ -56,6 +56,10 @@ public interface ScreenBufferService {
     public boolean hasStructuredOutput() {
       return outputKind != null
           && !outputKind.isBlank()
+          && replayPolicy != null
+          && !replayPolicy.isBlank()
+          && briefRenderPolicy != null
+          && !briefRenderPolicy.isBlank()
           && payloadType != null
           && !payloadType.isBlank()
           && payloadJson != null

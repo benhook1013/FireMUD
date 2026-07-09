@@ -287,6 +287,7 @@ for conventions on schema evolution and error handling. See each service's
     - [GetDraftDesignDigestResponse](#world_management-v1-GetDraftDesignDigestResponse)
     - [GetRoomRequest](#world_management-v1-GetRoomRequest)
     - [GetRoomResponse](#world_management-v1-GetRoomResponse)
+    - [RuntimeRoom](#world_management-v1-RuntimeRoom)
     - [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest)
     - [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse)
     - [HazardAmbientState](#world_management-v1-HazardAmbientState)
@@ -4082,9 +4083,28 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| room_json | [string](#string) |  |  |
+| room | [RuntimeRoom](#world_management-v1-RuntimeRoom) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
+<a name="world_management-v1-RuntimeRoom"></a>
+
+### RuntimeRoom
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| description | [string](#string) |  |  |
 
 
 
@@ -4376,4 +4396,3 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | <a name="bool" /> bool |  | bool | boolean | boolean | bool | bool | boolean | TrueClass/FalseClass |
 | <a name="string" /> string | A string must always contain UTF-8 encoded or 7-bit ASCII text. | string | String | str/unicode | string | string | string | String (UTF-8) |
 | <a name="bytes" /> bytes | May contain any arbitrary sequence of bytes. | string | ByteString | str | []byte | ByteString | string | String (ASCII-8BIT) |
-

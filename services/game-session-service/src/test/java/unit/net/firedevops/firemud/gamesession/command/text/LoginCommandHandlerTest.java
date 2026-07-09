@@ -661,7 +661,7 @@ class LoginCommandHandlerTest {
                     88L,
                     "Sora",
                     1L,
-                    "room-2045",
+                    "R-2045",
                     "old-jwt",
                     "en-NZ",
                     1L,
@@ -682,7 +682,7 @@ class LoginCommandHandlerTest {
                     88L,
                     "Sora",
                     1L,
-                    "room-2045",
+                    "R-2045",
                     "old-jwt",
                     "en-NZ",
                     1L,
@@ -703,7 +703,7 @@ class LoginCommandHandlerTest {
     assertEquals(77L, context.accountId());
     assertEquals(88L, context.characterId());
     assertEquals(1L, context.gameInstanceId());
-    assertEquals("room-2045", context.roomInstanceId());
+    assertEquals("R-2045", context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
   }
 
@@ -801,7 +801,7 @@ class LoginCommandHandlerTest {
             88L,
             "Sora",
             1L,
-            "room-2045",
+            "R-2045",
             AUTH_TOKEN,
             "en-NZ",
             1L,
@@ -1081,7 +1081,7 @@ class LoginCommandHandlerTest {
         88L,
         "Sora",
         1L,
-        "room-2045",
+        "R-2045",
         AUTH_TOKEN,
         "en-NZ",
         1L,
@@ -1102,7 +1102,7 @@ class LoginCommandHandlerTest {
         88L,
         "Sora",
         1L,
-        "room-2045",
+        "R-2045",
         AUTH_TOKEN,
         "en-NZ",
         1L,

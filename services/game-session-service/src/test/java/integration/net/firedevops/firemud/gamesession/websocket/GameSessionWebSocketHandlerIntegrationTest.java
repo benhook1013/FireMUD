@@ -244,7 +244,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
             .setRoomName("Login Hall")
             .setShortDescription("A narrow testing hall")
             .setLongDescription("A narrow testing hall used for login verification.")
@@ -336,19 +336,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("fr")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 42L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 1L, 123L, 1L, "R-1021")), eq("R-1021"), eq("")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "1021")), eq("1021"), eq("")))
+            argThat(ctx -> matchesContext(ctx, 22L, 2L, 123L, 1L, "R-1021")), eq("R-1021"), eq("")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -481,21 +487,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService).enqueue("41", "LOOK", false);
     verify(gameLogicClient)
         .resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq(""));
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq(""));
     verify(lookCacheService)
         .cache(
             eq(22L),
             eq(1L),
-            eq("1021"),
+            eq("R-1021"),
             eq(
-                "Room: Login Hall (ID: 1021)\n"
+                "Room: Login Hall (ID: R-1021)\n"
                     + "Short: A narrow testing hall\n"
                     + "Long: A narrow testing hall used for login verification.\n"
                     + "Exits: \n"
                     + "Entities:"),
             eq(
                 "OK LOOK\n"
-                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Room: Login Hall (ID: R-1021)\n"
                     + "Short: A narrow testing hall\n"
                     + "Long: A narrow testing hall used for login verification.\n"
                     + "Exits: \n"
@@ -523,6 +531,30 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(
             payloads.stream()
                 .filter(payload -> payload.startsWith("OK LOOK") && payload.endsWith("> ")))
+        .hasSizeGreaterThanOrEqualTo(2);
+  }
+
+  @Test
+  void repeatedWhoStillShowsPromptInsideBurstWindow() throws Exception {
+    List<String> payloads;
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
+      client.send("WHO");
+      client.awaitStartsWith("OK WHO");
+      client.send("WHO");
+      client.awaitMatching(
+          payload ->
+              client.responses().stream()
+                      .filter(response -> response.startsWith("OK WHO") && response.endsWith("> "))
+                      .count()
+                  >= 2,
+          "two prompt-terminated WHO responses");
+      payloads = client.responses();
+    }
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(
+            payloads.stream()
+                .filter(payload -> payload.startsWith("OK WHO") && payload.endsWith("> ")))
         .hasSizeGreaterThanOrEqualTo(2);
   }
 
@@ -662,7 +694,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketLocaleHeaderAppliesToBuiltInLookRendering() throws Exception {
     LookResult lookResult =
         LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1707").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1707").build())
             .setRoomName("Galerie")
             .setShortDescription("Un couloir etroit file vers le sud.")
             .setLongDescription("Des lampes fument sous les arches de pierre.")
@@ -674,7 +706,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .build())
             .build();
     when(gameLogicClient.resolveLook(
-            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "1021")), eq("1021"), eq("fr")))
+            argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
+            eq("R-1021"),
+            eq("fr")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -736,7 +770,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
-        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("1021"));
+        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("R-1021"));
   }
 
   @Test
@@ -753,12 +787,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    assertThat(json(payloads.get(0)).path("commandType").asText()).isEqualTo("LOGIN");
-    assertThat(json(payloads.get(0)).path("accepted").asBoolean()).isTrue();
+    JsonNode loginSuccess = json(payloads.get(0));
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        loginSuccess, "LOGIN", "login", "META", "SESSION");
+    assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
     assertThat(payloads)
         .anyMatch(
             payload ->
-                json(payload).path("commandType").asText().equals("PLAY")
+                GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload, "PLAY", "play", "META", "SESSION")
                     && json(payload).path("accepted").asBoolean());
     assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
@@ -827,16 +864,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                GameplayStructuredCommandAssertions.isStructuredCommand(
+                    payload, "LOGIN", "login", "META", "SESSION"));
     JsonNode realmsResult =
         payloads.stream()
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "REALMS".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "REALMS", "realms", "META", "WORLD_BROWSE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        realmsResult, "REALMS", "realms", "META", "WORLD_BROWSE", "UI");
     assertThat(realmsResult.path("accepted").asBoolean()).isTrue();
     assertThat(realmsResult.path("outputs").get(0).path("payloadType").asText())
         .isEqualTo("realms_view");
@@ -869,10 +912,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "CHARS".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "CHARS", "chars", "META", "WORLD_BROWSE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        charsResult, "CHARS", "chars", "META", "WORLD_BROWSE", "UI");
     assertThat(charsResult.path("accepted").asBoolean()).isTrue();
     assertThat(charsResult.path("outputs").get(0).path("payloadType").asText())
         .isEqualTo("characters_view");
@@ -925,10 +970,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .filter(
                 payload ->
-                    "command_result".equals(payload.path("eventType").asText())
-                        && "WHO".equals(payload.path("commandType").asText()))
+                    GameplayStructuredCommandAssertions.isStructuredCommand(
+                        payload.toString(), "WHO", "who", "META", "SOCIAL_PRESENCE", "UI"))
             .findFirst()
             .orElseThrow();
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        whoResult, "WHO", "who", "META", "SOCIAL_PRESENCE", "UI");
     assertThat(whoResult.path("accepted").asBoolean()).isTrue();
     assertThat(whoResult.path("outputs").get(0).path("payloadType").asText()).isEqualTo("who_view");
     assertThat(whoResult.path("outputs").get(0).path("payload").path("players")).hasSize(1);
@@ -984,8 +1031,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
       payloads = client.responses();
     }
 
-    assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
-    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
+    assertThat(
+            GameplayStructuredCommandAssertions.isStructuredCommand(
+                payloads.get(0), "LOGIN", "login", "META", "SESSION"))
+        .isTrue();
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                GameplayStructuredCommandAssertions.isStructuredCommand(
+                    payload, "PLAY", "play", "META", "SESSION"));
     assertThat(payloads)
         .anyMatch(
             payload ->
@@ -1239,13 +1293,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     JsonNode loginFailure = json(payloads.get(0));
-    assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
-    assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        loginFailure, "LOGIN", "login", "META", "SESSION");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
     JsonNode playFailure = json(payloads.get(1));
-    assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
-    assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        playFailure, "PLAY", "play", "META", "SESSION");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
     assertThat(playFailure.path("outputs").isArray()).isTrue();
@@ -1266,8 +1320,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     JsonNode loginFailure = json(payloads.getFirst());
-    assertThat(loginFailure.path("eventType").asText()).isEqualTo("command_result");
-    assertThat(loginFailure.path("commandType").asText()).isEqualTo("LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        loginFailure, "LOGIN", "login", "META", "SESSION");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }
@@ -1412,13 +1466,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     JsonNode loginSuccess = json(payloads.getFirst());
-    assertThat(loginSuccess.path("eventType").asText()).isEqualTo("command_result");
-    assertThat(loginSuccess.path("commandType").asText()).isEqualTo("LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        loginSuccess, "LOGIN", "login", "META", "SESSION");
     assertThat(loginSuccess.path("accepted").asBoolean()).isTrue();
 
     JsonNode playFailure = json(payloads.getLast());
-    assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
-    assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        playFailure, "PLAY", "play", "META", "SESSION");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }

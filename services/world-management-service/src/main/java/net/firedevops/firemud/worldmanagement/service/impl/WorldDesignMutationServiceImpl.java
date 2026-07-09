@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
@@ -162,8 +163,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     region.setGeneratorParams(blankToNull(payload.generatorParams()));
     region.setSpacingMultiplier(
         payload.spacingMultiplier() == 0.0d ? 1.0d : payload.spacingMultiplier());
+    validateRegionWithinScope(request, region);
     Region saved = regionRepository.save(region);
-    validateRegionWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -191,8 +192,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                 request.versionId(),
                 parseId(payload.regionId(), "zone.region_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "region not found")));
+    validateZoneWithinScope(request, zone);
     Zone saved = zoneRepository.save(zone);
-    validateZoneWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -222,8 +223,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
             .findByTenantIdAndVersionIdAndId(
                 request.tenantId(), request.versionId(), parseId(payload.zoneId(), "room.zone_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "zone not found")));
+    validateRoomWithinScope(request, room);
     Room saved = roomRepository.save(room);
-    validateRoomWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -260,8 +261,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                 request.versionId(),
                 parseId(payload.toRoomId(), "room_exit.to_room_id"))
             .orElseThrow(() -> appError("UNRESOLVED_REFERENCE", "to room not found")));
+    validateRoomExitWithinScope(request, exit);
     RoomExit saved = roomExitRepository.save(exit);
-    validateRoomExitWithinScope(request, saved);
     return saved.getId();
   }
 
@@ -290,7 +291,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     rule.setVersionId(request.versionId());
     rule.setName(ruleName);
     rule.setScopeType(blankToNull(request.scopeType()));
-    rule.setScopeId(blankToNull(request.scopeId()));
+    rule.setScopeId(normalizedScopeIdOrNull(request));
     rule.setValue(blankToNull(payload.value()));
     return generationRuleRepository.save(rule).getId();
   }
@@ -409,7 +410,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return;
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     Long currentEpoch =
         scopeEpochRepository
             .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
@@ -466,7 +467,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
               request.tenantId(),
               request.versionId(),
               request.scopeType(),
-              request.scopeId(),
+              requireNormalizedScopeId(request),
               ruleName)
           .map(
               existing -> {
@@ -482,7 +483,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private void deleteExistingGenerationRulesInScope(
       WorldDesignMutationRequestDto request, GenerationRule selectedRule) {
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(scopeType)) {
       throw appError(
           "UNSUPPORTED_SCOPE",
@@ -510,7 +511,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return;
     }
     if (!request.scopeType().equals(rule.getScopeType())
-        || !request.scopeId().equals(rule.getScopeId())) {
+        || !requireNormalizedScopeId(request).equals(rule.getScopeId())) {
       throw appError("OUT_OF_SYNC", "generation rule is outside the declared scope");
     }
     if (SCOPE_TYPE_NEW_EMPTY_REGION.equals(request.scopeType())) {
@@ -595,7 +596,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
                   request.tenantId(),
                   request.versionId(),
                   request.scopeType(),
-                  request.scopeId(),
+                  requireNormalizedScopeId(request),
                   ruleName)
               .orElseGet(GenerationRule::new);
       if (isSeedAppendOnlyPolicy(request) && rule.getId() != null) {
@@ -606,7 +607,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       rule.setVersionId(request.versionId());
       rule.setName(ruleName);
       rule.setScopeType(request.scopeType());
-      rule.setScopeId(request.scopeId());
+      rule.setScopeId(requireNormalizedScopeId(request));
       rule.setValue(blankToNull(rulePayload.value()));
       generationRuleRepository.save(rule);
     }
@@ -731,7 +732,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
       return null;
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
-    String scopeId = requireText(request.scopeId(), "scope_id");
+    String scopeId = requireNormalizedScopeId(request);
     WorldDesignScopeEpoch scopeEpoch =
         scopeEpochRepository
             .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
@@ -978,10 +979,21 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
 
   private Long parseId(String value, String field) {
     try {
-      return Long.parseLong(requireText(value, field));
-    } catch (NumberFormatException ex) {
-      throw appError("INVALID_ARGUMENT", field + " must be numeric");
+      return RequestIdValidation.requirePositiveLong(requireText(value, field), field);
+    } catch (IllegalArgumentException ex) {
+      throw appError("INVALID_ARGUMENT", ex.getMessage());
     }
+  }
+
+  private String normalizedScopeIdOrNull(WorldDesignMutationRequestDto request) {
+    if (!StringUtils.hasText(request.scopeId())) {
+      return null;
+    }
+    return requireNormalizedScopeId(request);
+  }
+
+  private String requireNormalizedScopeId(WorldDesignMutationRequestDto request) {
+    return Long.toString(parseId(request.scopeId(), "scope_id"));
   }
 
   private String normalizeId(String value) {

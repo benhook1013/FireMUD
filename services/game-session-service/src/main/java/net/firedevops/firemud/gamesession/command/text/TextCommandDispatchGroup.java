@@ -1,6 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-enum TextCommandDispatchGroup {
+public enum TextCommandDispatchGroup {
   ENQUEUE_ONLY,
   WORLDS,
   SESSION,

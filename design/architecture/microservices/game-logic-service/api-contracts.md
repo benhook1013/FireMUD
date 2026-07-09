@@ -88,6 +88,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
   - and recipient capabilities or effects determine whether that qualifying recipient receives full content, partial content, or only metadata such as “someone whispered here.”
 - The resulting delivery metadata (recipient list, NPC echoes, speaker/target metadata, recipient roles, and perception classification) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
+- For current room-local `say`, that returned metadata includes the actor plus each live player listener in the resolved room audience so Game Session can render canonical sender and listener prose from one shared communication result instead of treating `say` as actor-only success text.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `SendCommunication`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep stage-aware gating predictable.
 
 ### Current scope versus future communication semantics

@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -31,7 +32,11 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(TickRemediationController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class,
+  GlobalExceptionHandler.class
+})
 @WithFiremudPrivilegedHttpAuthTestProperties
 class TickRemediationControllerTest {
   @Autowired private MockMvc mockMvc;
@@ -116,6 +121,25 @@ class TickRemediationControllerTest {
   }
 
   @Test
+  void getRuntimeOwnershipStatusRejectsMalformedGameInstanceIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                    "/tick-remediation/status/1")
+                .queryParam("gameInstanceId", "bad-instance")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("gameInstanceId must be numeric"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
   void pauseReturnsActionDto() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
     when(tickRemediationService.pauseTicksForScope(request))
@@ -149,5 +173,45 @@ class TickRemediationControllerTest {
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void pauseRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "0", null, "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("gameInstanceId must be positive"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void pauseRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(0L, "7", null, "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(tickRemediationService);
   }
 }

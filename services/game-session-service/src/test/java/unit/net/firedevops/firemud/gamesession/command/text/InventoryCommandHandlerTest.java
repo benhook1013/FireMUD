@@ -25,7 +25,7 @@ class InventoryCommandHandlerTest {
   private final InventoryCommandHandler handler = new InventoryCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "room-7", "jwt-token");
+          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
 
   @Test
   void inventoryReturnsStructuredViewFromRuntimeContract() {
@@ -87,7 +87,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsRoomGroundItemsWithVisibleRefs() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -114,7 +114,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsStackedRoomGroundItemsWithStackRefs() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -139,7 +139,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsEmptyStateWhenNoRoomGroundItemsExist() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(ListRoomGroundInventoryResponse.newBuilder().build());
 
     InventoryCommandHandlingResult result =
@@ -164,7 +164,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithItemReferenceCallsPickupMutation() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -213,7 +213,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithQuantityCallsPickupMutation() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -269,7 +269,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithQuantityMatchesStackedRoomGroundEntryWithoutExplicitRef() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -319,7 +319,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithExplicitStackReferenceAllowsQuantitySelection() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(
@@ -388,7 +388,7 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getMatchesExplicitRoomItemReference() {
-    when(gameLogicClient.listRoomGroundInventory(context, "room-7"))
+    when(gameLogicClient.listRoomGroundInventory(context, "R-7"))
         .thenReturn(
             ListRoomGroundInventoryResponse.newBuilder()
                 .addItems(

@@ -22,26 +22,26 @@ public class RoomInstanceExitRepository {
     this.dsl = dsl;
   }
 
-  public List<RoomInstanceExit> findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
-      Long tenantId, Long gameInstanceId, Long roomInstanceId) {
+  public List<RoomInstanceExit> findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+      Long tenantId, Long gameInstanceId, Long fromRoomInstanceRecordId) {
     var toRoom = ROOM_INSTANCE.as("to_room");
     return dsl.select(ROOM_INSTANCE_EXIT.fields())
         .select(
             toRoom.ID,
-            toRoom.ROOM_INSTANCE_ID,
+            toRoom.ROOM_INSTANCE_ROW_ID,
             toRoom.NAME,
             toRoom.DESCRIPTION,
             toRoom.NAME_LOCALIZED_VARIANTS_JSON,
             toRoom.DESCRIPTION_LOCALIZED_VARIANTS_JSON)
         .from(ROOM_INSTANCE_EXIT)
         .join(toRoom)
-        .on(ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_ID.eq(toRoom.ID))
+        .on(ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_RECORD_ID.eq(toRoom.ID))
         .where(
             ROOM_INSTANCE_EXIT
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ROOM_INSTANCE_EXIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID.eq(roomInstanceId)))
+                .and(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_RECORD_ID.eq(fromRoomInstanceRecordId)))
         .orderBy(ROOM_INSTANCE_EXIT.ID.asc())
         .fetch(record -> toEntity(record, toRoom));
   }
@@ -71,8 +71,11 @@ public class RoomInstanceExitRepository {
           dsl.insertInto(ROOM_INSTANCE_EXIT)
               .set(ROOM_INSTANCE_EXIT.TENANT_ID, entity.getTenantId())
               .set(ROOM_INSTANCE_EXIT.GAME_INSTANCE_ID, entity.getGameInstanceId())
-              .set(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID, entity.getFromRoomInstance().getId())
-              .set(ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_ID, entity.getToRoomInstance().getId())
+              .set(
+                  ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_RECORD_ID,
+                  entity.getFromRoomInstance().getId())
+              .set(
+                  ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_RECORD_ID, entity.getToRoomInstance().getId())
               .set(ROOM_INSTANCE_EXIT.DIRECTION, entity.getDirection())
               .set(ROOM_INSTANCE_EXIT.COST, entity.getCost())
               .set(ROOM_INSTANCE_EXIT.VERSION, entity.getVersion())
@@ -86,8 +89,10 @@ public class RoomInstanceExitRepository {
         dsl.update(ROOM_INSTANCE_EXIT)
             .set(ROOM_INSTANCE_EXIT.TENANT_ID, entity.getTenantId())
             .set(ROOM_INSTANCE_EXIT.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID, entity.getFromRoomInstance().getId())
-            .set(ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_ID, entity.getToRoomInstance().getId())
+            .set(
+                ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_RECORD_ID,
+                entity.getFromRoomInstance().getId())
+            .set(ROOM_INSTANCE_EXIT.TO_ROOM_INSTANCE_RECORD_ID, entity.getToRoomInstance().getId())
             .set(ROOM_INSTANCE_EXIT.DIRECTION, entity.getDirection())
             .set(ROOM_INSTANCE_EXIT.COST, entity.getCost())
             .set(ROOM_INSTANCE_EXIT.VERSION, entity.getVersion() + 1)
@@ -108,14 +113,15 @@ public class RoomInstanceExitRepository {
     entity.setId(record.get(ROOM_INSTANCE_EXIT.ID));
     entity.setTenantId(record.get(ROOM_INSTANCE_EXIT.TENANT_ID));
     entity.setGameInstanceId(record.get(ROOM_INSTANCE_EXIT.GAME_INSTANCE_ID));
+    Long fromRoomInstanceRecordId = record.get(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_RECORD_ID);
     entity.setFromRoomInstance(
-        JooqWorldManagementRepositorySupport.partialRoomInstance(
-            record.get(ROOM_INSTANCE_EXIT.FROM_ROOM_INSTANCE_ID)));
+        JooqWorldManagementRepositorySupport.partialRoomInstanceRecord(fromRoomInstanceRecordId));
+    Long toRoomInstanceRecordId =
+        record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ID));
     RoomInstance toRoomInstance =
-        JooqWorldManagementRepositorySupport.partialRoomInstance(
-            record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ID)));
-    toRoomInstance.setRoomInstanceId(
-        record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ROOM_INSTANCE_ID)));
+        JooqWorldManagementRepositorySupport.partialRoomInstanceRecord(toRoomInstanceRecordId);
+    toRoomInstance.setRoomInstanceRowId(
+        record.get((org.jooq.Field<Long>) toRoomAlias.field(ROOM_INSTANCE.ROOM_INSTANCE_ROW_ID)));
     toRoomInstance.setName(
         record.get((org.jooq.Field<String>) toRoomAlias.field(ROOM_INSTANCE.NAME)));
     toRoomInstance.setDescription(

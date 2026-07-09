@@ -113,6 +113,25 @@ class GameInstanceControllerTest {
   }
 
   @Test
+  void startSessionRejectsZeroOwnerAccountIdBeforeDispatch() throws Exception {
+    StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", 0L);
+
+    mockMvc
+        .perform(
+            post("/sessions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("ownerAccountId must be positive"));
+
+    verifyNoInteractions(gameInstanceService);
+  }
+
+  @Test
   void stopSessionRejectsUnauthenticatedCaller() throws Exception {
     mockMvc.perform(post("/sessions/1/stop")).andExpect(status().isUnauthorized());
   }

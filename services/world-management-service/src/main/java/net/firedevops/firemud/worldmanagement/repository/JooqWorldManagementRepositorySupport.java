@@ -98,12 +98,12 @@ final class JooqWorldManagementRepositorySupport {
     return zoneInstance;
   }
 
-  static RoomInstance partialRoomInstance(Long id) {
-    if (id == null) {
+  static RoomInstance partialRoomInstanceRecord(Long roomInstanceRecordId) {
+    if (roomInstanceRecordId == null) {
       return null;
     }
     RoomInstance roomInstance = new RoomInstance();
-    roomInstance.setId(id);
+    roomInstance.setId(roomInstanceRecordId);
     return roomInstance;
   }
 }

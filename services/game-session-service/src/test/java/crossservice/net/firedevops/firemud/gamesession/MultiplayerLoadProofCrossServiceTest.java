@@ -14,6 +14,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
+import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayLoadScenarios;
@@ -170,10 +171,69 @@ class MultiplayerLoadProofCrossServiceTest {
     }
   }
 
+  @Test
+  void tenConcurrentPlayersCanBroadcastSayAfterConcurrentEntry() throws Exception {
+    ensureTestServicesStarted();
+    List<GameplayLoadScenarios.PlayerSeed> players =
+        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
+    URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
+
+    TimedResult<List<PlayerSessionDriver>> readyPlayers =
+        timed(() -> openReadyPlayersConcurrently(uri, players));
+    assertCompletesWithin(
+        "concurrent ready-player bootstrap", readyPlayers.duration(), ENTRY_PHASE_BUDGET);
+    List<PlayerSessionDriver> connectedPlayers = readyPlayers.result();
+    try {
+      TimedResult<Void> followUp =
+          timed(
+              () -> {
+                runConcurrentSayBurst(connectedPlayers);
+                return null;
+              });
+      assertCompletesWithin(
+          "concurrent SAY broadcast burst", followUp.duration(), FOLLOW_UP_PHASE_BUDGET);
+
+      connectedPlayers.forEach(
+          connectedPlayer ->
+              assertThat(connectedPlayer.driver().responses())
+                  .noneMatch(payload -> payload.startsWith("ERROR ")));
+
+      SocialGroupsStubServer socialStub = STACK.socialStub();
+      assertThat(socialStub.messageRequests()).hasSize(CLIENT_COUNT);
+      assertThat(socialStub.messageRequests())
+          .allSatisfy(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+                assertThat(request.getType())
+                    .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+              });
+      assertThat(
+              socialStub.messageRequests().stream()
+                  .map(request -> request.getContent())
+                  .collect(java.util.stream.Collectors.toSet()))
+          .isEqualTo(
+              connectedPlayers.stream()
+                  .map(connectedPlayer -> sayText(connectedPlayer.player()))
+                  .collect(java.util.stream.Collectors.toSet()));
+
+      GameplayAsyncAssertions.assertMetricEventually(
+          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
+          COMMAND_WAIT,
+          "gamesession.command.say.invocations",
+          CLIENT_COUNT);
+    } finally {
+      for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+        connectedPlayer.driver().close();
+      }
+    }
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
       STACK =
-          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID_BASE).start();
+          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID_BASE)
+              .withSocialEnabled(true)
+              .start();
     }
   }
 
@@ -229,6 +289,26 @@ class MultiplayerLoadProofCrossServiceTest {
           connectedPlayer.driver().awaitCanonicalLook(LookTestFixtures.DESTINATION_ROOM_ID);
           return null;
         });
+  }
+
+  private void runConcurrentSayBurst(List<PlayerSessionDriver> connectedPlayers) throws Exception {
+    runConcurrently(
+        connectedPlayers,
+        connectedPlayer -> {
+          connectedPlayer.driver().send("SAY " + sayText(connectedPlayer.player()));
+          return null;
+        });
+    for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+      connectedPlayer.driver().awaitContains(expectedSayTranscript(connectedPlayer.player()));
+    }
+  }
+
+  private String sayText(GameplayLoadScenarios.PlayerSeed player) {
+    return "multiplayer burst " + player.accountId();
+  }
+
+  private String expectedSayTranscript(GameplayLoadScenarios.PlayerSeed player) {
+    return "You say, \"Multiplayer burst " + player.accountId() + ".\"";
   }
 
   private <T, R> List<R> runConcurrently(List<T> items, ConcurrentTask<T, R> task)

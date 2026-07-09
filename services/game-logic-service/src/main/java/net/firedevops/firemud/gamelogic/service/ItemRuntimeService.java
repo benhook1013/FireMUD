@@ -5,6 +5,7 @@ import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
@@ -60,7 +61,13 @@ public class ItemRuntimeService {
   public ListRoomGroundInventoryResponse listRoomGroundInventory(
       ListRoomGroundInventoryRequest request) {
     try {
+      RequestIdValidation.requireCanonicalRuntimeRoomId(
+          request.getRoomInstanceId(), "roomInstanceId");
       return entityStub.listRoomGroundInventory(request);
+    } catch (IllegalArgumentException ex) {
+      return ListRoomGroundInventoryResponse.newBuilder()
+          .setError(invalidArgument("ListRoomGroundInventory", ex.getMessage()))
+          .build();
     } catch (StatusRuntimeException ex) {
       return ListRoomGroundInventoryResponse.newBuilder()
           .setError(error("ListRoomGroundInventory", "INVENTORY_UNAVAILABLE", ex))
@@ -70,7 +77,13 @@ public class ItemRuntimeService {
 
   public PickupItemFromRoomResponse pickupItemFromRoom(PickupItemFromRoomRequest request) {
     try {
+      RequestIdValidation.requireCanonicalRuntimeRoomId(
+          request.getRoomInstanceId(), "roomInstanceId");
       return entityStub.pickupItemFromRoom(request);
+    } catch (IllegalArgumentException ex) {
+      return PickupItemFromRoomResponse.newBuilder()
+          .setError(invalidArgument("PickupItemFromRoom", ex.getMessage()))
+          .build();
     } catch (StatusRuntimeException ex) {
       return PickupItemFromRoomResponse.newBuilder()
           .setError(error("PickupItemFromRoom", "INVENTORY_UNAVAILABLE", ex))
@@ -80,7 +93,13 @@ public class ItemRuntimeService {
 
   public DropItemToRoomResponse dropItemToRoom(DropItemToRoomRequest request) {
     try {
+      RequestIdValidation.requireCanonicalRuntimeRoomId(
+          request.getRoomInstanceId(), "roomInstanceId");
       return entityStub.dropItemToRoom(request);
+    } catch (IllegalArgumentException ex) {
+      return DropItemToRoomResponse.newBuilder()
+          .setError(invalidArgument("DropItemToRoom", ex.getMessage()))
+          .build();
     } catch (StatusRuntimeException ex) {
       return DropItemToRoomResponse.newBuilder()
           .setError(error("DropItemToRoom", "INVENTORY_UNAVAILABLE", ex))
@@ -276,6 +295,10 @@ public class ItemRuntimeService {
             ? "Entity Management unavailable"
             : description;
     return GrpcAppErrors.error(meterRegistry, LOG, operation, code, message);
+  }
+
+  private ErrorDetail invalidArgument(String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, LOG, operation, "INVALID_ARGUMENT", message);
   }
 
   private PickupItemFromRoomResponse pickupError(String code, String message) {

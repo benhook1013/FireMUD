@@ -27,6 +27,9 @@ World data uses two distinct identifier families. Template identifiers must not 
 - **Instance identifiers (runtime, instance-scoped)** – keyed by `(tenantId, gameInstanceId)`:
   - `regionInstanceId`, `zoneInstanceId`, `roomInstanceId`
   - `RoomInstanceRef` = `(tenantId, gameInstanceId, roomInstanceId)`
+  - `roomInstanceId` is the canonical cross-service runtime room identity and must be treated as opaque by callers, even when some implementations currently use numeric-looking values.
+
+World Management may still keep an internal numeric storage key for room topology joins, but that key is not the shared runtime contract and should use distinct naming such as `roomInstanceRowId` / `roomInstanceDbId` rather than `roomInstanceId`.
 
 ## Entity Identifiers
 

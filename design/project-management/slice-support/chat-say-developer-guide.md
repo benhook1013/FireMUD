@@ -11,10 +11,16 @@ This quick guide shows example commands for both WebSocket and Telnet clients so
 1. Expect the canonical sender response:
 
 ```text
-You say, "Hello travelers"
+You say, "Hello travelers."
 ```
 
-1. The communication regression suites also cover `WHISPER Sora Keep quiet` -> `You whisper to Sora, "Keep quiet"` and `TELL Sora Meet me at the forge` -> `You tell Sora, "Meet me at the forge"`.
+1. In the live listener-path proofs, a second connected player in the same room sees:
+
+```text
+Emberline says, "Hello travelers."
+```
+
+1. The communication regression suites also cover `WHISPER Sora Keep quiet` -> `You whisper to Sora, "Keep quiet."` and `TELL Sora Meet me at the forge` -> `You tell Sora, "Meet me at the forge."`.
 
 ## Telnet Example
 

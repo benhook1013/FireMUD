@@ -7,6 +7,8 @@ import java.util.List;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
@@ -25,6 +27,7 @@ import net.firedevops.firemud.gamesession.presentation.TextMessageOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -35,11 +38,20 @@ import org.springframework.web.socket.WebSocketSession;
     justification = "Injected renderer dependency is framework-managed and retained internally")
 public final class WebSocketOutputProjector {
   private final TextPlayerOutputRenderer textRenderer;
+  private final TextCommandMetadataResolver textCommandMetadataResolver;
   private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
       new com.fasterxml.jackson.databind.ObjectMapper();
 
   public WebSocketOutputProjector(TextPlayerOutputRenderer textRenderer) {
+    this(textRenderer, commandId -> java.util.Optional.empty());
+  }
+
+  @Autowired
+  public WebSocketOutputProjector(
+      TextPlayerOutputRenderer textRenderer,
+      TextCommandMetadataResolver textCommandMetadataResolver) {
     this.textRenderer = textRenderer;
+    this.textCommandMetadataResolver = textCommandMetadataResolver;
   }
 
   public String projectCommandResponse(
@@ -57,6 +69,9 @@ public final class WebSocketOutputProjector {
         new FirstPartyEnvelope(
             "command_result",
             command.type().name(),
+            command.commandId(),
+            resolveActionCategory(command),
+            resolveActionTags(command),
             interpretation.commandResult().accepted(),
             interpretation.commandResult().errorCode(),
             interpretation.commandResult().errorMessage(),
@@ -70,11 +85,29 @@ public final class WebSocketOutputProjector {
       String localeTag,
       PresentationProperties effectivePresentation) {
     if (!isFirstPartyWeb(session)) {
-      return textRenderer.render(output, localeTag, effectivePresentation);
+      return renderClassicPlayerOutput(output, localeTag, effectivePresentation);
     }
     return toJson(
         new FirstPartyEnvelope(
-            "player_output", null, null, null, null, null, List.of(toEnvelope(output))));
+            "player_output",
+            null,
+            null,
+            null,
+            java.util.List.of(),
+            null,
+            null,
+            null,
+            null,
+            List.of(toEnvelope(output))));
+  }
+
+  public String renderClassicPlayerOutput(
+      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
+    if (output.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW) {
+      return textRenderer.renderSuccessfulForCommandType(
+          TextCommandType.LOOK, List.of(output), localeTag, effectivePresentation);
+    }
+    return textRenderer.render(output, localeTag, effectivePresentation);
   }
 
   public String projectTranscriptChunk(WebSocketSession session, String label, String text) {
@@ -171,6 +204,9 @@ public final class WebSocketOutputProjector {
   private record FirstPartyEnvelope(
       String eventType,
       String commandType,
+      String commandId,
+      String actionCategory,
+      List<String> actionTags,
       Boolean accepted,
       String errorCode,
       String errorMessage,
@@ -188,4 +224,18 @@ public final class WebSocketOutputProjector {
 
   private record TranscriptEntryEnvelope(
       String eventType, String label, String text, FirstPartyPlayerOutputEnvelope output) {}
+
+  private String resolveActionCategory(TextCommand command) {
+    return textCommandMetadataResolver
+        .resolve(command.commandId())
+        .map(metadata -> metadata.actionCategory().name())
+        .orElse(null);
+  }
+
+  private List<String> resolveActionTags(TextCommand command) {
+    return textCommandMetadataResolver
+        .resolve(command.commandId())
+        .map(metadata -> metadata.actionTags().stream().map(Enum::name).toList())
+        .orElse(java.util.List.of());
+  }
 }

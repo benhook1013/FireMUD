@@ -65,4 +65,22 @@ class RequestIdValidationTest {
             () -> RequestIdValidation.requirePositiveInt("2147483648", "ordinal"));
     assertEquals("ordinal must fit in a 32-bit integer", oversized.getMessage());
   }
+
+  @Test
+  void requireCanonicalRuntimeRoomIdRejectsLegacyAndMalformedShapes() {
+    assertEquals("R-1021", RequestIdValidation.requireCanonicalRuntimeRoomId("R-1021", "roomId"));
+    assertEquals(1021L, RequestIdValidation.requireCanonicalRuntimeRoomRowId("R-1021", "roomId"));
+
+    IllegalArgumentException blank =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.requireCanonicalRuntimeRoomId("   ", "roomId"));
+    assertEquals("roomId must be specified", blank.getMessage());
+
+    IllegalArgumentException legacy =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> RequestIdValidation.requireCanonicalRuntimeRoomId("room-1021", "roomId"));
+    assertEquals("roomId must be a runtime room id like R-1021", legacy.getMessage());
+  }
 }

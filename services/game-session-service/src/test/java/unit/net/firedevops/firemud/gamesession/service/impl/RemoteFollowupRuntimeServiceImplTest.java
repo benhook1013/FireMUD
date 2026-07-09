@@ -782,7 +782,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "remote-enter-1".equals(followup.getScriptEventId())
                         && "game-session:onEnterRegion:9:8:remote-enter-1"
                             .equals(followup.getReadSnapshotToken())
-                        && "{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}"
+                        && "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}"
                             .equals(followup.getEventPayloadJson())));
   }
 
@@ -1011,7 +1011,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "followup-1",
                         "effect-1",
                         "entity-9",
-                        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"scriptEventId\":\"remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}}",
+                        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"scriptEventId\":\"remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}}",
                         "trigger_script_event",
                         null,
                         false,
@@ -1903,7 +1903,7 @@ class RemoteFollowupRuntimeServiceImplTest {
         "followup-1",
         "effect-1",
         "321",
-        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"eventSchemaVersion\":\"v1\",\"scriptEventId\":\"remote-enter-1\",\"readSnapshotToken\":\"game-session:onEnterRegion:9:8:remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}}",
+        "{\"kind\":\"trigger_script_event\",\"eventType\":\"onEnterRegion\",\"eventSchemaVersion\":\"v1\",\"scriptEventId\":\"remote-enter-1\",\"readSnapshotToken\":\"game-session:onEnterRegion:9:8:remote-enter-1\",\"eventPayload\":{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}}",
         "trigger_script_event",
         null,
         false,

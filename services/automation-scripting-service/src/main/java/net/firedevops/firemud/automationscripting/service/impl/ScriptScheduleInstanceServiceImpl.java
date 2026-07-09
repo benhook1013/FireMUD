@@ -1220,13 +1220,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     };
   }
 
-  private static long parsePointerVersion(String pointerVersion) {
-    if (pointerVersion == null || pointerVersion.isBlank()) {
-      return 0L;
-    }
-    return Long.parseLong(pointerVersion);
-  }
-
   private record TickAdvanceResult(
       boolean changed, List<Long> fireDueTicks, List<TimerFiringCandidate> suppressedDueTicks) {}
 

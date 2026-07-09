@@ -37,7 +37,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Properties are injected and not modified")
-public class DatabaseAutoConfiguration {
+public final class DatabaseAutoConfiguration {
   private final PostgresProperties postgres;
   private final RedisProperties redis;
 

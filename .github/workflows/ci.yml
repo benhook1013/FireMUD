@@ -679,6 +679,7 @@ jobs:
           path: services/${{ matrix.service }}/build/reports/jacoco/test/
 
       - name: ☂️ Upload Coverage to Codecov
+        continue-on-error: true
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
         with:
           use_oidc: true

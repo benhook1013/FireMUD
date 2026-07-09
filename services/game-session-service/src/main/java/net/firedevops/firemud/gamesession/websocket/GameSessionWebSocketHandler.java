@@ -6,11 +6,14 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -19,7 +22,6 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -28,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
+import net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntries;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -60,13 +63,50 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScreenBufferService screenBufferService;
-  private final TextPlayerOutputRenderer outputRenderer;
   private final WebSocketOutputProjector outputProjector;
   private final PromptBurstCoordinator promptBurstCoordinator;
   private final PromptComposer promptComposer;
   private final EffectiveSettingsResolver settingsResolver;
   private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser;
+  private final TextCommandMetadataResolver textCommandMetadataResolver;
+
+  public GameSessionWebSocketHandler(
+      TextCommandInterpreter interpreter,
+      LookCommandHandler lookHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      ActiveTransportSessionRegistry activeTransportSessionRegistry,
+      FirstPartyConnectContextService firstPartyConnectContextService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScreenBufferService screenBufferService,
+      WebSocketOutputProjector outputProjector,
+      PromptBurstCoordinator promptBurstCoordinator,
+      PromptComposer promptComposer,
+      EffectiveSettingsResolver settingsResolver,
+      RuntimeIdentity runtimeIdentity,
+      TextCommandParser parser) {
+    this(
+        interpreter,
+        lookHandler,
+        sessionAuthenticationService,
+        sessionContextService,
+        activeTransportSessionRegistry,
+        firstPartyConnectContextService,
+        firstPartyConnectContextRegistry,
+        gameplayAdmissionPointerAuthorityService,
+        gameplayPresenceLifecycleService,
+        screenBufferService,
+        outputProjector,
+        promptBurstCoordinator,
+        promptComposer,
+        settingsResolver,
+        runtimeIdentity,
+        parser,
+        BuiltInTextCommandMetadataResolvers.builtInOnly());
+  }
 
   @Autowired
   public GameSessionWebSocketHandler(
@@ -80,13 +120,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       ScreenBufferService screenBufferService,
-      TextPlayerOutputRenderer outputRenderer,
       WebSocketOutputProjector outputProjector,
       PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
       EffectiveSettingsResolver settingsResolver,
       RuntimeIdentity runtimeIdentity,
-      TextCommandParser parser) {
+      TextCommandParser parser,
+      TextCommandMetadataResolver textCommandMetadataResolver) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionAuthenticationService = sessionAuthenticationService;
@@ -97,13 +137,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.gameplayPresenceLifecycleService = gameplayPresenceLifecycleService;
     this.screenBufferService = screenBufferService;
-    this.outputRenderer = outputRenderer;
     this.outputProjector = outputProjector;
     this.promptBurstCoordinator = promptBurstCoordinator;
     this.promptComposer = promptComposer;
     this.settingsResolver = settingsResolver;
     this.runtimeIdentity = runtimeIdentity;
     this.parser = parser;
+    this.textCommandMetadataResolver = textCommandMetadataResolver;
   }
 
   @Override
@@ -303,7 +343,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted()) {
       return false;
     }
-    if (command.type() == TextCommandType.LOOK || command.type() == TextCommandType.QUICKLOOK) {
+    if (isUiTaggedCommand(command)) {
       return true;
     }
     if (command.type() == TextCommandType.PLAY && !interpretation.reconnectRedrawRecommended()) {
@@ -311,6 +351,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     return interpretation.outputs().stream()
         .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
+  }
+
+  private boolean isUiTaggedCommand(TextCommand command) {
+    return textCommandMetadataResolver
+        .resolve(command.commandId())
+        .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.UI))
+        .orElse(false);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {
@@ -453,16 +500,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String label) {
     try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       try {
-        if (!outputProjector.isFirstPartyWeb(session) && output.kind() == PlayerOutputKind.VIEW) {
-          sendProtocolMessage(
-              session,
-              outputRenderer.renderSuccessfulForCommandType(
-                  TextCommandType.LOOK,
-                  java.util.List.of(output),
-                  localeTag,
-                  effectivePresentation));
-          return;
-        }
         sendProtocolMessage(
             session,
             outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation));
@@ -476,26 +513,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       java.util.List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentation) {
-    return outputs.stream()
-        .filter(PlayerOutput::screenBufferEligible)
-        .map(output -> bufferedEntry(output, localeTag, effectivePresentation))
-        .filter(entry -> StringUtils.hasText(entry.text()))
-        .toList();
-  }
-
-  private ScreenBufferService.BufferedEntry bufferedEntry(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    return outputProjector.toBufferedEntry(
-        output, renderReplayableOutput(output, localeTag, effectivePresentation) + "\n");
-  }
-
-  private String renderReplayableOutput(
-      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
-    if (output.kind() == PlayerOutputKind.VIEW) {
-      return outputRenderer.renderSuccessfulForCommandType(
-          TextCommandType.LOOK, java.util.List.of(output), localeTag, effectivePresentation);
-    }
-    return outputRenderer.render(output, localeTag, effectivePresentation);
+    return ReplayableScreenBufferEntries.fromOutputs(
+        outputs, outputProjector, localeTag, effectivePresentation);
   }
 
   private boolean shouldBuffer(

@@ -8,13 +8,14 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void listRoomEntitiesFailsClosedWhenSessionContextDropsPartOfAdmittedRoutingBundle() {
@@ -37,7 +38,7 @@ class EntityManagementClientTest {
             0L,
             SESSION_CONTEXT.playableStateScope());
 
-    assertThatThrownBy(() -> client.listRoomEntities(partialRouting, "1021"))
+    assertThatThrownBy(() -> client.listRoomEntities(partialRouting, "R-1021"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Incomplete admitted routing bundle");
   }
@@ -63,9 +64,47 @@ class EntityManagementClientTest {
             0L,
             SESSION_CONTEXT.playableStateScope());
 
-    assertThatThrownBy(() -> client.listRoomEntities(missingRouting, "1021"))
+    assertThatThrownBy(() -> client.listRoomEntities(missingRouting, "R-1021"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Missing admitted routing bundle");
+  }
+
+  @Test
+  void listRoomEntitiesRejectsLegacyRuntimeRoomIdsBeforeDispatch() {
+    EntityManagementClient client = newClient();
+
+    assertThatThrownBy(() -> client.listRoomEntities(SESSION_CONTEXT, "room-1021"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
+  }
+
+  @Test
+  void findCharacterByNameRejectsLegacyRuntimeRoomIdsInSessionContextBeforeDispatch() {
+    EntityManagementClient client = newClient();
+    SessionContext legacyRoomContext =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            "room-1021",
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            SESSION_CONTEXT.pointerVersion(),
+            SESSION_CONTEXT.playableStateScope());
+
+    assertThatThrownBy(
+            () ->
+                client.findCharacterByName(
+                    legacyRoomContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
   }
 
   private static EntityManagementClient newClient() {

@@ -9,8 +9,11 @@ public interface TextCommandMetadataResolver {
   Optional<ResolvedTextCommandMetadata> resolve(String commandIdOrAlias);
 
   record ResolvedTextCommandMetadata(
-      TextCommandActionCategory actionCategory, List<TextCommandActionTag> actionTags) {
+      TextCommandDispatchGroup dispatchGroup,
+      TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags) {
     public ResolvedTextCommandMetadata {
+      Objects.requireNonNull(dispatchGroup, "dispatchGroup must not be null");
       Objects.requireNonNull(actionCategory, "actionCategory must not be null");
       Objects.requireNonNull(actionTags, "actionTags must not be null");
       actionTags = List.copyOf(actionTags);

@@ -99,7 +99,7 @@ class RedisSessionContextServiceTest {
   @Test
   void savePreservesLocaleTagInStoredContext() {
     SessionContext context =
-        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "room-1", "jwt", "fr", 40L);
+        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "R-1", "jwt", "fr", 40L);
 
     service.save(context);
 

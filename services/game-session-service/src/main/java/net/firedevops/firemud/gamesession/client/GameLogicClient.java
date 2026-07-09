@@ -46,6 +46,7 @@ import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -96,6 +97,7 @@ public class GameLogicClient
   }
 
   public LookResult resolveLook(SessionContext context, String roomId, String localeTag) {
+    String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
@@ -110,16 +112,19 @@ public class GameLogicClient
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setGameInstanceId(gameInstanceId)
-                    .setRoomInstanceId(roomId)
+                    .setRoomInstanceId(canonicalRoomId)
                     .build())
             .build();
     request =
-        request.toBuilder().setSessionAttestation(sessionAttestation(context, roomId)).build();
+        request.toBuilder()
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId))
+            .build();
     return callStub().resolveLook(request);
   }
 
   public LookResult resolveLookForReadiness(
       String tenantId, String sessionId, String characterId, String gameInstanceId, String roomId) {
+    String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -129,11 +134,11 @@ public class GameLogicClient
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
-                    .setRoomInstanceId(roomId)
+                    .setRoomInstanceId(canonicalRoomId)
                     .build())
             .setSessionAttestation(
                 gameplaySessionAttestationService.issueInternalProbeAttestation(
-                    tenantId, gameInstanceId, roomId))
+                    tenantId, gameInstanceId, canonicalRoomId))
             .build();
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -149,6 +154,7 @@ public class GameLogicClient
       String targetCharacterId,
       String targetCharacterName,
       String effectId) {
+    String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
@@ -164,7 +170,7 @@ public class GameLogicClient
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setGameInstanceId(gameInstanceId)
-                    .setRoomInstanceId(roomId)
+                    .setRoomInstanceId(canonicalRoomId)
                     .build())
             .setType(type)
             .setText(text)
@@ -174,13 +180,14 @@ public class GameLogicClient
             .setGameInstanceId(gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
             .setEffectId(effectId == null ? "" : effectId)
-            .setSessionAttestation(sessionAttestation(context, roomId))
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId))
             .build();
     return callStub().sendCommunication(request);
   }
 
   public MoveResult resolveMove(
       SessionContext context, String roomId, String direction, String localeTag) {
+    String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
@@ -195,10 +202,10 @@ public class GameLogicClient
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setGameInstanceId(gameInstanceId)
-                    .setRoomInstanceId(roomId)
+                    .setRoomInstanceId(canonicalRoomId)
                     .build())
             .setDirection(direction)
-            .setSessionAttestation(sessionAttestation(context, roomId))
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId))
             .build();
     return callStub().resolveMove(request);
   }
@@ -224,14 +231,16 @@ public class GameLogicClient
 
   public ListRoomGroundInventoryResponse listRoomGroundInventory(
       SessionContext context, String roomInstanceId) {
+    String canonicalRoomId =
+        GameplayRuntimeRoomIds.requireCanonical(roomInstanceId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     ListRoomGroundInventoryRequest request =
         ListRoomGroundInventoryRequest.newBuilder()
             .setTenantId(tenantId)
             .setGameInstanceId(gameInstanceId)
-            .setRoomInstanceId(roomInstanceId)
-            .setSessionAttestation(sessionAttestation(context, roomInstanceId))
+            .setRoomInstanceId(canonicalRoomId)
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId))
             .build();
     try {
       return callStub().listRoomGroundInventory(request);
@@ -271,6 +280,8 @@ public class GameLogicClient
       String stackFamilyKey,
       int quantity,
       String effectId) {
+    String canonicalRoomId =
+        GameplayRuntimeRoomIds.requireCanonical(roomInstanceId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     PickupItemFromRoomRequest.Builder request =
@@ -279,10 +290,10 @@ public class GameLogicClient
             .setCharacterId(Long.toString(context.characterId()))
             .setGameInstanceId(gameInstanceId)
             .setPlayableStateScope(resolvePlayableStateScope(context))
-            .setRoomInstanceId(roomInstanceId)
+            .setRoomInstanceId(canonicalRoomId)
             .setItemId(itemId)
             .setQuantity(quantity)
-            .setSessionAttestation(sessionAttestation(context, roomInstanceId));
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId));
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
     }
@@ -317,7 +328,8 @@ public class GameLogicClient
     String accountId = Long.toString(context.accountId());
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
-    String roomInstanceId = context.roomInstanceId();
+    String roomInstanceId =
+        GameplayRuntimeRoomIds.requireCanonical(context.roomInstanceId(), "roomInstanceId");
     PickupVisibleRoomItemRequest.Builder request =
         PickupVisibleRoomItemRequest.newBuilder()
             .setTenantId(tenantId)
@@ -371,6 +383,8 @@ public class GameLogicClient
       String stackFamilyKey,
       int quantity,
       String effectId) {
+    String canonicalRoomId =
+        GameplayRuntimeRoomIds.requireCanonical(roomInstanceId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     DropItemToRoomRequest.Builder request =
@@ -379,10 +393,10 @@ public class GameLogicClient
             .setCharacterId(Long.toString(context.characterId()))
             .setGameInstanceId(gameInstanceId)
             .setPlayableStateScope(resolvePlayableStateScope(context))
-            .setRoomInstanceId(roomInstanceId)
+            .setRoomInstanceId(canonicalRoomId)
             .setItemId(itemId)
             .setQuantity(quantity)
-            .setSessionAttestation(sessionAttestation(context, roomInstanceId));
+            .setSessionAttestation(sessionAttestation(context, canonicalRoomId));
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
     }
@@ -417,7 +431,8 @@ public class GameLogicClient
     String accountId = Long.toString(context.accountId());
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
-    String roomInstanceId = context.roomInstanceId();
+    String roomInstanceId =
+        GameplayRuntimeRoomIds.requireCanonical(context.roomInstanceId(), "roomInstanceId");
     DropCarriedItemRequest.Builder request =
         DropCarriedItemRequest.newBuilder()
             .setTenantId(tenantId)
@@ -680,17 +695,24 @@ public class GameLogicClient
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle routingBundle =
         GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
             context, "Game Logic request");
+    String canonicalRoomId = optionalCanonicalRoomId(roomId);
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.accountId()),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
-        roomId,
+        canonicalRoomId,
         routingBundle.worldSlug(),
         routingBundle.realmSlug(),
         routingBundle.pointerVersion(),
         context.playableStateScope());
+  }
+
+  private String optionalCanonicalRoomId(String roomId) {
+    return StringUtils.hasText(roomId)
+        ? GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId")
+        : roomId;
   }
 
   private ErrorDetail error(String code, String message) {

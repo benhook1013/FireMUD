@@ -1465,13 +1465,16 @@ public class EntityManagementGrpcService
       PickupItemFromRoomRequest request,
       StreamObserver<PickupItemFromRoomResponse> responseObserver) {
     try {
+      String roomInstanceId =
+          RequestIdValidation.requireCanonicalRuntimeRoomId(
+              request.getRoomInstanceId(), "roomInstanceId");
       GameplaySessionAttestationClaims claims =
           requireGameplaySessionAttestation(
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              request.getRoomInstanceId(),
+              roomInstanceId,
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
@@ -1495,7 +1498,7 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         request.getGameInstanceId(),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getRoomInstanceId(),
+                        roomInstanceId,
                         itemId,
                         itemInstanceId,
                         containerInstanceId == null ? null : Long.toString(containerInstanceId),
@@ -1554,13 +1557,16 @@ public class EntityManagementGrpcService
   public void dropItemToRoom(
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     try {
+      String roomInstanceId =
+          RequestIdValidation.requireCanonicalRuntimeRoomId(
+              request.getRoomInstanceId(), "roomInstanceId");
       GameplaySessionAttestationClaims claims =
           requireGameplaySessionAttestation(
               request.getSessionAttestation(),
               request.getTenantId(),
               request.getCharacterId(),
               request.getGameInstanceId(),
-              request.getRoomInstanceId(),
+              roomInstanceId,
               request.getPlayableStateScope());
       GameplayActorScope actorScope =
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
@@ -1584,7 +1590,7 @@ public class EntityManagementGrpcService
                         actorScope.characterId(),
                         request.getGameInstanceId(),
                         resolvePlayableStateScope(request.getPlayableStateScope(), claims),
-                        request.getRoomInstanceId(),
+                        roomInstanceId,
                         itemId,
                         itemInstanceId,
                         containerInstanceId == null ? null : Long.toString(containerInstanceId),
@@ -1643,7 +1649,7 @@ public class EntityManagementGrpcService
           roomScope.roomInstanceId());
       var entities =
           roomEntityService.listEntities(
-              roomScope.tenantIdText(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
+              roomScope.tenantId(), roomScope.gameInstanceId(), roomScope.roomInstanceId());
       var builder =
           ListRoomEntitiesResponse.newBuilder()
               .setTenantId(roomScope.tenantIdText())
@@ -1759,7 +1765,7 @@ public class EntityManagementGrpcService
         tenantId,
         String.valueOf(tenantId),
         requireText(gameInstanceId, "gameInstanceId"),
-        requireText(roomInstanceId, "roomInstanceId"));
+        RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, "roomInstanceId"));
   }
 
   private GameplayRoomScope requireGameplayRoomScope(ListRoomEntitiesRequest request) {

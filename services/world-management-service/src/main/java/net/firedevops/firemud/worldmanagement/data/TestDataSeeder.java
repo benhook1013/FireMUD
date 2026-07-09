@@ -46,8 +46,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class TestDataSeeder implements ApplicationRunner {
   private static final long DEMO_TENANT_ID = 1L;
   private static final long DEMO_VERSION_ID = 1L;
-  private static final long STARTER_ROOM_INSTANCE_ID = 1021L;
-  private static final long SECONDARY_ROOM_INSTANCE_ID = 2045L;
+  private static final long STARTER_ROOM_INSTANCE_ROW_ID = 1021L;
+  private static final long SECONDARY_ROOM_INSTANCE_ROW_ID = 2045L;
   private static final String DEMO_REGION_NAME = "Demo Region";
   private static final String DEMO_ZONE_NAME = "Demo Zone";
   private static final String STARTER_ROOM_NAME = "Candle-lit Antechamber";
@@ -175,12 +175,12 @@ public class TestDataSeeder implements ApplicationRunner {
 
     List<Room> templateRooms =
         roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(DEMO_TENANT_ID, DEMO_VERSION_ID);
-    Map<Long, RoomInstance> roomInstancesByRoomInstanceId = new HashMap<>();
+    Map<Long, RoomInstance> roomInstancesByRoomInstanceRowId = new HashMap<>();
     for (RoomInstance existingRoomInstance :
-        roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceIdAsc(
+        roomInstanceRepository.findByTenantIdAndGameInstanceIdOrderByRoomInstanceRowIdAsc(
             tenantId, gameInstanceId)) {
-      roomInstancesByRoomInstanceId.put(
-          existingRoomInstance.getRoomInstanceId(), existingRoomInstance);
+      roomInstancesByRoomInstanceRowId.put(
+          existingRoomInstance.getRoomInstanceRowId(), existingRoomInstance);
     }
     Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
     for (int index = 0; index < templateRooms.size(); index++) {
@@ -196,12 +196,12 @@ public class TestDataSeeder implements ApplicationRunner {
               savedRegionInstance,
               zoneInstance,
               templateRoom,
-              roomInstanceIdForTemplateOrder(index),
-              roomInstancesByRoomInstanceId);
+              roomInstanceRowIdForTemplateOrder(index),
+              roomInstancesByRoomInstanceRowId);
       roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
     }
 
-    Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId = new HashMap<>();
+    Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceRecordId = new HashMap<>();
     for (RoomExit templateExit :
         roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(
             DEMO_TENANT_ID, DEMO_VERSION_ID)) {
@@ -217,7 +217,7 @@ public class TestDataSeeder implements ApplicationRunner {
           fromRoomInstance,
           toRoomInstance,
           templateExit,
-          exitsByFromRoomInstanceId);
+          exitsByFromRoomInstanceRecordId);
     }
   }
 
@@ -290,13 +290,13 @@ public class TestDataSeeder implements ApplicationRunner {
       RegionInstance savedRegionInstance,
       ZoneInstance zoneInstance,
       Room templateRoom,
-      long roomInstanceId,
-      Map<Long, RoomInstance> roomInstancesByRoomInstanceId) {
+      long roomInstanceRowId,
+      Map<Long, RoomInstance> roomInstancesByRoomInstanceRowId) {
     RoomInstance roomInstance =
-        roomInstancesByRoomInstanceId.getOrDefault(roomInstanceId, new RoomInstance());
+        roomInstancesByRoomInstanceRowId.getOrDefault(roomInstanceRowId, new RoomInstance());
     roomInstance.setTenantId(tenantId);
     roomInstance.setGameInstanceId(gameInstanceId);
-    roomInstance.setRoomInstanceId(roomInstanceId);
+    roomInstance.setRoomInstanceRowId(roomInstanceRowId);
     roomInstance.setTemplateRoomId(templateRoom.getId());
     roomInstance.setRegionInstance(savedRegionInstance);
     roomInstance.setZoneInstance(zoneInstance);
@@ -306,7 +306,7 @@ public class TestDataSeeder implements ApplicationRunner {
     roomInstance.setDescriptionLocalizedVariantsJson(
         templateRoom.getDescriptionLocalizedVariantsJson());
     RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
-    roomInstancesByRoomInstanceId.put(roomInstanceId, savedRoomInstance);
+    roomInstancesByRoomInstanceRowId.put(roomInstanceRowId, savedRoomInstance);
     return savedRoomInstance;
   }
 
@@ -316,13 +316,14 @@ public class TestDataSeeder implements ApplicationRunner {
       RoomInstance fromRoomInstance,
       RoomInstance toRoomInstance,
       RoomExit templateExit,
-      Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceId) {
+      Map<Long, List<RoomInstanceExit>> exitsByFromRoomInstanceRecordId) {
     List<RoomInstanceExit> existingExits =
-        exitsByFromRoomInstanceId.computeIfAbsent(
+        exitsByFromRoomInstanceRecordId.computeIfAbsent(
             fromRoomInstance.getId(),
             ignored ->
-                roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceId(
-                    tenantId, gameInstanceId, fromRoomInstance.getId()));
+                roomInstanceExitRepository
+                    .findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+                        tenantId, gameInstanceId, fromRoomInstance.getId()));
     RoomInstanceExit roomInstanceExit =
         existingExits.stream()
             .filter(
@@ -344,13 +345,13 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private long roomInstanceIdForTemplateOrder(int index) {
+  private long roomInstanceRowIdForTemplateOrder(int index) {
     if (index == 0) {
-      return STARTER_ROOM_INSTANCE_ID;
+      return STARTER_ROOM_INSTANCE_ROW_ID;
     }
     if (index == 1) {
-      return SECONDARY_ROOM_INSTANCE_ID;
+      return SECONDARY_ROOM_INSTANCE_ROW_ID;
     }
-    return SECONDARY_ROOM_INSTANCE_ID + index;
+    return SECONDARY_ROOM_INSTANCE_ROW_ID + index;
   }
 }

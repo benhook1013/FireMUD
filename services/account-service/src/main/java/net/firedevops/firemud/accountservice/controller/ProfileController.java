@@ -6,7 +6,6 @@ import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,8 +31,8 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    long parsedAccountId = requireAccountId(accountId);
-    long parsedTenantId = requireTenantId(tenantId);
+    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
@@ -42,8 +41,8 @@ public class ProfileController {
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    long parsedAccountId = requireAccountId(accountId);
-    long parsedTenantId = requireTenantId(request.tenantId());
+    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     ProfileDto dto =
         accountService.updateProfile(
@@ -54,17 +53,5 @@ public class ProfileController {
                 request.bio(),
                 request.presenceVisibilityPolicy()));
     return ResponseEntity.ok(ApiResponse.success(dto));
-  }
-
-  private long requireAccountId(String accountId) {
-    return RequestIdValidation.requirePositiveLong(accountId, "accountId");
-  }
-
-  private long requireTenantId(String tenantId) {
-    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
-  }
-
-  private long requireTenantId(Long tenantId) {
-    return RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
   }
 }

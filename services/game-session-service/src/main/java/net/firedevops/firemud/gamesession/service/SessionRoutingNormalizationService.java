@@ -37,9 +37,19 @@ public final class SessionRoutingNormalizationService {
 
   public SessionContext normalizeProjectedContext(SessionContext context) {
     Objects.requireNonNull(context, "context must not be null");
-    if (!context.hasGameplayBinding() || currentAdmissionPointerMatches(context)) {
+    if (!context.hasGameplayBinding()) {
       return context;
     }
+    if (!hasCanonicalGameplayRoomBinding(context)) {
+      return clearGameplayBinding(context);
+    }
+    if (currentAdmissionPointerMatches(context)) {
+      return context;
+    }
+    return clearGameplayBinding(context);
+  }
+
+  private SessionContext clearGameplayBinding(SessionContext context) {
     return new SessionContext(
         context.sessionId(),
         context.tenantId(),
@@ -58,6 +68,13 @@ public final class SessionRoutingNormalizationService {
         null,
         context.connectScopeId(),
         context.connectRequestId());
+  }
+
+  private boolean hasCanonicalGameplayRoomBinding(SessionContext context) {
+    if (context.gameInstanceId() <= 0 || context.roomInstanceId() == null) {
+      return true;
+    }
+    return GameplayRuntimeRoomIds.isCanonical(context.roomInstanceId());
   }
 
   private boolean currentAdmissionPointerMatches(SessionContext context) {

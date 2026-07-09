@@ -14,9 +14,9 @@ import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
-import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
@@ -51,6 +51,7 @@ import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.RuntimeRoom;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.UpgradeValidationResult;
@@ -67,7 +68,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
@@ -419,13 +419,15 @@ public class WorldManagementGrpcService
           roomScope.gameInstanceIdText(),
           roomScope.roomInstanceIdText());
       requireTenantAccessWhenPresent(roomScope.tenantId());
-      Optional<String> json =
+      Optional<RuntimeRoom> room =
           Optional.ofNullable(
                   roomService.getRoom(
-                      roomScope.tenantId(), roomScope.gameInstanceId(), roomScope.roomInstanceId()))
-              .map(this::toJson);
-      if (json.isPresent()) {
-        GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
+                      roomScope.tenantId(),
+                      roomScope.gameInstanceId(),
+                      roomScope.roomInstanceRowId()))
+              .map(this::toProto);
+      if (room.isPresent()) {
+        GetRoomResponse response = GetRoomResponse.newBuilder().setRoom(room.get()).build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       } else {
@@ -488,7 +490,7 @@ public class WorldManagementGrpcService
           roomService.getRoomSnapshot(
               roomScope.tenantId(),
               roomScope.gameInstanceId(),
-              roomScope.roomInstanceId(),
+              roomScope.roomInstanceRowId(),
               request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
@@ -528,16 +530,17 @@ public class WorldManagementGrpcService
   }
 
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
-    RoomSnapshot.Builder builder =
-        RoomSnapshot.newBuilder()
-            .setRoomInstanceId(snapshot.roomId().toString())
-            .setTenantId(snapshot.tenantId().toString())
-            .setGameInstanceId(snapshot.gameInstanceId().toString())
-            .setWorldSnapshotId(
-                readFence(snapshot.tenantId(), snapshot.gameInstanceId(), snapshot.roomId()))
-            .setRoomName(snapshot.roomName())
-            .setShortDescription(snapshot.shortDescription())
-            .setLongDescription(snapshot.longDescription());
+    RoomSnapshot.Builder builder = RoomSnapshot.newBuilder();
+    String runtimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(snapshot.roomInstanceRowId());
+    builder
+        .setRoomInstanceId(runtimeRoomInstanceId)
+        .setTenantId(snapshot.tenantId().toString())
+        .setGameInstanceId(snapshot.gameInstanceId().toString())
+        .setWorldSnapshotId(
+            readFence(snapshot.tenantId(), snapshot.gameInstanceId(), runtimeRoomInstanceId))
+        .setRoomName(snapshot.roomName())
+        .setShortDescription(snapshot.shortDescription())
+        .setLongDescription(snapshot.longDescription());
     snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
     if (snapshot.ambientState() != null) {
       applyAmbientState(builder, snapshot);
@@ -597,30 +600,35 @@ public class WorldManagementGrpcService
   }
 
   private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
-    RoomExitSnapshot.Builder builder =
-        RoomExitSnapshot.newBuilder()
-            .setExitId(exit.exitId().toString())
-            .setTargetRoomInstanceId(exit.targetRoomId().toString())
-            .setTargetRoomName(exit.targetRoomName())
-            .setDirection(exit.direction())
-            .setLabel(exit.label())
-            .setDescription(exit.description());
+    RoomExitSnapshot.Builder builder = RoomExitSnapshot.newBuilder();
+    String targetRuntimeRoomInstanceId =
+        RuntimeRoomInstanceIds.canonical(exit.targetRoomInstanceRowId());
+    builder
+        .setExitId(exit.exitId().toString())
+        .setTargetRoomInstanceId(targetRuntimeRoomInstanceId)
+        .setTargetRoomName(exit.targetRoomName())
+        .setDirection(exit.direction())
+        .setLabel(exit.label())
+        .setDescription(exit.description());
     if (exit.cost() != null) {
       builder.setCost(exit.cost());
     }
     return builder.build();
   }
 
-  private String readFence(long tenantId, long gameInstanceId, long roomInstanceId) {
+  private String readFence(long tenantId, long gameInstanceId, String roomInstanceId) {
     return tenantId + ":" + gameInstanceId + ":" + roomInstanceId;
   }
 
-  private String toJson(RoomDto dto) {
-    try {
-      return objectMapper.writeValueAsString(dto);
-    } catch (JacksonException e) {
-      throw new RuntimeException("Failed to serialize room", e);
-    }
+  private RuntimeRoom toProto(RuntimeRoomDto dto) {
+    return RuntimeRoom.newBuilder()
+        .setTenantId(Long.toString(dto.tenantId()))
+        .setGameInstanceId(Long.toString(dto.gameInstanceId()))
+        .setRoomInstanceId(RuntimeRoomInstanceIds.canonical(dto.roomInstanceRowId()))
+        .setRegionId(Long.toString(dto.regionId()))
+        .setName(dto.name() == null ? "" : dto.name())
+        .setDescription(dto.description() == null ? "" : dto.description())
+        .build();
   }
 
   private String errorCodeFor(IllegalArgumentException ex) {
@@ -850,7 +858,7 @@ public class WorldManagementGrpcService
     return new GameplayRoomScope(
         tenantId,
         RequestIdValidation.requirePositiveLong(gameInstanceIdText, "gameInstanceId"),
-        RequestIdValidation.requirePositiveLong(roomInstanceIdText, "roomInstanceId"),
+        RuntimeRoomInstanceIds.requireRowId(roomInstanceIdText),
         tenantIdText,
         gameInstanceIdText,
         roomInstanceIdText);
@@ -880,7 +888,7 @@ public class WorldManagementGrpcService
   private record GameplayRoomScope(
       long tenantId,
       long gameInstanceId,
-      long roomInstanceId,
+      long roomInstanceRowId,
       String tenantIdText,
       String gameInstanceIdText,
       String roomInstanceIdText) {}

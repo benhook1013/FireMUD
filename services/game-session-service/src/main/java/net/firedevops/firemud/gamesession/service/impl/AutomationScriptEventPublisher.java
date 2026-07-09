@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -129,8 +130,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
           if (scope == null) {
             return;
           }
-          String previousRoomId = normalize(previousContext.roomInstanceId());
-          String currentRoomId = normalize(currentContext.roomInstanceId());
+          String previousRoomId = canonicalPayloadRoomId(previousContext.roomInstanceId());
+          String currentRoomId = canonicalPayloadRoomId(currentContext.roomInstanceId());
           if (!StringUtils.hasText(previousRoomId)
               || !StringUtils.hasText(currentRoomId)
               || previousRoomId.equals(currentRoomId)) {
@@ -173,7 +174,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
           if (scope == null) {
             return;
           }
-          String previousRoomId = normalize(context.roomInstanceId());
+          String previousRoomId = canonicalPayloadRoomId(context.roomInstanceId());
           if (!StringUtils.hasText(previousRoomId)) {
             return;
           }
@@ -492,6 +493,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private static String normalize(String value) {
     return value == null ? "" : value.trim();
+  }
+
+  private static String canonicalPayloadRoomId(String roomInstanceId) {
+    String normalized = normalize(roomInstanceId);
+    if (!StringUtils.hasText(normalized)) {
+      return "";
+    }
+    try {
+      return GameplayRuntimeRoomIds.requireCanonical(normalized, "roomInstanceId");
+    } catch (IllegalArgumentException ex) {
+      LOG.warn(
+          "Skipping script event room id because it is not canonical roomInstanceId={} message={}",
+          normalized,
+          ex.getMessage());
+      return "";
+    }
   }
 
   private record PublishingScope(

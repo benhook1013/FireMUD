@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 
 final class LoggingAdminRequestReaders {
   private LoggingAdminRequestReaders() {}
@@ -19,6 +20,13 @@ final class LoggingAdminRequestReaders {
 
   static long requirePositiveLong(String value, String fieldName) {
     return RequestIdValidation.requirePositiveLong(value, fieldName);
+  }
+
+  static String requireOptionalPositiveLongText(String value, String fieldName) {
+    if (!StringUtils.hasText(value)) {
+      return null;
+    }
+    return Long.toString(requirePositiveLong(value, fieldName));
   }
 
   static <T> ResponseEntity<ApiResponse<T>> withBadRequest(

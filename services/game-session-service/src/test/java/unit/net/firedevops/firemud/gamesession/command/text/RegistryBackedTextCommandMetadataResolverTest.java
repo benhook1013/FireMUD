@@ -31,6 +31,7 @@ class RegistryBackedTextCommandMetadataResolverTest {
         .get()
         .satisfies(
             metadata -> {
+              assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.SESSION);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.META);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.SESSION);
             });
@@ -42,6 +43,7 @@ class RegistryBackedTextCommandMetadataResolverTest {
         .get()
         .satisfies(
             metadata -> {
+              assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.AUTHORED);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.SOCIAL);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.COMMUNICATION);
             });

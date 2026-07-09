@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import org.springframework.util.StringUtils;
 
@@ -12,6 +13,7 @@ final class RoutingBundleSupport {
         || !StringUtils.hasText(pointerVersion)) {
       return RoutingBundle.EMPTY;
     }
+    RequestIdValidation.requirePositiveLong(pointerVersion, "pointerVersion");
     return new RoutingBundle(worldSlug, realmSlug, pointerVersion);
   }
 
@@ -41,7 +43,9 @@ final class RoutingBundleSupport {
     }
 
     long parsedPointerVersion() {
-      return pointerVersion.isBlank() ? 0L : Long.parseLong(pointerVersion);
+      return pointerVersion.isBlank()
+          ? 0L
+          : RequestIdValidation.requirePositiveLong(pointerVersion, "pointerVersion");
     }
   }
 }

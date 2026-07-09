@@ -2,9 +2,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
-import java.util.function.Supplier;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.AddFriendRequest;
@@ -13,7 +11,6 @@ import net.firedevops.firemud.entitymanagement.service.FriendService;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,9 +34,10 @@ public class FriendController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return withBadRequest(
+    return EntityManagementRequestReaders.withBadRequest(
         () -> {
-          CharacterScope scope = requireCharacterScope(tenantId, characterId);
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
           SessionContext.requireTenantAccess(scope.tenantId());
           Page<CharacterFriendDto> list =
               friendService.listFriends(
@@ -59,9 +57,10 @@ public class FriendController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody AddFriendRequest request) {
-    return withBadRequest(
+    return EntityManagementRequestReaders.withBadRequest(
         () -> {
-          CharacterScope scope = requireCharacterScope(tenantId, characterId);
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
           long parsedFriendId =
               RequestIdValidation.requirePositiveLong(request.friendId(), "friendId");
           SessionContext.requireTenantAccess(scope.tenantId());
@@ -83,9 +82,10 @@ public class FriendController {
       @PathVariable String friendId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    return withBadRequest(
+    return EntityManagementRequestReaders.withBadRequest(
         () -> {
-          CharacterScope scope = requireCharacterScope(tenantId, characterId);
+          EntityManagementRequestReaders.CharacterScope scope =
+              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
           long parsedFriendId = RequestIdValidation.requirePositiveLong(friendId, "friendId");
           SessionContext.requireTenantAccess(scope.tenantId());
           friendService.removeFriend(
@@ -97,22 +97,4 @@ public class FriendController {
           return ResponseEntity.ok(ApiResponse.success(null));
         });
   }
-
-  private CharacterScope requireCharacterScope(String tenantId, String characterId) {
-    return new CharacterScope(
-        RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
-        RequestIdValidation.requirePositiveLong(characterId, "characterId"));
-  }
-
-  private <T> ResponseEntity<ApiResponse<T>> withBadRequest(
-      Supplier<ResponseEntity<ApiResponse<T>>> action) {
-    try {
-      return action.get();
-    } catch (IllegalArgumentException ex) {
-      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-          .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));
-    }
-  }
-
-  private record CharacterScope(long tenantId, long characterId) {}
 }

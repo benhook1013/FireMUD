@@ -92,6 +92,21 @@ class TickRemediationServiceImplTest {
   }
 
   @Test
+  void getRuntimeOwnershipStatusRejectsMalformedGameInstanceIdBeforeDispatch() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "not-a-number", null))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("400 BAD_REQUEST")
+        .hasMessageContaining("gameInstanceId must be numeric");
+    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
+  }
+
+  @Test
   void getRuntimeOwnershipStatusRejectsZeroGameInstanceIdForRegionScope() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
@@ -152,6 +167,22 @@ class TickRemediationServiceImplTest {
             () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "7", null, "maint")))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("400 BAD_REQUEST");
+    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
+  }
+
+  @Test
+  void pauseRejectsZeroGameInstanceIdBeforeDispatchAndAudit() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    TickRemediationServiceImpl service =
+        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+
+    assertThatThrownBy(
+            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "0", null, "maint")))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("400 BAD_REQUEST")
+        .hasMessageContaining("gameInstanceId must be positive");
     Mockito.verifyNoInteractions(gameSessionClient, logEventService);
   }
 

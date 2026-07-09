@@ -36,7 +36,7 @@ class SessionRoutingNormalizationServiceTest {
             7001L,
             "Emberline",
             1L,
-            "room-1",
+            "R-1",
             "jwt",
             "en-NZ",
             41L,
@@ -101,5 +101,37 @@ class SessionRoutingNormalizationServiceTest {
     assertEquals(null, normalized.realmSlug());
     assertEquals(0L, normalized.pointerVersion());
     verify(pointerAuthorityService).listByRuntimeTarget(22L, 0L);
+  }
+
+  @Test
+  void normalizeProjectedContextClearsLegacyRuntimeRoomBindingBeforePointerChecks() {
+    SessionContext legacy =
+        new SessionContext(
+            41L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "room-1",
+            "jwt",
+            "en-NZ",
+            41L,
+            "demo",
+            "production",
+            2L,
+            "SHARED");
+
+    SessionContext normalized = service.normalizeProjectedContext(legacy);
+
+    assertEquals(0L, normalized.characterId());
+    assertEquals(0L, normalized.gameInstanceId());
+    assertEquals(null, normalized.roomInstanceId());
+    assertEquals(null, normalized.worldSlug());
+    assertEquals(null, normalized.realmSlug());
+    assertEquals(0L, normalized.pointerVersion());
+    verify(pointerAuthorityService, never())
+        .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
   }
 }

@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
+import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -173,6 +177,31 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllUsesCanonicalCommandIdForAcceptedAuthoredCommandWithoutOutputs() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "wave-salute",
+                TextCommandType.AUTHORED,
+                List.of("captain"),
+                "WAVE-SALUTE captain",
+                "WAVE-SALUTE",
+                new TextCommandPayload.AuthoredActionInvocation("wave-salute", List.of("captain"))),
+            CommandEnqueueResult.success(),
+            List.of());
+
+    assertThat(rendered).isEqualTo("OK WAVE-SALUTE");
+  }
+
+  @Test
   void renderAllFormatsEquipmentViewThroughNormalRendererPath() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -285,6 +314,89 @@ class TextPlayerOutputRendererTest {
                 + "Container: Satchel\n"
                 + "It is empty.\n\n"
                 + "demo> ");
+  }
+
+  @Test
+  void renderAllUsesCommunicationTagForInlineAuthoredProse() {
+    TextCommandMetadataResolver metadataResolver =
+        commandId ->
+            "wave".equals(commandId)
+                ? java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
+                        TextCommandActionCategory.SOCIAL,
+                        List.of(TextCommandActionTag.COMMUNICATION)))
+                : java.util.Optional.empty();
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)),
+            new PresentationMessageCatalog(),
+            new TextCommandPresentationPolicy(metadataResolver));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "wave",
+                TextCommandType.AUTHORED,
+                List.of("hello"),
+                "wave hello",
+                "wave",
+                new TextCommandPayload.AuthoredActionInvocation("wave", List.of("hello"))),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.message("You wave hello."), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("You wave hello.\ndemo> ");
+  }
+
+  @Test
+  void renderAllUsesBuiltInCommunicationFallbackMetadataForInlineSayProse() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.SAY, List.of("hello"), "SAY hello"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.message("You say, \"Hello.\""), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("You say, \"Hello.\"\ndemo> ");
+  }
+
+  @Test
+  void renderAllKeepsCommandEnvelopeForNonCommunicationAuthoredMessages() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)),
+            new PresentationMessageCatalog(),
+            new TextCommandPresentationPolicy(commandId -> java.util.Optional.empty()));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "wave",
+                TextCommandType.AUTHORED,
+                List.of("hello"),
+                "wave hello",
+                "wave",
+                new TextCommandPayload.AuthoredActionInvocation("wave", List.of("hello"))),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.message("You wave hello."), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("OK WAVE\nYou wave hello.\n\ndemo> ");
   }
 
   @Test

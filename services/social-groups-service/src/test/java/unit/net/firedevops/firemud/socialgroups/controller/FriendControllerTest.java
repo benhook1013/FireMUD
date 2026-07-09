@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -36,7 +37,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(FriendController.class)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  GlobalExceptionHandler.class,
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class
+})
 @WithFiremudHttpAuthTestProperties
 class FriendControllerTest {
 
@@ -84,6 +89,25 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(
             jsonPath("$.error.message").value("Cannot add or remove your own account as a friend"));
+  }
+
+  @Test
+  void addFriendRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
+    AddFriendRequest request = new AddFriendRequest(0L, 2L, 3L);
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+
+    mockMvc
+        .perform(
+            post("/friends")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(friendService, socialAccessGuard);
   }
 
   @Test

@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -566,7 +567,10 @@ class WorldManagementGrpcServiceTest {
         net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
             .setTenantId("bad")
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -583,6 +587,50 @@ class WorldManagementGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be numeric", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void getRoomReturnsTypedRuntimeRoomPayload() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    Mockito.when(roomService.getRoom(1L, 41L, 1L))
+        .thenReturn(new RuntimeRoomDto(1L, 1L, 41L, 7L, "Room A", "Seed room A"));
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
+
+    AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
+        new AtomicReference<>();
+    service.getRoom(
+        net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionAttestation("probe")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.worldmanagement.v1.GetRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("1", ref.get().getRoom().getTenantId());
+    assertEquals("41", ref.get().getRoom().getGameInstanceId());
+    assertEquals("R-1", ref.get().getRoom().getRoomInstanceId());
+    assertEquals("7", ref.get().getRoom().getRegionId());
+    assertEquals("Room A", ref.get().getRoom().getName());
+    assertEquals("Seed room A", ref.get().getRoom().getDescription());
   }
 
   @Test
@@ -645,7 +693,7 @@ class WorldManagementGrpcServiceTest {
                 RoomInstanceRef.newBuilder()
                     .setTenantId("2")
                     .setGameInstanceId("41")
-                    .setRoomInstanceId("1")
+                    .setRoomInstanceId("R-1")
                     .build())
             .build(),
         new StreamObserver<>() {
@@ -693,7 +741,7 @@ class WorldManagementGrpcServiceTest {
             .setTenantId("1")
             .setPreferredLocale("fr")
             .setSessionAttestation("probe")
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1").build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -731,7 +779,10 @@ class WorldManagementGrpcServiceTest {
             .setPreferredLocale("fr")
             .setSessionAttestation("probe")
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -780,7 +831,10 @@ class WorldManagementGrpcServiceTest {
             .setPreferredLocale("fr")
             .setSessionAttestation("probe")
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -800,8 +854,9 @@ class WorldManagementGrpcServiceTest {
     assertEquals(null, error.get());
     assertNotNull(ref.get());
     assertEquals("Room A", ref.get().getSnapshot().getRoomName());
-    assertEquals("1", ref.get().getSnapshot().getRoomInstanceId());
-    assertEquals("2", ref.get().getSnapshot().getExits(0).getTargetRoomInstanceId());
+    assertEquals("R-1", ref.get().getSnapshot().getRoomInstanceId());
+    assertEquals("R-2", ref.get().getSnapshot().getExits(0).getTargetRoomInstanceId());
+    assertEquals("1:41:R-1", ref.get().getSnapshot().getWorldSnapshotId());
     assertEquals("NORTH", ref.get().getSnapshot().getExits(0).getDirection());
     assertEquals("dim", ref.get().getSnapshot().getAmbientState().getWeather());
   }
@@ -835,7 +890,10 @@ class WorldManagementGrpcServiceTest {
             .setPreferredLocale("fr")
             .setSessionAttestation("probe")
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
             .build(),
         new StreamObserver<>() {
           @Override
@@ -853,6 +911,58 @@ class WorldManagementGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().hasError());
     assertEquals("Room A", ref.get().getSnapshot().getRoomName());
+  }
+
+  @Test
+  void getRoomRejectsMalformedRuntimeRoomInstanceIdBeforeAttestationAndLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(
+            pingService,
+            roomService,
+            Mockito.mock(WorldInstanceActivationService.class),
+            Mockito.mock(WorldDraftDesignDigestService.class),
+            Mockito.mock(WorldDesignMutationService.class),
+            Mockito.mock(WorldUpgradeValidationService.class),
+            attestationService,
+            meterRegistry,
+            new ObjectMapper());
+
+    AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
+        new AtomicReference<>();
+    service.getRoom(
+        net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setSessionAttestation("probe")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("room-antechamber")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.worldmanagement.v1.GetRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(
+        "roomInstanceId must be a runtime room id like R-1021", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(roomService, attestationService);
   }
 
   @Test
@@ -881,7 +991,10 @@ class WorldManagementGrpcServiceTest {
             .setTenantId("1")
             .setSessionAttestation("probe")
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setGameInstanceId("41").setRoomInstanceId("1").build())
+                RoomInstanceRef.newBuilder()
+                    .setGameInstanceId("41")
+                    .setRoomInstanceId("R-1")
+                    .build())
             .build(),
         new StreamObserver<>() {
           @Override

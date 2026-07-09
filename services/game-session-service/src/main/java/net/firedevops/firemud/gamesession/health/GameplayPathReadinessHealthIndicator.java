@@ -26,7 +26,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String PROBE_SESSION_ID = "1";
   private static final String PROBE_PLAYER_ID = "1";
   private static final String PROBE_GAME_INSTANCE_ID = "1";
-  private static final String PROBE_ROOM_ID = "1";
+  private static final String PROBE_ROOM_ID = "R-1021";
 
   private final AccountClient accountClient;
 

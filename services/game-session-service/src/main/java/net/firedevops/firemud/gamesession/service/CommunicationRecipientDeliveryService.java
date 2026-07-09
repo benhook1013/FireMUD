@@ -95,11 +95,7 @@ public final class CommunicationRecipientDeliveryService {
         if (!StringUtils.hasText(rendered)) {
           return;
         }
-        screenBufferService.append(
-            recipient.tenantId(),
-            recipient.gameInstanceId(),
-            recipient.characterId(),
-            java.util.List.of(ScreenBufferService.BufferedEntry.fromText(rendered + "\n")));
+        appendReplayableOutput(recipient, output, rendered);
 
         activeTransportSessionRegistry
             .find(recipient.sessionId())
@@ -115,6 +111,18 @@ public final class CommunicationRecipientDeliveryService {
                         .increment());
       }
     }
+  }
+
+  private void appendReplayableOutput(
+      SessionContext recipient, PlayerOutput output, String rendered) {
+    ReplayableScreenBufferEntries.fromRenderedOutput(output, outputProjector, rendered)
+        .ifPresent(
+            entry ->
+                screenBufferService.append(
+                    recipient.tenantId(),
+                    recipient.gameInstanceId(),
+                    recipient.characterId(),
+                    java.util.List.of(entry)));
   }
 
   private Optional<SessionContext> resolveRecipient(

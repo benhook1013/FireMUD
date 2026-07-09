@@ -159,6 +159,126 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void rejectsMalformedGameplayPointerVersionBeforeLookupAndAuditWrite() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptQuotaService quotaService = allowingQuotaService();
+    ScriptDryRunQuotaService dryRunQuotaService = allowingDryRunQuotaService();
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            automationQueueService,
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            quotaService,
+            dryRunQuotaService);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.admit(
+                gameplayRequestBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-1")
+                    .setRegionEpoch(7)
+                    .setEntityId("entity-1")
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setPointerVersion("bad-pointer")
+                    .setEventType("onCommand")
+                    .setScriptPatchVersion("patch-1")
+                    .setScriptEventId("event-1")
+                    .build()));
+    verifyNoInteractions(
+        repository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        automationQueueService,
+        gameSessionControlPlaneClient,
+        quotaService,
+        dryRunQuotaService);
+  }
+
+  @Test
+  void rejectsZeroGameplayPointerVersionBeforeLookupAndAuditWrite() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptQuotaService quotaService = allowingQuotaService();
+    ScriptDryRunQuotaService dryRunQuotaService = allowingDryRunQuotaService();
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            automationQueueService,
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            quotaService,
+            dryRunQuotaService);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.admit(
+                gameplayRequestBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-1")
+                    .setRegionEpoch(7)
+                    .setEntityId("entity-1")
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setPointerVersion("0")
+                    .setEventType("onCommand")
+                    .setScriptPatchVersion("patch-1")
+                    .setScriptEventId("event-1")
+                    .build()));
+    verifyNoInteractions(
+        repository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        automationQueueService,
+        gameSessionControlPlaneClient,
+        quotaService,
+        dryRunQuotaService);
+  }
+
+  @Test
   void admitsKnownProducerAndPersistsAuditRow() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");

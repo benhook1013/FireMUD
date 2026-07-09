@@ -396,7 +396,7 @@ class RemoteFollowupServiceImplTest {
         .setScriptEventId("evt-1")
         .setTriggerMode("TRIGGER_MODE_CATCH_UP")
         .setReadSnapshotToken("game-session:onEnterRegion:9:8:evt-1")
-        .setEventPayloadJson("{\"fromRegionId\":\"room-a\",\"toRegionId\":\"room-b\"}")
+        .setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}")
         .setClaimTargetAggregate("entity:entity-9")
         .setCurrentOriginRuntimeRegionId("region-origin-current")
         .setCurrentOriginRuntimeRegionEpoch(13L)

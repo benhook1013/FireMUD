@@ -30,6 +30,28 @@ class NpcFormationControllerTest {
   }
 
   @Test
+  void createFormationRejectsZeroLeaderNpcIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/formations")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "tenantId": 1,
+                      "name": "demo",
+                      "leaderNpcId": 0,
+                      "formationType": "LINE"
+                    }
+                    """))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("leaderNpcId must be positive"));
+
+    verifyNoInteractions(formationService);
+  }
+
+  @Test
   void addMemberRejectsMalformedFormationIdBeforeDispatch() throws Exception {
     mockMvc
         .perform(

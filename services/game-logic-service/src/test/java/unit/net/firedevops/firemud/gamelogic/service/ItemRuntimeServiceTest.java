@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
@@ -68,7 +69,7 @@ class ItemRuntimeServiceTest {
             .setCharacterId("7")
             .setGameInstanceId("9")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-            .setRoomInstanceId("room-1")
+            .setRoomInstanceId("R-1")
             .setItemId("100")
             .setQuantity(1)
             .setSessionAttestation("attestation")
@@ -84,7 +85,7 @@ class ItemRuntimeServiceTest {
             .setCharacterId("7")
             .setGameInstanceId("9")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-            .setRoomInstanceId("room-1")
+            .setRoomInstanceId("R-1")
             .setItemId("100")
             .setQuantity(1)
             .setSessionAttestation("attestation")
@@ -95,6 +96,68 @@ class ItemRuntimeServiceTest {
     assertThat(service.pickupItemFromRoom(pickupRequest).getInventoryItem().getItemName())
         .isEqualTo("Torch");
     assertThat(service.dropItemToRoom(dropRequest).hasError()).isFalse();
+  }
+
+  @Test
+  void listRoomGroundInventoryRejectsLegacyRuntimeRoomIdBeforeEntityLookup() {
+    ListRoomGroundInventoryRequest request =
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("9")
+            .setRoomInstanceId("room-1")
+            .setSessionAttestation("attestation")
+            .build();
+
+    ListRoomGroundInventoryResponse response = service.listRoomGroundInventory(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(response.getError().getMessage())
+        .isEqualTo("roomInstanceId must be a runtime room id like R-1021");
+    verifyNoInteractions(entityStub);
+  }
+
+  @Test
+  void pickupItemFromRoomRejectsLegacyRuntimeRoomIdBeforeEntityLookup() {
+    PickupItemFromRoomRequest request =
+        PickupItemFromRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("room-1")
+            .setItemId("100")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .build();
+
+    PickupItemFromRoomResponse response = service.pickupItemFromRoom(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(response.getError().getMessage())
+        .isEqualTo("roomInstanceId must be a runtime room id like R-1021");
+    verifyNoInteractions(entityStub);
+  }
+
+  @Test
+  void dropItemToRoomRejectsLegacyRuntimeRoomIdBeforeEntityLookup() {
+    DropItemToRoomRequest request =
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("room-1")
+            .setItemId("100")
+            .setQuantity(1)
+            .setSessionAttestation("attestation")
+            .build();
+
+    DropItemToRoomResponse response = service.dropItemToRoom(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(response.getError().getMessage())
+        .isEqualTo("roomInstanceId must be a runtime room id like R-1021");
+    verifyNoInteractions(entityStub);
   }
 
   @Test
@@ -195,7 +258,7 @@ class ItemRuntimeServiceTest {
             .setAccountId("3")
             .setCharacterId("7")
             .setGameInstanceId("9")
-            .setRoomInstanceId("room-1")
+            .setRoomInstanceId("R-1")
             .setItemReference("torch1")
             .setQuantity(1)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -206,7 +269,7 @@ class ItemRuntimeServiceTest {
             ListRoomGroundInventoryRequest.newBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("9")
-                .setRoomInstanceId("room-1")
+                .setRoomInstanceId("R-1")
                 .setSessionAttestation("attestation")
                 .build()))
         .thenReturn(
@@ -226,7 +289,7 @@ class ItemRuntimeServiceTest {
                 .setCharacterId("7")
                 .setGameInstanceId("9")
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                .setRoomInstanceId("room-1")
+                .setRoomInstanceId("R-1")
                 .setItemId("100")
                 .setItemInstanceId("500")
                 .setContainerInstanceId("ground-container-1")
@@ -253,7 +316,7 @@ class ItemRuntimeServiceTest {
             .setAccountId("3")
             .setCharacterId("7")
             .setGameInstanceId("9")
-            .setRoomInstanceId("room-1")
+            .setRoomInstanceId("R-1")
             .setItemReference("ammo/iron")
             .setQuantity(3)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -284,7 +347,7 @@ class ItemRuntimeServiceTest {
                 .setCharacterId("7")
                 .setGameInstanceId("9")
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                .setRoomInstanceId("room-1")
+                .setRoomInstanceId("R-1")
                 .setItemId("100")
                 .setContainerInstanceId("100")
                 .setStackFamilyKey("ammo/iron")
@@ -306,7 +369,7 @@ class ItemRuntimeServiceTest {
             .setTenantId("1")
             .setCharacterId("7")
             .setGameInstanceId("9")
-            .setRoomInstanceId("room-1")
+            .setRoomInstanceId("R-1")
             .setQuantity(1)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setSessionAttestation("attestation")

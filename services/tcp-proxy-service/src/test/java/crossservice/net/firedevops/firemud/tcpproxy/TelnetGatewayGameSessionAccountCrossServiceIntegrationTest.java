@@ -619,6 +619,39 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
+  void telnetSayDeliversRoomListenerView() throws Exception {
+    ensureTestServicesStarted();
+    entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
+
+    try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
+        GameplayTelnetScenarios.openReadyPair(
+            this::openTelnetClient,
+            GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
+            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
+      ActiveTransportSessionRegistry sessionRegistry =
+          gameSession().bean(ActiveTransportSessionRegistry.class);
+      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
+      SessionContext targetContext =
+          sessionContextService
+              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
+              .orElseThrow();
+      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
+
+      scenario.actor().sendLine("SAY hello travelers");
+      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
+          screenBufferService,
+          targetContext,
+          COMMAND_WAIT,
+          ChatTestFixtures.canonicalSayListenerText());
+      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalSayText()))
+          .contains(ChatTestFixtures.canonicalSayText());
+      assertThat(scenario.target().readLineContaining(ChatTestFixtures.canonicalSayListenerText()))
+          .contains(ChatTestFixtures.canonicalSayListenerText());
+    }
+  }
+
+  @Test
   void telnetTellDeliversTargetView() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());

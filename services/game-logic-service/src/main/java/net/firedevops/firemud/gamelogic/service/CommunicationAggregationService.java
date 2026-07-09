@@ -162,19 +162,34 @@ public class CommunicationAggregationService {
     List<String> delivered = new ArrayList<>();
     delivered.add(speakerName);
     delivered.addAll(attendees);
+    List<CommunicationRecipientView> recipientViews = new ArrayList<>();
+    recipientViews.add(
+        recipientView(
+            speakerId,
+            speakerName,
+            CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
+            CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+            speakerName,
+            ""));
+    roomEntities.getEntitiesList().stream()
+        .filter(entity -> entity.getEntityType() == EntityType.PLAYER)
+        .filter(entity -> !entity.getEntityId().equals(speakerId))
+        .forEach(
+            entity ->
+                recipientViews.add(
+                    recipientView(
+                        entity.getEntityId(),
+                        entity.getDisplayName(),
+                        CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
+                        CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+                        speakerName,
+                        "")));
     return new CommunicationAudience(
         delivered,
         buildNpcEchoes(roomEntities),
         Optional.empty(),
         speakerName,
-        List.of(
-            recipientView(
-                speakerId,
-                speakerName,
-                CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
-                CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-                speakerName,
-                "")),
+        recipientViews,
         null);
   }
 
@@ -410,12 +425,8 @@ public class CommunicationAggregationService {
   }
 
   private RoomInstanceRef resolveRoomInstance(SendCommunicationRequest request) {
-    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      throw io.grpc.Status.INVALID_ARGUMENT
-          .withDescription("room_instance.room_instance_id is required")
-          .asRuntimeException();
-    }
-    return request.getRoomInstance();
+    return RuntimeRoomInstanceRefs.requireCanonicalOrThrowInvalidArgument(
+        request.getRoomInstance());
   }
 
   private boolean requiresRoomAudience(CommunicationType type) {

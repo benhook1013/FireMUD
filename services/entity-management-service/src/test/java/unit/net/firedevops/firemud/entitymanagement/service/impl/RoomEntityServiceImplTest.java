@@ -1,7 +1,9 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
@@ -55,15 +57,25 @@ class RoomEntityServiceImplTest {
     room.addEntity(entity("NPC-1", "Kobold Scout", EntityType.NPC, ReloadHint.STABLE));
     props.putRoom("1:R-1021", room);
 
-    List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
+    List<RoomEntityDto> listed = service.listEntities(1L, "game-1", "R-1021");
     assertEquals(2, listed.size());
     assertTrue(listed.stream().anyMatch(dto -> dto.displayName().equals("Sora")));
   }
 
   @Test
   void returnsEmptyWhenRoomMissing() {
-    List<RoomEntityDto> listed = service.listEntities("1", "game-1", "missing");
+    List<RoomEntityDto> listed = service.listEntities(1L, "game-1", "missing");
     assertTrue(listed.isEmpty());
+  }
+
+  @Test
+  void listEntitiesRejectsZeroTenantIdBeforeRepositoryLookup() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.listEntities(0L, "game-1", "R-1"));
+
+    assertEquals("tenantId must be positive", ex.getMessage());
+    verifyNoInteractions(itemInstanceRepository, itemStackRepository, containerInstanceRepository);
   }
 
   @Test
@@ -104,7 +116,7 @@ class RoomEntityServiceImplTest {
     Mockito.when(containerInstanceRepository.findByItemInstance_Id(77L))
         .thenReturn(java.util.Optional.of(instance));
 
-    List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
+    List<RoomEntityDto> listed = service.listEntities(1L, "game-1", "R-1021");
     assertEquals(1, listed.size());
     assertEquals(EntityType.ITEM, listed.get(0).entityType());
     assertEquals("Backpack", listed.get(0).displayName());
@@ -142,7 +154,7 @@ class RoomEntityServiceImplTest {
                     1L, "game-1", "R-1021", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(stack)));
 
-    List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
+    List<RoomEntityDto> listed = service.listEntities(1L, "game-1", "R-1021");
 
     assertEquals(1, listed.size());
     assertEquals("Arrows", listed.get(0).displayName());

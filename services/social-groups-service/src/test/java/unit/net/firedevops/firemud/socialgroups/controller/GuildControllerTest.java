@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,10 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.GuildDto;
 import net.firedevops.firemud.socialgroups.service.GuildService;
@@ -30,7 +33,11 @@ import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(GuildController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  GlobalExceptionHandler.class,
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class
+})
 @WithFiremudHttpAuthTestProperties
 class GuildControllerTest {
 
@@ -76,5 +83,43 @@ class GuildControllerTest {
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void createGuildRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    CreateGuildRequest request = new CreateGuildRequest(0L, 2L, "guild");
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/guilds")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(guildService);
+  }
+
+  @Test
+  void addMemberRejectsZeroGuildIdBeforeDispatch() throws Exception {
+    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, 2L, "member");
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/guilds/members")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("guildId must be positive"));
+
+    verifyNoInteractions(guildService);
   }
 }

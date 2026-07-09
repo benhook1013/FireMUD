@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -10,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
@@ -26,6 +28,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(InventoryController.class)
+@org.springframework.context.annotation.Import(GlobalExceptionHandler.class)
 class InventoryControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -94,5 +97,49 @@ class InventoryControllerTest {
                 .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void listRejectsMalformedTenantIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/tenants/not-a-number/characters/2/inventory")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("tenantId must be numeric"));
+
+    verifyNoInteractions(inventoryService);
+  }
+
+  @Test
+  void removeRejectsZeroItemIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            delete("/tenants/1/characters/2/inventory/0")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("itemId must be positive"));
+
+    verifyNoInteractions(inventoryService);
+  }
+
+  @Test
+  void addRejectsZeroItemIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            post("/tenants/1/characters/2/inventory")
+                .param("gameInstanceId", "live")
+                .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"itemId\":0,\"quantity\":1}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("itemId must be positive"));
+
+    verifyNoInteractions(inventoryService);
   }
 }

@@ -29,6 +29,7 @@ public record SessionContext(
   public SessionContext {
     loginName = loginName == null ? null : loginName.trim();
     characterName = characterName == null ? null : characterName.trim();
+    roomInstanceId = normalizeText(roomInstanceId);
     localeTag = normalizeLocaleTag(localeTag);
     worldSlug = normalizeSlug(worldSlug);
     realmSlug = normalizeSlug(realmSlug);

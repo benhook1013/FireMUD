@@ -392,7 +392,7 @@ class PlayCommandHandlerTest {
             7001L,
             "demo",
             1L,
-            "room-7",
+            "R-7",
             "jwt-token",
             null,
             0L,
@@ -890,8 +890,7 @@ class PlayCommandHandlerTest {
   @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
     SessionContext context =
-        new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -919,8 +918,7 @@ class PlayCommandHandlerTest {
   @Test
   void playCreatesPublicProductionMembershipWhenMissing() {
     SessionContext context =
-        new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -951,8 +949,7 @@ class PlayCommandHandlerTest {
   @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
-        new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -981,8 +978,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWhenMembershipAuthorityUnavailableFailsClosed() {
     SessionContext context =
-        new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
@@ -38,5 +39,19 @@ class RoutingBundleSupportTest {
     assertThat(routingBundle.worldSlug()).isEqualTo("demo");
     assertThat(routingBundle.realmSlug()).isEqualTo("production");
     assertThat(routingBundle.parsedPointerVersion()).isEqualTo(7L);
+  }
+
+  @Test
+  void normalizeRejectsMalformedPointerVersionText() {
+    assertThatThrownBy(() -> RoutingBundleSupport.normalize("demo", "production", "bad-pointer"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("pointerVersion must be numeric");
+  }
+
+  @Test
+  void normalizeRejectsNonPositivePointerVersionText() {
+    assertThatThrownBy(() -> RoutingBundleSupport.normalize("demo", "production", "0"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("pointerVersion must be positive");
   }
 }

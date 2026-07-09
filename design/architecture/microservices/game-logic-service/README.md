@@ -40,7 +40,7 @@ Game Logic is intentionally a replaceable same-type worker rather than a keeper 
 
 Implementation notes:
 
-- Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `SendCommunication` forwards normalized `say`/`whisper`/`tell` payloads to the Social & Groups stub.
+- Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `SendCommunication` forwards normalized `say`/`whisper`/`tell` payloads to the Social & Groups stub while returning recipient metadata that lets Game Session render canonical actor and room-listener prose.
 - Stubbed: room and entity context still comes from the deterministic LOOK fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
 - Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, localized listening areas, and profanity-escalation flows remain future slices.
 

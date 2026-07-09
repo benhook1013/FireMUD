@@ -662,6 +662,59 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void listRoomGroundInventoryRejectsLegacyRuntimeRoomIdBeforeAttestation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListRoomGroundInventoryResponse> ref = new AtomicReference<>();
+    service.listRoomGroundInventory(
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("room-1")
+            .setSessionAttestation("probe")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomGroundInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(
+        "roomInstanceId must be a runtime room id like R-1021", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService, attestationService);
+  }
+
+  @Test
   void putItemIntoContainerReturnsMappedItem() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1171,7 +1224,7 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
-    Mockito.when(roomEntityService.listEntities("1", "2", "3"))
+    Mockito.when(roomEntityService.listEntities(1L, "2", "R-3"))
         .thenReturn(
             List.of(
                 new RoomEntityDto(
@@ -1202,7 +1255,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
                     .setTenantId("1")
                     .setGameInstanceId("2")
-                    .setRoomInstanceId("3")
+                    .setRoomInstanceId("R-3")
                     .build())
             .setSessionAttestation("probe")
             .build(),
@@ -1259,7 +1312,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
                     .setTenantId("2")
                     .setGameInstanceId("3")
-                    .setRoomInstanceId("4")
+                    .setRoomInstanceId("R-4")
                     .build())
             .setSessionAttestation("probe")
             .build(),
@@ -3540,6 +3593,68 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void pickupItemFromRoomRejectsLegacyRuntimeRoomIdBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            Mockito.mock(ContainerService.class),
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            meterRegistry);
+
+    AtomicReference<PickupItemFromRoomResponse> ref = new AtomicReference<>();
+    service.pickupItemFromRoom(
+        PickupItemFromRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("room-1")
+            .setItemId("99")
+            .setQuantity(1)
+            .setEffectId("effect-room-1")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PickupItemFromRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(
+        "roomInstanceId must be a runtime room id like R-1021", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService, replayService, attestationService);
+  }
+
+  @Test
   void dropItemToRoomRejectsMalformedItemInstanceIdBeforeReplayLookup() throws Exception {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -3767,5 +3882,67 @@ class EntityManagementGrpcServiceTest {
     assertEquals("containerInstanceId must be numeric", ref.get().getError().getMessage());
     verifyNoInteractions(inventoryService);
     verifyNoInteractions(replayService);
+  }
+
+  @Test
+  void dropItemToRoomRejectsLegacyRuntimeRoomIdBeforeReplayLookup() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectReplayService replayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    GameplaySessionAttestationService attestationService =
+        Mockito.mock(GameplaySessionAttestationService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            equipmentService,
+            inventoryService,
+            Mockito.mock(ContainerService.class),
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService,
+            meterRegistry);
+
+    AtomicReference<DropItemToRoomResponse> ref = new AtomicReference<>();
+    service.dropItemToRoom(
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setRoomInstanceId("room-1")
+            .setItemId("99")
+            .setQuantity(1)
+            .setEffectId("effect-room-2")
+            .setSessionAttestation("attestation")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(DropItemToRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(
+        "roomInstanceId must be a runtime room id like R-1021", ref.get().getError().getMessage());
+    verifyNoInteractions(inventoryService, replayService, attestationService);
   }
 }

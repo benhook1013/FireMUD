@@ -23,7 +23,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedAuthoredAction() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "room-1", "jwt");
+            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -61,7 +61,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
 
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "room-1", "jwt");
+            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     hookHandler.handle(
         new TextCommandDispatchRequest(

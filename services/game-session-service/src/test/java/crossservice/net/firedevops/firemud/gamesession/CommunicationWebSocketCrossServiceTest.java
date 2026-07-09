@@ -90,6 +90,25 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketSayPushesRoomListenerViewToLiveRecipient() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    try (GameplayWebSocketScenarios.TwoPlayerScenario scenario =
+        GameplayWebSocketScenarios.openReadyPair(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "actor-say-conn",
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
+            "target-say-conn",
+            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+      scenario.actor().send("SAY hello travelers");
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalSayText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalSayListenerText());
+    }
+  }
+
+  @Test
   void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -376,6 +395,36 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartySayUsesStructuredCommunicationMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("say-first-party")) {
+      int baseline = client.responses().size();
+      client.send("SAY hello travelers");
+      JsonNode say = awaitStructuredCommand(client, baseline, "SAY");
+      GameplayStructuredCommandAssertions.requireStructuredCommand(
+          say, "SAY", "say", "SOCIAL", "COMMUNICATION");
+      assertThat(say.path("accepted").asBoolean()).isTrue();
+    }
+  }
+
+  @Test
+  void websocketFirstPartyAuthoredCommunicationUsesStructuredMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("authored-first-party")) {
+      int baseline = client.responses().size();
+      client.send("SALUTE captain");
+      JsonNode authored = awaitStructuredCommand(client, baseline, "AUTHORED");
+      GameplayStructuredCommandAssertions.requireStructuredCommand(
+          authored, "AUTHORED", "wave-salute", "SOCIAL", "AUTHORING", "COMMUNICATION");
+      assertThat(authored.path("accepted").asBoolean()).isTrue();
+    }
+  }
+
+  @Test
   void websocketFirstPartyFriendsViewsUseStructuredCanonicalPayloads() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
@@ -644,7 +693,25 @@ class CommunicationWebSocketCrossServiceTest {
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withGameSessionProps(
-                  Map.of("firemud.gateway.connect-context.jwt-secret", FIRST_PARTY_CONNECT_SECRET))
+                  Map.of(
+                      "firemud.gateway.connect-context.jwt-secret",
+                      FIRST_PARTY_CONNECT_SECRET,
+                      "game-session.authored-actions.actions[0].action-id",
+                      "wave-salute",
+                      "game-session.authored-actions.actions[0].command-id",
+                      "wave-salute",
+                      "game-session.authored-actions.actions[0].aliases[0]",
+                      "salute",
+                      "game-session.authored-actions.actions[0].stage-requirement",
+                      "GAMEPLAY",
+                      "game-session.authored-actions.actions[0].prompt-policy",
+                      "WHEN_GAMEPLAY",
+                      "game-session.authored-actions.actions[0].action-category",
+                      "SOCIAL",
+                      "game-session.authored-actions.actions[0].action-tags[0]",
+                      "AUTHORING",
+                      "game-session.authored-actions.actions[0].action-tags[1]",
+                      "COMMUNICATION"))
               .withInitialFriendPresenceResponse(
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(
@@ -721,9 +788,13 @@ class CommunicationWebSocketCrossServiceTest {
     GameplayWebSocketDriver client = openFirstPartyClient(transportSessionId);
     client.send("LOGIN");
     JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        login, "LOGIN", "login", "META", "SESSION");
     assertThat(login.path("accepted").asBoolean()).withFailMessage(login.toPrettyString()).isTrue();
     client.send("PLAY demo");
     JsonNode play = awaitStructuredCommand(client, 1, "PLAY");
+    GameplayStructuredCommandAssertions.requireStructuredCommand(
+        play, "PLAY", "play", "META", "SESSION");
     assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
     return client;
   }

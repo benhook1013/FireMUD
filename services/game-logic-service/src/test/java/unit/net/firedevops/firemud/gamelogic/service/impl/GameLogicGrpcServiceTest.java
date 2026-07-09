@@ -301,6 +301,67 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
+  void resolveLookPreservesInvalidArgumentForMalformedRuntimeRoomIds() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    Mockito.when(lookAggregationService.resolve(any()))
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.INVALID_ARGUMENT.withDescription(
+                    "room_instance.room_instance_id must be a runtime room id like R-1021")));
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            communicationAggregationService,
+            moveAggregationService,
+            Mockito.mock(ItemRuntimeService.class),
+            digestService,
+            mockAttestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<LookResult> holder = new AtomicReference<>();
+    service.resolveLook(
+        LookRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("1")
+            .setCharacterId("911")
+            .setPreferredLocale("")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(LookResult value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertTrue(holder.get().hasError());
+    assertEquals("INVALID_ARGUMENT", holder.get().getError().getCode());
+    assertTrue(
+        holder
+            .get()
+            .getError()
+            .getMessage()
+            .contains("room_instance.room_instance_id must be a runtime room id like R-1021"));
+  }
+
+  @Test
   void queryInventoryDelegatesToItemRuntimeService() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();

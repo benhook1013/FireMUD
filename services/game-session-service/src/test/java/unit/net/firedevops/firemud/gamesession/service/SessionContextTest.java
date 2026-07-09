@@ -1,11 +1,32 @@
 package net.firedevops.firemud.gamesession.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
 class SessionContextTest {
+
+  @Test
+  void preservesLegacyAndSyntheticRuntimeRoomIdsVerbatim() {
+    SessionContext legacyNumeric =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "1", "jwt");
+    SessionContext legacyPrefixed =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+    SessionContext legacyUppercasePrefixed =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "ROOM-1", "jwt");
+    SessionContext syntheticProbe =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "readiness-room-1", "jwt");
+
+    assertEquals("1", legacyNumeric.roomInstanceId());
+    assertEquals("room-1", legacyPrefixed.roomInstanceId());
+    assertEquals("ROOM-1", legacyUppercasePrefixed.roomInstanceId());
+    assertEquals("readiness-room-1", syntheticProbe.roomInstanceId());
+  }
 
   @Test
   void hasPartialPersistedFirstPartyConnectContextDetectsMissingConnectRequest() {
@@ -44,7 +65,7 @@ class SessionContextTest {
             7001L,
             "Emberline",
             41L,
-            "room-1",
+            "R-1",
             "jwt",
             null,
             41L,
@@ -114,11 +135,11 @@ class SessionContextTest {
   void hasGameplayRegionBindingRequiresGameInstanceCharacterAndRoom() {
     SessionContext complete =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
     SessionContext missingRoom =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, null, "jwt");
     SessionContext missingCharacter =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "room-1", "jwt");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
 
     assertTrue(complete.hasGameplayRegionBinding());
     assertFalse(missingRoom.hasGameplayRegionBinding());
@@ -132,7 +153,7 @@ class SessionContextTest {
     SessionContext characterOnly =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt");
     SessionContext roomOnly =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "room-1", "jwt");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "R-1", "jwt");
     SessionContext blank =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt");
 
@@ -146,12 +167,11 @@ class SessionContextTest {
   void hasGameplayIdentityRequiresPositiveGameInstanceAndCharacter() {
     SessionContext complete =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
     SessionContext missingGameInstance =
-        new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, "room-1", "jwt");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, "R-1", "jwt");
     SessionContext missingCharacter =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "room-1", "jwt");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
 
     assertTrue(complete.hasGameplayIdentity());
     assertFalse(missingGameInstance.hasGameplayIdentity());

@@ -1,6 +1,9 @@
 package net.firedevops.firemud.socialgroups.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 public record UpdateFriendPresencePolicyRequest(
-    long tenantId, long accountId, @NotNull FriendPresenceVisibilityPolicyValue visibilityPolicy) {}
+    @Positive long tenantId,
+    @Positive long accountId,
+    @NotNull FriendPresenceVisibilityPolicyValue visibilityPolicy) {}

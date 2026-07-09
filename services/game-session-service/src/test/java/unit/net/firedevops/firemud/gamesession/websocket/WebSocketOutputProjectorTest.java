@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -10,7 +12,11 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
+import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
+import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -19,6 +25,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutpu
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
@@ -29,8 +36,28 @@ class WebSocketOutputProjectorTest {
 
   private final PresentationProperties presentation = new PresentationProperties();
   private final ObjectMapper objectMapper = new ObjectMapper();
+  private final TextCommandMetadataResolver metadataResolver =
+      commandId ->
+          switch (commandId) {
+            case "look" ->
+                java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .LOOK,
+                        TextCommandActionCategory.META,
+                        List.of(TextCommandActionTag.UI)));
+            case "wave" ->
+                java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
+                        TextCommandActionCategory.SOCIAL,
+                        List.of(
+                            TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION)));
+            default -> java.util.Optional.empty();
+          };
   private final WebSocketOutputProjector projector =
-      new WebSocketOutputProjector(new TextPlayerOutputRenderer(presentation));
+      new WebSocketOutputProjector(new TextPlayerOutputRenderer(presentation), metadataResolver);
 
   @Test
   void genericWebSocketStillReceivesClassicText() {
@@ -72,12 +99,48 @@ class WebSocketOutputProjectorTest {
     JsonNode json = objectMapper.readTree(payload);
     assertThat(json.path("eventType").asText()).isEqualTo("command_result");
     assertThat(json.path("commandType").asText()).isEqualTo("LOOK");
+    assertThat(json.path("commandId").asText()).isEqualTo("look");
+    assertThat(json.path("actionCategory").asText()).isEqualTo("META");
+    assertThat(json.path("actionTags")).extracting(JsonNode::asText).containsExactly("UI");
     assertThat(json.path("accepted").asBoolean()).isTrue();
     assertThat(json.path("outputs")).hasSize(1);
     assertThat(json.path("outputs").get(0).path("kind").asText()).isEqualTo("PROMPT");
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("prompt");
     assertThat(json.path("outputs").get(0).path("payload").path("text").asText())
         .isEqualTo("demo> ");
+  }
+
+  @Test
+  void firstPartyWebReceivesCanonicalAuthoredCommandId() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(
+                "wave",
+                TextCommandType.AUTHORED,
+                List.of("hello"),
+                "wave hello",
+                "wave",
+                new TextCommandPayload.AuthoredActionInvocation("wave", List.of("hello"))),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(PlayerOutput.message("You wave hello."))),
+            List.of(PlayerOutput.message("You wave hello.")),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("commandType").asText()).isEqualTo("AUTHORED");
+    assertThat(json.path("commandId").asText()).isEqualTo("wave");
+    assertThat(json.path("actionCategory").asText()).isEqualTo("SOCIAL");
+    assertThat(json.path("actionTags"))
+        .extracting(JsonNode::asText)
+        .containsExactly("AUTHORING", "COMMUNICATION");
   }
 
   @Test
@@ -105,6 +168,29 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("text_message");
     assertThat(json.path("outputs").get(0).path("payload").path("messageKey").asText())
         .isEqualTo("communication.whisper.actor");
+  }
+
+  @Test
+  void genericWebSocketProjectsViewOutputThroughLookRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new LookViewOutput(
+                "room-1", "Room One", "Short desc", "Long desc", true, List.of(), List.of()));
+    when(renderer.renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation))
+        .thenReturn("Room One\nLong desc");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload).isEqualTo("Room One\nLong desc");
+    verify(renderer)
+        .renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
+    verify(renderer, never()).render(output, "en-NZ", presentation);
   }
 
   @Test
@@ -537,6 +623,33 @@ class WebSocketOutputProjectorTest {
     ScreenBufferService.BufferedEntry entry =
         ScreenBufferService.BufferedEntry.fromStructuredOutput(
             "Legacy safe text\n", "MESSAGE", "BUFFERABLE", "DEFAULT", "text_message", "{bad json");
+
+    String payload = projector.projectTranscriptEntry(session, "screen buffer", entry);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
+    assertThat(json.path("text").asText()).isEqualTo("Legacy safe text\n");
+  }
+
+  @Test
+  void firstPartyWebFallsBackToTranscriptChunkForIncompleteBufferedMetadata() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    ScreenBufferService.BufferedEntry entry =
+        new ScreenBufferService.BufferedEntry(
+            "Legacy safe text\n",
+            1,
+            "Legacy safe text\n".getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+            System.currentTimeMillis(),
+            "MESSAGE",
+            null,
+            "DEFAULT",
+            "text_message",
+            "{\"text\":\"Legacy safe text\"}");
 
     String payload = projector.projectTranscriptEntry(session, "screen buffer", entry);
 

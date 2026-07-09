@@ -180,7 +180,7 @@ public class InventoryServiceImpl implements InventoryService {
   public Page<RoomGroundInventoryEntryDto> listRoomGroundItems(
       Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable) {
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
-    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
+    String normalizedRoomInstanceId = requireCanonicalRuntimeRoomId(roomInstanceId);
     List<RoomGroundInventoryEntryDto> entries = new ArrayList<>();
     entries.addAll(
         itemInstanceRepository
@@ -216,7 +216,7 @@ public class InventoryServiceImpl implements InventoryService {
       String sessionId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
-    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
+    String normalizedRoomInstanceId = requireCanonicalRuntimeRoomId(roomInstanceId);
     Character character =
         requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
@@ -271,7 +271,7 @@ public class InventoryServiceImpl implements InventoryService {
       String sessionId) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
-    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
+    String normalizedRoomInstanceId = requireCanonicalRuntimeRoomId(roomInstanceId);
     Character character =
         requireCharacter(tenantId, characterId, gameInstanceId, playableStateScope);
     Item item = requireItem(tenantId, itemId);
@@ -778,6 +778,10 @@ public class InventoryServiceImpl implements InventoryService {
       throw new IllegalArgumentException(fieldName + " must be provided");
     }
     return value.trim();
+  }
+
+  private String requireCanonicalRuntimeRoomId(String roomInstanceId) {
+    return RequestIdValidation.requireCanonicalRuntimeRoomId(roomInstanceId, "roomInstanceId");
   }
 
   private String normalizeOptionalText(String value) {

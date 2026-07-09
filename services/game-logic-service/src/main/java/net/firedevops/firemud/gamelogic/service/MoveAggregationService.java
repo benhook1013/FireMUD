@@ -40,10 +40,11 @@ public class MoveAggregationService {
         return errorResponse(builder, "INVALID_ARGUMENT", "Direction must not be empty");
       }
 
-      RoomInstanceRef currentRoom = request.getRoomInstance();
-      if (currentRoom.getRoomInstanceId().isBlank()) {
-        return errorResponse(
-            builder, "INVALID_ARGUMENT", "room_instance.room_instance_id is required");
+      RoomInstanceRef currentRoom;
+      try {
+        currentRoom = RuntimeRoomInstanceRefs.requireCanonical(request.getRoomInstance());
+      } catch (IllegalArgumentException ex) {
+        return errorResponse(builder, "INVALID_ARGUMENT", ex.getMessage());
       }
       RoomSnapshot snapshot;
       try {
