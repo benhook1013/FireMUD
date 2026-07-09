@@ -3,6 +3,10 @@ package net.firedevops.firemud.gamelogic;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
@@ -26,6 +30,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class GameLogicApplicationIntegrationTest {
+  private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
   @LocalServerPort private int port;
   @MockitoBean private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
@@ -97,5 +102,43 @@ class GameLogicApplicationIntegrationTest {
     assertThat(body)
         .contains(
             "\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\",\"gameInstancePersistedOverride:7\"]");
+  }
+
+  @Test
+  void effectiveCommunicationSettingsRejectsMalformedTenantIdWithInvalidArgumentEnvelope()
+      throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/actuator/settings/effective/communication?tenantId=bad-tenant"))
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"tenantId must be numeric\"");
+  }
+
+  @Test
+  void effectiveCommunicationSettingsRejectsZeroGameInstanceIdWithInvalidArgumentEnvelope()
+      throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/actuator/settings/effective/communication?tenantId=42&gameInstanceId=0"))
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"gameInstanceId must be positive\"");
   }
 }
