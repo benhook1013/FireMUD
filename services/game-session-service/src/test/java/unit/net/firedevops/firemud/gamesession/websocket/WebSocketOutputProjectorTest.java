@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutpu
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -180,17 +181,76 @@ class WebSocketOutputProjectorTest {
         PlayerOutput.view(
             new LookViewOutput(
                 "room-1", "Room One", "Short desc", "Long desc", true, List.of(), List.of()));
-    when(renderer.renderSuccessfulForCommandType(
-            TextCommandType.LOOK, List.of(output), "en-NZ", presentation))
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("Room One\nLong desc");
 
     String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
 
     assertThat(payload).isEqualTo("Room One\nLong desc");
-    verify(renderer)
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void genericWebSocketProjectsFriendViewThroughFriendsRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new FriendDetailViewOutput(
+                new FriendPresenceViewOutput.Entry(
+                    1,
+                    77L,
+                    41L,
+                    "ONLINE",
+                    null,
+                    "Sora",
+                    true,
+                    "demo",
+                    "Demo World",
+                    "ember",
+                    "Ember Realm",
+                    "Sora",
+                    "GLOBAL",
+                    1L,
+                    "ACTIVE",
+                    null,
+                    "FRIEND",
+                    "SHARED")));
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK FRIENDS\nFriend: Sora\n\n");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload).isEqualTo("OK FRIENDS\nFriend: Sora\n\n");
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never())
         .renderSuccessfulForCommandType(
             TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
-    verify(renderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void genericWebSocketProjectsEquipmentViewThroughEquipmentRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new InventoryViewOutput("Equipment:", List.of("- HEAD: Leather Cap (A small cap)")));
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK EQUIPMENT\nEquipment:\n- HEAD: Leather Cap (A small cap)\n\n");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload)
+        .isEqualTo("OK EQUIPMENT\nEquipment:\n- HEAD: Leather Cap (A small cap)\n\n");
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never())
+        .renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
   }
 
   @Test

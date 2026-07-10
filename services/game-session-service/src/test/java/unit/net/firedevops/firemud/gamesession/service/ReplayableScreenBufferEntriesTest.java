@@ -7,8 +7,8 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -56,8 +56,7 @@ class ReplayableScreenBufferEntriesTest {
         PlayerOutput.view(
             new LookViewOutput(
                 "room-1", "Room One", "Short desc", "Long desc", true, List.of(), List.of()));
-    when(outputRenderer.renderSuccessfulForCommandType(
-            TextCommandType.LOOK, List.of(output), "en-NZ", presentation))
+    when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("Room One\nLong desc");
 
     var entry =
@@ -66,9 +65,26 @@ class ReplayableScreenBufferEntriesTest {
     assertThat(entry).isPresent();
     assertThat(entry.orElseThrow().text()).isEqualTo("Room One\nLong desc\n");
     verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
-    verify(outputRenderer)
-        .renderSuccessfulForCommandType(
-            TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
+    verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(outputRenderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void fromOutputUsesInventoryRendererForReplayableInventoryView() {
+    PlayerOutput output =
+        PlayerOutput.view(
+            new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)")));
+    when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n");
+
+    var entry =
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
+
+    assertThat(entry).isPresent();
+    assertThat(entry.orElseThrow().text())
+        .isEqualTo("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n\n");
+    verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
+    verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
     verify(outputRenderer, never()).render(output, "en-NZ", presentation);
   }
 }

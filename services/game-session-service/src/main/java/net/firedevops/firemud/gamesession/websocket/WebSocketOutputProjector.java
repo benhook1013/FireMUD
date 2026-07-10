@@ -8,7 +8,6 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
@@ -104,8 +103,7 @@ public final class WebSocketOutputProjector {
   public String renderClassicPlayerOutput(
       PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
     if (output.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW) {
-      return textRenderer.renderSuccessfulForCommandType(
-          TextCommandType.LOOK, List.of(output), localeTag, effectivePresentation);
+      return textRenderer.renderSuccessfulForOutput(output, localeTag, effectivePresentation);
     }
     return textRenderer.render(output, localeTag, effectivePresentation);
   }

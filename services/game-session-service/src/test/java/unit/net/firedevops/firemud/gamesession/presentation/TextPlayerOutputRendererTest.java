@@ -915,6 +915,88 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderSuccessfulForOutputFormatsFriendDetailWithFriendsEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new FriendDetailViewOutput(
+                    new FriendPresenceViewOutput.Entry(
+                        1,
+                        77L,
+                        41L,
+                        "ONLINE",
+                        null,
+                        "Sora",
+                        true,
+                        "demo",
+                        "Demo World",
+                        "ember",
+                        "Ember Realm",
+                        "Sora",
+                        "GLOBAL",
+                        1L,
+                        "ACTIVE",
+                        null,
+                        "FRIEND",
+                        "SHARED"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK FRIENDS\n"
+                + "Friend Sora [acct #41]\n"
+                + "Link: #77\n"
+                + "Status: online\n"
+                + "Presence: online in Demo World / Ember Realm (active)\n"
+                + "Visibility: SHARED\n"
+                + "Location: Demo World / Ember Realm\n"
+                + "Character: Sora\n"
+                + "Activity: active\n"
+                + "State scope: global\n"
+                + "Pointer version: 1\n"
+                + "Roster entry: #1\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputFormatsEquipmentViewWithEquipmentEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo("OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Leather Cap (A small cap)\n\n");
+  }
+
+  @Test
   void explicitEffectivePresentationCanOverrideBaseBriefPolicy() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

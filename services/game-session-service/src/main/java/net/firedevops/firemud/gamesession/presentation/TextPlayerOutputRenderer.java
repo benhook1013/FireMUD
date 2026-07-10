@@ -207,6 +207,41 @@ public class TextPlayerOutputRenderer {
         effectivePresentationProperties);
   }
 
+  public String renderSuccessfulForOutput(
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    return renderSuccessfulForCommandType(
+        commandTypeForOutput(output), List.of(output), localeTag, effectivePresentationProperties);
+  }
+
+  private TextCommandType commandTypeForOutput(PlayerOutput output) {
+    return switch (output.payload()) {
+      case LookViewOutput ignored -> TextCommandType.LOOK;
+      case InventoryViewOutput inventoryView -> inventoryCommandType(inventoryView);
+      case WorldsViewOutput ignored -> TextCommandType.WORLDS;
+      case RealmBrowseViewOutput ignored -> TextCommandType.REALMS;
+      case CharacterBrowseViewOutput ignored -> TextCommandType.CHARS;
+      case WhoViewOutput ignored -> TextCommandType.WHO;
+      case FriendPresenceViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendDetailViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendRosterSummaryViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendPresencePolicyViewOutput ignored -> TextCommandType.FRIENDS;
+      default -> TextCommandType.LOOK;
+    };
+  }
+
+  private TextCommandType inventoryCommandType(InventoryViewOutput inventoryView) {
+    String title = inventoryView.title();
+    if (title.startsWith("Equipment:")) {
+      return TextCommandType.EQUIPMENT;
+    }
+    if (title.startsWith("Container:")) {
+      return TextCommandType.CONTAINER;
+    }
+    return TextCommandType.INVENTORY;
+  }
+
   private String renderLookView(
       LookViewOutput result,
       String localeTag,
