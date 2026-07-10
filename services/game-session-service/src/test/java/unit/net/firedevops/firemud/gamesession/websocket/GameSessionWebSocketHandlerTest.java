@@ -770,9 +770,13 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command =
         new TextCommand(TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers");
     PlayerOutput output = PlayerOutput.message("You say, \"hello travelers\"");
+    WebSocketSession decoratedSession = Mockito.mock(WebSocketSession.class);
     SessionContext context =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(session.getId()).thenReturn("session-41");
+    when(decoratedSession.getId()).thenReturn("session-41");
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(decoratedSession));
     when(parser.parse("SAY hello travelers")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -798,6 +802,8 @@ class GameSessionWebSocketHandlerTest {
 
     verify(promptBurstCoordinator)
         .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(false));
+    verify(decoratedSession).sendMessage(argThat(message -> "OK SAY".equals(message.getPayload())));
+    verify(session, never()).sendMessage(any(TextMessage.class));
   }
 
   @Test

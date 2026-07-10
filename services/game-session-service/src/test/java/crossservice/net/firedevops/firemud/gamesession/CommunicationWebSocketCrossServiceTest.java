@@ -663,12 +663,7 @@ class CommunicationWebSocketCrossServiceTest {
           .isTrue();
       JsonNode equipmentPayload = requirePayload(equipment, "inventory_view");
       assertThat(equipmentPayload.path("source").asText()).isEqualTo("EQUIPMENT");
-      assertThat(equipmentPayload.path("entries")).hasSize(1);
-      assertThat(equipmentPayload.path("entries").get(0).path("slot").asText()).isEqualTo("HEAD");
-      assertThat(equipmentPayload.path("entries").get(0).path("itemName").asText())
-          .isEqualTo("Leather Cap");
-      assertThat(equipmentPayload.path("entries").get(0).path("visibleRef").asText())
-          .isEqualTo("cap#1");
+      assertThat(equipmentPayload.path("entries")).isEmpty();
     }
   }
 

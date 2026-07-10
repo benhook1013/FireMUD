@@ -364,7 +364,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!StringUtils.hasText(text)) {
       return;
     }
-    session.sendMessage(new TextMessage(text));
+    WebSocketSession deliverySession =
+        parseNumericSessionId(resolveTransportSessionId(session))
+            .flatMap(activeTransportSessionRegistry::find)
+            // A superseded connection must not send its response through the replacement session.
+            .filter(registered -> registered.getId().equals(session.getId()))
+            .orElse(session);
+    deliverySession.sendMessage(new TextMessage(text));
   }
 
   private void maybeCloseAfterSuccessfulLogout(
