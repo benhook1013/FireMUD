@@ -79,6 +79,7 @@ public final class GameplayStructuredCommandAssertions {
       }
       Thread.sleep(50);
     }
+    List<String> responses = client.responses();
     throw new AssertionError(
         "Expected structured "
             + commandType
@@ -105,6 +106,46 @@ public final class GameplayStructuredCommandAssertions {
       throw new AssertionError("Missing payloadType=" + payloadType + " in envelope: " + envelope);
     }
     return payloads;
+  }
+
+  public static JsonNode awaitFirstPartyPlayerOutputPayload(
+      GameplayWebSocketDriver client, int responseBaseline, String payloadType) throws Exception {
+    return awaitFirstPartyPlayerOutputPayloads(client, responseBaseline, payloadType, 1).getFirst();
+  }
+
+  public static List<JsonNode> awaitFirstPartyPlayerOutputPayloads(
+      GameplayWebSocketDriver client, int responseBaseline, String payloadType, int expectedCount)
+      throws Exception {
+    long deadline = System.currentTimeMillis() + client.waitTimeout().toMillis();
+    while (System.currentTimeMillis() < deadline) {
+      List<JsonNode> payloads = new ArrayList<>();
+      List<String> responses = client.responses();
+      for (String response : responses.subList(responseBaseline, responses.size())) {
+        JsonNode envelope = parseStructuredResponse(response);
+        if (!"player_output".equals(envelope.path("eventType").asText())) {
+          continue;
+        }
+        for (JsonNode output : envelope.path("outputs")) {
+          if (payloadType.equals(output.path("payloadType").asText())) {
+            payloads.add(output.path("payload"));
+          }
+        }
+      }
+      if (payloads.size() >= expectedCount) {
+        return List.copyOf(payloads);
+      }
+      Thread.sleep(50);
+    }
+    List<String> responses = client.responses();
+    throw new AssertionError(
+        "Expected "
+            + expectedCount
+            + " first-party player_output payload(s) of type="
+            + payloadType
+            + " after baseline "
+            + responseBaseline
+            + ", got: "
+            + responses.subList(responseBaseline, responses.size()));
   }
 
   public static boolean containsKind(JsonNode envelope, String kind) {

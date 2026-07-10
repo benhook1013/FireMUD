@@ -545,12 +545,16 @@ class CommunicationWebSocketCrossServiceTest {
       assertThat(pickup.path("accepted").asBoolean())
           .withFailMessage(pickup.toPrettyString())
           .isTrue();
-      JsonNode pickupMutation = requirePayload(pickup, "item_mutation_result");
+      JsonNode pickupMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(pickupMutation.path("action").asText()).isEqualTo("GET");
       assertThat(pickupMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
       assertThat(pickupMutation.path("source").path("kind").asText()).isEqualTo("ROOM_GROUND");
       assertThat(pickupMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
-      List<JsonNode> pickupViews = requirePayloads(pickup, "inventory_view");
+      List<JsonNode> pickupViews =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayloads(
+              client, baseline, "inventory_view", 2);
       assertThat(pickupViews).hasSize(2);
       JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
       assertThat(carriedInventory.path("entries")).hasSize(1);
@@ -587,7 +591,9 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("PUT Torch INTO Backpack");
       JsonNode put = awaitStructuredCommand(client, baseline, "PUT");
       assertThat(put.path("accepted").asBoolean()).withFailMessage(put.toPrettyString()).isTrue();
-      JsonNode putMutation = requirePayload(put, "item_mutation_result");
+      JsonNode putMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(putMutation.path("action").asText()).isEqualTo("PUT");
       assertThat(putMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
       assertThat(putMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
@@ -600,7 +606,9 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("TAKE Torch FROM Backpack");
       JsonNode take = awaitStructuredCommand(client, baseline, "TAKE");
       assertThat(take.path("accepted").asBoolean()).withFailMessage(take.toPrettyString()).isTrue();
-      JsonNode takeMutation = requirePayload(take, "item_mutation_result");
+      JsonNode takeMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(takeMutation.path("action").asText()).isEqualTo("TAKE");
       assertThat(takeMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
       assertThat(takeMutation.path("source").path("kind").asText()).isEqualTo("CONTAINER");
@@ -613,7 +621,9 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("DROP Torch");
       JsonNode drop = awaitStructuredCommand(client, baseline, "DROP");
       assertThat(drop.path("accepted").asBoolean()).withFailMessage(drop.toPrettyString()).isTrue();
-      JsonNode dropMutation = requirePayload(drop, "item_mutation_result");
+      JsonNode dropMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(dropMutation.path("action").asText()).isEqualTo("DROP");
       assertThat(dropMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
       assertThat(dropMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
@@ -623,7 +633,9 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("WEAR Leather Cap");
       JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
       assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
-      JsonNode wearMutation = requirePayload(wear, "item_mutation_result");
+      JsonNode wearMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(wearMutation.path("action").asText()).isEqualTo("WEAR");
       assertThat(wearMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
       assertThat(wearMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
@@ -636,7 +648,9 @@ class CommunicationWebSocketCrossServiceTest {
       assertThat(remove.path("accepted").asBoolean())
           .withFailMessage(remove.toPrettyString())
           .isTrue();
-      JsonNode removeMutation = requirePayload(remove, "item_mutation_result");
+      JsonNode removeMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
       assertThat(removeMutation.path("action").asText()).isEqualTo("REMOVE");
       assertThat(removeMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
       assertThat(removeMutation.path("source").path("kind").asText()).isEqualTo("EQUIPMENT");
