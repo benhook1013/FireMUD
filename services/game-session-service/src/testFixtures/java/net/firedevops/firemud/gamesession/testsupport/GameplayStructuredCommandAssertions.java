@@ -90,12 +90,21 @@ public final class GameplayStructuredCommandAssertions {
   }
 
   public static JsonNode requirePayload(JsonNode envelope, String payloadType) {
+    List<JsonNode> payloads = requirePayloads(envelope, payloadType);
+    return payloads.get(0);
+  }
+
+  public static List<JsonNode> requirePayloads(JsonNode envelope, String payloadType) {
+    List<JsonNode> payloads = new ArrayList<>();
     for (JsonNode output : envelope.path("outputs")) {
       if (payloadType.equals(output.path("payloadType").asText())) {
-        return output.path("payload");
+        payloads.add(output.path("payload"));
       }
     }
-    throw new AssertionError("Missing payloadType=" + payloadType + " in envelope: " + envelope);
+    if (payloads.isEmpty()) {
+      throw new AssertionError("Missing payloadType=" + payloadType + " in envelope: " + envelope);
+    }
+    return payloads;
   }
 
   public static boolean containsKind(JsonNode envelope, String kind) {

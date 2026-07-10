@@ -534,6 +534,73 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartyInventoryViewsExposeTypedItemMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("inventory-first-party")) {
+      int baseline = client.responses().size();
+      client.send("GET Torch");
+      JsonNode pickup = awaitStructuredCommand(client, baseline, "GET");
+      assertThat(pickup.path("accepted").asBoolean())
+          .withFailMessage(pickup.toPrettyString())
+          .isTrue();
+      List<JsonNode> pickupViews = requirePayloads(pickup, "inventory_view");
+      assertThat(pickupViews).hasSize(2);
+      JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
+      assertThat(carriedInventory.path("entries")).hasSize(1);
+      assertThat(carriedInventory.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("torch#1");
+      assertThat(carriedInventory.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Torch");
+      JsonNode roomGroundInventory = requireInventoryViewBySource(pickupViews, "ROOM_GROUND");
+      assertThat(roomGroundInventory.path("entries")).hasSize(1);
+      assertThat(roomGroundInventory.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("backpack#1");
+      assertThat(roomGroundInventory.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Backpack");
+
+      baseline = client.responses().size();
+      client.send("CONTAINER Backpack");
+      JsonNode container = awaitStructuredCommand(client, baseline, "CONTAINER");
+      assertThat(container.path("accepted").asBoolean())
+          .withFailMessage(container.toPrettyString())
+          .isTrue();
+      JsonNode containerPayload = requirePayload(container, "inventory_view");
+      assertThat(containerPayload.path("source").asText()).isEqualTo("CONTAINER");
+      assertThat(containerPayload.path("context").path("displayName").asText())
+          .isEqualTo("Backpack");
+      assertThat(containerPayload.path("context").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(containerPayload.path("entries")).hasSize(1);
+      assertThat(containerPayload.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Ration");
+      assertThat(containerPayload.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("ration#1");
+
+      baseline = client.responses().size();
+      client.send("WEAR Leather Cap");
+      JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
+      assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
+
+      baseline = client.responses().size();
+      client.send("EQUIPMENT");
+      JsonNode equipment = awaitStructuredCommand(client, baseline, "EQUIPMENT");
+      assertThat(equipment.path("accepted").asBoolean())
+          .withFailMessage(equipment.toPrettyString())
+          .isTrue();
+      JsonNode equipmentPayload = requirePayload(equipment, "inventory_view");
+      assertThat(equipmentPayload.path("source").asText()).isEqualTo("EQUIPMENT");
+      assertThat(equipmentPayload.path("entries")).hasSize(1);
+      assertThat(equipmentPayload.path("entries").get(0).path("slot").asText()).isEqualTo("HEAD");
+      assertThat(equipmentPayload.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Leather Cap");
+      assertThat(equipmentPayload.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("cap#1");
+    }
+  }
+
+  @Test
   void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -864,6 +931,20 @@ class CommunicationWebSocketCrossServiceTest {
 
   private JsonNode requirePayload(JsonNode envelope, String payloadType) {
     return GameplayStructuredCommandAssertions.requirePayload(envelope, payloadType);
+  }
+
+  private List<JsonNode> requirePayloads(JsonNode envelope, String payloadType) {
+    return GameplayStructuredCommandAssertions.requirePayloads(envelope, payloadType);
+  }
+
+  private JsonNode requireInventoryViewBySource(List<JsonNode> payloads, String source) {
+    return payloads.stream()
+        .filter(payload -> source.equals(payload.path("source").asText()))
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new AssertionError(
+                    "Missing inventory_view source=" + source + " in payloads: " + payloads));
   }
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
