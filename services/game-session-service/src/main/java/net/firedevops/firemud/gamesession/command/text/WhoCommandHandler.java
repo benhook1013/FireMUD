@@ -4,9 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -39,22 +37,20 @@ public class WhoCommandHandler {
   }
 
   @Timed(value = "gamesession.command.who")
-  public TextCommandInterpretationResult handle(SessionContext context) {
+  public TextCommandInterpretationResult handle(TextCommand command, SessionContext context) {
     List<GameplayPresence> presences =
         gameplayPresenceService.listConnectedByGameInstance(
             context.tenantId(), context.gameInstanceId());
     WhoViewOutput body = toView(presences);
-    publishCommandEvent(context);
+    publishCommandEvent(context, command);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(body)));
   }
 
-  private void publishCommandEvent(SessionContext context) {
+  private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("who-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(TextCommandType.WHO.name());
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context, ScriptEventGameplayCommands.synthetic("who", command));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Who script event publish failed tenantId={} gameInstanceId={} characterId={}",

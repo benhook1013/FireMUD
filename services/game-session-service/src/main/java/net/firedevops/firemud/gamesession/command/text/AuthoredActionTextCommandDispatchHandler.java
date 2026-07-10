@@ -1,13 +1,10 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import java.util.UUID;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @Component
 final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispatchHandler {
@@ -44,18 +41,15 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
       String executionHook =
           catalog
               .find(command.commandId())
               .map(ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction::executionHook)
               .orElse(null);
-      gameplayCommand.setCommandId("authored-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(command.commandId());
-      if (StringUtils.hasText(executionHook)) {
-        gameplayCommand.setExecutionHook(executionHook);
-      }
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context,
+          ScriptEventGameplayCommands.synthetic(
+              "authored", command, command.commandId(), executionHook));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Authored script event publish failed tenantId={} gameInstanceId={} characterId={} commandId={}",

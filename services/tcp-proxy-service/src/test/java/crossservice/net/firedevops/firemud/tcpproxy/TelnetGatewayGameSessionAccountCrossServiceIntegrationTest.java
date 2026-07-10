@@ -62,7 +62,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   // This suite boots multiple real service contexts and backing stores, so allow slower
   // round-trips than the lighter isolated telnet seam tests.
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(15);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(20);
   private static final String CROSS_SERVICE_TEST_JWT_SECRET =
       "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
@@ -278,7 +278,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       client.sendLine("INV HERE");
       roomInventoryBeforePickup = client.readBlockContaining("Room Inventory:");
       client.sendLine("GET Torch");
-      pickupResponse = client.readBlockContaining("You pick up Torch.");
+      pickupResponse =
+          client.readTranscriptContainingAll(
+              "You pick up Torch.",
+              "Inventory:",
+              "- Torch [torch#1] (A small torch)",
+              "Room Inventory:",
+              "- Backpack [backpack#1] (A weathered backpack)");
       client.sendLine("CONTAINER Backpack");
       containerViewResponse = client.readBlockContaining("Container: Backpack [backpack#1]");
       client.sendLine("PUT Torch INTO Backpack");
@@ -286,7 +292,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       client.sendLine("TAKE Torch FROM Backpack");
       takeResponse = client.readBlockContaining("You take Torch from Backpack.");
       client.sendLine("DROP Torch");
-      dropResponse = client.readBlockContaining("You drop Torch.");
+      dropResponse =
+          client.readTranscriptContainingAll(
+              "You drop Torch.",
+              "Inventory:",
+              "- Leather Cap [cap#1] (A small cap)",
+              "- Iron Boots [boots#1] (Heavy iron boots)",
+              "Room Inventory:",
+              "- Torch [torch#1] (A small torch)");
       client.sendLine("INV HERE");
       roomInventoryAfterDrop = client.readBlockContaining("Room Inventory:");
 
@@ -308,7 +321,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(pickupResponse)
         .contains("You pick up Torch.")
         .contains("Inventory:")
-        .contains("- Torch [torch#1] (A small torch)");
+        .contains("- Torch [torch#1] (A small torch)")
+        .contains("Room Inventory:")
+        .contains("- Backpack [backpack#1] (A weathered backpack)");
     assertThat(containerViewResponse)
         .contains("Container: Backpack [backpack#1]")
         .contains("- Ration [ration#1] (A dry trail ration)");
@@ -318,7 +333,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(takeResponse)
         .contains("You take Torch from Backpack.")
         .contains("- Ration [ration#1] (A dry trail ration)");
-    assertThat(dropResponse).contains("You drop Torch.");
+    assertThat(dropResponse)
+        .contains("You drop Torch.")
+        .contains("Inventory:")
+        .contains("- Leather Cap [cap#1] (A small cap)")
+        .contains("- Iron Boots [boots#1] (Heavy iron boots)")
+        .contains("Room Inventory:")
+        .contains("- Torch [torch#1] (A small torch)");
     assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");
     assertThat(emptyEquipmentResponse).contains("You have nothing equipped.");
     assertThat(wearResponse).contains("You wear Leather Cap.");

@@ -30,7 +30,8 @@ final class LookTextCommandDispatchHandler implements TextCommandDispatchHandler
     }
     net.firedevops.firemud.gamesession.presentation.PlayerOutput lookOutput =
         lookHandler.describePlayerOutput(
-            request.sessionId(), request.command().type() != TextCommandType.QUICKLOOK);
+            request.sessionId(),
+            request.command().viewRequestPayload().orElseThrow().includeLongDescription());
     if (lookOutput == null) {
       return stageFailure(
           GameplayStageCommandConstants.PLAY_REQUIRED_CODE,

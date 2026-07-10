@@ -214,8 +214,7 @@ public final class LookCommandHandler {
           cacheKey,
           lookRoomId(lookResult),
           rendered,
-          outputRenderer.renderSuccessfulForCommandType(
-              TextCommandType.LOOK, java.util.List.of(output), localeTag, effectivePresentation));
+          outputRenderer.renderSuccessfulForOutput(output, localeTag, effectivePresentation));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Failed to cache LOOK tenantId={} gameInstanceId={} characterId={} cacheKey={}",

@@ -25,6 +25,8 @@ import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutpu
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -180,17 +182,129 @@ class WebSocketOutputProjectorTest {
         PlayerOutput.view(
             new LookViewOutput(
                 "room-1", "Room One", "Short desc", "Long desc", true, List.of(), List.of()));
-    when(renderer.renderSuccessfulForCommandType(
-            TextCommandType.LOOK, List.of(output), "en-NZ", presentation))
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("Room One\nLong desc");
 
     String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
 
     assertThat(payload).isEqualTo("Room One\nLong desc");
-    verify(renderer)
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void genericWebSocketProjectsFriendViewThroughFriendsRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new FriendDetailViewOutput(
+                new FriendPresenceViewOutput.Entry(
+                    1,
+                    77L,
+                    41L,
+                    "ONLINE",
+                    null,
+                    "Sora",
+                    true,
+                    "demo",
+                    "Demo World",
+                    "ember",
+                    "Ember Realm",
+                    "Sora",
+                    "GLOBAL",
+                    1L,
+                    "ACTIVE",
+                    null,
+                    "FRIEND",
+                    "SHARED")));
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK FRIENDS\nFriend: Sora\n\n");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload).isEqualTo("OK FRIENDS\nFriend: Sora\n\n");
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never())
         .renderSuccessfulForCommandType(
             TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
-    verify(renderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void genericWebSocketProjectsEquipmentViewThroughEquipmentRenderer() {
+    TextPlayerOutputRenderer renderer = mock(TextPlayerOutputRenderer.class);
+    WebSocketOutputProjector localProjector = new WebSocketOutputProjector(renderer);
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes()).thenReturn(Map.of());
+    PlayerOutput output =
+        PlayerOutput.view(
+            new InventoryViewOutput(
+                InventoryViewOutput.Source.EQUIPMENT,
+                "Inventory:",
+                List.of("- HEAD: Leather Cap (A small cap)")));
+    when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK EQUIPMENT\nInventory:\n- HEAD: Leather Cap (A small cap)\n\n");
+
+    String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
+
+    assertThat(payload)
+        .isEqualTo("OK EQUIPMENT\nInventory:\n- HEAD: Leather Cap (A small cap)\n\n");
+    verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(renderer, never())
+        .renderSuccessfulForCommandType(
+            TextCommandType.LOOK, List.of(output), "en-NZ", presentation);
+  }
+
+  @Test
+  void firstPartyWebProjectsInventoryViewPayloadsWithStableType() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.ROOM_GROUND,
+                    "Room Inventory:",
+                    List.of("- Torch [torch3] (A small torch)"),
+                    List.of(
+                        new InventoryViewOutput.ItemEntry(
+                            "1001", "", "", "torch3", "Torch", "A small torch", 0, "")))),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("outputs")).hasSize(1);
+    assertThat(json.path("outputs").get(0).path("payloadType").asText())
+        .isEqualTo("inventory_view");
+    assertThat(json.path("outputs").get(0).path("payload").path("source").asText())
+        .isEqualTo("ROOM_GROUND");
+    assertThat(json.path("outputs").get(0).path("payload").path("title").asText())
+        .isEqualTo("Room Inventory:");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("entries")
+                .get(0)
+                .path("visibleRef")
+                .asText())
+        .isEqualTo("torch3");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("entries")
+                .get(0)
+                .path("itemName")
+                .asText())
+        .isEqualTo("Torch");
   }
 
   @Test
@@ -566,6 +680,53 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payload").path("displayName").asText())
         .isEqualTo("Sora");
     assertThat(json.path("outputs").get(0).path("payload").path("ordinal").asInt()).isEqualTo(1);
+  }
+
+  @Test
+  void firstPartyWebProjectsItemMutationResultPayloads() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    ItemMutationResultOutput payloadView =
+        new ItemMutationResultOutput(
+            "PUT",
+            new InventoryViewOutput.ItemEntry(
+                "torch", "torch-inventory-1", "", "torch#1", "Torch", "A small torch", 1, ""),
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""),
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Backpack",
+                "container-backpack-1",
+                "backpack#1",
+                ""));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(
+                TextCommandType.PUT,
+                List.of("Torch", "INTO", "Backpack"),
+                "PUT Torch INTO Backpack"),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(PlayerOutput.notice(payloadView))),
+            List.of(PlayerOutput.notice(payloadView)),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    JsonNode output = json.path("outputs").get(0);
+    assertThat(output.path("kind").asText()).isEqualTo("NOTICE");
+    assertThat(output.path("payloadType").asText()).isEqualTo("item_mutation_result");
+    assertThat(output.path("payload").path("action").asText()).isEqualTo("PUT");
+    assertThat(output.path("payload").path("item").path("visibleRef").asText())
+        .isEqualTo("torch#1");
+    assertThat(output.path("payload").path("source").path("kind").asText()).isEqualTo("INVENTORY");
+    assertThat(output.path("payload").path("target").path("kind").asText()).isEqualTo("CONTAINER");
+    assertThat(output.path("payload").path("target").path("containerInstanceId").asText())
+        .isEqualTo("container-backpack-1");
   }
 
   @Test

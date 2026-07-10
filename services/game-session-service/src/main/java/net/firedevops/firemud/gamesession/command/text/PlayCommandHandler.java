@@ -275,7 +275,7 @@ public class PlayCommandHandler {
               && Objects.equals(
                   normalizeName(context.characterName()), normalizeName(characterName))) {
             resumeCounter.increment();
-            publishCommandEvent(context);
+            publishCommandEvent(context, command);
             LOG.debug(
                 "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
                 selectedRealm.tenantId(),
@@ -330,7 +330,7 @@ public class PlayCommandHandler {
                   context.connectRequestId());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
-          publishCommandEvent(updated);
+          publishCommandEvent(updated, command);
           if (!resumedOrTookOver) {
             publishSpawnEvent(updated);
           }
@@ -574,9 +574,9 @@ public class PlayCommandHandler {
     }
   }
 
-  private void publishCommandEvent(SessionContext context) {
+  private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      scriptEventPublisher.publishCommandEvent(context, scriptEventCommand(context));
+      scriptEventPublisher.publishCommandEvent(context, scriptEventCommand(context, command));
     } catch (RuntimeException ex) {
       LOG.warn(
           "PLAY command event publish failed tenantId={} gameInstanceId={} characterId={} sessionId={}",
@@ -588,9 +588,8 @@ public class PlayCommandHandler {
     }
   }
 
-  private static GameplayCommand scriptEventCommand(SessionContext context) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId(
+  private static GameplayCommand scriptEventCommand(SessionContext context, TextCommand command) {
+    return ScriptEventGameplayCommands.syntheticWithId(
         "play-command:"
             + context.sessionId()
             + ":"
@@ -598,9 +597,10 @@ public class PlayCommandHandler {
             + ":"
             + context.characterId()
             + ":"
-            + context.pointerVersion());
-    gameplayCommand.setCommandName(TextCommandType.PLAY.name());
-    return gameplayCommand;
+            + context.pointerVersion(),
+        command,
+        TextCommandType.PLAY.name(),
+        null);
   }
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(

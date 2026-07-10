@@ -8,7 +8,6 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
@@ -17,6 +16,8 @@ import net.firedevops.firemud.gamesession.presentation.FriendMutationResultOutpu
 import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -104,8 +105,7 @@ public final class WebSocketOutputProjector {
   public String renderClassicPlayerOutput(
       PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
     if (output.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW) {
-      return textRenderer.renderSuccessfulForCommandType(
-          TextCommandType.LOOK, List.of(output), localeTag, effectivePresentation);
+      return textRenderer.renderSuccessfulForOutput(output, localeTag, effectivePresentation);
     }
     return textRenderer.render(output, localeTag, effectivePresentation);
   }
@@ -171,8 +171,10 @@ public final class WebSocketOutputProjector {
       case PromptOutput ignored -> "prompt";
       case NoticeOutput ignored -> "notice";
       case FriendMutationResultOutput ignored -> "friend_mutation_result";
+      case ItemMutationResultOutput ignored -> "item_mutation_result";
       case ErrorOutput ignored -> "error";
       case LookViewOutput ignored -> "look_view";
+      case InventoryViewOutput ignored -> "inventory_view";
       case WorldsViewOutput ignored -> "worlds_view";
       case RealmBrowseViewOutput ignored -> "realms_view";
       case CharacterBrowseViewOutput ignored -> "characters_view";

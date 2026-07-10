@@ -238,10 +238,8 @@ public class CommunicationCommandHandler {
   }
 
   private GameplayCommand scriptEventCommand(TextCommand command, String effectId) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId(commandEventId(command, effectId));
-    gameplayCommand.setCommandName(command.type().name());
-    return gameplayCommand;
+    return ScriptEventGameplayCommands.syntheticWithId(
+        commandEventId(command, effectId), command, command.type().name(), null);
   }
 
   private String commandEventId(TextCommand command, String effectId) {

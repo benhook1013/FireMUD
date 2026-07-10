@@ -16,6 +16,7 @@ import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -170,13 +171,18 @@ public class ContainerCommandHandler {
 
       List<PlayerOutput> outputs = new ArrayList<>();
       outputs.add(
-          PlayerOutput.message(
-              "You put "
-                  + displayInventoryItemName(inventoryItem)
-                  + quantitySuffix(transfer.quantity())
-                  + " into "
-                  + resolvedContainer.orElseThrow().displayName()
-                  + "."));
+          PlayerOutput.notice(
+              new ItemMutationResultOutput(
+                  "PUT",
+                  ItemPayloadSupport.withFallback(
+                      ItemPayloadSupport.toItemEntry(response.getContainerItem()),
+                      displayInventoryItemName(inventoryItem),
+                      transfer.quantity()),
+                  ItemPayloadSupport.inventoryHolder(),
+                  ItemPayloadSupport.containerHolder(
+                      resolvedContainer.orElseThrow().displayName(),
+                      resolvedContainer.orElseThrow().containerInstanceId(),
+                      resolvedContainer.orElseThrow().compactReference()))));
       outputs.addAll(describeResolvedContainer(context, resolvedContainer.orElseThrow()).outputs());
       return new TextCommandInterpretationResult(CommandEnqueueResult.success(), outputs);
     } catch (RuntimeException ex) {
@@ -277,13 +283,18 @@ public class ContainerCommandHandler {
 
       List<PlayerOutput> outputs = new ArrayList<>();
       outputs.add(
-          PlayerOutput.message(
-              "You take "
-                  + displayContainerItemName(containerItem)
-                  + quantitySuffix(transfer.quantity())
-                  + " from "
-                  + resolvedContainer.orElseThrow().displayName()
-                  + "."));
+          PlayerOutput.notice(
+              new ItemMutationResultOutput(
+                  "TAKE",
+                  ItemPayloadSupport.withFallback(
+                      ItemPayloadSupport.toItemEntry(response.getInventoryItem()),
+                      displayContainerItemName(containerItem),
+                      transfer.quantity()),
+                  ItemPayloadSupport.containerHolder(
+                      resolvedContainer.orElseThrow().displayName(),
+                      resolvedContainer.orElseThrow().containerInstanceId(),
+                      resolvedContainer.orElseThrow().compactReference()),
+                  ItemPayloadSupport.inventoryHolder())));
       outputs.addAll(describeResolvedContainer(context, resolvedContainer.orElseThrow()).outputs());
       return new TextCommandInterpretationResult(CommandEnqueueResult.success(), outputs);
     } catch (RuntimeException ex) {
@@ -315,10 +326,18 @@ public class ContainerCommandHandler {
         List.of(
             PlayerOutput.view(
                 new InventoryViewOutput(
+                    InventoryViewOutput.Source.CONTAINER,
                     "Container: "
                         + containerItem.displayName()
                         + compactReferenceSuffix(containerItem.compactReference()),
-                    lines))));
+                    lines,
+                    new InventoryViewOutput.ViewContext(
+                        containerItem.containerInstanceId(),
+                        containerItem.displayName(),
+                        containerItem.compactReference()),
+                    response.getItemsList().stream()
+                        .map(ItemPayloadSupport::toItemEntry)
+                        .toList()))));
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
@@ -410,10 +429,6 @@ public class ContainerCommandHandler {
 
   private String displayContainerItemName(ContainerItem item) {
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : "item";
-  }
-
-  private String quantitySuffix(int quantity) {
-    return quantity > 1 ? " x" + quantity : "";
   }
 
   private boolean isStackSelection(InventoryItem item, String reference) {

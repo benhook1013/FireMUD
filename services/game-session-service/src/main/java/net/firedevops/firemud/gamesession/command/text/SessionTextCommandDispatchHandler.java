@@ -32,7 +32,8 @@ final class SessionTextCommandDispatchHandler implements TextCommandDispatchHand
             loginResult.commandResult(), loginResult.outputs());
       }
       case LOGOUT -> {
-        LogoutCommandHandlingResult logoutResult = logoutHandler.handle(request.sessionId());
+        LogoutCommandHandlingResult logoutResult =
+            logoutHandler.handle(request.sessionId(), request.command());
         yield new TextCommandInterpretationResult(
             logoutResult.commandResult(), logoutResult.outputs());
       }

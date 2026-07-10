@@ -575,6 +575,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     && payload.endsWith("> ")
                     && payload.contains("Room: Login Hall")
                     && !payload.contains("Long:"));
+    verify(lookCacheService)
+        .cache(
+            eq(22L),
+            eq(1L),
+            eq("R-1021"),
+            eq(
+                "Room: Login Hall (ID: R-1021)\n"
+                    + "Short: A narrow testing hall\n"
+                    + "Exits: \n"
+                    + "Entities:"),
+            eq(
+                "OK QUICKLOOK\n"
+                    + "Room: Login Hall (ID: R-1021)\n"
+                    + "Short: A narrow testing hall\n"
+                    + "Exits: \n"
+                    + "Entities:\n\n"));
   }
 
   @Test

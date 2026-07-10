@@ -66,6 +66,7 @@ class ItemCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "INVENTORY".equals(gameplayCommand.getCommandName())
+                        && "INVENTORY".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("item-")));
   }

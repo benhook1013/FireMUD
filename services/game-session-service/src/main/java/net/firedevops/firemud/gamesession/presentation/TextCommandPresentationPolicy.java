@@ -32,7 +32,7 @@ final class TextCommandPresentationPolicy {
   }
 
   String responseCommandLabel(TextCommand command, List<PlayerOutput> outputs) {
-    if (command.type() == TextCommandType.MOVE && outputs.stream().allMatch(this::isViewOutput)) {
+    if (isMovementAction(command) && outputs.stream().allMatch(this::isViewOutput)) {
       return TextCommandType.LOOK.name();
     }
     if (outputs.stream().allMatch(this::isViewOutput)
@@ -47,10 +47,30 @@ final class TextCommandPresentationPolicy {
   }
 
   private boolean isCommunicationAction(TextCommand command) {
+    return hasActionTag(command, TextCommandActionTag.COMMUNICATION);
+  }
+
+  private boolean isMovementAction(TextCommand command) {
+    if (hasActionTag(command, TextCommandActionTag.MOVEMENT)) {
+      return true;
+    }
+    return command.type() == TextCommandType.MOVE;
+  }
+
+  private boolean hasActionTag(TextCommand command, TextCommandActionTag actionTag) {
     return textCommandMetadataResolver
         .resolve(command.commandId())
-        .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.COMMUNICATION))
+        .or(() -> resolveAliasMetadata(command))
+        .map(metadata -> metadata.actionTags().contains(actionTag))
         .orElse(false);
+  }
+
+  private java.util.Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata>
+      resolveAliasMetadata(TextCommand command) {
+    if (!StringUtils.hasText(command.aliasUsed())) {
+      return java.util.Optional.empty();
+    }
+    return textCommandMetadataResolver.resolve(command.aliasUsed());
   }
 
   private String canonicalResponseLabel(TextCommand command) {

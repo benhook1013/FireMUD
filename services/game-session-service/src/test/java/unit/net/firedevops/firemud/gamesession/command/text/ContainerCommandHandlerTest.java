@@ -15,6 +15,7 @@ import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -66,8 +67,15 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.VIEW);
     assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Old Chest [oldchest10]");
     assertThat(view.lines()).containsExactly("- Torch [torch3] x2 (A small torch)");
+    assertThat(view.context())
+        .isEqualTo(new InventoryViewOutput.ViewContext("container-10", "Old Chest", "oldchest10"));
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry(
+                "99", "", "container-10", "torch3", "Torch", "A small torch", 2, ""));
   }
 
   @Test
@@ -123,7 +131,26 @@ class ContainerCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(2);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("PUT");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "99", "", "container-10", "torch3", "Torch", "", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Old Chest",
+                "container-10",
+                "oldchest10",
+                ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You put Torch into Old Chest.");
     assertThat(result.outputs().get(1).kind()).isEqualTo(PlayerOutputKind.VIEW);
   }
@@ -211,6 +238,24 @@ class ContainerCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(2);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("TAKE");
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("99", "", "", "", "Torch", "", 2, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Old Chest",
+                "container-10",
+                "oldchest10",
+                ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Torch x2 from Old Chest.");
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(1).payload();
     assertThat(view.lines()).containsExactly("It is empty.");
@@ -302,6 +347,26 @@ class ContainerCommandHandlerTest {
                 "PUT 3 ammo/iron INTO old chest"));
 
     assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("PUT");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "99", "", "container-10", "ammo/iron", "Arrow", "", 3, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Old Chest",
+                "container-10",
+                "oldchest10",
+                ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You put Arrow x3 into Old Chest.");
   }
 
@@ -352,6 +417,25 @@ class ContainerCommandHandlerTest {
                 "TAKE 3 ammo/iron FROM old chest"));
 
     assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("TAKE");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry("99", "", "", "ammo/iron", "Arrow", "", 3, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Old Chest",
+                "container-10",
+                "oldchest10",
+                ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Arrow x3 from Old Chest.");
   }
 
@@ -380,8 +464,12 @@ class ContainerCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Dropped Chest [chest#1]");
     assertThat(view.lines()).containsExactly("It is empty.");
+    assertThat(view.context())
+        .isEqualTo(new InventoryViewOutput.ViewContext("container-10", "Dropped Chest", "chest#1"));
+    assertThat(view.entries()).isEmpty();
   }
 
   @Test
@@ -421,6 +509,24 @@ class ContainerCommandHandlerTest {
                 "PUT torch INTO chest#1"));
 
     assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("PUT");
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("", "", "", "", "Torch", "", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Dropped Chest",
+                "container-10",
+                "chest#1",
+                ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You put Torch into Dropped Chest.");
   }
 
@@ -462,6 +568,24 @@ class ContainerCommandHandlerTest {
                 "TAKE torch FROM chest#1"));
 
     assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("TAKE");
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("", "", "", "", "Torch", "", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Dropped Chest",
+                "container-10",
+                "chest#1",
+                ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Torch from Dropped Chest.");
   }
 }

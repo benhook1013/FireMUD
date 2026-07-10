@@ -64,7 +64,8 @@ public final class LogoutCommandHandler {
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
   }
 
-  public LogoutCommandHandlingResult handle(String sessionId) {
+  public LogoutCommandHandlingResult handle(String sessionId, TextCommand command) {
+    Objects.requireNonNull(command, "command must not be null");
     Optional<SessionContext> maybePersistedContext = resolvePersistedSessionContext(sessionId);
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
@@ -77,7 +78,7 @@ public final class LogoutCommandHandler {
     SessionContext persistedContext = maybePersistedContext.orElse(context);
     try {
       if (context.hasGameplayIdentity()) {
-        scriptEventPublisher.publishCommandEvent(context, logoutCommand(context));
+        scriptEventPublisher.publishCommandEvent(context, logoutCommand(context, command));
       }
       boolean stopSession = shouldStopSession(context, persistedContext);
       if (stopSession) {
@@ -110,17 +111,17 @@ public final class LogoutCommandHandler {
         List.of(PlayerOutput.error(code, message, messageKey, arguments)));
   }
 
-  private static GameplayCommand logoutCommand(SessionContext context) {
-    GameplayCommand gameplayCommand = new GameplayCommand();
-    gameplayCommand.setCommandId(
+  private static GameplayCommand logoutCommand(SessionContext context, TextCommand command) {
+    return ScriptEventGameplayCommands.syntheticWithId(
         "logout-command:"
             + context.sessionId()
             + ":"
             + context.gameInstanceId()
             + ":"
-            + context.characterId());
-    gameplayCommand.setCommandName(TextCommandType.LOGOUT.name());
-    return gameplayCommand;
+            + context.characterId(),
+        command,
+        TextCommandType.LOGOUT.name(),
+        null);
   }
 
   private boolean shouldStopSession(SessionContext context, SessionContext persistedContext) {

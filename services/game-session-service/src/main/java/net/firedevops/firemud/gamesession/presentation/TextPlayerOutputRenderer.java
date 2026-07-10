@@ -207,6 +207,44 @@ public class TextPlayerOutputRenderer {
         effectivePresentationProperties);
   }
 
+  public String renderSuccessfulForOutput(
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    return renderSuccessfulForCommandType(
+        commandTypeForOutput(output), List.of(output), localeTag, effectivePresentationProperties);
+  }
+
+  private TextCommandType commandTypeForOutput(PlayerOutput output) {
+    return switch (output.payload()) {
+      case LookViewOutput lookView -> lookCommandType(lookView);
+      case InventoryViewOutput inventoryView -> inventoryCommandType(inventoryView);
+      case WorldsViewOutput ignored -> TextCommandType.WORLDS;
+      case RealmBrowseViewOutput ignored -> TextCommandType.REALMS;
+      case CharacterBrowseViewOutput ignored -> TextCommandType.CHARS;
+      case WhoViewOutput ignored -> TextCommandType.WHO;
+      case FriendPresenceViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendDetailViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendRosterSummaryViewOutput ignored -> TextCommandType.FRIENDS;
+      case FriendPresencePolicyViewOutput ignored -> TextCommandType.FRIENDS;
+      default -> TextCommandType.LOOK;
+    };
+  }
+
+  private TextCommandType lookCommandType(LookViewOutput lookView) {
+    return lookView.refreshReason() == LookViewOutput.RefreshReason.QUICKLOOK
+        ? TextCommandType.QUICKLOOK
+        : TextCommandType.LOOK;
+  }
+
+  private TextCommandType inventoryCommandType(InventoryViewOutput inventoryView) {
+    return switch (inventoryView.source()) {
+      case INVENTORY, ROOM_GROUND -> TextCommandType.INVENTORY;
+      case EQUIPMENT -> TextCommandType.EQUIPMENT;
+      case CONTAINER -> TextCommandType.CONTAINER;
+    };
+  }
+
   private String renderLookView(
       LookViewOutput result,
       String localeTag,
@@ -619,6 +657,9 @@ public class TextPlayerOutputRenderer {
     }
     if (payload instanceof FriendMutationResultOutput result) {
       return colorizeNotice(renderFriendMutationResult(result), effectivePresentationProperties);
+    }
+    if (payload instanceof ItemMutationResultOutput result) {
+      return colorizeNotice(result.text(), effectivePresentationProperties);
     }
     throw new IllegalArgumentException(
         "Unsupported notice payload: " + payload.getClass().getName());

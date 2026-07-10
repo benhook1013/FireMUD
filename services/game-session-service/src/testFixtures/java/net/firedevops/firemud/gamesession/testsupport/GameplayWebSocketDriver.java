@@ -232,6 +232,36 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
     throw new AssertionError("Expected " + description + ", got " + responses);
   }
 
+  public int responseCount() {
+    return responses.size();
+  }
+
+  public String awaitTranscriptContainingAllAfter(int responseCount, String... expectedSubstrings)
+      throws Exception {
+    long deadline = System.currentTimeMillis() + waitTimeout.toMillis();
+    while (System.currentTimeMillis() < deadline) {
+      String transcript = String.join("\n", responses.subList(responseCount, responses.size()));
+      if (containsAll(transcript, expectedSubstrings)) {
+        return transcript;
+      }
+      String partial = textFrames.snapshot();
+      if (!partial.isEmpty()) {
+        String combined = transcript.isEmpty() ? partial : transcript + "\n" + partial;
+        if (containsAll(combined, expectedSubstrings)) {
+          return combined;
+        }
+      }
+      Thread.sleep(50);
+    }
+    throw new AssertionError(
+        "Expected new transcript after response "
+            + responseCount
+            + " containing "
+            + List.of(expectedSubstrings)
+            + ", got "
+            + responses.subList(responseCount, responses.size()));
+  }
+
   public void awaitMatching(Predicate<String> predicate, String description) throws Exception {
     awaitResponseMatching(predicate, description);
   }
@@ -258,6 +288,15 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
 
   public List<String> responses() {
     return List.copyOf(responses);
+  }
+
+  private static boolean containsAll(String text, String... expectedSubstrings) {
+    for (String expectedSubstring : expectedSubstrings) {
+      if (!text.contains(expectedSubstring)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   public void clearResponses() {

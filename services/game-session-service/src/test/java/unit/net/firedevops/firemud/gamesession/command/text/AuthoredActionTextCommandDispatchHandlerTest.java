@@ -40,6 +40,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "wave-salute".equals(gameplayCommand.getCommandName())
+                        && "salute captain".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("authored-")));
   }
@@ -76,6 +77,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "hooked-wave".equals(gameplayCommand.getCommandName())
+                        && "hooked-wave".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("authored-")
                         && "runtime.workflow.wave".equals(gameplayCommand.getExecutionHook())));

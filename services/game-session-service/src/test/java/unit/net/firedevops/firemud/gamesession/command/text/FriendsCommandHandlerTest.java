@@ -130,6 +130,7 @@ class FriendsCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "FRIENDS".equals(gameplayCommand.getCommandName())
+                        && "FRIENDS".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("friends-")));
   }
@@ -195,7 +196,7 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "77"), "FRIENDS ADD 77"),
+                TextCommandType.FRIENDS, java.util.List.of("ADD", "77"), "friends add 77"),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -215,7 +216,10 @@ class FriendsCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.any(),
-            Mockito.argThat(gameplayCommand -> "FRIENDS".equals(gameplayCommand.getCommandName())));
+            Mockito.argThat(
+                gameplayCommand ->
+                    "FRIENDS".equals(gameplayCommand.getCommandName())
+                        && "friends add 77".equals(gameplayCommand.getCommandText())));
   }
 
   @Test

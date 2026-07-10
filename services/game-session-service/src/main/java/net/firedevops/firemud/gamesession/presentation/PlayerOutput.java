@@ -111,6 +111,11 @@ public record PlayerOutput(
         PlayerOutputKind.NOTICE, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.ALWAYS_SHOW);
   }
 
+  public static PlayerOutput notice(ItemMutationResultOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.NOTICE, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.ALWAYS_SHOW);
+  }
+
   public static PlayerOutput notice(
       String fallbackText, String messageKey, java.util.Map<String, String> arguments) {
     return new PlayerOutput(
@@ -146,6 +151,7 @@ public record PlayerOutput(
       case PromptOutput prompt -> prompt.text();
       case NoticeOutput notice -> notice.text();
       case FriendMutationResultOutput result -> friendMutationText(result);
+      case ItemMutationResultOutput result -> result.text();
       case ErrorOutput error ->
           "ERROR "
               + error.code()

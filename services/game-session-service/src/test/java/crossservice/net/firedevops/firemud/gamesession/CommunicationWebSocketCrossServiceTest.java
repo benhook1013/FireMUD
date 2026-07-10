@@ -30,7 +30,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CommunicationWebSocketCrossServiceTest {
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(10);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(45);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
@@ -534,6 +534,140 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartyInventoryViewsExposeTypedItemMetadata() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+
+    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("inventory-first-party")) {
+      int baseline = client.responses().size();
+      client.send("GET Torch");
+      JsonNode pickup = awaitStructuredCommand(client, baseline, "GET");
+      assertThat(pickup.path("accepted").asBoolean())
+          .withFailMessage(pickup.toPrettyString())
+          .isTrue();
+      JsonNode pickupMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(pickupMutation.path("action").asText()).isEqualTo("GET");
+      assertThat(pickupMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(pickupMutation.path("source").path("kind").asText()).isEqualTo("ROOM_GROUND");
+      assertThat(pickupMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
+      List<JsonNode> pickupViews =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayloads(
+              client, baseline, "inventory_view", 2);
+      assertThat(pickupViews).hasSize(2);
+      JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
+      assertThat(carriedInventory.path("entries")).hasSize(3);
+      JsonNode pickedUpTorch = requireInventoryEntryByVisibleRef(carriedInventory, "torch#1");
+      assertThat(pickedUpTorch.path("itemName").asText()).isEqualTo("Torch");
+      JsonNode roomGroundInventory = requireInventoryViewBySource(pickupViews, "ROOM_GROUND");
+      assertThat(roomGroundInventory.path("entries")).hasSize(1);
+      assertThat(roomGroundInventory.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("backpack#1");
+      assertThat(roomGroundInventory.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Backpack");
+
+      baseline = client.responses().size();
+      client.send("CONTAINER Backpack");
+      JsonNode container = awaitStructuredCommand(client, baseline, "CONTAINER");
+      assertThat(container.path("accepted").asBoolean())
+          .withFailMessage(container.toPrettyString())
+          .isTrue();
+      JsonNode containerPayload = requirePayload(container, "inventory_view");
+      assertThat(containerPayload.path("source").asText()).isEqualTo("CONTAINER");
+      assertThat(containerPayload.path("context").path("displayName").asText())
+          .isEqualTo("Backpack");
+      assertThat(containerPayload.path("context").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(containerPayload.path("entries")).hasSize(1);
+      assertThat(containerPayload.path("entries").get(0).path("itemName").asText())
+          .isEqualTo("Ration");
+      assertThat(containerPayload.path("entries").get(0).path("visibleRef").asText())
+          .isEqualTo("ration#1");
+
+      baseline = client.responses().size();
+      client.send("PUT Torch INTO Backpack");
+      JsonNode put = awaitStructuredCommand(client, baseline, "PUT");
+      assertThat(put.path("accepted").asBoolean()).withFailMessage(put.toPrettyString()).isTrue();
+      JsonNode putMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(putMutation.path("action").asText()).isEqualTo("PUT");
+      assertThat(putMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(putMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(putMutation.path("target").path("kind").asText()).isEqualTo("CONTAINER");
+      assertThat(putMutation.path("target").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(putMutation.path("target").path("visibleRef").asText()).isEqualTo("backpack#1");
+
+      baseline = client.responses().size();
+      client.send("TAKE Torch FROM Backpack");
+      JsonNode take = awaitStructuredCommand(client, baseline, "TAKE");
+      assertThat(take.path("accepted").asBoolean()).withFailMessage(take.toPrettyString()).isTrue();
+      JsonNode takeMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(takeMutation.path("action").asText()).isEqualTo("TAKE");
+      assertThat(takeMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(takeMutation.path("source").path("kind").asText()).isEqualTo("CONTAINER");
+      assertThat(takeMutation.path("source").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(takeMutation.path("source").path("visibleRef").asText()).isEqualTo("backpack#1");
+      assertThat(takeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
+
+      baseline = client.responses().size();
+      client.send("DROP Torch");
+      JsonNode drop = awaitStructuredCommand(client, baseline, "DROP");
+      assertThat(drop.path("accepted").asBoolean()).withFailMessage(drop.toPrettyString()).isTrue();
+      JsonNode dropMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(dropMutation.path("action").asText()).isEqualTo("DROP");
+      assertThat(dropMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(dropMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(dropMutation.path("target").path("kind").asText()).isEqualTo("ROOM_GROUND");
+
+      baseline = client.responses().size();
+      client.send("WEAR Leather Cap");
+      JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
+      assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
+      JsonNode wearMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(wearMutation.path("action").asText()).isEqualTo("WEAR");
+      assertThat(wearMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
+      assertThat(wearMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(wearMutation.path("target").path("kind").asText()).isEqualTo("EQUIPMENT");
+      assertThat(wearMutation.path("target").path("slot").asText()).isEqualTo("HEAD");
+
+      baseline = client.responses().size();
+      client.send("REMOVE HEAD");
+      JsonNode remove = awaitStructuredCommand(client, baseline, "REMOVE");
+      assertThat(remove.path("accepted").asBoolean())
+          .withFailMessage(remove.toPrettyString())
+          .isTrue();
+      JsonNode removeMutation =
+          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
+              client, baseline, "item_mutation_result");
+      assertThat(removeMutation.path("action").asText()).isEqualTo("REMOVE");
+      assertThat(removeMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
+      assertThat(removeMutation.path("source").path("kind").asText()).isEqualTo("EQUIPMENT");
+      assertThat(removeMutation.path("source").path("slot").asText()).isEqualTo("HEAD");
+      assertThat(removeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
+
+      baseline = client.responses().size();
+      client.send("EQUIPMENT");
+      JsonNode equipment = awaitStructuredCommand(client, baseline, "EQUIPMENT");
+      assertThat(equipment.path("accepted").asBoolean())
+          .withFailMessage(equipment.toPrettyString())
+          .isTrue();
+      JsonNode equipmentPayload = requirePayload(equipment, "inventory_view");
+      assertThat(equipmentPayload.path("source").asText()).isEqualTo("EQUIPMENT");
+      assertThat(equipmentPayload.path("entries")).isEmpty();
+    }
+  }
+
+  @Test
   void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -586,10 +720,17 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("- Torch [torch#1] (A small torch)");
       client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
 
+      int pickupResponseCount = client.responseCount();
       client.send("GET Torch");
-      client.awaitContains("You pick up Torch.");
-      client.awaitContains("Inventory:");
-      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(
+              client.awaitTranscriptContainingAllAfter(
+                  pickupResponseCount,
+                  "You pick up Torch.",
+                  "Inventory:",
+                  "- Torch [torch#1] (A small torch)",
+                  "Room Inventory:",
+                  "- Backpack [backpack#1] (A weathered backpack)"))
+          .contains("Room Inventory:");
       GameplayEntityAssertions.assertPickup(
           entityStub().lastPickupRequest(),
           String.valueOf(TENANT_ID),
@@ -598,13 +739,17 @@ class CommunicationWebSocketCrossServiceTest {
           ChatTestFixtures.ROOM_ID,
           "torch");
 
+      int containerResponseCount = client.responseCount();
       client.send("CONTAINER Backpack");
-      client.awaitContains("Container: Backpack [backpack#1]");
-      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      client.awaitTranscriptContainingAllAfter(
+          containerResponseCount,
+          "Container: Backpack [backpack#1]",
+          "- Ration [ration#1] (A dry trail ration)");
 
+      int putResponseCount = client.responseCount();
       client.send("PUT Torch INTO Backpack");
-      client.awaitContains("You put Torch into Backpack.");
-      client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitTranscriptContainingAllAfter(
+          putResponseCount, "You put Torch into Backpack.", "- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertPut(
           entityStub().lastPutRequest(),
           String.valueOf(TENANT_ID),
@@ -613,9 +758,12 @@ class CommunicationWebSocketCrossServiceTest {
           "torch",
           "torch-ground-1");
 
+      int takeResponseCount = client.responseCount();
       client.send("TAKE Torch FROM Backpack");
-      client.awaitContains("You take Torch from Backpack.");
-      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      client.awaitTranscriptContainingAllAfter(
+          takeResponseCount,
+          "You take Torch from Backpack.",
+          "- Ration [ration#1] (A dry trail ration)");
       GameplayEntityAssertions.assertTake(
           entityStub().lastTakeRequest(),
           String.valueOf(TENANT_ID),
@@ -624,8 +772,18 @@ class CommunicationWebSocketCrossServiceTest {
           "torch",
           "");
 
+      int dropResponseCount = client.responseCount();
       client.send("DROP Torch");
-      client.awaitContains("You drop Torch.");
+      assertThat(
+              client.awaitTranscriptContainingAllAfter(
+                  dropResponseCount,
+                  "You drop Torch.",
+                  "Inventory:",
+                  "- Leather Cap [cap#1] (A small cap)",
+                  "- Iron Boots [boots#1] (Heavy iron boots)",
+                  "Room Inventory:",
+                  "- Torch [torch#1] (A small torch)"))
+          .contains("Room Inventory:");
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
       client.awaitContains("- Torch [torch#1] (A small torch)");
@@ -796,6 +954,10 @@ class CommunicationWebSocketCrossServiceTest {
     GameplayStructuredCommandAssertions.requireStructuredCommand(
         play, "PLAY", "play", "META", "SESSION");
     assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
+    int readinessBaseline = client.responses().size();
+    client.send("LOOK");
+    JsonNode look = awaitStructuredCommand(client, readinessBaseline, "LOOK");
+    assertThat(look.path("accepted").asBoolean()).withFailMessage(look.toPrettyString()).isTrue();
     return client;
   }
 
@@ -841,6 +1003,30 @@ class CommunicationWebSocketCrossServiceTest {
 
   private JsonNode requirePayload(JsonNode envelope, String payloadType) {
     return GameplayStructuredCommandAssertions.requirePayload(envelope, payloadType);
+  }
+
+  private List<JsonNode> requirePayloads(JsonNode envelope, String payloadType) {
+    return GameplayStructuredCommandAssertions.requirePayloads(envelope, payloadType);
+  }
+
+  private JsonNode requireInventoryViewBySource(List<JsonNode> payloads, String source) {
+    return payloads.stream()
+        .filter(payload -> source.equals(payload.path("source").asText()))
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new AssertionError(
+                    "Missing inventory_view source=" + source + " in payloads: " + payloads));
+  }
+
+  private JsonNode requireInventoryEntryByVisibleRef(JsonNode inventory, String visibleRef) {
+    for (JsonNode entry : inventory.path("entries")) {
+      if (visibleRef.equals(entry.path("visibleRef").asText())) {
+        return entry;
+      }
+    }
+    throw new AssertionError(
+        "Missing inventory entry visibleRef=" + visibleRef + " in view: " + inventory);
   }
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {

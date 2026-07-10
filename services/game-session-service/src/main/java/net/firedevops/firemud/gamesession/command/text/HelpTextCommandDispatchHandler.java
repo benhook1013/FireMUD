@@ -1,7 +1,5 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import java.util.UUID;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -38,10 +36,8 @@ final class HelpTextCommandDispatchHandler implements TextCommandDispatchHandler
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("help-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(command.type().name());
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context, ScriptEventGameplayCommands.synthetic("help", command));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Help script event publish failed tenantId={} gameInstanceId={} characterId={} commandType={}",

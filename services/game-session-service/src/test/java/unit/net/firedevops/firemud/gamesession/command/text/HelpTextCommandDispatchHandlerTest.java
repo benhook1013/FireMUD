@@ -37,6 +37,7 @@ class HelpTextCommandDispatchHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "HELP".equals(gameplayCommand.getCommandName())
+                        && "HELP who".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("help-")));
   }

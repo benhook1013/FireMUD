@@ -1,8 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
-import java.util.UUID;
-import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -114,10 +112,8 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      GameplayCommand gameplayCommand = new GameplayCommand();
-      gameplayCommand.setCommandId("worlds-" + UUID.randomUUID());
-      gameplayCommand.setCommandName(command.type().name());
-      scriptEventPublisher.publishCommandEvent(context, gameplayCommand);
+      scriptEventPublisher.publishCommandEvent(
+          context, ScriptEventGameplayCommands.synthetic("worlds", command));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Discovery script event publish failed tenantId={} gameInstanceId={} characterId={} commandType={}",

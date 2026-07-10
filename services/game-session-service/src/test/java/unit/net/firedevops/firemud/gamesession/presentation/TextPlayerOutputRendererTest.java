@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import org.junit.jupiter.api.Test;
 
 class TextPlayerOutputRendererTest {
+  private static final String STRIDE_COMMAND_ID = "stride";
 
   @Test
   void briefModeSuppressesLongLookDescription() {
@@ -169,7 +170,10 @@ class TextPlayerOutputRendererTest {
             CommandEnqueueResult.success(),
             List.of(
                 PlayerOutput.view(
-                    new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)"))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.INVENTORY,
+                        "Inventory:",
+                        List.of("- Torch x2 (A small torch)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -218,7 +222,9 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+                        InventoryViewOutput.Source.EQUIPMENT,
+                        "Equipment:",
+                        List.of("- HEAD: Leather Cap (A small cap)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -243,7 +249,9 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Container: Satchel", List.of("- Trail Ration x2 (A dry ration)"))),
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("- Trail Ration x2 (A dry ration)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -270,9 +278,24 @@ class TextPlayerOutputRendererTest {
                 TextCommandType.PUT, List.of("torch", "into", "satchel"), "PUT torch INTO satchel"),
             CommandEnqueueResult.success(),
             List.of(
-                PlayerOutput.message("You put Torch into Satchel."),
+                PlayerOutput.notice(
+                    new ItemMutationResultOutput(
+                        "PUT",
+                        new InventoryViewOutput.ItemEntry(
+                            "torch", "torch-1", "", "torch#1", "Torch", "", 1, ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.INVENTORY, "", "", "", ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.CONTAINER,
+                            "Satchel",
+                            "satchel-1",
+                            "satchel#1",
+                            ""))),
                 PlayerOutput.view(
-                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("It is empty."))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -302,9 +325,24 @@ class TextPlayerOutputRendererTest {
                 "TAKE torch FROM satchel"),
             CommandEnqueueResult.success(),
             List.of(
-                PlayerOutput.message("You take Torch from Satchel."),
+                PlayerOutput.notice(
+                    new ItemMutationResultOutput(
+                        "TAKE",
+                        new InventoryViewOutput.ItemEntry(
+                            "torch", "torch-1", "", "torch#1", "Torch", "", 1, ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.CONTAINER,
+                            "Satchel",
+                            "satchel-1",
+                            "satchel#1",
+                            ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.INVENTORY, "", "", "", ""))),
                 PlayerOutput.view(
-                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("It is empty."))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -573,6 +611,60 @@ class TextPlayerOutputRendererTest {
             "OK LOOK\n"
                 + "Room: North Hall (ID: R-205)\n"
                 + "Short: North Hall text\n"
+                + "Exits: \n"
+                + "Entities:\n\n");
+  }
+
+  @Test
+  void renderAllUsesMovementTagForAuthoredViewLabel() {
+    TextCommandMetadataResolver metadataResolver =
+        commandId ->
+            STRIDE_COMMAND_ID.equals(commandId)
+                ? java.util.Optional.of(
+                    new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                        net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                            .AUTHORED,
+                        TextCommandActionCategory.GAMEPLAY,
+                        List.of(TextCommandActionTag.MOVEMENT)))
+                : java.util.Optional.empty();
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)),
+            new PresentationMessageCatalog(),
+            new TextCommandPresentationPolicy(metadataResolver));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                STRIDE_COMMAND_ID,
+                TextCommandType.AUTHORED,
+                List.of("north"),
+                "stride north",
+                STRIDE_COMMAND_ID,
+                new TextCommandPayload.AuthoredActionInvocation(
+                    STRIDE_COMMAND_ID, List.of("north"))),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        List.of(),
+                        List.of()))));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK LOOK\n"
+                + "Room: North Hall (ID: R-205)\n"
+                + "Short: North Hall text\n"
+                + "Long: Detailed north hall text\n"
                 + "Exits: \n"
                 + "Entities:\n\n");
   }
@@ -859,6 +951,156 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered)
         .isEqualTo("OK WHO\nGods [1]: Aster\nPlayers [2]: Ben (idle), Cara (AFK)\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputFormatsFriendDetailWithFriendsEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new FriendDetailViewOutput(
+                    new FriendPresenceViewOutput.Entry(
+                        1,
+                        77L,
+                        41L,
+                        "ONLINE",
+                        null,
+                        "Sora",
+                        true,
+                        "demo",
+                        "Demo World",
+                        "ember",
+                        "Ember Realm",
+                        "Sora",
+                        "GLOBAL",
+                        1L,
+                        "ACTIVE",
+                        null,
+                        "FRIEND",
+                        "SHARED"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK FRIENDS\n"
+                + "Friend Sora [acct #41]\n"
+                + "Link: #77\n"
+                + "Status: online\n"
+                + "Presence: online in Demo World / Ember Realm (active)\n"
+                + "Visibility: SHARED\n"
+                + "Location: Demo World / Ember Realm\n"
+                + "Character: Sora\n"
+                + "Activity: active\n"
+                + "State scope: global\n"
+                + "Pointer version: 1\n"
+                + "Roster entry: #1\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputFormatsQuickLookWithQuickLookEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-1021",
+                    "Quick Hall",
+                    "Quick hall short",
+                    "Quick hall long",
+                    false,
+                    LookViewOutput.RefreshReason.QUICKLOOK,
+                    List.of(),
+                    List.of())),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK QUICKLOOK\n"
+                + "Room: Quick Hall (ID: R-1021)\n"
+                + "Short: Quick hall short\n"
+                + "Exits: \n"
+                + "Entities:\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputFormatsEquipmentViewWithEquipmentEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.EQUIPMENT,
+                    "Equipment:",
+                    List.of("- HEAD: Leather Cap (A small cap)"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo("OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Leather Cap (A small cap)\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputUsesInventorySourceInsteadOfTitlePrefix() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.EQUIPMENT,
+                    "Inventory:",
+                    List.of("- HEAD: Leather Cap (A small cap)"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo("OK EQUIPMENT\n" + "Inventory:\n" + "- HEAD: Leather Cap (A small cap)\n\n");
   }
 
   @Test
