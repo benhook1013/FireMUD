@@ -463,6 +463,7 @@ class TextCommandInterpreterTest {
             afkHandler,
             helpHandler,
             whoHandler,
+            new StatusCommandHandler(gameLogicClient, scriptEventPublisher),
             new FriendsCommandHandler(
                 Mockito.mock(SocialGroupsClient.class),
                 entityManagementClient,

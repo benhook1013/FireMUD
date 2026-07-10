@@ -26,6 +26,17 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesStatusAndStatAsCanonicalGameplayView() {
+    TextCommand command = parser.parse("stat");
+
+    assertEquals(TextCommandType.STATUS, command.type());
+    assertEquals("status", command.commandId());
+    assertEquals("stat", command.aliasUsed());
+    assertEquals(List.of(), command.args());
+    assertEquals(new TextCommandPayload.ViewRequest("STATUS", true), command.payload());
+  }
+
+  @Test
   void parserResolvesAliasesThroughRegistryMetadata() {
     TextCommandParser parser =
         new TextCommandParser(

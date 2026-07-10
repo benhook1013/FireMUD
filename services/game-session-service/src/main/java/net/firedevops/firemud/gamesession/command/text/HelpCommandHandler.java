@@ -103,6 +103,12 @@ public class HelpCommandHandler {
                   + "List currently connected players in this game instance.\n"
                   + "Gods appear first, then players.\n"
                   + "You must already be in-world with PLAY.");
+      case "STATUS" ->
+          success(
+              "STATUS\n"
+                  + "Show your evaluated resources and active visible conditions.\n"
+                  + "STAT is a short alias.\n"
+                  + "You must already be in-world with PLAY.");
       case "FRIENDS" ->
           success(
               "FRIENDS\n"
@@ -220,6 +226,7 @@ public class HelpCommandHandler {
           case "LOGIN", "LOGON" -> "LOGIN";
           case "PLAY" -> "PLAY";
           case "WHO" -> "WHO";
+          case "STATUS", "STAT" -> "STATUS";
           case "FRIENDS" -> "FRIENDS";
           case "INVENTORY", "INV", "I" -> "INVENTORY";
           case "EQUIPMENT", "EQUIP", "EQ" -> "EQUIPMENT";
@@ -255,6 +262,7 @@ public class HelpCommandHandler {
                 "- HELP LOGIN",
                 "- HELP PLAY",
                 "- HELP WHO",
+                "- HELP STATUS",
                 "- HELP FRIENDS",
                 "- HELP INVENTORY",
                 "- HELP EQUIPMENT",

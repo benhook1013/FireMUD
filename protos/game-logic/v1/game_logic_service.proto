@@ -17,6 +17,8 @@ service GameLogicService {
   rpc ResolveMove(MoveRequest) returns (MoveResult);
   rpc QueryInventory(entity_management.v1.QueryInventoryRequest)
       returns (entity_management.v1.QueryInventoryResponse);
+  rpc QueryActorState(entity_management.v1.QueryActorStateRequest)
+      returns (entity_management.v1.QueryActorStateResponse);
   rpc ListEquipment(entity_management.v1.ListEquipmentRequest)
       returns (entity_management.v1.ListEquipmentResponse);
   rpc WearEquipment(entity_management.v1.WearEquipmentItemRequest)

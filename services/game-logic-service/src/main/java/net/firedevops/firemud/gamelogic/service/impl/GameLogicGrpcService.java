@@ -23,6 +23,8 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -296,6 +298,14 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void queryInventory(
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     responseObserver.onNext(itemRuntimeService.queryInventory(request));
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.queryActorState")
+  public void queryActorState(
+      QueryActorStateRequest request, StreamObserver<QueryActorStateResponse> responseObserver) {
+    responseObserver.onNext(itemRuntimeService.queryActorState(request));
     responseObserver.onCompleted();
   }
 

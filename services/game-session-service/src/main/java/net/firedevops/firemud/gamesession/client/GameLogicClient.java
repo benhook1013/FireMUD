@@ -24,6 +24,8 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -225,6 +227,25 @@ public class GameLogicClient
       LOG.warn("Game Logic inventory query failed", ex);
       return QueryInventoryResponse.newBuilder()
           .setError(error("INVENTORY_UNAVAILABLE", "Inventory service unavailable"))
+          .build();
+    }
+  }
+
+  public QueryActorStateResponse queryActorState(SessionContext context) {
+    QueryActorStateRequest request =
+        QueryActorStateRequest.newBuilder()
+            .setTenantId(Long.toString(context.tenantId()))
+            .setCharacterId(Long.toString(context.characterId()))
+            .setGameInstanceId(Long.toString(context.gameInstanceId()))
+            .setPlayableStateScope(resolvePlayableStateScope(context))
+            .setSessionAttestation(sessionAttestation(context, context.roomInstanceId()))
+            .build();
+    try {
+      return callStub().queryActorState(request);
+    } catch (RuntimeException ex) {
+      LOG.warn("Game Logic actor state query failed", ex);
+      return QueryActorStateResponse.newBuilder()
+          .setError(error("ACTOR_STATE_UNAVAILABLE", "Actor state unavailable"))
           .build();
     }
   }

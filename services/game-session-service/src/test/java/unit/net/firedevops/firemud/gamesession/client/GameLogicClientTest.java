@@ -20,6 +20,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRespons
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
@@ -72,6 +74,29 @@ class GameLogicClientTest {
     LookResult result = client.resolveLook(SESSION_CONTEXT, "R-1021", "fr");
 
     assertThat(result.getRoomInstance().getGameInstanceId()).isEqualTo("1");
+  }
+
+  @Test
+  void queryActorStateForwardsScopedAttestationThroughGameLogic() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    QueryActorStateRequest request =
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("22")
+            .setCharacterId("123")
+            .setGameInstanceId("1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .build();
+    when(stub.queryActorState(request))
+        .thenReturn(QueryActorStateResponse.newBuilder().setCharacterId("123").build());
+    setStub(client, stub);
+
+    QueryActorStateResponse result = client.queryActorState(SESSION_CONTEXT);
+
+    assertThat(result.getCharacterId()).isEqualTo("123");
   }
 
   @Test

@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.ActorStateViewOutput;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendDetailViewOutput;
@@ -179,6 +180,7 @@ public final class WebSocketOutputProjector {
       case RealmBrowseViewOutput ignored -> "realms_view";
       case CharacterBrowseViewOutput ignored -> "characters_view";
       case WhoViewOutput ignored -> "who_view";
+      case ActorStateViewOutput ignored -> "actor_state_view";
       case FriendPresenceViewOutput ignored -> "friends_view";
       case FriendDetailViewOutput ignored -> "friend_detail_view";
       case FriendRosterSummaryViewOutput ignored -> "friend_roster_summary_view";

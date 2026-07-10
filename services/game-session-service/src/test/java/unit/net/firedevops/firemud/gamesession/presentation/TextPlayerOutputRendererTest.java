@@ -58,6 +58,30 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void rendersActorStateViewWithoutInternalEffectProvenance() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new ActorStateViewOutput(
+                    List.of(new ActorStateViewOutput.Resource("health", 12, 20L, 10L)),
+                    List.of(
+                        new ActorStateViewOutput.Condition(
+                            "blocking", 1, "2026-07-11T00:00:00Z")))));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "Status:\n- health: 12/20\nConditions:\n- blocking (until 2026-07-11T00:00:00Z)");
+  }
+
+  @Test
   void briefPolicySuppressesTaggedMessageOutput() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

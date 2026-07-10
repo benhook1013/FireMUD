@@ -22,6 +22,8 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -54,6 +56,16 @@ public class ItemRuntimeService {
     } catch (StatusRuntimeException ex) {
       return QueryInventoryResponse.newBuilder()
           .setError(error("QueryInventory", "INVENTORY_UNAVAILABLE", ex))
+          .build();
+    }
+  }
+
+  public QueryActorStateResponse queryActorState(QueryActorStateRequest request) {
+    try {
+      return entityStub.queryActorState(request);
+    } catch (StatusRuntimeException ex) {
+      return QueryActorStateResponse.newBuilder()
+          .setError(error("QueryActorState", "ACTOR_STATE_UNAVAILABLE", ex))
           .build();
     }
   }
