@@ -25,7 +25,8 @@ final class HelpTextCommandDispatchHandler implements TextCommandDispatchHandler
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    TextCommandInterpretationResult result = helpHandler.handle(request.command());
+    TextCommandInterpretationResult result =
+        helpHandler.handle(request.command(), request.sessionContext());
     if (result.commandResult().accepted()) {
       request
           .sessionContext()

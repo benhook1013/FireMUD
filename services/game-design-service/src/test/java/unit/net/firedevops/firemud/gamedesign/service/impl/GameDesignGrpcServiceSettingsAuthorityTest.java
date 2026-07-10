@@ -12,6 +12,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
@@ -44,6 +45,8 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
       Mockito.mock(SettingsAuthorityService.class);
+  private final GameAuthoredHelpTopicService gameAuthoredHelpTopicService =
+      Mockito.mock(GameAuthoredHelpTopicService.class);
 
   private GameDesignGrpcService grpcService;
 
@@ -59,6 +62,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             templateRemapSetService,
             versionAssetArtifactService,
             settingsAuthorityService,
+            gameAuthoredHelpTopicService,
             new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
   }
