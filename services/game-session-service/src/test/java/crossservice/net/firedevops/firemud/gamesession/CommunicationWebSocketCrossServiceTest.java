@@ -584,6 +584,42 @@ class CommunicationWebSocketCrossServiceTest {
           .isEqualTo("ration#1");
 
       baseline = client.responses().size();
+      client.send("PUT Torch INTO Backpack");
+      JsonNode put = awaitStructuredCommand(client, baseline, "PUT");
+      assertThat(put.path("accepted").asBoolean()).withFailMessage(put.toPrettyString()).isTrue();
+      JsonNode putMutation = requirePayload(put, "item_mutation_result");
+      assertThat(putMutation.path("action").asText()).isEqualTo("PUT");
+      assertThat(putMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(putMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(putMutation.path("target").path("kind").asText()).isEqualTo("CONTAINER");
+      assertThat(putMutation.path("target").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(putMutation.path("target").path("visibleRef").asText()).isEqualTo("backpack#1");
+
+      baseline = client.responses().size();
+      client.send("TAKE Torch FROM Backpack");
+      JsonNode take = awaitStructuredCommand(client, baseline, "TAKE");
+      assertThat(take.path("accepted").asBoolean()).withFailMessage(take.toPrettyString()).isTrue();
+      JsonNode takeMutation = requirePayload(take, "item_mutation_result");
+      assertThat(takeMutation.path("action").asText()).isEqualTo("TAKE");
+      assertThat(takeMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(takeMutation.path("source").path("kind").asText()).isEqualTo("CONTAINER");
+      assertThat(takeMutation.path("source").path("containerInstanceId").asText())
+          .isEqualTo("container-backpack-1");
+      assertThat(takeMutation.path("source").path("visibleRef").asText()).isEqualTo("backpack#1");
+      assertThat(takeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
+
+      baseline = client.responses().size();
+      client.send("DROP Torch");
+      JsonNode drop = awaitStructuredCommand(client, baseline, "DROP");
+      assertThat(drop.path("accepted").asBoolean()).withFailMessage(drop.toPrettyString()).isTrue();
+      JsonNode dropMutation = requirePayload(drop, "item_mutation_result");
+      assertThat(dropMutation.path("action").asText()).isEqualTo("DROP");
+      assertThat(dropMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(dropMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(dropMutation.path("target").path("kind").asText()).isEqualTo("ROOM_GROUND");
+
+      baseline = client.responses().size();
       client.send("WEAR Leather Cap");
       JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
       assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
@@ -593,6 +629,19 @@ class CommunicationWebSocketCrossServiceTest {
       assertThat(wearMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
       assertThat(wearMutation.path("target").path("kind").asText()).isEqualTo("EQUIPMENT");
       assertThat(wearMutation.path("target").path("slot").asText()).isEqualTo("HEAD");
+
+      baseline = client.responses().size();
+      client.send("REMOVE HEAD");
+      JsonNode remove = awaitStructuredCommand(client, baseline, "REMOVE");
+      assertThat(remove.path("accepted").asBoolean())
+          .withFailMessage(remove.toPrettyString())
+          .isTrue();
+      JsonNode removeMutation = requirePayload(remove, "item_mutation_result");
+      assertThat(removeMutation.path("action").asText()).isEqualTo("REMOVE");
+      assertThat(removeMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
+      assertThat(removeMutation.path("source").path("kind").asText()).isEqualTo("EQUIPMENT");
+      assertThat(removeMutation.path("source").path("slot").asText()).isEqualTo("HEAD");
+      assertThat(removeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
 
       baseline = client.responses().size();
       client.send("EQUIPMENT");
