@@ -8,7 +8,7 @@ final class ScriptEventGameplayCommands {
   private ScriptEventGameplayCommands() {}
 
   static GameplayCommand synthetic(String prefix, TextCommand command) {
-    return syntheticWithId(syntheticId(prefix), command, command.type().name(), null);
+    return synthetic(prefix, command, command.type().name(), null);
   }
 
   static GameplayCommand synthetic(String prefix, String commandName, String rawLine) {
