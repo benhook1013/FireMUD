@@ -80,7 +80,7 @@ class GameAuthoredHelpTopicServiceImplTest {
     ArgumentCaptor<GameAuthoredHelpTopic> savedCaptor =
         ArgumentCaptor.forClass(GameAuthoredHelpTopic.class);
     verify(repository).save(savedCaptor.capture());
-    verify(repository).replaceAliases(saved, List.of("walk"));
+    verify(repository).replaceLookupKeys(saved, List.of("walk"));
     assertThat(savedCaptor.getValue().getCanonicalTopicKey()).isEqualTo("movement");
     assertThat(result.canonicalTopicId()).isEqualTo("movement");
     assertThatIllegalArgumentException()

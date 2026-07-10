@@ -20,7 +20,7 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameAuthoredHelpTopicRepository {
   private static final Table<?> TOPIC_TABLE = DSL.table(DSL.name("game_authored_help_topic"));
-  private static final Table<?> ALIAS_TABLE = DSL.table(DSL.name("game_authored_help_topic_alias"));
+  private static final Table<?> KEY_TABLE = DSL.table(DSL.name("game_authored_help_topic_key"));
   private static final Field<Long> ID =
       DSL.field(DSL.name("game_authored_help_topic", "id"), Long.class);
   private static final Field<String> TENANT_ID =
@@ -39,10 +39,14 @@ public class GameAuthoredHelpTopicRepository {
       DSL.field(DSL.name("game_authored_help_topic", "created_at"), Timestamp.class);
   private static final Field<Timestamp> UPDATED_AT =
       DSL.field(DSL.name("game_authored_help_topic", "updated_at"), Timestamp.class);
-  private static final Field<Long> ALIAS_TOPIC_ID =
-      DSL.field(DSL.name("game_authored_help_topic_alias", "help_topic_id"), Long.class);
-  private static final Field<String> ALIAS_KEY =
-      DSL.field(DSL.name("game_authored_help_topic_alias", "alias_key"), String.class);
+  private static final Field<Long> KEY_TOPIC_ID =
+      DSL.field(DSL.name("game_authored_help_topic_key", "help_topic_id"), Long.class);
+  private static final Field<String> LOOKUP_KEY =
+      DSL.field(DSL.name("game_authored_help_topic_key", "lookup_key"), String.class);
+  private static final Field<String> KEY_TENANT_ID =
+      DSL.field(DSL.name("game_authored_help_topic_key", "tenant_id"), String.class);
+  private static final Field<Long> KEY_GAME_TEMPLATE_ID =
+      DSL.field(DSL.name("game_authored_help_topic_key", "game_template_id"), Long.class);
 
   private final DSLContext dsl;
 
@@ -64,11 +68,11 @@ public class GameAuthoredHelpTopicRepository {
   public Optional<GameAuthoredHelpTopic> findPublishedByAliasKey(
       String tenantId, long gameTemplateId, String aliasKey) {
     return findOne(
-        TOPIC_TABLE.join(ALIAS_TABLE).on(ID.eq(ALIAS_TOPIC_ID)),
+        TOPIC_TABLE.join(KEY_TABLE).on(ID.eq(KEY_TOPIC_ID)),
         TENANT_ID
             .eq(tenantId)
             .and(GAME_TEMPLATE_ID.eq(gameTemplateId))
-            .and(ALIAS_KEY.eq(aliasKey))
+            .and(LOOKUP_KEY.eq(aliasKey))
             .and(PUBLISHED.isTrue()));
   }
 
@@ -85,11 +89,11 @@ public class GameAuthoredHelpTopicRepository {
   public Optional<GameAuthoredHelpTopic> findByScopeAndAliasKey(
       String tenantId, long gameTemplateId, String aliasKey) {
     return findOne(
-        TOPIC_TABLE.join(ALIAS_TABLE).on(ID.eq(ALIAS_TOPIC_ID)),
+        TOPIC_TABLE.join(KEY_TABLE).on(ID.eq(KEY_TOPIC_ID)),
         TENANT_ID
             .eq(tenantId)
             .and(GAME_TEMPLATE_ID.eq(gameTemplateId))
-            .and(ALIAS_KEY.eq(aliasKey)));
+            .and(LOOKUP_KEY.eq(aliasKey)));
   }
 
   public List<GameAuthoredHelpTopic> findAllByScope(String tenantId, long gameTemplateId) {
@@ -130,14 +134,14 @@ public class GameAuthoredHelpTopicRepository {
     return findById(topic.getId()).orElseThrow();
   }
 
-  public void replaceAliases(GameAuthoredHelpTopic topic, List<String> aliases) {
-    dsl.deleteFrom(ALIAS_TABLE).where(ALIAS_TOPIC_ID.eq(topic.getId())).execute();
-    for (String alias : aliases) {
-      dsl.insertInto(ALIAS_TABLE)
-          .set(ALIAS_TOPIC_ID, topic.getId())
-          .set(TENANT_ID, topic.getTenantId())
-          .set(GAME_TEMPLATE_ID, topic.getGameTemplateId())
-          .set(ALIAS_KEY, alias)
+  public void replaceLookupKeys(GameAuthoredHelpTopic topic, List<String> aliases) {
+    dsl.deleteFrom(KEY_TABLE).where(KEY_TOPIC_ID.eq(topic.getId())).execute();
+    for (String key : lookupKeys(topic.getCanonicalTopicKey(), aliases)) {
+      dsl.insertInto(KEY_TABLE)
+          .set(KEY_TOPIC_ID, topic.getId())
+          .set(KEY_TENANT_ID, topic.getTenantId())
+          .set(KEY_GAME_TEMPLATE_ID, topic.getGameTemplateId())
+          .set(LOOKUP_KEY, key)
           .execute();
     }
   }
@@ -171,11 +175,18 @@ public class GameAuthoredHelpTopicRepository {
     Timestamp updatedAt = record.get(UPDATED_AT);
     topic.setUpdatedAt(updatedAt == null ? null : updatedAt.toInstant());
     topic.setAliases(
-        dsl.select(ALIAS_KEY)
-            .from(ALIAS_TABLE)
-            .where(ALIAS_TOPIC_ID.eq(topic.getId()))
-            .orderBy(ALIAS_KEY.asc())
-            .fetch(ALIAS_KEY));
+        dsl.select(LOOKUP_KEY)
+            .from(KEY_TABLE)
+            .where(KEY_TOPIC_ID.eq(topic.getId()).and(LOOKUP_KEY.ne(topic.getCanonicalTopicKey())))
+            .orderBy(LOOKUP_KEY.asc())
+            .fetch(LOOKUP_KEY));
     return topic;
+  }
+
+  private List<String> lookupKeys(String canonicalTopicKey, List<String> aliases) {
+    java.util.ArrayList<String> keys = new java.util.ArrayList<>();
+    keys.add(canonicalTopicKey);
+    keys.addAll(aliases);
+    return List.copyOf(keys);
   }
 }

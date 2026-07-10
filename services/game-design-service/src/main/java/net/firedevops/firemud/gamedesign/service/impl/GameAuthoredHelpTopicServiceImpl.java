@@ -66,7 +66,7 @@ public class GameAuthoredHelpTopicServiceImpl implements GameAuthoredHelpTopicSe
     entity.setBody(requireText(topic.body(), "body"));
     entity.setPublished(topic.published());
     GameAuthoredHelpTopic saved = repository.save(entity);
-    repository.replaceAliases(saved, aliases);
+    repository.replaceLookupKeys(saved, aliases);
     saved.setAliases(aliases);
     return toDto(saved);
   }
