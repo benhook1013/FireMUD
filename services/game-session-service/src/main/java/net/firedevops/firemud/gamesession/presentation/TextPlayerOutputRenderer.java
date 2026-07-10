@@ -217,7 +217,7 @@ public class TextPlayerOutputRenderer {
 
   private TextCommandType commandTypeForOutput(PlayerOutput output) {
     return switch (output.payload()) {
-      case LookViewOutput ignored -> TextCommandType.LOOK;
+      case LookViewOutput lookView -> lookCommandType(lookView);
       case InventoryViewOutput inventoryView -> inventoryCommandType(inventoryView);
       case WorldsViewOutput ignored -> TextCommandType.WORLDS;
       case RealmBrowseViewOutput ignored -> TextCommandType.REALMS;
@@ -229,6 +229,12 @@ public class TextPlayerOutputRenderer {
       case FriendPresencePolicyViewOutput ignored -> TextCommandType.FRIENDS;
       default -> TextCommandType.LOOK;
     };
+  }
+
+  private TextCommandType lookCommandType(LookViewOutput lookView) {
+    return lookView.refreshReason() == LookViewOutput.RefreshReason.QUICKLOOK
+        ? TextCommandType.QUICKLOOK
+        : TextCommandType.LOOK;
   }
 
   private TextCommandType inventoryCommandType(InventoryViewOutput inventoryView) {

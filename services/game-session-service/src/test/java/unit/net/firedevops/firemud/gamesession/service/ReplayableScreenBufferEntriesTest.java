@@ -70,6 +70,33 @@ class ReplayableScreenBufferEntriesTest {
   }
 
   @Test
+  void fromOutputUsesQuickLookEnvelopeForReplayableQuickLookView() {
+    PlayerOutput output =
+        PlayerOutput.view(
+            new LookViewOutput(
+                "room-1",
+                "Quick Hall",
+                "Quick hall short",
+                "Quick hall long",
+                false,
+                LookViewOutput.RefreshReason.QUICKLOOK,
+                List.of(),
+                List.of()));
+    when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK QUICKLOOK\nRoom: Quick Hall (ID: room-1)\nShort: Quick hall short\n\n");
+
+    var entry =
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
+
+    assertThat(entry).isPresent();
+    assertThat(entry.orElseThrow().text())
+        .isEqualTo("OK QUICKLOOK\nRoom: Quick Hall (ID: room-1)\nShort: Quick hall short\n\n\n");
+    verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
+    verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(outputRenderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
   void fromOutputUsesInventoryRendererForReplayableInventoryView() {
     PlayerOutput output =
         PlayerOutput.view(

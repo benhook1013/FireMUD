@@ -207,7 +207,7 @@ class LookCommandHandlerTest {
                     + "Exits: \n"
                     + "Entities:"),
             eq(
-                "OK LOOK\n"
+                "OK QUICKLOOK\n"
                     + "Room: Quick Hall (ID: R-1021)\n"
                     + "Short: Quick hall short\n"
                     + "Exits: \n"

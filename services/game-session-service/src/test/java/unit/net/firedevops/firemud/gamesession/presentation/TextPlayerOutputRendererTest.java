@@ -971,6 +971,44 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderSuccessfulForOutputFormatsQuickLookWithQuickLookEnvelope() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-1021",
+                    "Quick Hall",
+                    "Quick hall short",
+                    "Quick hall long",
+                    false,
+                    LookViewOutput.RefreshReason.QUICKLOOK,
+                    List.of(),
+                    List.of())),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK QUICKLOOK\n"
+                + "Room: Quick Hall (ID: R-1021)\n"
+                + "Short: Quick hall short\n"
+                + "Exits: \n"
+                + "Entities:\n\n");
+  }
+
+  @Test
   void renderSuccessfulForOutputFormatsEquipmentViewWithEquipmentEnvelope() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
