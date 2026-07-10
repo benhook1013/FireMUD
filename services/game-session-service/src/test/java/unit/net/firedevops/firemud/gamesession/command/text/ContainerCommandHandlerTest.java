@@ -66,6 +66,7 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.VIEW);
     assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Old Chest [oldchest10]");
     assertThat(view.lines()).containsExactly("- Torch [torch3] x2 (A small torch)");
   }
@@ -380,6 +381,7 @@ class ContainerCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Dropped Chest [chest#1]");
     assertThat(view.lines()).containsExactly("It is empty.");
   }

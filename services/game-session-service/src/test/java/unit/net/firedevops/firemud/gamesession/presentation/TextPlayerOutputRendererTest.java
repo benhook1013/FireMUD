@@ -169,7 +169,10 @@ class TextPlayerOutputRendererTest {
             CommandEnqueueResult.success(),
             List.of(
                 PlayerOutput.view(
-                    new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)"))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.INVENTORY,
+                        "Inventory:",
+                        List.of("- Torch x2 (A small torch)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -218,7 +221,9 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+                        InventoryViewOutput.Source.EQUIPMENT,
+                        "Equipment:",
+                        List.of("- HEAD: Leather Cap (A small cap)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -243,7 +248,9 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Container: Satchel", List.of("- Trail Ration x2 (A dry ration)"))),
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("- Trail Ration x2 (A dry ration)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -272,7 +279,10 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.message("You put Torch into Satchel."),
                 PlayerOutput.view(
-                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("It is empty."))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -304,7 +314,10 @@ class TextPlayerOutputRendererTest {
             List.of(
                 PlayerOutput.message("You take Torch from Satchel."),
                 PlayerOutput.view(
-                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                    new InventoryViewOutput(
+                        InventoryViewOutput.Source.CONTAINER,
+                        "Container: Satchel",
+                        List.of("It is empty."))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
@@ -1022,7 +1035,9 @@ class TextPlayerOutputRendererTest {
         renderer.renderSuccessfulForOutput(
             PlayerOutput.view(
                 new InventoryViewOutput(
-                    "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+                    InventoryViewOutput.Source.EQUIPMENT,
+                    "Equipment:",
+                    List.of("- HEAD: Leather Cap (A small cap)"))),
             "en-NZ",
             new PresentationProperties(
                 "en-NZ",
@@ -1032,6 +1047,34 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered)
         .isEqualTo("OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Leather Cap (A small cap)\n\n");
+  }
+
+  @Test
+  void renderSuccessfulForOutputUsesInventorySourceInsteadOfTitlePrefix() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderSuccessfulForOutput(
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.EQUIPMENT,
+                    "Inventory:",
+                    List.of("- HEAD: Leather Cap (A small cap)"))),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered)
+        .isEqualTo("OK EQUIPMENT\n" + "Inventory:\n" + "- HEAD: Leather Cap (A small cap)\n\n");
   }
 
   @Test

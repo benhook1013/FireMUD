@@ -238,14 +238,11 @@ public class TextPlayerOutputRenderer {
   }
 
   private TextCommandType inventoryCommandType(InventoryViewOutput inventoryView) {
-    String title = inventoryView.title();
-    if (title.startsWith("Equipment:")) {
-      return TextCommandType.EQUIPMENT;
-    }
-    if (title.startsWith("Container:")) {
-      return TextCommandType.CONTAINER;
-    }
-    return TextCommandType.INVENTORY;
+    return switch (inventoryView.source()) {
+      case INVENTORY -> TextCommandType.INVENTORY;
+      case EQUIPMENT -> TextCommandType.EQUIPMENT;
+      case CONTAINER -> TextCommandType.CONTAINER;
+    };
   }
 
   private String renderLookView(

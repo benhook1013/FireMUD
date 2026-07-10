@@ -70,7 +70,10 @@ public class EquipmentCommandHandler {
             : equipment.getItemsList().stream().map(this::formatEquipmentItem).toList();
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(),
-        List.of(PlayerOutput.view(new InventoryViewOutput("Equipment:", lines))));
+        List.of(
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.EQUIPMENT, "Equipment:", lines))));
   }
 
   private TextCommandInterpretationResult wear(

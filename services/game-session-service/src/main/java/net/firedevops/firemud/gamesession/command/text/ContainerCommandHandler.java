@@ -315,6 +315,7 @@ public class ContainerCommandHandler {
         List.of(
             PlayerOutput.view(
                 new InventoryViewOutput(
+                    InventoryViewOutput.Source.CONTAINER,
                     "Container: "
                         + containerItem.displayName()
                         + compactReferenceSuffix(containerItem.compactReference()),

@@ -24,7 +24,9 @@ class PlayerOutputTest {
     assertThat(
             PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Inventory:", java.util.List.of("- Torch x2 (A small torch)")))
+                        InventoryViewOutput.Source.INVENTORY,
+                        "Inventory:",
+                        java.util.List.of("- Torch x2 (A small torch)")))
                 .screenBufferEligible())
         .isTrue();
     assertThat(

@@ -100,7 +100,10 @@ class ReplayableScreenBufferEntriesTest {
   void fromOutputUsesInventoryRendererForReplayableInventoryView() {
     PlayerOutput output =
         PlayerOutput.view(
-            new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)")));
+            new InventoryViewOutput(
+                InventoryViewOutput.Source.INVENTORY,
+                "Inventory:",
+                List.of("- Torch x2 (A small torch)")));
     when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n");
 
@@ -110,6 +113,26 @@ class ReplayableScreenBufferEntriesTest {
     assertThat(entry).isPresent();
     assertThat(entry.orElseThrow().text())
         .isEqualTo("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n\n");
+    verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
+    verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
+    verify(outputRenderer, never()).render(output, "en-NZ", presentation);
+  }
+
+  @Test
+  void fromOutputUsesInventorySourceInsteadOfTitlePrefix() {
+    PlayerOutput output =
+        PlayerOutput.view(
+            new InventoryViewOutput(
+                InventoryViewOutput.Source.CONTAINER, "Inventory:", List.of("It is empty.")));
+    when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
+        .thenReturn("OK CONTAINER\nInventory:\nIt is empty.\n\n");
+
+    var entry =
+        ReplayableScreenBufferEntries.fromOutput(output, outputProjector, "en-NZ", presentation);
+
+    assertThat(entry).isPresent();
+    assertThat(entry.orElseThrow().text())
+        .isEqualTo("OK CONTAINER\nInventory:\nIt is empty.\n\n\n");
     verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
     verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
     verify(outputRenderer, never()).render(output, "en-NZ", presentation);

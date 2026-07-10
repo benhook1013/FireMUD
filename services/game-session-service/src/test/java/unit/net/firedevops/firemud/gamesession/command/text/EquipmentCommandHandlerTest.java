@@ -58,10 +58,10 @@ class EquipmentCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.VIEW);
     assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
-    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).title())
-        .isEqualTo("Equipment:");
-    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
-        .containsExactly("- HEAD: Leather Cap (A small cap)");
+    InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.EQUIPMENT);
+    assertThat(view.title()).isEqualTo("Equipment:");
+    assertThat(view.lines()).containsExactly("- HEAD: Leather Cap (A small cap)");
   }
 
   @Test

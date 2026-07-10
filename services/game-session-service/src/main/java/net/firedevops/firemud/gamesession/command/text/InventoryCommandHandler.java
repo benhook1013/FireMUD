@@ -72,7 +72,10 @@ public class InventoryCommandHandler {
       List<String> lines = formatInventoryLines(response.getItemsList());
       return new InventoryCommandHandlingResult(
           CommandEnqueueResult.success(),
-          List.of(PlayerOutput.view(new InventoryViewOutput("Inventory:", lines))));
+          List.of(
+              PlayerOutput.view(
+                  new InventoryViewOutput(
+                      InventoryViewOutput.Source.INVENTORY, "Inventory:", lines))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Inventory query failed tenantId={} characterId={}",
@@ -95,7 +98,10 @@ public class InventoryCommandHandler {
       List<String> lines = formatRoomInventoryLines(response.getItemsList());
       return new InventoryCommandHandlingResult(
           CommandEnqueueResult.success(),
-          List.of(PlayerOutput.view(new InventoryViewOutput("Room Inventory:", lines))));
+          List.of(
+              PlayerOutput.view(
+                  new InventoryViewOutput(
+                      InventoryViewOutput.Source.INVENTORY, "Room Inventory:", lines))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",

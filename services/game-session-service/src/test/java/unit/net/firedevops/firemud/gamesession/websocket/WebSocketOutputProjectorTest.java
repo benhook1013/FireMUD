@@ -239,14 +239,17 @@ class WebSocketOutputProjectorTest {
     when(session.getAttributes()).thenReturn(Map.of());
     PlayerOutput output =
         PlayerOutput.view(
-            new InventoryViewOutput("Equipment:", List.of("- HEAD: Leather Cap (A small cap)")));
+            new InventoryViewOutput(
+                InventoryViewOutput.Source.EQUIPMENT,
+                "Inventory:",
+                List.of("- HEAD: Leather Cap (A small cap)")));
     when(renderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
-        .thenReturn("OK EQUIPMENT\nEquipment:\n- HEAD: Leather Cap (A small cap)\n\n");
+        .thenReturn("OK EQUIPMENT\nInventory:\n- HEAD: Leather Cap (A small cap)\n\n");
 
     String payload = localProjector.projectPlayerOutput(session, output, "en-NZ", presentation);
 
     assertThat(payload)
-        .isEqualTo("OK EQUIPMENT\nEquipment:\n- HEAD: Leather Cap (A small cap)\n\n");
+        .isEqualTo("OK EQUIPMENT\nInventory:\n- HEAD: Leather Cap (A small cap)\n\n");
     verify(renderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
     verify(renderer, never())
         .renderSuccessfulForCommandType(
