@@ -586,16 +586,16 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("- Torch [torch#1] (A small torch)");
       client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
 
+      int pickupResponseCount = client.responseCount();
       client.send("GET Torch");
       assertThat(
-              client.awaitResponseMatching(
-                  response ->
-                      response.contains("You pick up Torch.")
-                          && response.contains("Inventory:")
-                          && response.contains("- Torch [torch#1] (A small torch)")
-                          && response.contains("Room Inventory:")
-                          && response.contains("- Backpack [backpack#1] (A weathered backpack)"),
-                  "pickup response"))
+              client.awaitTranscriptContainingAllAfter(
+                  pickupResponseCount,
+                  "You pick up Torch.",
+                  "Inventory:",
+                  "- Torch [torch#1] (A small torch)",
+                  "Room Inventory:",
+                  "- Backpack [backpack#1] (A weathered backpack)"))
           .contains("Room Inventory:");
       GameplayEntityAssertions.assertPickup(
           entityStub().lastPickupRequest(),
@@ -605,13 +605,17 @@ class CommunicationWebSocketCrossServiceTest {
           ChatTestFixtures.ROOM_ID,
           "torch");
 
+      int containerResponseCount = client.responseCount();
       client.send("CONTAINER Backpack");
-      client.awaitContains("Container: Backpack [backpack#1]");
-      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      client.awaitTranscriptContainingAllAfter(
+          containerResponseCount,
+          "Container: Backpack [backpack#1]",
+          "- Ration [ration#1] (A dry trail ration)");
 
+      int putResponseCount = client.responseCount();
       client.send("PUT Torch INTO Backpack");
-      client.awaitContains("You put Torch into Backpack.");
-      client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitTranscriptContainingAllAfter(
+          putResponseCount, "You put Torch into Backpack.", "- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertPut(
           entityStub().lastPutRequest(),
           String.valueOf(TENANT_ID),
@@ -620,9 +624,12 @@ class CommunicationWebSocketCrossServiceTest {
           "torch",
           "torch-ground-1");
 
+      int takeResponseCount = client.responseCount();
       client.send("TAKE Torch FROM Backpack");
-      client.awaitContains("You take Torch from Backpack.");
-      client.awaitContains("- Ration [ration#1] (A dry trail ration)");
+      client.awaitTranscriptContainingAllAfter(
+          takeResponseCount,
+          "You take Torch from Backpack.",
+          "- Ration [ration#1] (A dry trail ration)");
       GameplayEntityAssertions.assertTake(
           entityStub().lastTakeRequest(),
           String.valueOf(TENANT_ID),
@@ -631,16 +638,16 @@ class CommunicationWebSocketCrossServiceTest {
           "torch",
           "");
 
+      int dropResponseCount = client.responseCount();
       client.send("DROP Torch");
       assertThat(
-              client.awaitResponseMatching(
-                  response ->
-                      response.contains("You drop Torch.")
-                          && response.contains("Inventory:")
-                          && response.contains("You are not carrying anything.")
-                          && response.contains("Room Inventory:")
-                          && response.contains("- Torch [torch#1] (A small torch)"),
-                  "drop response"))
+              client.awaitTranscriptContainingAllAfter(
+                  dropResponseCount,
+                  "You drop Torch.",
+                  "Inventory:",
+                  "You are not carrying anything.",
+                  "Room Inventory:",
+                  "- Torch [torch#1] (A small torch)"))
           .contains("Room Inventory:");
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");

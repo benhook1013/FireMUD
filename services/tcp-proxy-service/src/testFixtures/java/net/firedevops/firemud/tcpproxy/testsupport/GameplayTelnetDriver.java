@@ -166,6 +166,27 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     return readBlockContaining(expectedSubstring, true);
   }
 
+  public String readTranscriptContainingAll(String... expectedSubstrings) throws IOException {
+    long deadline = System.nanoTime() + waitTimeout.toNanos();
+    StringBuilder transcript = new StringBuilder();
+    while (System.nanoTime() < deadline) {
+      String line = readRecordedLine();
+      if (line == null) {
+        break;
+      }
+      transcript.append(line).append("\n");
+      String current = transcript.toString();
+      if (containsAll(current, expectedSubstrings)) {
+        return current;
+      }
+    }
+    throw new AssertionError(
+        "Expected transcript containing "
+            + java.util.Arrays.toString(expectedSubstrings)
+            + ", got:\n"
+            + transcript);
+  }
+
   public String readMultiLineResponse() throws IOException {
     List<String> lines = new ArrayList<>();
     String line;
@@ -225,6 +246,15 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     }
     throw new AssertionError(
         "Expected block containing '" + expectedSubstring + "', got:\n" + block);
+  }
+
+  private static boolean containsAll(String text, String... expectedSubstrings) {
+    for (String expectedSubstring : expectedSubstrings) {
+      if (!text.contains(expectedSubstring)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @Override

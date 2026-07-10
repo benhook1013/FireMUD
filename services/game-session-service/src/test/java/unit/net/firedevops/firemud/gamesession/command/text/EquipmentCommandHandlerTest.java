@@ -62,6 +62,10 @@ class EquipmentCommandHandlerTest {
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.EQUIPMENT);
     assertThat(view.title()).isEqualTo("Equipment:");
     assertThat(view.lines()).containsExactly("- HEAD: Leather Cap (A small cap)");
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry(
+                "3", "", "", "", "Leather Cap", "A small cap", 1, "HEAD"));
   }
 
   @Test

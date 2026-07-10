@@ -103,7 +103,10 @@ class ReplayableScreenBufferEntriesTest {
             new InventoryViewOutput(
                 InventoryViewOutput.Source.INVENTORY,
                 "Inventory:",
-                List.of("- Torch x2 (A small torch)")));
+                List.of("- Torch x2 (A small torch)"),
+                List.of(
+                    new InventoryViewOutput.ItemEntry(
+                        "7", "", "", "torch3", "Torch", "A small torch", 2, ""))));
     when(outputRenderer.renderSuccessfulForOutput(output, "en-NZ", presentation))
         .thenReturn("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n");
 
@@ -114,6 +117,9 @@ class ReplayableScreenBufferEntriesTest {
     assertThat(entry.orElseThrow().text())
         .isEqualTo("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n\n");
     assertThat(entry.orElseThrow().payloadType()).isEqualTo("inventory_view");
+    assertThat(entry.orElseThrow().payloadJson())
+        .contains("\"visibleRef\":\"torch3\"")
+        .contains("\"itemName\":\"Torch\"");
     verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
     verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
     verify(outputRenderer, never()).render(output, "en-NZ", presentation);

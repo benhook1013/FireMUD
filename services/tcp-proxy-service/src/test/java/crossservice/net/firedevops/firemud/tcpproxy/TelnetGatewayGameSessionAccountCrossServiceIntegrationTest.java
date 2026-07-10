@@ -278,7 +278,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       client.sendLine("INV HERE");
       roomInventoryBeforePickup = client.readBlockContaining("Room Inventory:");
       client.sendLine("GET Torch");
-      pickupResponse = client.readBlockContaining("You pick up Torch.");
+      pickupResponse =
+          client.readTranscriptContainingAll(
+              "You pick up Torch.",
+              "Inventory:",
+              "- Torch [torch#1] (A small torch)",
+              "Room Inventory:",
+              "- Backpack [backpack#1] (A weathered backpack)");
       client.sendLine("CONTAINER Backpack");
       containerViewResponse = client.readBlockContaining("Container: Backpack [backpack#1]");
       client.sendLine("PUT Torch INTO Backpack");
@@ -286,7 +292,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       client.sendLine("TAKE Torch FROM Backpack");
       takeResponse = client.readBlockContaining("You take Torch from Backpack.");
       client.sendLine("DROP Torch");
-      dropResponse = client.readBlockContaining("You drop Torch.");
+      dropResponse =
+          client.readTranscriptContainingAll(
+              "You drop Torch.",
+              "Inventory:",
+              "You are not carrying anything.",
+              "Room Inventory:",
+              "- Torch [torch#1] (A small torch)");
       client.sendLine("INV HERE");
       roomInventoryAfterDrop = client.readBlockContaining("Room Inventory:");
 

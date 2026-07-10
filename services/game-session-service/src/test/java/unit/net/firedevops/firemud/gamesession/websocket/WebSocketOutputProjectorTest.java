@@ -271,7 +271,10 @@ class WebSocketOutputProjectorTest {
                 new InventoryViewOutput(
                     InventoryViewOutput.Source.ROOM_GROUND,
                     "Room Inventory:",
-                    List.of("- Torch [torch3] (A small torch)"))),
+                    List.of("- Torch [torch3] (A small torch)"),
+                    List.of(
+                        new InventoryViewOutput.ItemEntry(
+                            "1001", "", "", "torch3", "Torch", "A small torch", 0, "")))),
             "en-NZ",
             presentation);
 
@@ -283,6 +286,24 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("ROOM_GROUND");
     assertThat(json.path("outputs").get(0).path("payload").path("title").asText())
         .isEqualTo("Room Inventory:");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("entries")
+                .get(0)
+                .path("visibleRef")
+                .asText())
+        .isEqualTo("torch3");
+    assertThat(
+            json.path("outputs")
+                .get(0)
+                .path("payload")
+                .path("entries")
+                .get(0)
+                .path("itemName")
+                .asText())
+        .isEqualTo("Torch");
   }
 
   @Test

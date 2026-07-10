@@ -75,7 +75,10 @@ public class InventoryCommandHandler {
           List.of(
               PlayerOutput.view(
                   new InventoryViewOutput(
-                      InventoryViewOutput.Source.INVENTORY, "Inventory:", lines))));
+                      InventoryViewOutput.Source.INVENTORY,
+                      "Inventory:",
+                      lines,
+                      response.getItemsList().stream().map(this::toInventoryEntry).toList()))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Inventory query failed tenantId={} characterId={}",
@@ -101,7 +104,10 @@ public class InventoryCommandHandler {
           List.of(
               PlayerOutput.view(
                   new InventoryViewOutput(
-                      InventoryViewOutput.Source.ROOM_GROUND, "Room Inventory:", lines))));
+                      InventoryViewOutput.Source.ROOM_GROUND,
+                      "Room Inventory:",
+                      lines,
+                      response.getItemsList().stream().map(this::toRoomGroundEntry).toList()))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",
@@ -149,6 +155,30 @@ public class InventoryCommandHandler {
       line.append(" (").append(item.getItemDescription()).append(")");
     }
     return line.toString();
+  }
+
+  private InventoryViewOutput.ItemEntry toInventoryEntry(InventoryItem item) {
+    return new InventoryViewOutput.ItemEntry(
+        item.getItemId(),
+        item.getItemInstanceId(),
+        item.getContainerInstanceId(),
+        item.getVisibleRef(),
+        item.getItemName(),
+        item.getItemDescription(),
+        item.getQuantity(),
+        "");
+  }
+
+  private InventoryViewOutput.ItemEntry toRoomGroundEntry(RoomGroundInventoryItem item) {
+    return new InventoryViewOutput.ItemEntry(
+        item.getItemId(),
+        item.getItemInstanceId(),
+        item.getContainerInstanceId(),
+        item.getVisibleRef(),
+        item.getItemName(),
+        item.getItemDescription(),
+        item.getQuantity(),
+        "");
   }
 
   private InventoryCommandHandlingResult inventoryUnavailable(String reason) {

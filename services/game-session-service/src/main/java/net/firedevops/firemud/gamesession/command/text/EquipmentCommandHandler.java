@@ -73,7 +73,10 @@ public class EquipmentCommandHandler {
         List.of(
             PlayerOutput.view(
                 new InventoryViewOutput(
-                    InventoryViewOutput.Source.EQUIPMENT, "Equipment:", lines))));
+                    InventoryViewOutput.Source.EQUIPMENT,
+                    "Equipment:",
+                    lines,
+                    equipment.getItemsList().stream().map(this::toEquipmentEntry).toList()))));
   }
 
   private TextCommandInterpretationResult wear(
@@ -225,6 +228,18 @@ public class EquipmentCommandHandler {
       line.append(" (").append(item.getItemDescription()).append(")");
     }
     return line.toString();
+  }
+
+  private InventoryViewOutput.ItemEntry toEquipmentEntry(EquipmentItem item) {
+    return new InventoryViewOutput.ItemEntry(
+        item.getItemId(),
+        item.getItemInstanceId(),
+        item.getContainerInstanceId(),
+        item.getVisibleRef(),
+        item.getItemName(),
+        item.getItemDescription(),
+        1,
+        item.getSlot());
   }
 
   private record EquipmentResolution(

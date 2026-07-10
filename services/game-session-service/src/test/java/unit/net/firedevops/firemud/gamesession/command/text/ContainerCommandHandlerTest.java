@@ -69,6 +69,12 @@ class ContainerCommandHandlerTest {
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Old Chest [oldchest10]");
     assertThat(view.lines()).containsExactly("- Torch [torch3] x2 (A small torch)");
+    assertThat(view.context())
+        .isEqualTo(new InventoryViewOutput.ViewContext("container-10", "Old Chest", "oldchest10"));
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry(
+                "99", "", "container-10", "torch3", "Torch", "A small torch", 2, ""));
   }
 
   @Test
@@ -384,6 +390,9 @@ class ContainerCommandHandlerTest {
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.CONTAINER);
     assertThat(view.title()).isEqualTo("Container: Dropped Chest [chest#1]");
     assertThat(view.lines()).containsExactly("It is empty.");
+    assertThat(view.context())
+        .isEqualTo(new InventoryViewOutput.ViewContext("container-10", "Dropped Chest", "chest#1"));
+    assertThat(view.entries()).isEmpty();
   }
 
   @Test

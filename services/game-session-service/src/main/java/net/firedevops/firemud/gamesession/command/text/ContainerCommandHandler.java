@@ -319,7 +319,12 @@ public class ContainerCommandHandler {
                     "Container: "
                         + containerItem.displayName()
                         + compactReferenceSuffix(containerItem.compactReference()),
-                    lines))));
+                    lines,
+                    new InventoryViewOutput.ViewContext(
+                        containerItem.containerInstanceId(),
+                        containerItem.displayName(),
+                        containerItem.compactReference()),
+                    response.getItemsList().stream().map(this::toContainerEntry).toList()))));
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
@@ -411,6 +416,18 @@ public class ContainerCommandHandler {
 
   private String displayContainerItemName(ContainerItem item) {
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : "item";
+  }
+
+  private InventoryViewOutput.ItemEntry toContainerEntry(ContainerItem item) {
+    return new InventoryViewOutput.ItemEntry(
+        item.getItemId(),
+        item.getItemInstanceId(),
+        item.getContainerInstanceId(),
+        item.getVisibleRef(),
+        item.getItemName(),
+        item.getItemDescription(),
+        item.getQuantity(),
+        "");
   }
 
   private String quantitySuffix(int quantity) {

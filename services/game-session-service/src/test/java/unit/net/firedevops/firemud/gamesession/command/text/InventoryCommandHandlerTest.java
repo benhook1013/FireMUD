@@ -51,6 +51,9 @@ class InventoryCommandHandlerTest {
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.INVENTORY);
     assertThat(view.lines()).containsExactly("- Torch x2 (A small torch)");
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry("7", "", "", "", "Torch", "A small torch", 2, ""));
   }
 
   @Test
@@ -84,6 +87,9 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
         .containsExactly("- Torch [torch1] (A small torch)", "- Torch [torch2] (A small torch)");
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).entries())
+        .extracting(InventoryViewOutput.ItemEntry::visibleRef)
+        .containsExactly("torch1", "torch2");
   }
 
   @Test
@@ -112,6 +118,10 @@ class InventoryCommandHandlerTest {
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(view.title()).isEqualTo("Room Inventory:");
     assertThat(view.lines()).containsExactly("- Torch [torch3] (A small torch)");
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry(
+                "1001", "", "", "torch3", "Torch", "A small torch", 0, ""));
   }
 
   @Test
@@ -138,6 +148,10 @@ class InventoryCommandHandlerTest {
     assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(view.title()).isEqualTo("Room Inventory:");
     assertThat(view.lines()).containsExactly("- Arrow [ammo/iron] x12 (A straight wooden arrow)");
+    assertThat(view.entries())
+        .containsExactly(
+            new InventoryViewOutput.ItemEntry(
+                "1001", "", "", "ammo/iron", "Arrow", "A straight wooden arrow", 12, ""));
   }
 
   @Test
@@ -154,6 +168,7 @@ class InventoryCommandHandlerTest {
         .isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
         .containsExactly("There is nothing on the ground here.");
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).entries()).isEmpty();
   }
 
   @Test
