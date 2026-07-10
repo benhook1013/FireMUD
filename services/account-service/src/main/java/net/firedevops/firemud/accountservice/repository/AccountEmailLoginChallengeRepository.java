@@ -44,14 +44,21 @@ public class AccountEmailLoginChallengeRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
-        .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.CODE_HASH, entity.getCodeHash())
-        .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT, entity.getExpiresAt())
-        .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.RESEND_AVAILABLE_AT, entity.getResendAvailableAt())
-        .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.INVALID_ATTEMPT_COUNT, entity.getInvalidAttemptCount())
-        .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.UPDATED_AT, entity.getUpdatedAt())
-        .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.eq(entity.getId()))
-        .execute();
+    int updated =
+        dsl.update(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
+            .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.CODE_HASH, entity.getCodeHash())
+            .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT, entity.getExpiresAt())
+            .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.RESEND_AVAILABLE_AT, entity.getResendAvailableAt())
+            .set(
+                ACCOUNT_EMAIL_LOGIN_CHALLENGE.INVALID_ATTEMPT_COUNT,
+                entity.getInvalidAttemptCount())
+            .set(ACCOUNT_EMAIL_LOGIN_CHALLENGE.UPDATED_AT, entity.getUpdatedAt())
+            .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.eq(entity.getId()))
+            .execute();
+    if (updated != 1) {
+      throw JooqAccountRepositorySupport.staleWrite(
+          "account_email_login_challenge", entity.getId());
+    }
     return entity;
   }
 
