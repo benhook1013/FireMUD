@@ -557,11 +557,9 @@ class CommunicationWebSocketCrossServiceTest {
               client, baseline, "inventory_view", 2);
       assertThat(pickupViews).hasSize(2);
       JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
-      assertThat(carriedInventory.path("entries")).hasSize(1);
-      assertThat(carriedInventory.path("entries").get(0).path("visibleRef").asText())
-          .isEqualTo("torch#1");
-      assertThat(carriedInventory.path("entries").get(0).path("itemName").asText())
-          .isEqualTo("Torch");
+      assertThat(carriedInventory.path("entries")).hasSize(3);
+      JsonNode pickedUpTorch = requireInventoryEntryByVisibleRef(carriedInventory, "torch#1");
+      assertThat(pickedUpTorch.path("itemName").asText()).isEqualTo("Torch");
       JsonNode roomGroundInventory = requireInventoryViewBySource(pickupViews, "ROOM_GROUND");
       assertThat(roomGroundInventory.path("entries")).hasSize(1);
       assertThat(roomGroundInventory.path("entries").get(0).path("visibleRef").asText())
@@ -1024,6 +1022,16 @@ class CommunicationWebSocketCrossServiceTest {
             () ->
                 new AssertionError(
                     "Missing inventory_view source=" + source + " in payloads: " + payloads));
+  }
+
+  private JsonNode requireInventoryEntryByVisibleRef(JsonNode inventory, String visibleRef) {
+    for (JsonNode entry : inventory.path("entries")) {
+      if (visibleRef.equals(entry.path("visibleRef").asText())) {
+        return entry;
+      }
+    }
+    throw new AssertionError(
+        "Missing inventory entry visibleRef=" + visibleRef + " in view: " + inventory);
   }
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {

@@ -87,7 +87,7 @@ public final class GameplayStructuredCommandAssertions {
             + " response after baseline "
             + responseBaseline
             + ", got: "
-            + client.responses());
+            + responses);
   }
 
   public static JsonNode requirePayload(JsonNode envelope, String payloadType) {
