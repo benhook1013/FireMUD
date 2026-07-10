@@ -30,7 +30,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CommunicationWebSocketCrossServiceTest {
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(10);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(20);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);

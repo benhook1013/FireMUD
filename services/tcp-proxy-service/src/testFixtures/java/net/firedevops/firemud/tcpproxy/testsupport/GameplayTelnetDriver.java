@@ -15,6 +15,7 @@ import java.util.function.Predicate;
 /** FireMUD-specific telnet gameplay test driver for chained login/play/command flows. */
 public final class GameplayTelnetDriver implements AutoCloseable {
   private static final Charset TELNET_CHARSET = Charset.forName("ISO_8859_1");
+  private static final int READ_POLL_TIMEOUT_MILLIS = 250;
 
   private final Socket socket;
   private final PrintWriter writer;
@@ -92,18 +93,14 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   public String sendAndExpectExactLine(String command, String expectedLine) throws IOException {
     for (int attempt = 1; attempt <= 2; attempt++) {
       sendLine(command);
+      long deadline = System.nanoTime() + waitTimeout.toNanos();
       StringBuilder received = new StringBuilder();
       while (true) {
-        final String line;
-        try {
-          line = readRecordedLine();
-        } catch (java.net.SocketTimeoutException ex) {
+        String line = readRecordedLineBefore(deadline);
+        if (line == null) {
           if (attempt == 1 && received.isEmpty()) {
             break;
           }
-          throw ex;
-        }
-        if (line == null) {
           throw new AssertionError(
               "Expected line '"
                   + expectedLine
@@ -128,16 +125,17 @@ public final class GameplayTelnetDriver implements AutoCloseable {
 
   public String readLineContaining(String expectedSubstring) throws IOException {
     long deadline = System.nanoTime() + waitTimeout.toNanos();
-    while (System.nanoTime() < deadline) {
-      String line = readRecordedLine();
-      if (line == null) {
-        throw new AssertionError("Expected line containing '" + expectedSubstring + "'");
-      }
+    String line;
+    while ((line = readRecordedLineBefore(deadline)) != null) {
       if (line.contains(expectedSubstring)) {
         return line;
       }
     }
-    throw new AssertionError("Expected line containing '" + expectedSubstring + "'");
+    throw new AssertionError(
+        "Expected line containing '"
+            + expectedSubstring
+            + "', got:\n"
+            + String.join("\n", responses));
   }
 
   public String readBlockContaining(String expectedSubstring) throws IOException {
@@ -148,11 +146,8 @@ public final class GameplayTelnetDriver implements AutoCloseable {
       throws IOException {
     long deadline = System.nanoTime() + waitTimeout.toNanos();
     StringBuilder block = new StringBuilder();
-    while (System.nanoTime() < deadline) {
-      String line = readRecordedLine();
-      if (line == null) {
-        break;
-      }
+    String line;
+    while ((line = readRecordedLineBefore(deadline)) != null) {
       block.append(line).append("\n");
       String current = block.toString().trim();
       if (matcher.test(current)) {
@@ -169,11 +164,8 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   public String readTranscriptContainingAll(String... expectedSubstrings) throws IOException {
     long deadline = System.nanoTime() + waitTimeout.toNanos();
     StringBuilder transcript = new StringBuilder();
-    while (System.nanoTime() < deadline) {
-      String line = readRecordedLine();
-      if (line == null) {
-        break;
-      }
+    String line;
+    while ((line = readRecordedLineBefore(deadline)) != null) {
       transcript.append(line).append("\n");
       String current = transcript.toString();
       if (containsAll(current, expectedSubstrings)) {
@@ -200,7 +192,8 @@ public final class GameplayTelnetDriver implements AutoCloseable {
   }
 
   private void expectExactLine(String expected) throws IOException {
-    String line = readRecordedLine();
+    long deadline = System.nanoTime() + waitTimeout.toNanos();
+    String line = readRecordedLineBefore(deadline);
     if (!expected.equals(line)) {
       throw new AssertionError("Expected line '" + expected + "' but got '" + line + "'");
     }
@@ -220,16 +213,11 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     StringBuilder block = new StringBuilder();
     boolean matched = false;
     while (System.nanoTime() < deadline) {
-      final String line;
-      try {
-        line = readRecordedLine();
-      } catch (java.net.SocketTimeoutException ex) {
+      String line = readRecordedLineBefore(deadline);
+      if (line == null) {
         if (returnOnTimeout) {
           return block.toString();
         }
-        throw ex;
-      }
-      if (line == null) {
         break;
       }
       block.append(line).append("\n");
@@ -246,6 +234,29 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     }
     throw new AssertionError(
         "Expected block containing '" + expectedSubstring + "', got:\n" + block);
+  }
+
+  private String readRecordedLineBefore(long deadlineNanos) throws IOException {
+    int originalTimeoutMillis = socket.getSoTimeout();
+    while (System.nanoTime() < deadlineNanos) {
+      int timeoutMillis =
+          (int)
+              Math.max(
+                  1L,
+                  Math.min(
+                      READ_POLL_TIMEOUT_MILLIS,
+                      java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                          deadlineNanos - System.nanoTime())));
+      socket.setSoTimeout(timeoutMillis);
+      try {
+        return readRecordedLine();
+      } catch (java.net.SocketTimeoutException ignored) {
+        // Keep polling until the overall command deadline expires.
+      } finally {
+        socket.setSoTimeout(originalTimeoutMillis);
+      }
+    }
+    return null;
   }
 
   private static boolean containsAll(String text, String... expectedSubstrings) {

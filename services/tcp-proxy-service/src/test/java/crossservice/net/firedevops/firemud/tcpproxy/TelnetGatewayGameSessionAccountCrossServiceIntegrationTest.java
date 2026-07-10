@@ -62,7 +62,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   // This suite boots multiple real service contexts and backing stores, so allow slower
   // round-trips than the lighter isolated telnet seam tests.
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(15);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(20);
   private static final String CROSS_SERVICE_TEST_JWT_SECRET =
       "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
