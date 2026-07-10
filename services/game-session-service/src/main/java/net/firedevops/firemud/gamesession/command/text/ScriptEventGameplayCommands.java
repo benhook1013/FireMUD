@@ -12,12 +12,12 @@ final class ScriptEventGameplayCommands {
   }
 
   static GameplayCommand synthetic(String prefix, String commandName, String rawLine) {
-    return syntheticWithId(syntheticId(prefix), commandName, rawLine, null);
+    return synthetic(prefix, commandName, rawLine, null);
   }
 
   static GameplayCommand synthetic(
       String prefix, TextCommand command, String commandName, String executionHook) {
-    return syntheticWithId(syntheticId(prefix), command, commandName, executionHook);
+    return synthetic(prefix, commandName, command.rawLine(), executionHook);
   }
 
   static GameplayCommand syntheticWithId(String commandId, String commandName, String rawLine) {
@@ -26,6 +26,11 @@ final class ScriptEventGameplayCommands {
 
   private static String syntheticId(String prefix) {
     return prefix + "-" + UUID.randomUUID();
+  }
+
+  private static GameplayCommand synthetic(
+      String prefix, String commandName, String rawLine, String executionHook) {
+    return syntheticWithId(syntheticId(prefix), commandName, rawLine, executionHook);
   }
 
   static GameplayCommand syntheticWithId(

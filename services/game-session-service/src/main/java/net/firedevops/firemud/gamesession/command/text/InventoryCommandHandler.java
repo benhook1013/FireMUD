@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -78,7 +79,9 @@ public class InventoryCommandHandler {
                       InventoryViewOutput.Source.INVENTORY,
                       "Inventory:",
                       lines,
-                      response.getItemsList().stream().map(this::toInventoryEntry).toList()))));
+                      response.getItemsList().stream()
+                          .map(ItemPayloadSupport::toItemEntry)
+                          .toList()))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Inventory query failed tenantId={} characterId={}",
@@ -107,7 +110,9 @@ public class InventoryCommandHandler {
                       InventoryViewOutput.Source.ROOM_GROUND,
                       "Room Inventory:",
                       lines,
-                      response.getItemsList().stream().map(this::toRoomGroundEntry).toList()))));
+                      response.getItemsList().stream()
+                          .map(ItemPayloadSupport::toItemEntry)
+                          .toList()))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",
@@ -157,30 +162,6 @@ public class InventoryCommandHandler {
     return line.toString();
   }
 
-  private InventoryViewOutput.ItemEntry toInventoryEntry(InventoryItem item) {
-    return new InventoryViewOutput.ItemEntry(
-        item.getItemId(),
-        item.getItemInstanceId(),
-        item.getContainerInstanceId(),
-        item.getVisibleRef(),
-        item.getItemName(),
-        item.getItemDescription(),
-        item.getQuantity(),
-        "");
-  }
-
-  private InventoryViewOutput.ItemEntry toRoomGroundEntry(RoomGroundInventoryItem item) {
-    return new InventoryViewOutput.ItemEntry(
-        item.getItemId(),
-        item.getItemInstanceId(),
-        item.getContainerInstanceId(),
-        item.getVisibleRef(),
-        item.getItemName(),
-        item.getItemDescription(),
-        item.getQuantity(),
-        "");
-  }
-
   private InventoryCommandHandlingResult inventoryUnavailable(String reason) {
     return new InventoryCommandHandlingResult(
         CommandEnqueueResult.failure("INVENTORY_UNAVAILABLE", reason),
@@ -228,8 +209,12 @@ public class InventoryCommandHandler {
         return inventoryMutationSuccess(
             context,
             "GET",
-            displayItemName(response.getInventoryItem(), itemReferenceValue),
-            itemReference.quantity());
+            ItemPayloadSupport.withFallback(
+                ItemPayloadSupport.toItemEntry(response.getInventoryItem()),
+                displayItemName(response.getInventoryItem(), itemReferenceValue),
+                itemReference.quantity()),
+            ItemPayloadSupport.roomGroundHolder(),
+            ItemPayloadSupport.inventoryHolder());
       }
 
       var response =
@@ -250,8 +235,12 @@ public class InventoryCommandHandler {
       return inventoryMutationSuccess(
           context,
           "DROP",
-          displayItemName(response.getRoomGroundItem(), itemReferenceValue),
-          itemReference.quantity());
+          ItemPayloadSupport.withFallback(
+              ItemPayloadSupport.toItemEntry(response.getRoomGroundItem()),
+              displayItemName(response.getRoomGroundItem(), itemReferenceValue),
+              itemReference.quantity()),
+          ItemPayloadSupport.inventoryHolder(),
+          ItemPayloadSupport.roomGroundHolder());
     } catch (RuntimeException ex) {
       LOG.warn(
           "Inventory mutation failed tenantId={} characterId={} verb={} itemReference={}",
@@ -265,9 +254,13 @@ public class InventoryCommandHandler {
   }
 
   private InventoryCommandHandlingResult inventoryMutationSuccess(
-      SessionContext context, String verb, String itemName, int quantity) {
+      SessionContext context,
+      String verb,
+      InventoryViewOutput.ItemEntry item,
+      ItemMutationResultOutput.HolderContext source,
+      ItemMutationResultOutput.HolderContext target) {
     List<PlayerOutput> outputs = new ArrayList<>();
-    outputs.add(PlayerOutput.message(successMessage(verb, itemName, quantity)));
+    outputs.add(PlayerOutput.notice(new ItemMutationResultOutput(verb, item, source, target)));
     appendAcceptedOutputs(outputs, describeInventory(context));
     appendAcceptedOutputs(outputs, describeRoomInventory(context));
     return new InventoryCommandHandlingResult(CommandEnqueueResult.success(), outputs);
@@ -287,16 +280,6 @@ public class InventoryCommandHandler {
     return new InventoryCommandHandlingResult(
         CommandEnqueueResult.failure(errorCode, message),
         List.of(PlayerOutput.error(errorCode, message)));
-  }
-
-  private String successMessage(String verb, String itemName, int quantity) {
-    String safeName = StringUtils.hasText(itemName) ? itemName : "item";
-    String quantitySuffix = quantity > 1 ? " x" + quantity : "";
-    return switch (verb) {
-      case "GET" -> "You pick up " + safeName + quantitySuffix + ".";
-      case "DROP" -> "You drop " + safeName + quantitySuffix + ".";
-      default -> "You " + verb.toLowerCase() + " " + safeName + quantitySuffix + ".";
-    };
   }
 
   private String displayItemName(InventoryItem item, String fallback) {

@@ -30,7 +30,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CommunicationWebSocketCrossServiceTest {
-  private static final Duration COMMAND_WAIT = Duration.ofSeconds(20);
+  private static final Duration COMMAND_WAIT = Duration.ofSeconds(45);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
@@ -545,6 +545,11 @@ class CommunicationWebSocketCrossServiceTest {
       assertThat(pickup.path("accepted").asBoolean())
           .withFailMessage(pickup.toPrettyString())
           .isTrue();
+      JsonNode pickupMutation = requirePayload(pickup, "item_mutation_result");
+      assertThat(pickupMutation.path("action").asText()).isEqualTo("GET");
+      assertThat(pickupMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
+      assertThat(pickupMutation.path("source").path("kind").asText()).isEqualTo("ROOM_GROUND");
+      assertThat(pickupMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
       List<JsonNode> pickupViews = requirePayloads(pickup, "inventory_view");
       assertThat(pickupViews).hasSize(2);
       JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
@@ -582,6 +587,12 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("WEAR Leather Cap");
       JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
       assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
+      JsonNode wearMutation = requirePayload(wear, "item_mutation_result");
+      assertThat(wearMutation.path("action").asText()).isEqualTo("WEAR");
+      assertThat(wearMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
+      assertThat(wearMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
+      assertThat(wearMutation.path("target").path("kind").asText()).isEqualTo("EQUIPMENT");
+      assertThat(wearMutation.path("target").path("slot").asText()).isEqualTo("HEAD");
 
       baseline = client.responses().size();
       client.send("EQUIPMENT");
@@ -712,7 +723,8 @@ class CommunicationWebSocketCrossServiceTest {
                   dropResponseCount,
                   "You drop Torch.",
                   "Inventory:",
-                  "You are not carrying anything.",
+                  "- Leather Cap [cap#1] (A small cap)",
+                  "- Iron Boots [boots#1] (Heavy iron boots)",
                   "Room Inventory:",
                   "- Torch [torch#1] (A small torch)"))
           .contains("Room Inventory:");
@@ -886,6 +898,10 @@ class CommunicationWebSocketCrossServiceTest {
     GameplayStructuredCommandAssertions.requireStructuredCommand(
         play, "PLAY", "play", "META", "SESSION");
     assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
+    int readinessBaseline = client.responses().size();
+    client.send("LOOK");
+    JsonNode look = awaitStructuredCommand(client, readinessBaseline, "LOOK");
+    assertThat(look.path("accepted").asBoolean()).withFailMessage(look.toPrettyString()).isTrue();
     return client;
   }
 

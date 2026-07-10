@@ -278,7 +278,19 @@ class TextPlayerOutputRendererTest {
                 TextCommandType.PUT, List.of("torch", "into", "satchel"), "PUT torch INTO satchel"),
             CommandEnqueueResult.success(),
             List.of(
-                PlayerOutput.message("You put Torch into Satchel."),
+                PlayerOutput.notice(
+                    new ItemMutationResultOutput(
+                        "PUT",
+                        new InventoryViewOutput.ItemEntry(
+                            "torch", "torch-1", "", "torch#1", "Torch", "", 1, ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.INVENTORY, "", "", "", ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.CONTAINER,
+                            "Satchel",
+                            "satchel-1",
+                            "satchel#1",
+                            ""))),
                 PlayerOutput.view(
                     new InventoryViewOutput(
                         InventoryViewOutput.Source.CONTAINER,
@@ -313,7 +325,19 @@ class TextPlayerOutputRendererTest {
                 "TAKE torch FROM satchel"),
             CommandEnqueueResult.success(),
             List.of(
-                PlayerOutput.message("You take Torch from Satchel."),
+                PlayerOutput.notice(
+                    new ItemMutationResultOutput(
+                        "TAKE",
+                        new InventoryViewOutput.ItemEntry(
+                            "torch", "torch-1", "", "torch#1", "Torch", "", 1, ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.CONTAINER,
+                            "Satchel",
+                            "satchel-1",
+                            "satchel#1",
+                            ""),
+                        new ItemMutationResultOutput.HolderContext(
+                            InventoryViewOutput.Source.INVENTORY, "", "", "", ""))),
                 PlayerOutput.view(
                     new InventoryViewOutput(
                         InventoryViewOutput.Source.CONTAINER,

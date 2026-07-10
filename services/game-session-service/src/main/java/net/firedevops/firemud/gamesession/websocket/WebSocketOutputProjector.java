@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewO
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.NoticeOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -170,6 +171,7 @@ public final class WebSocketOutputProjector {
       case PromptOutput ignored -> "prompt";
       case NoticeOutput ignored -> "notice";
       case FriendMutationResultOutput ignored -> "friend_mutation_result";
+      case ItemMutationResultOutput ignored -> "item_mutation_result";
       case ErrorOutput ignored -> "error";
       case LookViewOutput ignored -> "look_view";
       case InventoryViewOutput ignored -> "inventory_view";

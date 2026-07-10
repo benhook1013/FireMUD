@@ -13,6 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class LookTextCommandDispatchHandlerTest {
+  private static final String SESSION_ID = "session-1";
+  private static final String LOOK_LINE = "LOOK";
+
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final LookCommandHandler lookHandler = Mockito.mock(LookCommandHandler.class);
   private final LookTextCommandDispatchHandler handler =
@@ -20,27 +23,27 @@ class LookTextCommandDispatchHandlerTest {
 
   @Test
   void usesParsedViewPayloadForQuickLookShape() {
-    when(commandService.enqueue("session-1", "LOOK", false))
+    when(commandService.enqueue(SESSION_ID, LOOK_LINE, false))
         .thenReturn(CommandEnqueueResult.success());
-    when(lookHandler.describePlayerOutput("session-1", false))
+    when(lookHandler.describePlayerOutput(SESSION_ID, false))
         .thenReturn(PlayerOutput.message("quick look"));
 
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommandDispatchRequest(
-                "session-1",
+                SESSION_ID,
                 new TextCommand(
                     "look",
                     TextCommandType.LOOK,
                     List.of(),
-                    "LOOK",
-                    "LOOK",
-                    new TextCommandPayload.ViewRequest("LOOK", false)),
+                    LOOK_LINE,
+                    LOOK_LINE,
+                    new TextCommandPayload.ViewRequest(LOOK_LINE, false)),
                 false,
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
-    verify(commandService).enqueue("session-1", "LOOK", false);
-    verify(lookHandler).describePlayerOutput("session-1", false);
+    verify(commandService).enqueue(SESSION_ID, LOOK_LINE, false);
+    verify(lookHandler).describePlayerOutput(SESSION_ID, false);
   }
 }

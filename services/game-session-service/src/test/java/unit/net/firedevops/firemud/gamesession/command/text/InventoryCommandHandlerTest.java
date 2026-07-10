@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -238,7 +239,22 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("GET");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "7", "", "", "", "Rough Iron Key", "A battered key", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Rough Iron Key.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).source())
         .isEqualTo(InventoryViewOutput.Source.INVENTORY);
@@ -302,7 +318,21 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("GET");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry("7", "", "", "", "Torch", "A small torch", 2, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Torch x2.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).source())
         .isEqualTo(InventoryViewOutput.Source.INVENTORY);
@@ -370,7 +400,22 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("GET");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "7", "", "", "", "Arrow", "A straight wooden arrow", 3, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Arrow x3.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).source())
         .isEqualTo(InventoryViewOutput.Source.INVENTORY);
@@ -427,6 +472,24 @@ class InventoryCommandHandlerTest {
             new TextCommand(TextCommandType.GET, List.of("3", "ammo/iron"), "GET 3 ammo/iron"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("GET");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "7", "", "", "ammo/iron", "Arrow", "A straight wooden arrow", 3, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Arrow x3.");
   }
 
@@ -490,6 +553,23 @@ class InventoryCommandHandlerTest {
             context, new TextCommand(TextCommandType.GET, List.of("ITEM-009"), "GET ITEM-009"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("GET");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry("ITEM-009", "ITEM-009", "", "", "Torch", "", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Torch.");
   }
 
@@ -531,7 +611,22 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("DROP");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "7", "", "", "", "Rough Iron Key", "A battered key", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Rough Iron Key.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).source())
         .isEqualTo(InventoryViewOutput.Source.INVENTORY);
@@ -586,7 +681,21 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("DROP");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry("7", "", "", "", "Torch", "A small torch", 2, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Torch x2.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).source())
         .isEqualTo(InventoryViewOutput.Source.INVENTORY);
@@ -654,6 +763,24 @@ class InventoryCommandHandlerTest {
             new TextCommand(TextCommandType.DROP, List.of("3", "ammo/iron"), "DROP 3 ammo/iron"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("DROP");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "7", "", "", "ammo/iron", "Arrow", "A straight wooden arrow", 3, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Arrow x3.");
   }
 
@@ -700,7 +827,22 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .extracting(PlayerOutput::kind)
-        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+        .containsExactly(PlayerOutputKind.NOTICE, PlayerOutputKind.VIEW, PlayerOutputKind.VIEW);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("DROP");
+    assertThat(mutation.item())
+        .isEqualTo(
+            new InventoryViewOutput.ItemEntry(
+                "10", "", "container-10", "", "Old Chest", "", 1, ""));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.ROOM_GROUND, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Old Chest.");
   }
 

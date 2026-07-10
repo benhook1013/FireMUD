@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewO
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -679,6 +680,53 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payload").path("displayName").asText())
         .isEqualTo("Sora");
     assertThat(json.path("outputs").get(0).path("payload").path("ordinal").asInt()).isEqualTo(1);
+  }
+
+  @Test
+  void firstPartyWebProjectsItemMutationResultPayloads() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    ItemMutationResultOutput payloadView =
+        new ItemMutationResultOutput(
+            "PUT",
+            new InventoryViewOutput.ItemEntry(
+                "torch", "torch-inventory-1", "", "torch#1", "Torch", "A small torch", 1, ""),
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""),
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.CONTAINER,
+                "Backpack",
+                "container-backpack-1",
+                "backpack#1",
+                ""));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(
+                TextCommandType.PUT,
+                List.of("Torch", "INTO", "Backpack"),
+                "PUT Torch INTO Backpack"),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(PlayerOutput.notice(payloadView))),
+            List.of(PlayerOutput.notice(payloadView)),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    JsonNode output = json.path("outputs").get(0);
+    assertThat(output.path("kind").asText()).isEqualTo("NOTICE");
+    assertThat(output.path("payloadType").asText()).isEqualTo("item_mutation_result");
+    assertThat(output.path("payload").path("action").asText()).isEqualTo("PUT");
+    assertThat(output.path("payload").path("item").path("visibleRef").asText())
+        .isEqualTo("torch#1");
+    assertThat(output.path("payload").path("source").path("kind").asText()).isEqualTo("INVENTORY");
+    assertThat(output.path("payload").path("target").path("kind").asText()).isEqualTo("CONTAINER");
+    assertThat(output.path("payload").path("target").path("containerInstanceId").asText())
+        .isEqualTo("container-backpack-1");
   }
 
   @Test

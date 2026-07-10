@@ -658,6 +658,9 @@ public class TextPlayerOutputRenderer {
     if (payload instanceof FriendMutationResultOutput result) {
       return colorizeNotice(renderFriendMutationResult(result), effectivePresentationProperties);
     }
+    if (payload instanceof ItemMutationResultOutput result) {
+      return colorizeNotice(result.text(), effectivePresentationProperties);
+    }
     throw new IllegalArgumentException(
         "Unsupported notice payload: " + payload.getClass().getName());
   }

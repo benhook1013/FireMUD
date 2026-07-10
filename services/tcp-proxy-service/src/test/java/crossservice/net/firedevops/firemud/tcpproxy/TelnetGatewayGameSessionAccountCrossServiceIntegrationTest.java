@@ -296,7 +296,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           client.readTranscriptContainingAll(
               "You drop Torch.",
               "Inventory:",
-              "You are not carrying anything.",
+              "- Leather Cap [cap#1] (A small cap)",
+              "- Iron Boots [boots#1] (Heavy iron boots)",
               "Room Inventory:",
               "- Torch [torch#1] (A small torch)");
       client.sendLine("INV HERE");
@@ -335,7 +336,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(dropResponse)
         .contains("You drop Torch.")
         .contains("Inventory:")
-        .contains("You are not carrying anything.")
+        .contains("- Leather Cap [cap#1] (A small cap)")
+        .contains("- Iron Boots [boots#1] (Heavy iron boots)")
         .contains("Room Inventory:")
         .contains("- Torch [torch#1] (A small torch)");
     assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");

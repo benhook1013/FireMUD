@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
@@ -76,7 +77,9 @@ public class EquipmentCommandHandler {
                     InventoryViewOutput.Source.EQUIPMENT,
                     "Equipment:",
                     lines,
-                    equipment.getItemsList().stream().map(this::toEquipmentEntry).toList()))));
+                    equipment.getItemsList().stream()
+                        .map(ItemPayloadSupport::toItemEntry)
+                        .toList()))));
   }
 
   private TextCommandInterpretationResult wear(
@@ -118,7 +121,17 @@ public class EquipmentCommandHandler {
     if (!response.hasEquipmentItem()) {
       return equipmentUnavailable("Equipment service unavailable");
     }
-    return equipmentSuccess("You wear " + response.getEquipmentItem().getItemName() + ".");
+    return equipmentSuccess(
+        new ItemMutationResultOutput(
+            "WEAR",
+            ItemPayloadSupport.withFallback(
+                ItemPayloadSupport.toItemEntry(response.getEquipmentItem()),
+                StringUtils.hasText(response.getEquipmentItem().getItemName())
+                    ? response.getEquipmentItem().getItemName()
+                    : (StringUtils.hasText(carried.getItemName()) ? carried.getItemName() : "item"),
+                1),
+            ItemPayloadSupport.inventoryHolder(),
+            ItemPayloadSupport.equipmentHolder(response.getEquipmentItem().getSlot())));
   }
 
   private TextCommandInterpretationResult remove(
@@ -159,12 +172,22 @@ public class EquipmentCommandHandler {
     if (!response.hasEquipmentItem()) {
       return equipmentUnavailable("Equipment service unavailable");
     }
-    return equipmentSuccess("You remove " + response.getEquipmentItem().getItemName() + ".");
+    return equipmentSuccess(
+        new ItemMutationResultOutput(
+            "REMOVE",
+            ItemPayloadSupport.withFallback(
+                ItemPayloadSupport.toItemEntry(response.getEquipmentItem()),
+                StringUtils.hasText(response.getEquipmentItem().getItemName())
+                    ? response.getEquipmentItem().getItemName()
+                    : (StringUtils.hasText(worn.getItemName()) ? worn.getItemName() : "item"),
+                1),
+            ItemPayloadSupport.equipmentHolder(worn.getSlot()),
+            ItemPayloadSupport.inventoryHolder()));
   }
 
-  private TextCommandInterpretationResult equipmentSuccess(String message) {
+  private TextCommandInterpretationResult equipmentSuccess(ItemMutationResultOutput payload) {
     return new TextCommandInterpretationResult(
-        CommandEnqueueResult.success(), List.of(PlayerOutput.message(message)));
+        CommandEnqueueResult.success(), List.of(PlayerOutput.notice(payload)));
   }
 
   private TextCommandInterpretationResult equipmentUnavailable(String reason) {
@@ -228,18 +251,6 @@ public class EquipmentCommandHandler {
       line.append(" (").append(item.getItemDescription()).append(")");
     }
     return line.toString();
-  }
-
-  private InventoryViewOutput.ItemEntry toEquipmentEntry(EquipmentItem item) {
-    return new InventoryViewOutput.ItemEntry(
-        item.getItemId(),
-        item.getItemInstanceId(),
-        item.getContainerInstanceId(),
-        item.getVisibleRef(),
-        item.getItemName(),
-        item.getItemDescription(),
-        1,
-        item.getSlot());
   }
 
   private record EquipmentResolution(

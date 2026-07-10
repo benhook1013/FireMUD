@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -113,7 +114,20 @@ class EquipmentCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("WEAR");
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("3", "", "", "", "Torch", "", 1, "HEAD"));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.EQUIPMENT, "", "", "", "HEAD"));
     assertThat(result.outputs().get(0).text()).isEqualTo("You wear Torch.");
   }
 
@@ -147,7 +161,20 @@ class EquipmentCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("WEAR");
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("5", "", "", "", "Satchel", "", 1, "BACK"));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.EQUIPMENT, "", "", "", "BACK"));
     assertThat(result.outputs().get(0).text()).isEqualTo("You wear Satchel.");
   }
 
@@ -180,7 +207,20 @@ class EquipmentCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.NOTICE);
+    ItemMutationResultOutput mutation =
+        (ItemMutationResultOutput) result.outputs().get(0).payload();
+    assertThat(mutation.action()).isEqualTo("REMOVE");
+    assertThat(mutation.item())
+        .isEqualTo(new InventoryViewOutput.ItemEntry("3", "", "", "", "Torch", "", 1, "HEAD"));
+    assertThat(mutation.source())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.EQUIPMENT, "", "", "", "HEAD"));
+    assertThat(mutation.target())
+        .isEqualTo(
+            new ItemMutationResultOutput.HolderContext(
+                InventoryViewOutput.Source.INVENTORY, "", "", "", ""));
     assertThat(result.outputs().get(0).text()).isEqualTo("You remove Torch.");
   }
 
