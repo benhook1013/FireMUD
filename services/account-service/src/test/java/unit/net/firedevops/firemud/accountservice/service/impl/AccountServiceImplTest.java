@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -211,6 +212,39 @@ class AccountServiceImplTest {
     service.requestEmailLoginOtp(7L, "unknown@example.com");
 
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
+  }
+
+  @Test
+  void emailLoginOtpRequestPersistsOnlyHashedChallengeAndSendsSixDigitCode() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setGameplayAdmissionAllowed(true);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
+        .thenReturn(Optional.of(membership));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
+    when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    org.mockito.ArgumentCaptor<
+            net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
+        challengeCaptor =
+            org.mockito.ArgumentCaptor.forClass(
+                net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge.class);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
+        .save(challengeCaptor.capture());
+    assertEquals(9L, challengeCaptor.getValue().getAccountId());
+    assertFalse(challengeCaptor.getValue().getCodeHash().matches("\\d{6}"));
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("verified@example.com"),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.matches(".*\\b\\d{6}\\b.*"));
   }
 
   @Test
