@@ -8,6 +8,7 @@ public record InventoryViewOutput(Source source, String title, List<String> line
     implements PlayerOutputPayload {
   public enum Source {
     INVENTORY,
+    ROOM_GROUND,
     EQUIPMENT,
     CONTAINER
   }

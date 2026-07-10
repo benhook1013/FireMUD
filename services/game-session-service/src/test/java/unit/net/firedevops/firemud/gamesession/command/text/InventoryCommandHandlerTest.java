@@ -109,7 +109,7 @@ class InventoryCommandHandlerTest {
         .extracting(PlayerOutput::kind)
         .containsExactly(PlayerOutputKind.VIEW);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
-    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.INVENTORY);
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(view.title()).isEqualTo("Room Inventory:");
     assertThat(view.lines()).containsExactly("- Torch [torch3] (A small torch)");
   }
@@ -135,7 +135,7 @@ class InventoryCommandHandlerTest {
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
-    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.INVENTORY);
+    assertThat(view.source()).isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(view.title()).isEqualTo("Room Inventory:");
     assertThat(view.lines()).containsExactly("- Arrow [ammo/iron] x12 (A straight wooden arrow)");
   }
@@ -150,6 +150,8 @@ class InventoryCommandHandlerTest {
             context, new TextCommand(TextCommandType.INVENTORY, List.of("HERE"), "INV HERE"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).source())
+        .isEqualTo(InventoryViewOutput.Source.ROOM_GROUND);
     assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
         .containsExactly("There is nothing on the ground here.");
   }

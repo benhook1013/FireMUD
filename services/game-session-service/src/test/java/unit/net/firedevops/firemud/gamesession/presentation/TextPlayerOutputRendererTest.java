@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import org.junit.jupiter.api.Test;
 
 class TextPlayerOutputRendererTest {
+  private static final String STRIDE_COMMAND_ID = "stride";
 
   @Test
   void briefModeSuppressesLongLookDescription() {
@@ -594,7 +595,7 @@ class TextPlayerOutputRendererTest {
   void renderAllUsesMovementTagForAuthoredViewLabel() {
     TextCommandMetadataResolver metadataResolver =
         commandId ->
-            "stride".equals(commandId)
+            STRIDE_COMMAND_ID.equals(commandId)
                 ? java.util.Optional.of(
                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
                         net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
@@ -615,12 +616,13 @@ class TextPlayerOutputRendererTest {
     String rendered =
         renderer.renderAll(
             new TextCommand(
-                "stride",
+                STRIDE_COMMAND_ID,
                 TextCommandType.AUTHORED,
                 List.of("north"),
                 "stride north",
-                "stride",
-                new TextCommandPayload.AuthoredActionInvocation("stride", List.of("north"))),
+                STRIDE_COMMAND_ID,
+                new TextCommandPayload.AuthoredActionInvocation(
+                    STRIDE_COMMAND_ID, List.of("north"))),
             CommandEnqueueResult.success(),
             List.of(
                 PlayerOutput.view(

@@ -239,7 +239,7 @@ public class TextPlayerOutputRenderer {
 
   private TextCommandType inventoryCommandType(InventoryViewOutput inventoryView) {
     return switch (inventoryView.source()) {
-      case INVENTORY -> TextCommandType.INVENTORY;
+      case INVENTORY, ROOM_GROUND -> TextCommandType.INVENTORY;
       case EQUIPMENT -> TextCommandType.EQUIPMENT;
       case CONTAINER -> TextCommandType.CONTAINER;
     };

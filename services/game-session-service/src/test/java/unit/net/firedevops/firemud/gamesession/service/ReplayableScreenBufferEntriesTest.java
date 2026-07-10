@@ -113,6 +113,7 @@ class ReplayableScreenBufferEntriesTest {
     assertThat(entry).isPresent();
     assertThat(entry.orElseThrow().text())
         .isEqualTo("OK INVENTORY\nInventory:\n- Torch x2 (A small torch)\n\n\n");
+    assertThat(entry.orElseThrow().payloadType()).isEqualTo("inventory_view");
     verify(outputProjector).renderClassicPlayerOutput(output, "en-NZ", presentation);
     verify(outputRenderer).renderSuccessfulForOutput(output, "en-NZ", presentation);
     verify(outputRenderer, never()).render(output, "en-NZ", presentation);

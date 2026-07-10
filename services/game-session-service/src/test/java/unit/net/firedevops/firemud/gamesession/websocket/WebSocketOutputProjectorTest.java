@@ -257,6 +257,35 @@ class WebSocketOutputProjectorTest {
   }
 
   @Test
+  void firstPartyWebProjectsInventoryViewPayloadsWithStableType() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(
+                new InventoryViewOutput(
+                    InventoryViewOutput.Source.ROOM_GROUND,
+                    "Room Inventory:",
+                    List.of("- Torch [torch3] (A small torch)"))),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("outputs")).hasSize(1);
+    assertThat(json.path("outputs").get(0).path("payloadType").asText())
+        .isEqualTo("inventory_view");
+    assertThat(json.path("outputs").get(0).path("payload").path("source").asText())
+        .isEqualTo("ROOM_GROUND");
+    assertThat(json.path("outputs").get(0).path("payload").path("title").asText())
+        .isEqualTo("Room Inventory:");
+  }
+
+  @Test
   void firstPartyWebProjectsWhoViewPayloads() throws Exception {
     WebSocketSession session = mock(WebSocketSession.class);
     when(session.getAttributes())

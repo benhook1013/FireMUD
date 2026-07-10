@@ -8,20 +8,24 @@ final class ScriptEventGameplayCommands {
   private ScriptEventGameplayCommands() {}
 
   static GameplayCommand synthetic(String prefix, TextCommand command) {
-    return syntheticWithId(prefix + "-" + UUID.randomUUID(), command, command.type().name(), null);
+    return syntheticWithId(syntheticId(prefix), command, command.type().name(), null);
   }
 
   static GameplayCommand synthetic(String prefix, String commandName, String rawLine) {
-    return syntheticWithId(prefix + "-" + UUID.randomUUID(), commandName, rawLine, null);
+    return syntheticWithId(syntheticId(prefix), commandName, rawLine, null);
   }
 
   static GameplayCommand synthetic(
       String prefix, TextCommand command, String commandName, String executionHook) {
-    return syntheticWithId(prefix + "-" + UUID.randomUUID(), command, commandName, executionHook);
+    return syntheticWithId(syntheticId(prefix), command, commandName, executionHook);
   }
 
   static GameplayCommand syntheticWithId(String commandId, String commandName, String rawLine) {
     return syntheticWithId(commandId, commandName, rawLine, null);
+  }
+
+  private static String syntheticId(String prefix) {
+    return prefix + "-" + UUID.randomUUID();
   }
 
   static GameplayCommand syntheticWithId(

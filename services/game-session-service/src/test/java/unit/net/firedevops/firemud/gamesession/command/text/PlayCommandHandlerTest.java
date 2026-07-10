@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class PlayCommandHandlerTest {
+  private static final String PLAY_COMMAND_NAME = "PLAY";
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
@@ -209,7 +210,7 @@ class PlayCommandHandlerTest {
                 "production",
                 1L,
                 "SHARED"),
-            command("play-command:1:1:7001:1", "PLAY", "play demo"));
+            command("play-command:1:1:7001:1", PLAY_COMMAND_NAME, "play demo"));
     Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(
@@ -323,7 +324,8 @@ class PlayCommandHandlerTest {
                 "production",
                 1L,
                 "SHARED"),
-            command("play-command:1:2:9007:1", "PLAY", "PLAY sandbox production Emberline"));
+            command(
+                "play-command:1:2:9007:1", PLAY_COMMAND_NAME, "PLAY sandbox production Emberline"));
     Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(
@@ -408,7 +410,8 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.reconnectRedrawRecommended()).isTrue();
     Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(context, command("play-command:1:1:7001:1", "PLAY", "PLAY demo"));
+        .publishCommandEvent(
+            context, command("play-command:1:1:7001:1", PLAY_COMMAND_NAME, "PLAY demo"));
     Mockito.verify(scriptEventPublisher, never())
         .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
@@ -674,7 +677,7 @@ class PlayCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of(), "PLAY"));
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of(), PLAY_COMMAND_NAME));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
@@ -1061,7 +1064,7 @@ class PlayCommandHandlerTest {
                 "production",
                 1L,
                 "SHARED"),
-            command("play-command:1:1:123:1", "PLAY", "PLAY demo"));
+            command("play-command:1:1:123:1", PLAY_COMMAND_NAME, "PLAY demo"));
     Mockito.verify(scriptEventPublisher)
         .publishSpawnEvent(
             new SessionContext(

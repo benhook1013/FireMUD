@@ -101,7 +101,7 @@ public class InventoryCommandHandler {
           List.of(
               PlayerOutput.view(
                   new InventoryViewOutput(
-                      InventoryViewOutput.Source.INVENTORY, "Room Inventory:", lines))));
+                      InventoryViewOutput.Source.ROOM_GROUND, "Room Inventory:", lines))));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",

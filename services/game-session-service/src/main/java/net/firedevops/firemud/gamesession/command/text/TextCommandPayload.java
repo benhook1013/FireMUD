@@ -63,7 +63,7 @@ public sealed interface TextCommandPayload
 
   record ViewRequest(String viewName, boolean includeLongDescription)
       implements TextCommandPayload {
-    ViewRequest(String viewName) {
+    public ViewRequest(String viewName) {
       this(viewName, true);
     }
   }
