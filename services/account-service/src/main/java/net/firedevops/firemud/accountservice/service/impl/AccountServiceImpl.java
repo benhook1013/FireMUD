@@ -12,7 +12,9 @@ import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
@@ -47,6 +49,7 @@ import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
@@ -54,6 +57,7 @@ import net.firedevops.firemud.accountservice.entity.Profile;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
+import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -91,8 +95,11 @@ public class AccountServiceImpl implements AccountService {
       "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
   private static final String INVALID_CONNECT_SCOPE_MESSAGE =
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
+  private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
+  private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
   private final AccountRepository accountRepository;
+  private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final AccountMapper accountMapper;
@@ -120,6 +127,7 @@ public class AccountServiceImpl implements AccountService {
       justification = "Dependencies are injected and kept internal")
   public AccountServiceImpl(
       AccountRepository accountRepository,
+      AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
       AccountMapper accountMapper,
@@ -142,6 +150,7 @@ public class AccountServiceImpl implements AccountService {
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       SagaRunner sagaRunner) {
     this.accountRepository = accountRepository;
+    this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
     this.accountMapper = accountMapper;
@@ -217,6 +226,71 @@ public class AccountServiceImpl implements AccountService {
       Long tenantId, String username, String password, String otp) {
     Account account = authenticateAccountIdentity(username, password, otp);
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
+    String token =
+        jwtUtil.generateToken(
+            account.getId().toString(),
+            Map.of(
+                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
+    sessionService.storeSession(tenantId, account.getId(), token);
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+        account.getId(), token);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.request_email_login_otp")
+  public void requestEmailLoginOtp(Long tenantId, String email) {
+    Optional<Account> account = accountRepository.findByEmail(email == null ? "" : email.trim());
+    if (account.isEmpty() || !account.orElseThrow().isEmailVerified()) {
+      return;
+    }
+    Account resolvedAccount = account.orElseThrow();
+    try {
+      requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
+    } catch (IllegalArgumentException ex) {
+      return;
+    }
+    LocalDateTime now = LocalDateTime.now();
+    Optional<AccountEmailLoginChallenge> existing =
+        accountEmailLoginChallengeRepository.findByAccountId(resolvedAccount.getId());
+    if (existing.filter(challenge -> challenge.getResendAvailableAt().isAfter(now)).isPresent()) {
+      return;
+    }
+    existing.ifPresent(accountEmailLoginChallengeRepository::delete);
+    String code = String.format("%06d", EMAIL_LOGIN_OTP_RANDOM.nextInt(1_000_000));
+    AccountEmailLoginChallenge challenge = new AccountEmailLoginChallenge();
+    challenge.setAccountId(resolvedAccount.getId());
+    challenge.setCodeHash(hashPassword(code));
+    challenge.setExpiresAt(now.plusMinutes(10));
+    challenge.setResendAvailableAt(now.plusSeconds(60));
+    challenge.setCreatedAt(now);
+    challenge.setUpdatedAt(now);
+    accountEmailLoginChallengeRepository.save(challenge);
+    runAfterCommit(() -> safeSendEmailLoginOtp(resolvedAccount.getEmail(), code));
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.verify_email_login_otp")
+  public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
+      Long tenantId, String email, String code) {
+    Account account =
+        accountRepository
+            .findByEmail(email == null ? "" : email.trim())
+            .orElseThrow(this::invalidCredentials);
+    AccountEmailLoginChallenge challenge =
+        accountEmailLoginChallengeRepository
+            .findByAccountId(account.getId())
+            .orElseThrow(this::invalidCredentials);
+    LocalDateTime now = LocalDateTime.now();
+    if (challenge.getExpiresAt().isBefore(now)
+        || challenge.getInvalidAttemptCount() >= EMAIL_LOGIN_OTP_MAX_ATTEMPTS
+        || !verifyPassword(code == null ? "" : code, challenge.getCodeHash())) {
+      recordFailedEmailLoginAttempt(challenge, now);
+      throw invalidCredentials();
+    }
+    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
+    accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         jwtUtil.generateToken(
             account.getId().toString(),
@@ -1310,6 +1384,34 @@ public class AccountServiceImpl implements AccountService {
       return argon2.verify(hash, chars);
     } finally {
       argon2.wipeArray(chars);
+    }
+  }
+
+  private AuthenticationException invalidCredentials() {
+    return new AuthenticationException(
+        AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
+  }
+
+  private void recordFailedEmailLoginAttempt(
+      AccountEmailLoginChallenge challenge, LocalDateTime now) {
+    challenge.setInvalidAttemptCount(challenge.getInvalidAttemptCount() + 1);
+    challenge.setUpdatedAt(now);
+    if (challenge.getInvalidAttemptCount() >= EMAIL_LOGIN_OTP_MAX_ATTEMPTS
+        || challenge.getExpiresAt().isBefore(now)) {
+      accountEmailLoginChallengeRepository.delete(challenge);
+      return;
+    }
+    accountEmailLoginChallengeRepository.save(challenge);
+  }
+
+  private void safeSendEmailLoginOtp(String email, String code) {
+    try {
+      emailService.sendEmail(
+          email,
+          "Your FireMUD login code",
+          "Your FireMUD login code is " + code + ". It expires in 10 minutes.");
+    } catch (RuntimeException ex) {
+      logger.warn("Email login code delivery failed");
     }
   }
 

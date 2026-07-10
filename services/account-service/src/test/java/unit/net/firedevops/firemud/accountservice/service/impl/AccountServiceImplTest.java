@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
@@ -36,6 +37,7 @@ import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPol
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
+import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -62,6 +64,7 @@ import org.mockito.MockitoAnnotations;
 class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
   @Mock private ProfileRepository profileRepository;
@@ -155,6 +158,7 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
             mapper,
@@ -198,6 +202,28 @@ class AccountServiceImplTest {
     assertEquals(1L, dto.id());
     assertEquals("demo", dto.username());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void emailLoginOtpRequestIsNeutralForUnknownEmail() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.requestEmailLoginOtp(7L, "unknown@example.com");
+
+    verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
+  }
+
+  @Test
+  void emailLoginOtpVerificationFailsClosedForUnknownEmail() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.verifyEmailLoginOtp(7L, "unknown@example.com", "123456"));
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+    verifyNoInteractions(accountEmailLoginChallengeRepository, sessionService);
   }
 
   @Test
@@ -363,6 +389,7 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountEmailLoginChallengeRepository,
             accountRealmAccessGrantRepository,
             accountTenantMembershipRepository,
             Mappers.getMapper(AccountMapper.class),

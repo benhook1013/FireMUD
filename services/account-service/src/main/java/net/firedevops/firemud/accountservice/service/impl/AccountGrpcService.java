@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -27,8 +28,11 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
@@ -149,6 +153,57 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.requestEmailLoginOtp")
+  public void requestEmailLoginOtp(
+      RequestEmailLoginOtpRequest request,
+      StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
+    try {
+      accountService.requestEmailLoginOtp(
+          requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getEmail());
+      responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
+    } catch (InvalidRequestException ex) {
+      responseObserver.onNext(
+          RequestEmailLoginOtpResponse.newBuilder()
+              .setError(appError("RequestEmailLoginOtp", "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+    }
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.verifyEmailLoginOtp")
+  public void verifyEmailLoginOtp(
+      VerifyEmailLoginOtpRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
+    try {
+      var result =
+          accountService.verifyEmailLoginOtp(
+              requirePositiveRequestId(request.getTenantId(), "tenantId"),
+              request.getEmail(),
+              request.getCode());
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setAuthToken(result.authToken())
+              .setAccountId(String.valueOf(result.accountId()))
+              .build());
+    } catch (InvalidRequestException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(appError("VerifyEmailLoginOtp", "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+    } catch (AuthenticationException | IllegalArgumentException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  appError(
+                      "VerifyEmailLoginOtp",
+                      AuthenticationErrorCodes.INVALID_CREDENTIALS,
+                      "Invalid credentials"))
+              .build());
+    }
+    responseObserver.onCompleted();
   }
 
   @Override
