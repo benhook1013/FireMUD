@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
@@ -47,6 +48,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
             new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
 
@@ -107,6 +109,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
             new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
             new SimpleMeterRegistry());
 

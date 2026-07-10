@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -17,10 +20,19 @@ import org.springframework.util.StringUtils;
 @Component
 public class HelpCommandHandler {
   private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
+  private final GameAuthoredHelpReader authoredHelpReader;
 
-  HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
+  HelpCommandHandler(
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      GameAuthoredHelpReader authoredHelpReader) {
     this.authoredActionCatalog =
         Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
+    this.authoredHelpReader =
+        Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
+  }
+
+  HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
+    this(authoredActionCatalog, (context, topic) -> Optional.empty());
   }
 
   HelpCommandHandler() {
@@ -31,6 +43,11 @@ public class HelpCommandHandler {
 
   @Timed(value = "gamesession.command.help")
   public TextCommandInterpretationResult handle(TextCommand command) {
+    return handle(command, Optional.empty());
+  }
+
+  public TextCommandInterpretationResult handle(
+      TextCommand command, Optional<SessionContext> maybeContext) {
     if (command == null) {
       throw new IllegalArgumentException("command must not be null");
     }
@@ -41,6 +58,12 @@ public class HelpCommandHandler {
     }
     if (args.size() > 1) {
       return unknownTopic(args.get(0));
+    }
+
+    Optional<GameAuthoredHelpReader.ResolvedTopic> authoredTopic =
+        maybeContext.flatMap(context -> authoredHelpReader.resolve(context, args.get(0)));
+    if (authoredTopic.isPresent()) {
+      return success(authoredTopic.orElseThrow());
     }
 
     String resolvedTopic = canonicalTopic(args.get(0));
@@ -267,6 +290,10 @@ public class HelpCommandHandler {
             + (StringUtils.hasText(action.helpDetails()) ? "\n" + action.helpDetails().trim() : "")
             + authoredAliasSuffix(action);
     return success(body);
+  }
+
+  private TextCommandInterpretationResult success(GameAuthoredHelpReader.ResolvedTopic topic) {
+    return success(topic.title().trim() + "\n" + topic.body().trim());
   }
 
   private String firstNonBlank(String first, String fallback) {

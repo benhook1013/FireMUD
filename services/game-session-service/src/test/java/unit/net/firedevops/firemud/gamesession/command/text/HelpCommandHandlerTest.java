@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class HelpCommandHandlerTest {
@@ -238,6 +241,31 @@ class HelpCommandHandlerTest {
     assertTrue(
         result.outputs().get(0).text().contains("Use this to greet nearby nobles or officers."));
     assertTrue(result.outputs().get(0).text().contains("Aliases: HAIL"));
+  }
+
+  @Test
+  void publishedGameAuthoredTopicOverridesPlatformTopicForAdmittedSession() {
+    GameAuthoredHelpReader reader =
+        (context, topic) ->
+            "look".equals(topic)
+                ? Optional.of(
+                    new GameAuthoredHelpReader.ResolvedTopic(
+                        "Temple Etiquette", "Bow before entering the moonlit sanctuary."))
+                : Optional.empty();
+    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog(), reader);
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        authoredHelpHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("look"), "HELP look"),
+            Optional.of(context));
+
+    assertTrue(result.commandResult().accepted());
+    assertEquals(
+        "Temple Etiquette\nBow before entering the moonlit sanctuary.",
+        result.outputs().get(0).text());
   }
 
   private ConfiguredAuthoredActionCatalog authoredCatalog() {

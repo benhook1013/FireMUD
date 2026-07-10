@@ -61,6 +61,10 @@ service GameDesignService {
       returns (PutSettingsDomainOverrideResponse);
   rpc DeleteSettingsDomainOverride(DeleteSettingsDomainOverrideRequest)
       returns (DeleteSettingsDomainOverrideResponse);
+  rpc ResolveHelpTopic(ResolveHelpTopicRequest) returns (ResolveHelpTopicResponse);
+  rpc PutHelpTopic(PutHelpTopicRequest) returns (PutHelpTopicResponse);
+  rpc ListHelpTopics(ListHelpTopicsRequest) returns (ListHelpTopicsResponse);
+  rpc DeleteHelpTopic(DeleteHelpTopicRequest) returns (DeleteHelpTopicResponse);
 }
 
 message SaveRevisionRequest {
@@ -648,6 +652,57 @@ message DeleteSettingsDomainOverrideRequest {
 }
 
 message DeleteSettingsDomainOverrideResponse {
+  shared.v1.ErrorDetail error = 1;
+}
+
+message HelpTopicScope {
+  string tenant_id = 1;
+  int64 game_template_id = 2;
+}
+
+message HelpTopic {
+  string canonical_topic_id = 1;
+  string title = 2;
+  string body = 3;
+  repeated string aliases = 4;
+  bool published = 5;
+}
+
+message ResolveHelpTopicRequest {
+  HelpTopicScope scope = 1;
+  string topic = 2;
+}
+
+message ResolveHelpTopicResponse {
+  HelpTopic help_topic = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PutHelpTopicRequest {
+  HelpTopicScope scope = 1;
+  HelpTopic help_topic = 2;
+}
+
+message PutHelpTopicResponse {
+  HelpTopic help_topic = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListHelpTopicsRequest {
+  HelpTopicScope scope = 1;
+}
+
+message ListHelpTopicsResponse {
+  repeated HelpTopic help_topics = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message DeleteHelpTopicRequest {
+  HelpTopicScope scope = 1;
+  string canonical_topic_id = 2;
+}
+
+message DeleteHelpTopicResponse {
   shared.v1.ErrorDetail error = 1;
 }
 

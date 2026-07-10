@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
@@ -88,6 +89,8 @@ class GameDesignGrpcServiceTest {
       Mockito.mock(VersionAssetArtifactService.class);
   private final SettingsAuthorityService settingsAuthorityService =
       Mockito.mock(SettingsAuthorityService.class);
+  private final GameAuthoredHelpTopicService gameAuthoredHelpTopicService =
+      Mockito.mock(GameAuthoredHelpTopicService.class);
   private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver =
       new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty());
   private final GameDesignGrpcService service =
@@ -99,6 +102,7 @@ class GameDesignGrpcServiceTest {
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
+          gameAuthoredHelpTopicService,
           publishWorkflowMetadataResolver,
           new SimpleMeterRegistry());
 

@@ -18,8 +18,12 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.HelpTopicScope;
+import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.stereotype.Component;
 
@@ -145,6 +149,33 @@ public final class GameDesignClient
                 .setTenantId(Long.toString(tenantId))
                 .setVersionId(versionId)
                 .build());
+  }
+
+  public java.util.Optional<GameAuthoredHelpReader.ResolvedTopic> resolveAuthoredHelpTopic(
+      long tenantId, long gameTemplateId, String topic) {
+    if (stub() == null) {
+      return java.util.Optional.empty();
+    }
+    try {
+      ResolveHelpTopicResponse response =
+          callStub()
+              .resolveHelpTopic(
+                  ResolveHelpTopicRequest.newBuilder()
+                      .setScope(
+                          HelpTopicScope.newBuilder()
+                              .setTenantId(Long.toString(tenantId))
+                              .setGameTemplateId(gameTemplateId))
+                      .setTopic(topic)
+                      .build());
+      if (response.hasError() || !response.hasHelpTopic()) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(
+          new GameAuthoredHelpReader.ResolvedTopic(
+              response.getHelpTopic().getTitle(), response.getHelpTopic().getBody()));
+    } catch (RuntimeException ex) {
+      return java.util.Optional.empty();
+    }
   }
 
   private GameDesignServiceGrpc.GameDesignServiceBlockingStub callStub() {

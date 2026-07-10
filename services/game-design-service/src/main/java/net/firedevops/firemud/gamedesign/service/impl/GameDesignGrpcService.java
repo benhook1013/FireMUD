@@ -15,12 +15,14 @@ import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
+import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -41,6 +43,8 @@ import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
+import net.firedevops.firemud.gamedesign.v1.DeleteHelpTopicRequest;
+import net.firedevops.firemud.gamedesign.v1.DeleteHelpTopicResponse;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
@@ -64,6 +68,9 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetPurgeStatusResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.HelpTopic;
+import net.firedevops.firemud.gamedesign.v1.ListHelpTopicsRequest;
+import net.firedevops.firemud.gamedesign.v1.ListHelpTopicsResponse;
 import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusEventsResponse;
 import net.firedevops.firemud.gamedesign.v1.ListPluginVersionStatusesRequest;
@@ -82,10 +89,14 @@ import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamedesign.v1.PutHelpTopicRequest;
+import net.firedevops.firemud.gamedesign.v1.PutHelpTopicResponse;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.RepairPublishedVersionAssetsResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.RevokePluginVersionRequest;
@@ -117,6 +128,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
+  private final GameAuthoredHelpTopicService gameAuthoredHelpTopicService;
   private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver;
 
   @SuppressFBWarnings(
@@ -1541,6 +1553,138 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     responseObserver.onCompleted();
   }
 
+  @Override
+  @Timed(value = "gamedesignGrpc.resolveHelpTopic")
+  public void resolveHelpTopic(
+      ResolveHelpTopicRequest request, StreamObserver<ResolveHelpTopicResponse> responseObserver) {
+    ResolveHelpTopicResponse.Builder builder = ResolveHelpTopicResponse.newBuilder();
+    try {
+      requireHelpTopicReadAccess();
+      gameAuthoredHelpTopicService
+          .resolvePublishedTopic(
+              request.getScope().getTenantId(),
+              request.getScope().getGameTemplateId(),
+              request.getTopic())
+          .ifPresent(topic -> builder.setHelpTopic(toProtoHelpTopic(topic)));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ResolveHelpTopic", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ResolveHelpTopic", helpTopicErrorCode(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "ResolveHelpTopic", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.putHelpTopic")
+  public void putHelpTopic(
+      PutHelpTopicRequest request, StreamObserver<PutHelpTopicResponse> responseObserver) {
+    PutHelpTopicResponse.Builder builder = PutHelpTopicResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      builder.setHelpTopic(
+          toProtoHelpTopic(
+              gameAuthoredHelpTopicService.putTopic(
+                  request.getScope().getTenantId(),
+                  request.getScope().getGameTemplateId(),
+                  fromProtoHelpTopic(request.getHelpTopic()))));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PutHelpTopic", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PutHelpTopic", helpTopicErrorCode(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "PutHelpTopic", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.listHelpTopics")
+  public void listHelpTopics(
+      ListHelpTopicsRequest request, StreamObserver<ListHelpTopicsResponse> responseObserver) {
+    ListHelpTopicsResponse.Builder builder = ListHelpTopicsResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      gameAuthoredHelpTopicService
+          .listTopics(request.getScope().getTenantId(), request.getScope().getGameTemplateId())
+          .forEach(topic -> builder.addHelpTopics(toProtoHelpTopic(topic)));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ListHelpTopics", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ListHelpTopics", helpTopicErrorCode(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "ListHelpTopics", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.deleteHelpTopic")
+  public void deleteHelpTopic(
+      DeleteHelpTopicRequest request, StreamObserver<DeleteHelpTopicResponse> responseObserver) {
+    DeleteHelpTopicResponse.Builder builder = DeleteHelpTopicResponse.newBuilder();
+    try {
+      AdminRoleGuard.requireAdminRole();
+      gameAuthoredHelpTopicService.deleteTopic(
+          request.getScope().getTenantId(),
+          request.getScope().getGameTemplateId(),
+          request.getCanonicalTopicId());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "DeleteHelpTopic", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "DeleteHelpTopic", helpTopicErrorCode(ex), ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "DeleteHelpTopic", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  private HelpTopic toProtoHelpTopic(HelpTopicDto topic) {
+    return HelpTopic.newBuilder()
+        .setCanonicalTopicId(topic.canonicalTopicId())
+        .setTitle(topic.title())
+        .setBody(topic.body())
+        .addAllAliases(topic.aliases())
+        .setPublished(topic.published())
+        .build();
+  }
+
+  private HelpTopicDto fromProtoHelpTopic(HelpTopic topic) {
+    return new HelpTopicDto(
+        topic.getCanonicalTopicId(),
+        topic.getTitle(),
+        topic.getBody(),
+        topic.getAliasesList(),
+        topic.getPublished());
+  }
+
+  private String helpTopicErrorCode(IllegalArgumentException ex) {
+    return ex.getMessage() != null && ex.getMessage().startsWith("NOT_FOUND:")
+        ? "NOT_FOUND"
+        : "INVALID_ARGUMENT";
+  }
+
   private net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState toProto(
       net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto state) {
     return net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
@@ -1824,6 +1968,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   private void requireSettingsAuthorityReadAccess() {
+    if (SessionContext.isInternalService()) {
+      return;
+    }
+    AdminRoleGuard.requireAdminRole();
+  }
+
+  private void requireHelpTopicReadAccess() {
     if (SessionContext.isInternalService()) {
       return;
     }
