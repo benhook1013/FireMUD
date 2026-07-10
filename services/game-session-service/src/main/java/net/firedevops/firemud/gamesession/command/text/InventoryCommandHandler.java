@@ -238,11 +238,16 @@ public class InventoryCommandHandler {
       SessionContext context, String verb, String itemName, int quantity) {
     List<PlayerOutput> outputs = new ArrayList<>();
     outputs.add(PlayerOutput.message(successMessage(verb, itemName, quantity)));
-    InventoryCommandHandlingResult refreshedInventory = describeInventory(context);
-    if (refreshedInventory.commandResult().accepted()) {
-      outputs.addAll(refreshedInventory.outputs());
-    }
+    appendAcceptedOutputs(outputs, describeInventory(context));
+    appendAcceptedOutputs(outputs, describeRoomInventory(context));
     return new InventoryCommandHandlingResult(CommandEnqueueResult.success(), outputs);
+  }
+
+  private void appendAcceptedOutputs(
+      List<PlayerOutput> outputs, InventoryCommandHandlingResult refreshResult) {
+    if (refreshResult.commandResult().accepted()) {
+      outputs.addAll(refreshResult.outputs());
+    }
   }
 
   private InventoryCommandHandlingResult inventoryMutationFailure(

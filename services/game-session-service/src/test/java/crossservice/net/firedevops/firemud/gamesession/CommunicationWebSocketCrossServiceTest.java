@@ -587,9 +587,16 @@ class CommunicationWebSocketCrossServiceTest {
       client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
 
       client.send("GET Torch");
-      client.awaitContains("You pick up Torch.");
-      client.awaitContains("Inventory:");
-      client.awaitContains("- Torch [torch#1] (A small torch)");
+      assertThat(
+              client.awaitResponseMatching(
+                  response ->
+                      response.contains("You pick up Torch.")
+                          && response.contains("Inventory:")
+                          && response.contains("- Torch [torch#1] (A small torch)")
+                          && response.contains("Room Inventory:")
+                          && response.contains("- Backpack [backpack#1] (A weathered backpack)"),
+                  "pickup response"))
+          .contains("Room Inventory:");
       GameplayEntityAssertions.assertPickup(
           entityStub().lastPickupRequest(),
           String.valueOf(TENANT_ID),
@@ -625,7 +632,16 @@ class CommunicationWebSocketCrossServiceTest {
           "");
 
       client.send("DROP Torch");
-      client.awaitContains("You drop Torch.");
+      assertThat(
+              client.awaitResponseMatching(
+                  response ->
+                      response.contains("You drop Torch.")
+                          && response.contains("Inventory:")
+                          && response.contains("You are not carrying anything.")
+                          && response.contains("Room Inventory:")
+                          && response.contains("- Torch [torch#1] (A small torch)"),
+                  "drop response"))
+          .contains("Room Inventory:");
       client.send("INV HERE");
       client.awaitContains("Room Inventory:");
       client.awaitContains("- Torch [torch#1] (A small torch)");

@@ -308,7 +308,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(pickupResponse)
         .contains("You pick up Torch.")
         .contains("Inventory:")
-        .contains("- Torch [torch#1] (A small torch)");
+        .contains("- Torch [torch#1] (A small torch)")
+        .contains("Room Inventory:")
+        .contains("- Backpack [backpack#1] (A weathered backpack)");
     assertThat(containerViewResponse)
         .contains("Container: Backpack [backpack#1]")
         .contains("- Ration [ration#1] (A dry trail ration)");
@@ -318,7 +320,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(takeResponse)
         .contains("You take Torch from Backpack.")
         .contains("- Ration [ration#1] (A dry trail ration)");
-    assertThat(dropResponse).contains("You drop Torch.");
+    assertThat(dropResponse)
+        .contains("You drop Torch.")
+        .contains("Inventory:")
+        .contains("You are not carrying anything.")
+        .contains("Room Inventory:")
+        .contains("- Torch [torch#1] (A small torch)");
     assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");
     assertThat(emptyEquipmentResponse).contains("You have nothing equipped.");
     assertThat(wearResponse).contains("You wear Leather Cap.");
