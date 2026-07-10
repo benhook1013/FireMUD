@@ -930,6 +930,25 @@ class TextCommandInterpreterTest {
   }
 
   @Test
+  void malformedMovementAfterPlayReturnsInvalidArgumentWithoutEnqueueing() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+    Mockito.clearInvocations(commandService);
+
+    for (String rawLine : List.of("north extra", "go west extra", "move sideways")) {
+      TextCommandInterpretationResult interpretation = interpreter.interpret("1", rawLine, false);
+
+      assertFalse(interpretation.commandResult().accepted());
+      assertEquals("INVALID_ARGUMENT", interpretation.commandResult().errorCode());
+      assertEquals(
+          "ERROR INVALID_ARGUMENT MOVE requires exactly one direction.",
+          renderedResponse(rawLine, interpretation));
+    }
+
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
   void loginPlayAndLookFlowWorks() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);

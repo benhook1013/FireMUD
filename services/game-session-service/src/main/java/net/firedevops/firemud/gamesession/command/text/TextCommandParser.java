@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -263,71 +262,21 @@ public class TextCommandParser {
   }
 
   private ParsedCommandData parseMove(String aliasUsed, String[] tokens) {
-    List<String> args = extractMoveArguments(tokens);
-    if (!args.isEmpty()) {
-      String canonicalDirection = canonicalDirection(args.get(0));
-      List<String> canonicalArgs =
-          canonicalDirection.isEmpty() ? args : List.of(canonicalDirection);
-      return new ParsedCommandData(
-          canonicalArgs,
-          new TextCommandPayload.Directional(
-              canonicalDirection.isEmpty()
-                  ? args.get(0).trim().toLowerCase()
-                  : canonicalDirection));
-    }
-    String canonicalAliasDirection = canonicalDirection(aliasUsed);
-    if (!canonicalAliasDirection.isEmpty()) {
+    String canonicalAliasDirection = TextCommandDirections.canonicalDirection(aliasUsed);
+    if (!canonicalAliasDirection.isEmpty() && tokens.length == 1) {
       return new ParsedCommandData(
           List.of(canonicalAliasDirection),
           new TextCommandPayload.Directional(canonicalAliasDirection));
     }
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.size() == 1) {
+      String canonicalDirection = TextCommandDirections.canonicalDirection(args.get(0));
+      if (!canonicalDirection.isEmpty()) {
+        return new ParsedCommandData(
+            List.of(canonicalDirection), new TextCommandPayload.Directional(canonicalDirection));
+      }
+    }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
-  }
-
-  private List<String> extractMoveArguments(String[] tokens) {
-    if (tokens.length == 0) {
-      return List.of();
-    }
-    String verb = tokens[0];
-    if (tokens.length == 1) {
-      String canonical = canonicalDirection(verb);
-      return canonical.isEmpty() ? List.of() : List.of(canonical);
-    }
-    return normalizeGoSyntax(verb, Arrays.copyOfRange(tokens, 1, tokens.length));
-  }
-
-  private List<String> normalizeGoSyntax(String verb, String[] remainingTokens) {
-    if (!verb.equalsIgnoreCase("go")) {
-      return List.of(remainingTokens);
-    }
-    if (remainingTokens.length == 0) {
-      return List.of();
-    }
-    String canonicalDirection = canonicalDirection(remainingTokens[0]);
-    if (canonicalDirection.isEmpty()) {
-      return List.of(remainingTokens);
-    }
-    ArrayList<String> normalized = new ArrayList<>();
-    normalized.add(canonicalDirection);
-    if (remainingTokens.length > 1) {
-      normalized.addAll(List.of(Arrays.copyOfRange(remainingTokens, 1, remainingTokens.length)));
-    }
-    return List.copyOf(normalized);
-  }
-
-  private String canonicalDirection(String token) {
-    if (token == null || token.isBlank()) {
-      return "";
-    }
-    return switch (token.trim().toUpperCase()) {
-      case "N", "NORTH" -> "north";
-      case "S", "SOUTH" -> "south";
-      case "E", "EAST" -> "east";
-      case "W", "WEST" -> "west";
-      case "U", "UP" -> "up";
-      case "D", "DOWN" -> "down";
-      default -> "";
-    };
   }
 
   private ParsedCommandData parseUnknown(String[] tokens) {

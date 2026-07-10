@@ -693,6 +693,16 @@ class TextCommandParserTest {
   }
 
   @Test
+  void malformedMovementDoesNotProduceDirectionalPayload() {
+    for (String rawLine : List.of("north extra", "go west extra", "move sideways")) {
+      TextCommand command = parser.parse(rawLine);
+
+      assertEquals(TextCommandType.MOVE, command.type());
+      assertTrue(command.directionalPayload().isEmpty());
+    }
+  }
+
+  @Test
   void blankInputIsIgnored() {
     TextCommand command = parser.parse("    ");
 
