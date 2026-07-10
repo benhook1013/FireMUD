@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.presentation;
 
+import java.util.Locale;
 import java.util.Objects;
 import org.springframework.util.StringUtils;
 
@@ -24,7 +25,7 @@ public record ItemMutationResultOutput(
       case "TAKE" -> "You take " + itemName + quantitySuffix + " from " + holderName(source) + ".";
       case "WEAR" -> "You wear " + itemName + ".";
       case "REMOVE" -> "You remove " + itemName + ".";
-      default -> "You " + action.toLowerCase() + " " + itemName + quantitySuffix + ".";
+      default -> "You " + action.toLowerCase(Locale.ROOT) + " " + itemName + quantitySuffix + ".";
     };
   }
 

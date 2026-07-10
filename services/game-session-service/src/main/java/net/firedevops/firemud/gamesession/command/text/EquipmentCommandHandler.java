@@ -126,9 +126,7 @@ public class EquipmentCommandHandler {
             "WEAR",
             ItemPayloadSupport.withFallback(
                 ItemPayloadSupport.toItemEntry(response.getEquipmentItem()),
-                StringUtils.hasText(response.getEquipmentItem().getItemName())
-                    ? response.getEquipmentItem().getItemName()
-                    : (StringUtils.hasText(carried.getItemName()) ? carried.getItemName() : "item"),
+                StringUtils.hasText(carried.getItemName()) ? carried.getItemName() : "item",
                 1),
             ItemPayloadSupport.inventoryHolder(),
             ItemPayloadSupport.equipmentHolder(response.getEquipmentItem().getSlot())));
@@ -177,9 +175,7 @@ public class EquipmentCommandHandler {
             "REMOVE",
             ItemPayloadSupport.withFallback(
                 ItemPayloadSupport.toItemEntry(response.getEquipmentItem()),
-                StringUtils.hasText(response.getEquipmentItem().getItemName())
-                    ? response.getEquipmentItem().getItemName()
-                    : (StringUtils.hasText(worn.getItemName()) ? worn.getItemName() : "item"),
+                StringUtils.hasText(worn.getItemName()) ? worn.getItemName() : "item",
                 1),
             ItemPayloadSupport.equipmentHolder(worn.getSlot()),
             ItemPayloadSupport.inventoryHolder()));
