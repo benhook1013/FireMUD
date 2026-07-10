@@ -46,7 +46,7 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Runs formatting and lint steps (Spotless, markdownlint, link checks).
 - Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
 - Generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs Trivy scans over the workspace.
-- Uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
+- Uses Node 24 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
 - Validates tracked Bash scripts across the repository with ShellCheck and validates tracked Python scripts by compiling them with `py_compile` so syntax regressions fail fast in CI.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
@@ -80,7 +80,7 @@ jobs:
           java-version: '21'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
       - name: Check Formatting
         run: ./gradlew spotlessCheck
       - name: Lint Docs and Links
