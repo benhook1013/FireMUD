@@ -35,9 +35,7 @@ public final class GameplayPresenceActivityResolver {
     long mostRecentActivity =
         presence.lastMeaningfulActivityAtEpochMs() != null
             ? presence.lastMeaningfulActivityAtEpochMs()
-            : presence.lastAcceptedCommandAtEpochMs() != null
-                ? presence.lastAcceptedCommandAtEpochMs()
-                : presence.connectedAtEpochMs();
+            : presence.connectedAtEpochMs();
     long inactivityMs = currentTimeMillisSupplier.getAsLong() - mostRecentActivity;
     return inactivityMs >= presenceProperties.getAutoAfkThresholdMs()
         ? GameplayPresenceActivityState.AUTO_AFK

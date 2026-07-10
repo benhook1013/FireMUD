@@ -36,7 +36,7 @@ class GameplayPresenceActivityResolverTest {
   }
 
   @Test
-  void autoAfkUsesLastMeaningfulOrAcceptedActivity() {
+  void autoAfkIgnoresAcceptedNonGameplayActivity() {
     PresenceProperties properties = new PresenceProperties();
     properties.setAutoAfkEnabled(true);
     properties.setAutoAfkThresholdMs(100L);
@@ -44,7 +44,7 @@ class GameplayPresenceActivityResolverTest {
     GameplayPresenceActivityResolver resolver =
         new GameplayPresenceActivityResolver(properties, now::get);
 
-    GameplayPresence activeFromAccepted =
+    GameplayPresence acceptedOnly =
         new GameplayPresence(
             1L,
             22L,
@@ -59,7 +59,24 @@ class GameplayPresenceActivityResolverTest {
             null,
             150L,
             null);
-    assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(activeFromAccepted));
+    assertEquals(GameplayPresenceActivityState.AUTO_AFK, resolver.resolve(acceptedOnly));
+
+    GameplayPresence activeFromMeaningful =
+        new GameplayPresence(
+            1L,
+            22L,
+            7L,
+            "demo",
+            "production",
+            2L,
+            102L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            50L,
+            null,
+            60L,
+            150L);
+    assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(activeFromMeaningful));
 
     GameplayPresence autoAfk =
         new GameplayPresence(
@@ -77,5 +94,32 @@ class GameplayPresenceActivityResolverTest {
             60L,
             60L);
     assertEquals(GameplayPresenceActivityState.AUTO_AFK, resolver.resolve(autoAfk));
+  }
+
+  @Test
+  void autoAfkFallsBackToConnectionTimeWhenNoGameplayActivityExists() {
+    PresenceProperties properties = new PresenceProperties();
+    properties.setAutoAfkEnabled(true);
+    properties.setAutoAfkThresholdMs(100L);
+    GameplayPresenceActivityResolver resolver =
+        new GameplayPresenceActivityResolver(properties, () -> 200L);
+
+    GameplayPresence presence =
+        new GameplayPresence(
+            1L,
+            22L,
+            7L,
+            "demo",
+            "production",
+            2L,
+            102L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            150L,
+            null,
+            190L,
+            null);
+
+    assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(presence));
   }
 }
