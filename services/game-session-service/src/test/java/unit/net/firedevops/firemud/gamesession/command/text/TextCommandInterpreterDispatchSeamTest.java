@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.verify;
 
 import java.util.List;
 import java.util.Optional;
@@ -68,9 +69,16 @@ class TextCommandInterpreterDispatchSeamTest {
             return Optional.empty();
           }
         };
+    AcceptedCommandHistoryRecorder commandHistoryRecorder =
+        Mockito.mock(AcceptedCommandHistoryRecorder.class);
     TextCommandInterpreter interpreter =
         new TextCommandInterpreter(
-            authenticationService, promptComposer, new TextCommandParser(), registry, dispatcher);
+            authenticationService,
+            promptComposer,
+            new TextCommandParser(),
+            registry,
+            dispatcher,
+            commandHistoryRecorder);
 
     TextCommandInterpretationResult actual = interpreter.interpret("1", "LOOK", false);
 
@@ -81,5 +89,11 @@ class TextCommandInterpreterDispatchSeamTest {
     assertEquals(
         expectedDispatchResult.reconnectRedrawRecommended(), actual.reconnectRedrawRecommended());
     assertEquals(false, actual.meaningfulGameplayActivity());
+    verify(commandHistoryRecorder)
+        .record(
+            Mockito.any(TextCommand.class),
+            Mockito.eq(expectedDispatchResult.commandResult()),
+            Mockito.eq(Optional.of(gameplayContext)),
+            Mockito.eq(Optional.of(gameplayContext)));
   }
 }

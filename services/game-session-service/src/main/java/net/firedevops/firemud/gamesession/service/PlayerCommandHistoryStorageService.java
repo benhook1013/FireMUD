@@ -1,24 +1,22 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Durable per-player command-history storage with bounded retention by configured maximum. */
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repository and clock are internal Spring collaborators.")
 public class PlayerCommandHistoryStorageService {
   private final PlayerCommandHistoryRepository repository;
   private final Clock clock;
 
+  @Autowired
   public PlayerCommandHistoryStorageService(PlayerCommandHistoryRepository repository) {
     this(repository, Clock.systemUTC());
   }

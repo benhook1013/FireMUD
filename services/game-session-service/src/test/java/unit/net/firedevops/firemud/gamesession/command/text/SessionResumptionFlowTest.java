@@ -307,7 +307,8 @@ class SessionResumptionFlowTest {
             new PromptComposer(),
             registry,
             parser,
-            meterRegistry);
+            meterRegistry,
+            AcceptedCommandHistoryRecorder.NOOP);
   }
 
   private SessionRoutingNormalizationService sessionRoutingNormalizationService() {
