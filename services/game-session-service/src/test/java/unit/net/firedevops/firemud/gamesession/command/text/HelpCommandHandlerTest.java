@@ -6,6 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -228,6 +232,65 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpIndexHidesHistoryWhenFeatureDisabled() {
+    HelpCommandHandler disabledHandler =
+        new HelpCommandHandler(
+            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
+            (context, topic) -> Optional.empty(),
+            historyResolver(false));
+    SessionContext context =
+        new SessionContext(
+            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        disabledHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of(), "HELP"), Optional.of(context));
+
+    assertTrue(result.commandResult().accepted());
+    assertFalse(result.outputs().get(0).text().contains("- HELP HISTORY"));
+  }
+
+  @Test
+  void helpHistoryTopicUnavailableWhenFeatureDisabled() {
+    HelpCommandHandler disabledHandler =
+        new HelpCommandHandler(
+            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
+            (context, topic) -> Optional.empty(),
+            historyResolver(false));
+    SessionContext context =
+        new SessionContext(
+            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        disabledHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("history"), "HELP history"),
+            Optional.of(context));
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("HELP_UNKNOWN_TOPIC", result.commandResult().errorCode());
+  }
+
+  @Test
+  void helpHistoryTopicAvailableWhenFeatureEnabled() {
+    HelpCommandHandler enabledHandler =
+        new HelpCommandHandler(
+            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
+            (context, topic) -> Optional.empty(),
+            historyResolver(true));
+    SessionContext context =
+        new SessionContext(
+            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        enabledHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("history"), "HELP history"),
+            Optional.of(context));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("HISTORY [count]"));
+  }
+
+  @Test
   void helpTopicResolvesConfiguredAuthoredAction() {
     HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog());
 
@@ -280,5 +343,11 @@ class HelpCommandHandlerTest {
     action.setHelpDetails("Use this to greet nearby nobles or officers.");
     properties.setActions(List.of(action));
     return new ConfiguredAuthoredActionCatalog(properties);
+  }
+
+  private static EffectiveCommandHistorySettingsResolver historyResolver(boolean enabled) {
+    return new EffectiveCommandHistorySettingsResolver(
+        new FiremudCommandHistoryProperties(enabled, 10),
+        (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   }
 }

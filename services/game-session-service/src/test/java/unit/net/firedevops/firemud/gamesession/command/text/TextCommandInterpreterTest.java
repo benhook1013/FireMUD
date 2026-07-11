@@ -21,6 +21,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
@@ -45,6 +46,7 @@ import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
@@ -69,6 +71,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -104,6 +107,12 @@ class TextCommandInterpreterTest {
   private final ModerationPolicyClient moderationPolicyClient =
       Mockito.mock(ModerationPolicyClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
+  private final HistoryCommandHandler historyHandler =
+      new HistoryCommandHandler(
+          Mockito.mock(PlayerCommandHistoryStorageService.class),
+          new EffectiveCommandHistorySettingsResolver(
+              new FiremudCommandHistoryProperties(true, 10),
+              (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final InventoryCommandHandler inventoryHandler =
       new InventoryCommandHandler(gameLogicClient);
@@ -461,6 +470,7 @@ class TextCommandInterpreterTest {
             moveHandler,
             afkHandler,
             helpHandler,
+            historyHandler,
             whoHandler,
             new StatusCommandHandler(gameLogicClient, scriptEventPublisher),
             new FriendsCommandHandler(

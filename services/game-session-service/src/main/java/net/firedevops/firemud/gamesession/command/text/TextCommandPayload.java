@@ -13,6 +13,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.CharacterBrowseRequest,
         TextCommandPayload.PlayRequest,
         TextCommandPayload.AfkRequest,
+        TextCommandPayload.HistoryRequest,
         TextCommandPayload.ItemReference,
         TextCommandPayload.ContainerTransfer,
         TextCommandPayload.ContainerView,
@@ -129,8 +130,20 @@ public sealed interface TextCommandPayload
           !safeArgs.isEmpty() && StringUtils.hasText(safeArgs.get(0))
               ? new Directional(safeArgs.get(0))
               : new Tokens(safeArgs);
+      case HISTORY ->
+          parseHistoryRequest(safeArgs)
+              .<TextCommandPayload>map(request -> request)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case UNKNOWN -> new Tokens(safeArgs);
     };
+  }
+
+  record HistoryRequest(Integer count) implements TextCommandPayload {
+    public HistoryRequest {
+      if (count != null && count <= 0) {
+        count = null;
+      }
+    }
   }
 
   private static java.util.Optional<ItemReference> parseQuantityAwareItemReference(
@@ -213,6 +226,20 @@ public sealed interface TextCommandPayload
       characterSelector = null;
     }
     return java.util.Optional.of(new PlayRequest(worldSelector, realmSelector, characterSelector));
+  }
+
+  private static java.util.Optional<HistoryRequest> parseHistoryRequest(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.of(new HistoryRequest(null));
+    }
+    if (args.size() != 1 || !StringUtils.hasText(args.getFirst())) {
+      return java.util.Optional.empty();
+    }
+    try {
+      return java.util.Optional.of(new HistoryRequest(Integer.parseInt(args.getFirst().trim())));
+    } catch (NumberFormatException ignored) {
+      return java.util.Optional.empty();
+    }
   }
 
   private static java.util.Optional<RealmBrowseRequest> parseRealmBrowseRequest(List<String> args) {

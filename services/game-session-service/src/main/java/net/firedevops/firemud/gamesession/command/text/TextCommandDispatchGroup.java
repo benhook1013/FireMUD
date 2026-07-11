@@ -5,6 +5,7 @@ public enum TextCommandDispatchGroup {
   WORLDS,
   SESSION,
   HELP,
+  HISTORY,
   ACTIVITY,
   WHO,
   STATUS,
