@@ -59,7 +59,9 @@ Games may extend standard behavior only through explicitly documented extension 
 
 ## Command History
 
-`HISTORY [count]` is a future command-input history feature, not a screen transcript reader. It returns the caller's eligible prior command inputs, subject to the effective tenant/game default and maximum count. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display.
+`HISTORY [count]` is a future command-input history feature, not a screen transcript reader. It returns the caller's safe prior command inputs for the current tenant/game and character binding, including entered commands that later fail or are unknown so normal command recall remains useful. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display.
+
+The platform default is `10` entries and the platform maximum is `20`. A tenant/game may configure its own effective default and maximum within those platform limits. A supplied `count` returns the newest requested subset, bounded by the effective maximum.
 
 Its storage and retention are independent of the durable resume transcript. See [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features).
 
