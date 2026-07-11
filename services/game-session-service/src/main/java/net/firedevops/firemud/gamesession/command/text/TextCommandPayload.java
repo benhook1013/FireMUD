@@ -138,13 +138,7 @@ public sealed interface TextCommandPayload
     };
   }
 
-  record HistoryRequest(Integer count) implements TextCommandPayload {
-    public HistoryRequest {
-      if (count != null && count <= 0) {
-        count = null;
-      }
-    }
-  }
+  record HistoryRequest(Integer count) implements TextCommandPayload {}
 
   private static java.util.Optional<ItemReference> parseQuantityAwareItemReference(
       List<String> args) {
