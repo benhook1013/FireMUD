@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
-import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.ResumeTranscriptEntry.RESUME_TRANSCRIPT_ENTRY;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -58,7 +58,7 @@ public class ResumeTranscriptEntryRepository {
                 .eq(tenantId)
                 .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId))
-                .and(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toLocalDateTime(cutoff))))
+                .and(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toOffsetDateTime(cutoff))))
         .execute();
   }
 
@@ -67,15 +67,16 @@ public class ResumeTranscriptEntryRepository {
     if (batchSize <= 0) {
       return 0;
     }
-    List<Long> expiredIds =
-        dsl.select(RESUME_TRANSCRIPT_ENTRY.ID)
-            .from(RESUME_TRANSCRIPT_ENTRY)
-            .where(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toLocalDateTime(cutoff)))
-            .orderBy(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
-            .limit(batchSize)
-            .fetch(RESUME_TRANSCRIPT_ENTRY.ID);
-    deleteByIds(expiredIds);
-    return expiredIds.size();
+    return dsl.deleteFrom(RESUME_TRANSCRIPT_ENTRY)
+        .where(
+            RESUME_TRANSCRIPT_ENTRY.ID.in(
+                dsl.select(RESUME_TRANSCRIPT_ENTRY.ID)
+                    .from(RESUME_TRANSCRIPT_ENTRY)
+                    .where(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toOffsetDateTime(cutoff)))
+                    .orderBy(
+                        RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
+                    .limit(batchSize)))
+        .execute();
   }
 
   public void deleteByIds(Collection<Long> ids) {
@@ -103,8 +104,8 @@ public class ResumeTranscriptEntryRepository {
     record.setProtocolText(entry.getProtocolText());
     record.setLineCount(entry.getLineCount());
     record.setByteSize(entry.getByteSize());
-    record.setAppendedAt(toLocalDateTime(entry.getAppendedAt()));
-    record.setExpiresAt(toLocalDateTime(entry.getExpiresAt()));
+    record.setAppendedAt(toOffsetDateTime(entry.getAppendedAt()));
+    record.setExpiresAt(toOffsetDateTime(entry.getExpiresAt()));
     record.setOutputKind(entry.getOutputKind());
     record.setReplayPolicy(entry.getReplayPolicy());
     record.setBriefRenderPolicy(entry.getBriefRenderPolicy());

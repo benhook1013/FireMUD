@@ -1,5 +1,5 @@
 ALTER TABLE resume_transcript_entry
-    ADD COLUMN expires_at timestamp without time zone;
+    ADD COLUMN expires_at timestamp with time zone;
 
 CREATE INDEX idx_resume_transcript_entry_expiry
     ON resume_transcript_entry USING btree (expires_at)

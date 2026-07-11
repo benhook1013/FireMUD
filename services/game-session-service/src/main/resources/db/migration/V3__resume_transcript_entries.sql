@@ -13,7 +13,7 @@ CREATE TABLE resume_transcript_entry (
     protocol_text text NOT NULL,
     line_count integer NOT NULL,
     byte_size integer NOT NULL,
-    appended_at timestamp without time zone NOT NULL,
+    appended_at timestamp with time zone NOT NULL,
     output_kind character varying(64),
     replay_policy character varying(64),
     brief_render_policy character varying(64),

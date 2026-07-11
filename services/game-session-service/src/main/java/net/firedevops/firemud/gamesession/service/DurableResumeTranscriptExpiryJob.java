@@ -34,7 +34,7 @@ public class DurableResumeTranscriptExpiryJob {
   public void purgeExpiredTranscripts() {
     int deleted = repository.deleteExpiredBefore(Instant.now(), BATCH_SIZE);
     if (deleted > 0) {
-      log.debug("Purged {} expired reconnect transcript entries", deleted);
+      log.info("Purged {} expired reconnect transcript entries", deleted);
     }
   }
 }
