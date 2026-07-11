@@ -32,8 +32,11 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -111,6 +114,69 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, ref.get().getError().getCode());
+  }
+
+  @Test
+  void requestEmailLoginOtpDispatchesNeutralChallengeRequest() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<RequestEmailLoginOtpResponse> ref = new AtomicReference<>();
+    service.requestEmailLoginOtp(
+        RequestEmailLoginOtpRequest.newBuilder()
+            .setTenantId("7")
+            .setEmail("demo@example.com")
+            .build(),
+        new StreamObserver<RequestEmailLoginOtpResponse>() {
+          @Override
+          public void onNext(RequestEmailLoginOtpResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertTrue(ref.get().getAccepted());
+    Mockito.verify(accountService).requestEmailLoginOtp(7L, "demo@example.com");
+  }
+
+  @Test
+  void verifyEmailLoginOtpReturnsAuthenticatedSession() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.verifyEmailLoginOtp(7L, "demo@example.com", "123456"))
+        .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setTenantId("7")
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        new StreamObserver<AuthenticateResponse>() {
+          @Override
+          public void onNext(AuthenticateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("9", ref.get().getAccountId());
+    assertEquals("jwt", ref.get().getAuthToken());
   }
 
   @Test
