@@ -20,6 +20,8 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -99,6 +101,37 @@ public final class AccountClient
         .build();
   }
 
+  /** Requests a neutral email-login challenge from the Account Service. */
+  public RequestEmailLoginOtpResponse requestEmailLoginOtp(String tenantId, String email) {
+    if (stub() == null) {
+      return emailLoginOtpUnavailable();
+    }
+    RequestEmailLoginOtpRequest request =
+        RequestEmailLoginOtpRequest.newBuilder().setTenantId(tenantId).setEmail(email).build();
+    try {
+      return callStub().requestEmailLoginOtp(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Account Service unavailable; rebuilding channel and retrying email login challenge",
+            ex);
+        try {
+          initClient();
+          return callStub().requestEmailLoginOtp(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Account Service email login challenge after channel reload",
+              retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Account Service email login challenge endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Account Service email login challenge endpoint", ex);
+    }
+    return emailLoginOtpUnavailable();
+  }
+
   public AuthenticateResponse authenticateForReadiness(
       String tenantId, String username, String password, String otp) {
     if (stub() == null) {
@@ -119,6 +152,15 @@ public final class AccountClient
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
         .authenticate(request);
+  }
+
+  private RequestEmailLoginOtpResponse emailLoginOtpUnavailable() {
+    return RequestEmailLoginOtpResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                .setMessage("Authentication service unavailable"))
+        .build();
   }
 
   public PingResponse ping() {

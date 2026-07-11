@@ -47,6 +47,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.EmailLoginChallengeRequest> emailLoginChallengePayload() {
+    return payload instanceof TextCommandPayload.EmailLoginChallengeRequest challengeRequest
+        ? Optional.of(challengeRequest)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.RealmBrowseRequest> realmBrowsePayload() {
     return payload instanceof TextCommandPayload.RealmBrowseRequest browseRequest
         ? Optional.of(browseRequest)

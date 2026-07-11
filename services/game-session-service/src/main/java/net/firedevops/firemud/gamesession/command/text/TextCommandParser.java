@@ -114,6 +114,10 @@ public class TextCommandParser {
 
   private ParsedCommandData parseLogin(String[] tokens) {
     List<String> args = parseRemainingTokens(tokens);
+    if (args.size() == 1) {
+      return new ParsedCommandData(
+          args, new TextCommandPayload.EmailLoginChallengeRequest(args.getFirst()));
+    }
     if (args.size() >= 2) {
       return new ParsedCommandData(
           args,

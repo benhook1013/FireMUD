@@ -803,7 +803,7 @@ class TextPlayerOutputRendererTest {
                 "LOGIN_REQUIRED", "fallback", "error.login-required", java.util.Map.of()));
 
     assertThat(rendered)
-        .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.");
+        .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> [secret].");
   }
 
   @Test

@@ -37,6 +37,16 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesOneArgumentLoginAsEmailChallengeRequest() {
+    TextCommand command = parser.parse("LOGIN demo@example.com");
+
+    assertTrue(command.payload() instanceof TextCommandPayload.EmailLoginChallengeRequest);
+    TextCommandPayload.EmailLoginChallengeRequest payload =
+        (TextCommandPayload.EmailLoginChallengeRequest) command.payload();
+    assertEquals("demo@example.com", payload.email());
+  }
+
+  @Test
   void parserResolvesAliasesThroughRegistryMetadata() {
     TextCommandParser parser =
         new TextCommandParser(

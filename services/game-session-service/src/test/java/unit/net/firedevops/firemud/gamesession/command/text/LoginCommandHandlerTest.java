@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -116,6 +117,52 @@ class LoginCommandHandlerTest {
         result.outputs().stream().map(output -> output.kind()).toList());
     verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
     verify(commandService).enqueue("1", command.rawLine(), false);
+  }
+
+  @Test
+  void oneArgumentLoginRequestsNeutralEmailChallengeWithoutAuthenticating() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))
+        .thenReturn(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    assertEquals(
+        LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, joinedOutputText(result.outputs()));
+    verify(accountClient).requestEmailLoginOtp("22", "demo@example.com");
+    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void oneArgumentLoginDoesNotExposeEmailChallengeFailures() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))
+        .thenReturn(
+            RequestEmailLoginOtpResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                        .setMessage("challenge delivery failed"))
+                .build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UPSTREAM_FAILURE Authentication service unavailable",
+        joinedOutputText(result.outputs()));
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
