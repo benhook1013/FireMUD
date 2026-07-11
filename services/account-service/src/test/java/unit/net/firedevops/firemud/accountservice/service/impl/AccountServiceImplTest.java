@@ -308,6 +308,105 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void authenticateUsesMatchingEmailLoginOtpBeforePasswordFallback() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setUsername("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(9L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setGameplayAdmissionAllowed(true);
+    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challenge));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
+        .thenReturn(Optional.of(membership));
+
+    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "123456", null);
+
+    assertEquals(9L, result.accountId());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
+    org.mockito.Mockito.verify(sessionService).storeSession(7L, 9L, result.authToken());
+  }
+
+  @Test
+  void authenticateFallsBackToPasswordWithoutBurningUnmatchedEmailLoginOtp() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setUsername("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(9L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setGameplayAdmissionAllowed(true);
+    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challenge));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
+        .thenReturn(Optional.of(membership));
+
+    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "password", null);
+
+    assertEquals(9L, result.accountId());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .delete(challenge);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .save(challenge);
+  }
+
+  @Test
+  void authenticateCountsFailedMixedModeSecretAgainstActiveEmailLoginOtp() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setUsername("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(9L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challenge));
+    when(accountEmailLoginChallengeRepository.save(challenge)).thenReturn(challenge);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticate(7L, "demo@example.com", "wrong", null));
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+    assertEquals(1, challenge.getInvalidAttemptCount());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).save(challenge);
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void passwordOnlyAccountsDoNotIssueEmailLoginChallenges() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    account.setLoginAuthModes("PASSWORD");
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    verifyNoInteractions(
+        accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
+  }
+
+  @Test
   void emailLoginOtpVerificationFailsClosedForUnknownEmail() {
     when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
 
@@ -414,6 +513,7 @@ class AccountServiceImplTest {
             .getAudience()
             .iterator()
             .next());
+    verifyNoInteractions(accountEmailLoginChallengeRepository);
   }
 
   @Test

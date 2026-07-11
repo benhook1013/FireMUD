@@ -130,7 +130,8 @@ public class AccountRealmAccessGrantRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(ACCOUNT_REALM_ACCESS_GRANT)
         .join(ACCOUNTS)
         .on(ACCOUNT_REALM_ACCESS_GRANT.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -147,7 +148,8 @@ public class AccountRealmAccessGrantRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     grant.setTenantId(record.get(ACCOUNT_REALM_ACCESS_GRANT.TENANT_ID));
     grant.setWorldSlug(record.get(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG));
     grant.setRealmSlug(record.get(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG));

@@ -75,7 +75,8 @@ public class CurrencyBalanceRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(CURRENCY_BALANCE)
         .join(ACCOUNTS)
         .on(CURRENCY_BALANCE.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -92,7 +93,8 @@ public class CurrencyBalanceRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     balance.setCurrencyCode(record.get(CURRENCY_BALANCE.CURRENCY_CODE));
     balance.setBalance(record.get(CURRENCY_BALANCE.BALANCE));
     balance.setTenantId(record.get(CURRENCY_BALANCE.TENANT_ID));

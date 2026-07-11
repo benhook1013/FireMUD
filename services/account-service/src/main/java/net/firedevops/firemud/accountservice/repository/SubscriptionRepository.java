@@ -92,7 +92,8 @@ public class SubscriptionRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(SUBSCRIPTION)
         .join(ACCOUNTS)
         .on(SUBSCRIPTION.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -109,7 +110,8 @@ public class SubscriptionRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     entity.setPlanId(record.get(SUBSCRIPTION.PLAN_ID));
     entity.setStatus(record.get(SUBSCRIPTION.STATUS));
     entity.setStartedAt(record.get(SUBSCRIPTION.STARTED_AT));

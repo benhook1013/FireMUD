@@ -90,7 +90,8 @@ public class ExternalAccountRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(EXTERNAL_ACCOUNT)
         .join(ACCOUNTS)
         .on(EXTERNAL_ACCOUNT.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -107,7 +108,8 @@ public class ExternalAccountRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     entity.setTenantId(record.get(EXTERNAL_ACCOUNT.TENANT_ID));
     entity.setProvider(record.get(EXTERNAL_ACCOUNT.PROVIDER));
     entity.setExternalId(record.get(EXTERNAL_ACCOUNT.EXTERNAL_ID));

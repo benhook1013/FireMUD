@@ -11,4 +11,5 @@ public class Account {
   private String role = "player";
   private String twoFactorSecret;
   private boolean emailVerified = false;
+  private String loginAuthModes = AccountLoginAuthModes.DEFAULT_SERIALIZED;
 }
