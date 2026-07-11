@@ -39,8 +39,14 @@ final class HistoryCommandHandler {
                   java.util.Map.of())));
     }
 
-    Integer requestedCount =
-        command.historyPayload().map(TextCommandPayload.HistoryRequest::count).orElse(null);
+    java.util.Optional<TextCommandPayload.HistoryRequest> historyRequest = command.historyPayload();
+    if (historyRequest.isEmpty()) {
+      return invalidCount();
+    }
+    Integer requestedCount = historyRequest.orElseThrow().count();
+    if (requestedCount != null && requestedCount <= 0) {
+      return invalidCount();
+    }
     int limit = resolveLimit(requestedCount, settings.maxEntries());
     List<String> entries =
         historyStorageService.findRecent(
@@ -54,10 +60,22 @@ final class HistoryCommandHandler {
   }
 
   private int resolveLimit(Integer requestedCount, int configuredMax) {
-    if (requestedCount == null || requestedCount <= 0) {
+    if (requestedCount == null) {
       return configuredMax;
     }
     return Math.min(requestedCount, configuredMax);
+  }
+
+  private TextCommandInterpretationResult invalidCount() {
+    String message = "HISTORY count must be a positive integer.";
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure("INVALID_ARGUMENT", message),
+        List.of(
+            PlayerOutput.error(
+                "INVALID_ARGUMENT",
+                message,
+                "error.command-history.invalid-count",
+                java.util.Map.of())));
   }
 
   private TextCommandInterpretationResult success(String body) {

@@ -235,10 +235,6 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private String canonicalTopic(String topic) {
-    return canonicalTopic(topic, true);
-  }
-
   private String canonicalTopic(String topic, boolean historyEnabled) {
     if (!StringUtils.hasText(topic)) {
       return "";

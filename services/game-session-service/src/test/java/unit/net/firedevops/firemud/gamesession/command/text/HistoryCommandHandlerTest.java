@@ -119,4 +119,60 @@ class HistoryCommandHandlerTest {
         .findRecent(Mockito.eq(7L), Mockito.eq(9L), Mockito.eq(7001L), maxEntries.capture());
     assertEquals(3, maxEntries.getValue());
   }
+
+  @Test
+  void rejectsMalformedHistoryCountWithoutReadingStorage() {
+    PlayerCommandHistoryStorageService storage =
+        Mockito.mock(PlayerCommandHistoryStorageService.class);
+    HistoryCommandHandler handler =
+        new HistoryCommandHandler(
+            storage,
+            new EffectiveCommandHistorySettingsResolver(
+                new FiremudCommandHistoryProperties(true, 10),
+                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    SessionContext context =
+        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.HISTORY,
+                List.of("now"),
+                "HISTORY now",
+                "HISTORY",
+                new TextCommandPayload.Tokens(List.of("now"))),
+            context);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    Mockito.verifyNoInteractions(storage);
+  }
+
+  @Test
+  void rejectsNonPositiveHistoryCountWithoutReadingStorage() {
+    PlayerCommandHistoryStorageService storage =
+        Mockito.mock(PlayerCommandHistoryStorageService.class);
+    HistoryCommandHandler handler =
+        new HistoryCommandHandler(
+            storage,
+            new EffectiveCommandHistorySettingsResolver(
+                new FiremudCommandHistoryProperties(true, 10),
+                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    SessionContext context =
+        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.HISTORY,
+                List.of("0"),
+                "HISTORY 0",
+                "HISTORY",
+                new TextCommandPayload.HistoryRequest(0)),
+            context);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    Mockito.verifyNoInteractions(storage);
+  }
 }

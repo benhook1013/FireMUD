@@ -681,6 +681,14 @@ class TextCommandParserTest {
   }
 
   @Test
+  void preservesNonPositiveHistoryCountForHandlerValidation() {
+    TextCommand command = parser.parse("HISTORY 0");
+
+    assertTrue(command.payload() instanceof TextCommandPayload.HistoryRequest);
+    assertEquals(0, command.historyPayload().orElseThrow().count());
+  }
+
+  @Test
   void parsesMalformedHistoryCountAsTokens() {
     TextCommand command = parser.parse("HISTORY now");
 
