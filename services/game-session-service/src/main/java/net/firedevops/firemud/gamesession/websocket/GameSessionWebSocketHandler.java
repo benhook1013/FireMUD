@@ -11,10 +11,12 @@ import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
+import net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
+import net.firedevops.firemud.gamesession.command.text.TextCommandPromptPolicy;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -346,7 +348,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (isUiTaggedCommand(command)) {
       return true;
     }
-    if (command.type() == TextCommandType.PLAY && !interpretation.reconnectRedrawRecommended()) {
+    if (isGameplayEntryPromptCommand(command) && !interpretation.reconnectRedrawRecommended()) {
       return true;
     }
     return interpretation.outputs().stream()
@@ -357,6 +359,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return textCommandMetadataResolver
         .resolve(command.commandId())
         .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.UI))
+        .orElse(false);
+  }
+
+  private boolean isGameplayEntryPromptCommand(TextCommand command) {
+    return textCommandMetadataResolver
+        .resolve(command.commandId())
+        .map(
+            metadata ->
+                metadata.dispatchGroup() == TextCommandDispatchGroup.SESSION
+                    && metadata.promptPolicy() == TextCommandPromptPolicy.WHEN_GAMEPLAY)
         .orElse(false);
   }
 
