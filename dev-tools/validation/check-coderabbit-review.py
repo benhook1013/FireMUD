@@ -292,8 +292,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_explicit_review_request_dt: datetime | None = None
     latest_coderabbit_review_finished_at: str | None = None
     latest_coderabbit_review_finished_dt: datetime | None = None
-    latest_review_request_rate_limited = False
-    latest_review_request_noop = False
+    latest_review_outcome_dt: datetime | None = None
+    latest_review_outcome: str | None = None
     latest_actionable_comment_dt: datetime | None = None
     latest_actionable_comment_url: str | None = None
     outside_diff_actionable_comments = 0
@@ -341,13 +341,29 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if created_at_dt is None:
             continue
         body = comment.get("body", "")
-        if latest_commit_at_dt is not None and created_at_dt >= latest_commit_at_dt:
-            latest_review_request_rate_limited |= REVIEW_LIMIT_MARKER in body
-        if (
+        if latest_commit_at_dt is None or created_at_dt < latest_commit_at_dt:
+            continue
+
+        outcome: str | None = None
+        if SUBSTANTIVE_REVIEW_MARKER in body:
+            outcome = "substantive"
+        elif REVIEW_LIMIT_MARKER in body:
+            outcome = "rate_limited"
+        elif (
             latest_explicit_review_request_dt is not None
             and created_at_dt >= latest_explicit_review_request_dt
+            and NOOP_REVIEW_MARKER in body
         ):
-            latest_review_request_noop |= NOOP_REVIEW_MARKER in body
+            outcome = "noop"
+
+        if outcome is not None and (
+            latest_review_outcome_dt is None or created_at_dt >= latest_review_outcome_dt
+        ):
+            latest_review_outcome_dt = created_at_dt
+            latest_review_outcome = outcome
+
+    latest_review_request_rate_limited = latest_review_outcome == "rate_limited"
+    latest_review_request_noop = latest_review_outcome == "noop"
     for comment in pr["comments"]["nodes"]:
         author = (comment.get("author") or {}).get("login", "")
         body = comment.get("body", "")

@@ -335,6 +335,67 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/superseded-review-outcome.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
+              "createdAt": "2026-07-03T02:40:01Z",
+              "url": "https://example.test/rate-limited"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "Review finished. Note: CodeRabbit does not re-review already reviewed commits.",
+              "createdAt": "2026-07-03T02:40:02Z",
+              "url": "https://example.test/noop"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "<!-- walkthrough_start -->",
+              "createdAt": "2026-07-03T02:40:03Z",
+              "url": "https://example.test/walkthrough"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/outside-diff-actionable.json" <<'JSON'
 {
   "data": {
@@ -455,6 +516,14 @@ grep -q "explicit_review_after_latest_commit=false" "$TMP_DIR/review-rate-limite
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+
+superseded_outcome_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/superseded-review-outcome.json")"
+grep -q "review_finished_after_latest_request=true" <<<"$superseded_outcome_output"
+grep -q "substantive_review_after_latest_commit=true" <<<"$superseded_outcome_output"
+grep -q "latest_review_request_rate_limited=false" <<<"$superseded_outcome_output"
+grep -q "latest_review_request_noop=false" <<<"$superseded_outcome_output"
+grep -q "retrigger_review_allowed=true" <<<"$superseded_outcome_output"
+grep -q "ok=true" <<<"$superseded_outcome_output"
 
 expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
