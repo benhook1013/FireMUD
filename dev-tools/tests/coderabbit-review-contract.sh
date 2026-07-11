@@ -424,6 +424,7 @@ expect_failure_output "$TMP_DIR/stale-review.json" "$TMP_DIR/stale-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "explicit_review_after_latest_commit=false" "$TMP_DIR/stale-review.out"
 grep -q "retrigger_review_allowed=true" "$TMP_DIR/stale-review.out"
+grep -q "warning=A SMALL FOLLOW-UP MAY MERGE WITHOUT A FRESH CODERABBIT RUN ONLY WHEN EVERY POST-REVIEW COMMIT DIRECTLY ADDRESSES REVIEW FINDINGS; VERIFY THAT SCOPE AND GREEN CI MANUALLY" "$TMP_DIR/stale-review.out"
 grep -q "reason=no explicit CodeRabbit review request found after the latest PR commit" "$TMP_DIR/stale-review.out"
 
 expect_failure_output "$TMP_DIR/unresolved-non-outdated.json" "$TMP_DIR/unresolved-non-outdated.out"

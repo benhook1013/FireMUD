@@ -518,6 +518,16 @@ def emit_text(summary: ReviewSummary) -> None:
             "warning=DO NOT RETRIGGER @coderabbitai review WHILE ANY UNRESOLVED "
             "CODERABBIT THREADS REMAIN"
         )
+    if (
+        summary.unresolved_total == 0
+        and summary.latest_coderabbit_review_finished_at is not None
+        and not summary.substantive_review_after_latest_commit
+    ):
+        print(
+            "warning=A SMALL FOLLOW-UP MAY MERGE WITHOUT A FRESH CODERABBIT RUN ONLY WHEN "
+            "EVERY POST-REVIEW COMMIT DIRECTLY ADDRESSES REVIEW FINDINGS; VERIFY THAT SCOPE "
+            "AND GREEN CI MANUALLY"
+        )
     if summary.reasons:
         for reason in summary.reasons:
             print(f"reason={reason}")
