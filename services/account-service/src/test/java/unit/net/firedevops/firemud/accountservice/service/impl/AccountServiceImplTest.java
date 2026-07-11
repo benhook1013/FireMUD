@@ -14,6 +14,8 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
@@ -227,7 +229,13 @@ class AccountServiceImplTest {
         .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+                  invocation.getArgument(0);
+              challenge.setId(3L);
+              return challenge;
+            });
 
     service.requestEmailLoginOtp(7L, "verified@example.com");
 
@@ -245,6 +253,57 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("verified@example.com"),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.matches(".*\\b\\d{6}\\b.*"));
+  }
+
+  @Test
+  void emailLoginOtpVerificationAuthenticatesAndConsumesMatchingChallenge() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    account.setRole("player");
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setGameplayAdmissionAllowed(true);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
+        .thenReturn(Optional.of(membership));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
+    when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    org.mockito.ArgumentCaptor<
+            net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
+        challengeCaptor =
+            org.mockito.ArgumentCaptor.forClass(
+                net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge.class);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
+        .save(challengeCaptor.capture());
+    org.mockito.ArgumentCaptor<String> emailBodyCaptor =
+        org.mockito.ArgumentCaptor.forClass(String.class);
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("verified@example.com"),
+            org.mockito.ArgumentMatchers.anyString(),
+            emailBodyCaptor.capture());
+    Matcher codeMatcher = Pattern.compile("\\b(\\d{6})\\b").matcher(emailBodyCaptor.getValue());
+    assertTrue(codeMatcher.find());
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challengeCaptor.getValue()));
+
+    AuthenticationResult result =
+        service.verifyEmailLoginOtp(7L, "verified@example.com", codeMatcher.group(1));
+
+    assertEquals(9L, result.accountId());
+    assertNotNull(result.authToken());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
+        .delete(challengeCaptor.getValue());
+    org.mockito.Mockito.verify(sessionService)
+        .storeSession(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(9L),
+            org.mockito.ArgumentMatchers.eq(result.authToken()));
   }
 
   @Test
