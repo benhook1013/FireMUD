@@ -41,7 +41,17 @@ public class PlayerCommandHistoryStorageService {
     entry.setCommandText(commandText);
     entry.setAcceptedAt(Instant.now(clock));
     repository.save(entry);
-    trimToMaxEntries(tenantId, gameInstanceId, characterId, maxEntries);
+    trimLocked(tenantId, gameInstanceId, characterId, maxEntries);
+  }
+
+  @Transactional
+  public void trimToMaxEntries(
+      long tenantId, long gameInstanceId, long characterId, int maxEntries) {
+    if (maxEntries <= 0) {
+      return;
+    }
+    repository.lockScope(tenantId, gameInstanceId, characterId);
+    trimLocked(tenantId, gameInstanceId, characterId, maxEntries);
   }
 
   @Transactional
@@ -66,8 +76,7 @@ public class PlayerCommandHistoryStorageService {
         .stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
   }
 
-  private void trimToMaxEntries(
-      long tenantId, long gameInstanceId, long characterId, int maxEntries) {
+  private void trimLocked(long tenantId, long gameInstanceId, long characterId, int maxEntries) {
     List<PlayerCommandHistoryEntry> retained =
         new ArrayList<>(repository.findByScope(tenantId, gameInstanceId, characterId));
     if (retained.size() <= maxEntries) {

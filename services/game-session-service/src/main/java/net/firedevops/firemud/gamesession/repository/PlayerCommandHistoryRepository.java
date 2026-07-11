@@ -60,6 +60,48 @@ public class PlayerCommandHistoryRepository {
         .fetch(this::toEntity);
   }
 
+  /** Returns one deterministic page of scopes for background retention enforcement. */
+  public List<HistoryScope> findDistinctScopesAfter(HistoryScope after, int batchSize) {
+    if (batchSize <= 0) {
+      return List.of();
+    }
+    org.jooq.Condition condition = PLAYER_COMMAND_HISTORY.ID.isNotNull();
+    if (after != null) {
+      condition =
+          PLAYER_COMMAND_HISTORY
+              .TENANT_ID
+              .gt(after.tenantId())
+              .or(
+                  PLAYER_COMMAND_HISTORY
+                      .TENANT_ID
+                      .eq(after.tenantId())
+                      .and(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.gt(after.gameInstanceId())))
+              .or(
+                  PLAYER_COMMAND_HISTORY
+                      .TENANT_ID
+                      .eq(after.tenantId())
+                      .and(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.eq(after.gameInstanceId()))
+                      .and(PLAYER_COMMAND_HISTORY.CHARACTER_ID.gt(after.characterId())));
+    }
+    return dsl.selectDistinct(
+            PLAYER_COMMAND_HISTORY.TENANT_ID,
+            PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID,
+            PLAYER_COMMAND_HISTORY.CHARACTER_ID)
+        .from(PLAYER_COMMAND_HISTORY)
+        .where(condition)
+        .orderBy(
+            PLAYER_COMMAND_HISTORY.TENANT_ID.asc(),
+            PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.asc(),
+            PLAYER_COMMAND_HISTORY.CHARACTER_ID.asc())
+        .limit(batchSize)
+        .fetch(
+            record ->
+                new HistoryScope(
+                    record.get(PLAYER_COMMAND_HISTORY.TENANT_ID),
+                    record.get(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID),
+                    record.get(PLAYER_COMMAND_HISTORY.CHARACTER_ID)));
+  }
+
   public void deleteByIds(Collection<Long> ids) {
     if (ids == null || ids.isEmpty()) {
       return;
@@ -102,4 +144,6 @@ public class PlayerCommandHistoryRepository {
     key = 31L * key + gameInstanceId;
     return 31L * key + characterId;
   }
+
+  public record HistoryScope(long tenantId, long gameInstanceId, long characterId) {}
 }
