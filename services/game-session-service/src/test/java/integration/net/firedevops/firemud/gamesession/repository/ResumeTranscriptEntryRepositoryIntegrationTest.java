@@ -1,0 +1,97 @@
+package net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
+import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class ResumeTranscriptEntryRepositoryIntegrationTest {
+  @Container
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  private DSLContext dsl;
+  private ResumeTranscriptEntryRepository repository;
+
+  @BeforeAll
+  void setUpRepository() {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .load()
+        .migrate();
+
+    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    repository = new ResumeTranscriptEntryRepository(dsl);
+  }
+
+  @BeforeEach
+  void cleanTable() {
+    dsl.execute("TRUNCATE TABLE resume_transcript_entry RESTART IDENTITY");
+  }
+
+  @Test
+  void persistsStructuredEntriesInTranscriptOrderAndScopesDeletes() {
+    ResumeTranscriptEntry earlier = entry("Earlier\n", Instant.parse("2026-07-12T01:00:00Z"));
+    ResumeTranscriptEntry later = entry("Later\n", Instant.parse("2026-07-12T01:01:00Z"));
+    ResumeTranscriptEntry otherCharacter = entry("Other\n", Instant.parse("2026-07-12T01:02:00Z"));
+    otherCharacter.setCharacterId(14L);
+
+    repository.saveAll(List.of(later, earlier, otherCharacter));
+    List<ResumeTranscriptEntry> entries = repository.findByScope(22L, 7L, 13L);
+
+    assertThat(entries)
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Earlier\n", "Later\n");
+    assertThat(entries.getFirst().getPayloadJson()).isEqualTo("{\"room\":\"R-1\"}");
+
+    repository.deleteExpired(22L, 7L, 13L, Instant.parse("2026-07-12T01:00:30Z"));
+
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Later\n");
+    assertThat(repository.findByScope(22L, 7L, 14L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Other\n");
+  }
+
+  private ResumeTranscriptEntry entry(String text, Instant appendedAt) {
+    ResumeTranscriptEntry entry = new ResumeTranscriptEntry();
+    entry.setTenantId(22L);
+    entry.setGameInstanceId(7L);
+    entry.setCharacterId(13L);
+    entry.setProtocolText(text);
+    entry.setLineCount(1);
+    entry.setByteSize(text.length());
+    entry.setAppendedAt(appendedAt);
+    entry.setOutputKind("VIEW");
+    entry.setReplayPolicy("REPLAY");
+    entry.setBriefRenderPolicy("FULL");
+    entry.setPayloadType("look-view");
+    entry.setPayloadJson("{\"room\":\"R-1\"}");
+    return entry;
+  }
+}
