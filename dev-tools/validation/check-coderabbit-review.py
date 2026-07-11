@@ -5,7 +5,7 @@ This script does not trust the top-level CodeRabbit status badge. It verifies:
 1. unresolved non-outdated review threads are zero
 2. unresolved outdated review threads are zero
 3. an explicit CodeRabbit review command was posted after the latest PR commit
-4. CodeRabbit posted a "Review finished." reply after that command
+4. CodeRabbit published a substantive review summary after that command
 """
 
 from __future__ import annotations
@@ -28,7 +28,11 @@ REVIEW_COMMANDS = {
     "@coderabbitai full review",
 }
 
-REVIEW_FINISHED_MARKER = "Review finished."
+# A command acknowledgement can say "Review finished." while explicitly stating that no commits
+# were reviewed. The walkthrough is emitted only by CodeRabbit's actual review summary.
+SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
+REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+NOOP_REVIEW_MARKER = "does not re-review already reviewed commits"
 ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
 OUTSIDE_DIFF_MARKER = "Outside diff range comments"
 DUPLICATE_COMMENTS_MARKER = "Duplicate comments"
@@ -47,6 +51,9 @@ class ReviewSummary:
     latest_coderabbit_review_finished_at: str | None
     explicit_review_after_latest_commit: bool
     review_finished_after_latest_request: bool
+    substantive_review_after_latest_commit: bool
+    latest_review_request_rate_limited: bool
+    latest_review_request_noop: bool
     retrigger_review_allowed: bool
     must_resolve_outdated_threads: bool
     outside_diff_actionable_comments: int
@@ -285,6 +292,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_explicit_review_request_dt: datetime | None = None
     latest_coderabbit_review_finished_at: str | None = None
     latest_coderabbit_review_finished_dt: datetime | None = None
+    latest_review_request_rate_limited = False
+    latest_review_request_noop = False
     latest_actionable_comment_dt: datetime | None = None
     latest_actionable_comment_url: str | None = None
     outside_diff_actionable_comments = 0
@@ -302,7 +311,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             ):
                 latest_explicit_review_request_dt = created_at_dt
                 latest_explicit_review_request_at = created_at
-        if author == "coderabbitai" and REVIEW_FINISHED_MARKER in body:
+        if author == "coderabbitai" and SUBSTANTIVE_REVIEW_MARKER in body:
             if (
                 latest_coderabbit_review_finished_dt is None
                 or created_at_dt > latest_coderabbit_review_finished_dt
@@ -320,6 +329,21 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and latest_coderabbit_review_finished_dt is not None
         and latest_coderabbit_review_finished_dt >= latest_explicit_review_request_dt
     )
+    substantive_review_after_latest_commit = (
+        latest_coderabbit_review_finished_dt is not None
+        and latest_commit_at_dt is not None
+        and latest_coderabbit_review_finished_dt >= latest_commit_at_dt
+    )
+    if latest_explicit_review_request_dt is not None:
+        for comment in pr["comments"]["nodes"]:
+            if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+                continue
+            created_at_dt = parse_timestamp(comment.get("createdAt"))
+            if created_at_dt is None or created_at_dt < latest_explicit_review_request_dt:
+                continue
+            body = comment.get("body", "")
+            latest_review_request_rate_limited |= REVIEW_LIMIT_MARKER in body
+            latest_review_request_noop |= NOOP_REVIEW_MARKER in body
     for comment in pr["comments"]["nodes"]:
         author = (comment.get("author") or {}).get("login", "")
         body = comment.get("body", "")
@@ -341,12 +365,16 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_review_request_still_running = (
         explicit_review_after_latest_commit
         and not review_finished_after_latest_request
+        and not latest_review_request_rate_limited
+        and not latest_review_request_noop
     )
     retrigger_review_allowed = (
         unresolved_total == 0
         and outside_diff_actionable_comments == 0
         and duplicate_actionable_comments == 0
         and not latest_review_request_still_running
+        and not latest_review_request_rate_limited
+        and not latest_review_request_noop
     )
     must_resolve_outdated_threads = unresolved_outdated > 0
 
@@ -376,7 +404,15 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         )
     if not review_finished_after_latest_request:
         reasons.append(
-            "no completed CodeRabbit review found after the latest explicit review request"
+            "no substantive CodeRabbit review summary found after the latest explicit review request"
+        )
+    if not substantive_review_after_latest_commit:
+        reasons.append("no substantive CodeRabbit review summary found after the latest PR commit")
+    if latest_review_request_rate_limited:
+        reasons.append("latest explicit CodeRabbit review request was rate limited; do not retrigger yet")
+    if latest_review_request_noop:
+        reasons.append(
+            "latest explicit CodeRabbit review request was acknowledged without reviewing commits"
         )
 
     return ReviewSummary(
@@ -391,6 +427,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_coderabbit_review_finished_at=latest_coderabbit_review_finished_at,
         explicit_review_after_latest_commit=explicit_review_after_latest_commit,
         review_finished_after_latest_request=review_finished_after_latest_request,
+        substantive_review_after_latest_commit=substantive_review_after_latest_commit,
+        latest_review_request_rate_limited=latest_review_request_rate_limited,
+        latest_review_request_noop=latest_review_request_noop,
         retrigger_review_allowed=retrigger_review_allowed,
         must_resolve_outdated_threads=must_resolve_outdated_threads,
         outside_diff_actionable_comments=outside_diff_actionable_comments,
@@ -424,6 +463,18 @@ def emit_text(summary: ReviewSummary) -> None:
     print(
         "review_finished_after_latest_request="
         f"{str(summary.review_finished_after_latest_request).lower()}"
+    )
+    print(
+        "substantive_review_after_latest_commit="
+        f"{str(summary.substantive_review_after_latest_commit).lower()}"
+    )
+    print(
+        "latest_review_request_rate_limited="
+        f"{str(summary.latest_review_request_rate_limited).lower()}"
+    )
+    print(
+        "latest_review_request_noop="
+        f"{str(summary.latest_review_request_noop).lower()}"
     )
     print(
         "retrigger_review_allowed="

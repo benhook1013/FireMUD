@@ -49,7 +49,7 @@ cat >"$TMP_DIR/pass.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "Review finished.",
+              "body": "<!-- walkthrough_start -->",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/finished"
             }
@@ -104,7 +104,7 @@ cat >"$TMP_DIR/unresolved-outdated.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "Review finished.",
+              "body": "<!-- walkthrough_start -->",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/finished"
             }
@@ -149,7 +149,7 @@ cat >"$TMP_DIR/stale-review.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "Review finished.",
+              "body": "<!-- walkthrough_start -->",
               "createdAt": "2026-07-03T02:20:05Z",
               "url": "https://example.test/finished"
             }
@@ -204,7 +204,7 @@ cat >"$TMP_DIR/unresolved-non-outdated.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "Review finished.",
+              "body": "<!-- walkthrough_start -->",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/finished"
             }
@@ -244,6 +244,96 @@ cat >"$TMP_DIR/review-not-finished.json" <<'JSON'
               "body": "@coderabbitai review",
               "createdAt": "2026-07-03T02:40:00Z",
               "url": "https://example.test/review"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/review-command-noop.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "Review finished. Note: CodeRabbit does not re-review already reviewed commits.",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/noop"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/rate-limited"
             }
           ]
         }
@@ -294,7 +384,7 @@ cat >"$TMP_DIR/outside-diff-actionable.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "Review finished.",
+              "body": "<!-- walkthrough_start -->",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/finished"
             }
@@ -324,6 +414,8 @@ grep -q "unresolved_outdated=0" <<<"$pass_output"
 grep -q "unresolved_total=0" <<<"$pass_output"
 grep -q "explicit_review_after_latest_commit=true" <<<"$pass_output"
 grep -q "review_finished_after_latest_request=true" <<<"$pass_output"
+grep -q "substantive_review_after_latest_commit=true" <<<"$pass_output"
+grep -q "latest_review_request_noop=false" <<<"$pass_output"
 grep -q "retrigger_review_allowed=true" <<<"$pass_output"
 grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
@@ -354,7 +446,21 @@ expect_failure_output "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-not-f
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-not-finished.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
-grep -q "reason=no completed CodeRabbit review found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
+grep -q "reason=no substantive CodeRabbit review summary found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
+
+expect_failure_output "$TMP_DIR/review-command-noop.json" "$TMP_DIR/review-command-noop.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-command-noop.out"
+grep -q "substantive_review_after_latest_commit=false" "$TMP_DIR/review-command-noop.out"
+grep -q "latest_review_request_noop=true" "$TMP_DIR/review-command-noop.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-command-noop.out"
+grep -q "reason=latest explicit CodeRabbit review request was acknowledged without reviewing commits" "$TMP_DIR/review-command-noop.out"
+
+expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-limited.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
+grep -q "reason=latest explicit CodeRabbit review request was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
 
 expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
