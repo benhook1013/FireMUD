@@ -130,8 +130,16 @@ jobs:
 
             const resolveStatuses = (checkRuns) =>
               [...gateChecks, ...detailChecks].map(([label, checkName]) => {
+                const isCodeQlAnalysis = checkName.startsWith("CodeQL Analysis (");
+                const emptyMatrixCodeQlCheck =
+                  "CodeQL Analysis ($" + "{{ matrix.language }})";
                 const candidates = (Array.isArray(checkRuns) ? checkRuns : [])
-                  .filter((checkRun) => checkRun?.name === checkName)
+                  .filter(
+                    (checkRun) =>
+                      checkRun?.name === checkName ||
+                      (isCodeQlAnalysis &&
+                        checkRun?.name === emptyMatrixCodeQlCheck)
+                  )
                   .map((checkRun) => ({
                     checkRun,
                     status: normalizeStatus(checkRun, checkName),
