@@ -22,7 +22,7 @@ import org.mockito.Mockito;
 
 class PlayerCommandHistoryFlowTest {
   @Test
-  void recordsHistoryAfterItsOwnResponseSoItAppearsOnTheNextQuery() {
+  void doesNotRecordHistoryDisplayCommands() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     SessionAuthenticationService sessionAuthenticationService =
@@ -59,12 +59,12 @@ class PlayerCommandHistoryFlowTest {
     TextCommandInterpretationResult first = interpreter.interpret("41", history, false);
 
     assertThat(historyNoticeTexts(first)).containsExactly("LOOK");
-    assertThat(storedCommands).containsExactly("LOOK", "HISTORY");
+    assertThat(storedCommands).containsExactly("LOOK");
 
     TextCommandInterpretationResult second = interpreter.interpret("41", history, false);
 
-    assertThat(historyNoticeTexts(second)).containsExactly("LOOK\nHISTORY");
-    assertThat(storedCommands).containsExactly("LOOK", "HISTORY", "HISTORY");
+    assertThat(historyNoticeTexts(second)).containsExactly("LOOK");
+    assertThat(storedCommands).containsExactly("LOOK");
   }
 
   private List<String> historyNoticeTexts(TextCommandInterpretationResult result) {

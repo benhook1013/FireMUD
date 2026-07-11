@@ -81,6 +81,7 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
         && commandResult != null
         && commandResult.accepted()
         && command.type() != TextCommandType.LOGIN
+        && command.type() != TextCommandType.HISTORY
         && command.credentialsPayload().isEmpty()
         && command.emailLoginChallengePayload().isEmpty()
         && command.rawLine() != null
