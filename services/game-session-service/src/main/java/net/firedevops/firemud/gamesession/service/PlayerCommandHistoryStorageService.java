@@ -7,9 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Durable per-player command-history storage with bounded retention by configured maximum. */
+@Service
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository and clock are internal Spring collaborators.")
