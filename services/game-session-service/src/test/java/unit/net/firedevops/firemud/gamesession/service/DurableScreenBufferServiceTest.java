@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -62,7 +61,7 @@ class DurableScreenBufferServiceTest {
     assertThat(persisted.getProtocolText()).isEqualTo("You say, \"hello\"\n");
     assertThat(persisted.getPayloadJson()).isEqualTo("{\"kind\":\"SAY\"}");
     assertThat(persisted.getExpiresAt()).isNull();
-    verify(repository, never()).deleteExpired(anyLong(), anyLong(), anyLong(), any());
+    verify(repository).deleteExpired(eq(22L), eq(7L), eq(13L), any());
     verify(hotCache).append(22L, 7L, 13L, List.of(entry));
   }
 
