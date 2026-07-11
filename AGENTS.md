@@ -48,46 +48,18 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 ## Subagent Models
 
-When using subagents, call `spawn_agent` with an explicit `agent_type`, a tightly scoped task, and a `model` override only when there is a clear reason not to inherit the parent model. Prefer these models for delegation:
+Subagents share the main weekly allowance. Use them only when bounded parallel work preserves main-thread context or improves turnaround.
 
-- `gpt-5.3-codex-spark`: Use for most bounded delegation. Main thread owns slice boundaries, integration, and final validation.
-- `gpt-5.4-mini`: Use for targeted tasks.
-- `gpt-5.5`: Use when delegation needs a smarter model for harder reasoning, ambiguous implementation work, or higher-risk synthesis.
-
-Typical call shape:
-
-```json
-{
-  "agent_type": "explorer",
-  "message": "Find where session tokens are issued and validated. Report exact files and entrypoints.",
-  "model": "gpt-5.3-codex-spark"
-}
-```
-
-```json
-{
-  "agent_type": "worker",
-  "message": "Own the auth middleware tests in <path>. Make the bounded fix, do not touch unrelated files, and report changed paths.",
-  "model": "gpt-5.4-mini"
-}
-```
-
-```json
-{
-  "agent_type": "worker",
-  "message": "Own the protocol validation refactor in <path>. Resolve the design cleanly, preserve in-flight edits from others, and report changed paths.",
-  "model": "gpt-5.5"
-}
-```
-
-If no model override is needed, omit `model` and let the subagent inherit the parent model.
+- `gpt-5.6-luna`: Default for repository searches, focused review, narrow test investigation, and mechanical local fixes.
+- `gpt-5.6-terra`: Use only for a bounded implementation task that Luna cannot handle reliably.
+- Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
 
 ## Execution Style
 
 - Prefer a single main-thread workflow on the active branch and in the current working tree unless a human explicitly asks otherwise.
 - Keep orchestration, integration, end-to-end reasoning, and final verification on the main thread.
 - Use subagents only for bounded parallelizable work when delegation is explicitly requested or clearly improves turnaround.
-- When delegating, prefer `gpt-5.3-codex-spark` for most tasks, `gpt-5.4-mini` for targeted tasks, and `gpt-5.5` when stronger reasoning is needed; give each subagent a narrowly scoped task with explicit success conditions.
+- When delegating, prefer `gpt-5.6-luna` unless a bounded implementation task needs `gpt-5.6-terra`; give each subagent a narrowly scoped task with explicit success conditions.
 - Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.
 - When rolling out or repairing a shared pattern, update the remaining in-scope adopters in the same pass when practical.
