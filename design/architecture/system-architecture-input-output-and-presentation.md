@@ -15,7 +15,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Prompt output now has the pre-`06` baseline pipeline: prompt coalescing, a narrow per-session prompt-throttling window, reconnect prompt regeneration, and structured first-party prompt delivery are live. Richer burst-end scheduling, broader game-defined composition, and canonical buffered prompt/status replay remain future work.
 - Built-in/system text now has the first usable localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests.
 - Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work.
-- The canonical transcript storage model is now locked at the architecture layer: reconnect replay and later durable history share one conceptual structured transcript-entry model, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth.
+- The canonical resume-transcript model is now locked at the architecture layer: replay-eligible structured entries are retained durably as one bounded per-character resume context, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth.
 
 ---
 
@@ -240,15 +240,15 @@ If FireMUD later needs richer output composition for configurable games, accessi
 
 That richer direction is a valid future option, but the first implementation should begin with the smaller output-envelope model rather than jumping immediately to a full presentation document system.
 
-### Canonical transcript persistence model
+### Canonical resume-transcript model
 
-Structured `PlayerOutput` is the live output contract. Canonical transcript persistence sits one step below that live envelope:
+Structured `PlayerOutput` is the live output contract. The canonical resume transcript sits one step below that live envelope:
 
 - replay-eligible `PlayerOutput` values are projected into canonical transcript entries;
-- transcript entries are the persistence/replay source of truth;
+- resume-transcript entries are the durable replay source of truth;
 - rendered plain text remains a derived compatibility cache for classic text transports.
 
-The canonical persisted transcript unit is one transcript entry carrying:
+The canonical resume-transcript unit is one entry carrying:
 
 - session/gameplay identity;
 - ordering token;
@@ -258,28 +258,35 @@ The canonical persisted transcript unit is one transcript entry carrying:
 
 For the current architecture, that means:
 
-- a reconnect buffer entry may keep derived rendered text alongside the structured transcript entry so Telnet and generic WebSocket replay remain simple;
-- later durable transcript history should persist the same conceptual transcript entry model rather than inventing a second browser-only or archive-only contract;
+- the durable resume transcript is keyed by the admitted tenant/game, game instance, and character identity;
+- every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
+- a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
+- Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;
+- after `LOGIN` plus `PLAY`, FireMUD replays the retained resume context in ordering-token order, then emits fresh authoritative reconstruction such as `LOOK` and a prompt;
 - prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
 
 Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.
 
-The first retention classes are intentionally simple:
+### Resume-transcript bounds
 
-- `RECONNECT_ONLY`
-- `SHORT_HISTORY`
-- `EXTENDED_HISTORY`
+Every game uses the durable resume-transcript model. This is not a player preference and it has no transient-only mode. The effective policy resolves from platform defaults with an optional tenant/game override.
 
-Their intended behavior is:
+The policy defines:
 
-- `RECONNECT_ONLY`: keep entries only in the hot reconnect buffer; do not write durable transcript history.
-- `SHORT_HISTORY`: keep entries in the hot reconnect buffer and also persist bounded durable transcript history suitable for normal operator troubleshooting and recent-player replay.
-- `EXTENDED_HISTORY`: keep the same transcript-entry model with a longer bounded durable history window for operators or products that explicitly opt into richer replay/history retention.
+- maximum retained entry count;
+- maximum retained byte size;
+- optional expiry after a character has been inactive for a configured duration, or `never`.
 
-This model keeps reconnect replay, durable transcript history, and richer client replay on one transcript contract while still allowing the current implementation split:
+When an entry or byte bound is exceeded, FireMUD evicts the oldest retained entries. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
 
-- hot reconnect buffer in Redis or equivalent runtime storage;
-- longer transcript history in durable storage when that later implementation work lands.
+### Separate history features
+
+The resume transcript is not a command-input history or a complete player archive.
+
+- A future `HISTORY [count]` command is a separate, optional safe command-input history. It records eligible prior commands rather than screen output, must exclude or redact authentication secrets and other sensitive input, and has its own tenant/game retention and count limits.
+- A future Player Transcript Archive and Export feature may retain the complete player-visible transcript as append-only archive segments for a finite tenant/game-configured period. It must preserve the canonical structured entries with derived rendered text for export, let players obtain an export before FireMUD-side expiry, and remain separate from the small resume context. The first export surface should be a FireMUD-managed downloadable artifact; arbitrary external destinations require later credential, privacy, retry, and deletion design.
+
+The current implementation remains narrower: the hot reconnect buffer already stores structured metadata beside rendered compatibility text, while the durable resume transcript and the two separate history features remain later implementation work.
 
 ---
 

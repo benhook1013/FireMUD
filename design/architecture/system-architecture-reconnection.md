@@ -186,7 +186,7 @@ For clarity, Telnet clients never receive a hidden transport-preserving recovery
 
 Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
 
-- a bounded per-player screen buffer keyed to gameplay identity may replay the most recent narrative/system transcript lines for that player after successful `LOGIN` + `PLAY`;
+- a bounded durable per-player resume transcript keyed to gameplay identity replays its retained narrative/system entries after successful `LOGIN` + `PLAY`; Redis may cache that context but is not authoritative;
 - new screen-buffer entries retain structured player-output metadata alongside rendered protocol text when the output came from the structured `PlayerOutput` path, so first-party clients can receive typed replay entries while classic clients continue to receive text;
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
@@ -205,7 +205,7 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
-The reconnect/session-recovery and screen-buffer defaults themselves are exposed through:
+The current hot-cache reconnect settings are exposed through:
 
 - `firemud.reconnection.policy.resume-window-ms`
 - `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
@@ -215,19 +215,25 @@ The reconnect/session-recovery and screen-buffer defaults themselves are exposed
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+These remain implementation-level operator/file-env defaults today. They will converge on the durable resume-transcript policy below; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
-The canonical transcript retention model sitting behind these reconnect settings is now explicit:
+### Canonical durable resume-transcript policy
 
-- `RECONNECT_ONLY`: only the hot reconnect buffer is retained; no durable transcript history is written.
-- `SHORT_HISTORY`: the same transcript-entry model used by reconnect replay is also written to bounded durable history suitable for normal operator troubleshooting and recent-player replay.
-- `EXTENDED_HISTORY`: the same transcript-entry model is retained for a longer bounded durable history window when a product/operator explicitly wants richer replay retention.
+Every game retains a durable, bounded resume transcript. This is a short rolling player context, not an archive and not a player-selected setting. The effective policy resolves from platform defaults with an optional tenant/game override:
 
-Current implementation status remains intentionally narrower than the full model:
+- maximum retained entry count;
+- maximum retained byte size;
+- optional expiry after configured character inactivity, or `never`.
+
+New entries evict the oldest retained entries when either size bound is exceeded. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD reprints the whole retained context in order, then sends fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
+
+Current implementation status remains intentionally narrower than the target model:
 
 - structured replay metadata is already stored in the hot reconnect buffer for new replayable outputs;
 - legacy text-only reconnect buffer entries remain readable;
-- durable transcript history for `SHORT_HISTORY` and `EXTENDED_HISTORY` is still later implementation work, but it must reuse the same canonical transcript-entry model rather than inventing a second transport- or client-specific history contract.
+- the durable resume transcript is later implementation work, but it must reuse the same canonical structured entry model rather than inventing a text-only transport cache.
+
+Command-input history and complete player transcript archive/export are separate future features. They do not alter the reconnect context contract; see [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features).
 
 ### Abnormal WebSocket Transport Loss
 
