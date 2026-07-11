@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Component;
 
 /** Resolves the platform and tenant/game command-history capability policy. */
 @Component
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Constructor validation only guards injected collaborators before resolution.")
 public class EffectiveCommandHistorySettingsResolver {
   private final FiremudCommandHistoryProperties defaults;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
