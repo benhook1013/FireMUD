@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.entity;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** Canonical reader for the persisted primary-login mode set. */
 public final class AccountLoginAuthModes {
@@ -31,5 +32,10 @@ public final class AccountLoginAuthModes {
       throw new IllegalStateException("Account must have at least one login authentication mode");
     }
     return Set.copyOf(modes);
+  }
+
+  /** Returns the database representation in stable enum declaration order. */
+  public static String normalize(String serializedModes) {
+    return read(serializedModes).stream().sorted().map(Enum::name).collect(Collectors.joining(","));
   }
 }

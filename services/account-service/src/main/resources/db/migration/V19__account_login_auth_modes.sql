@@ -1,5 +1,5 @@
 ALTER TABLE accounts
-    ADD COLUMN login_auth_modes VARCHAR(64) NOT NULL DEFAULT 'PASSWORD,EMAIL_OTP';
+    ADD COLUMN login_auth_modes TEXT NOT NULL DEFAULT 'PASSWORD,EMAIL_OTP';
 
 ALTER TABLE accounts
     ADD CONSTRAINT chk_accounts_login_auth_modes
