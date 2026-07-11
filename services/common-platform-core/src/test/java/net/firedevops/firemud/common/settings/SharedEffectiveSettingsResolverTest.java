@@ -29,7 +29,8 @@ class SharedEffectiveSettingsResolverTest {
                         new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
                             true, null, 300L)),
                     null,
-                    null),
+                    null,
+                    new ScopedSettingsOverrides.CommandHistoryOverride(true, 10)),
                 new ScopedSettingsOverrides(
                     null,
                     new ScopedSettingsOverrides.CommunicationOverride(
@@ -38,7 +39,8 @@ class SharedEffectiveSettingsResolverTest {
                             false, null, null, null)),
                     new ScopedSettingsOverrides.PresentationOverride("fr", null, null, null),
                     null,
-                    null)));
+                    null,
+                    new ScopedSettingsOverrides.CommandHistoryOverride(null, 20))));
 
     SharedEffectiveSettingsResolver resolver = new SharedEffectiveSettingsResolver(authorityReader);
 
@@ -49,6 +51,10 @@ class SharedEffectiveSettingsResolverTest {
     assertThat(resolved.effectiveOverrides().presentation().defaultLocaleTag()).isEqualTo("fr");
     assertThat(resolved.effectiveOverrides().presentation().defaultColorMode())
         .isEqualTo(ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC);
+    assertThat(resolved.effectiveOverrides().commandHistory())
+        .isEqualTo(new ScopedSettingsOverrides.CommandHistoryOverride(true, 20));
+    assertThat(resolved.sourcesFor(ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, 22L, 7L))
+        .containsExactly("tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
     assertThat(resolved.sourcesFor(ScopedSettingsOverrides.SettingsDomain.COMMUNICATION, 22L, 7L))
         .containsExactly("tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
   }
@@ -62,7 +68,12 @@ class SharedEffectiveSettingsResolverTest {
             new ScopedSettingsSnapshot(
                 ScopedSettingsOverrides.empty(),
                 new ScopedSettingsOverrides(
-                    null, null, null, new ScopedSettingsOverrides.MovementOverride(false), null)));
+                    null,
+                    null,
+                    null,
+                    new ScopedSettingsOverrides.MovementOverride(false),
+                    null,
+                    null)));
 
     SharedEffectiveSettingsResolver resolver = new SharedEffectiveSettingsResolver(authorityReader);
 

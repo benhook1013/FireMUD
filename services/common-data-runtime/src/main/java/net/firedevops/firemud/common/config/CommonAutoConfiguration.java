@@ -20,7 +20,10 @@ import tools.jackson.databind.ObjectMapper;
 
 @AutoConfiguration
 @AutoConfigureAfter(DatabaseAutoConfiguration.class)
-@EnableConfigurationProperties(FiremudReconnectionProperties.class)
+@EnableConfigurationProperties({
+  FiremudReconnectionProperties.class,
+  FiremudCommandHistoryProperties.class
+})
 @Import(CommonCoreAutoConfiguration.class)
 public class CommonAutoConfiguration {
 

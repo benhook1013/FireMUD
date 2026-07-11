@@ -1,11 +1,16 @@
 package net.firedevops.firemud.common.settings;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.util.StringUtils;
 
 /** Resolves one bounded effective persisted-override layer for surfaced pre-06 settings domains. */
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification =
+        "Constructor validation only guards the injected settings authority reader before use.")
 public class SharedEffectiveSettingsResolver {
   private final SharedSettingsAuthorityReader settingsAuthorityReader;
 
@@ -60,7 +65,8 @@ public class SharedEffectiveSettingsResolver {
         merge(normalizedBase.communication(), overrideLayer.communication()),
         merge(normalizedBase.presentation(), overrideLayer.presentation()),
         merge(normalizedBase.movement(), overrideLayer.movement()),
-        merge(normalizedBase.worldTopology(), overrideLayer.worldTopology()));
+        merge(normalizedBase.worldTopology(), overrideLayer.worldTopology()),
+        merge(normalizedBase.commandHistory(), overrideLayer.commandHistory()));
   }
 
   private ScopedSettingsOverrides.ReconnectionOverride merge(
@@ -209,6 +215,20 @@ public class SharedEffectiveSettingsResolver {
         override.regionsEnabled() != null ? override.regionsEnabled() : base.regionsEnabled());
   }
 
+  private ScopedSettingsOverrides.CommandHistoryOverride merge(
+      ScopedSettingsOverrides.CommandHistoryOverride base,
+      ScopedSettingsOverrides.CommandHistoryOverride override) {
+    if (override == null) {
+      return base;
+    }
+    if (base == null) {
+      return override;
+    }
+    return new ScopedSettingsOverrides.CommandHistoryOverride(
+        override.enabled() != null ? override.enabled() : base.enabled(),
+        override.maxEntries() != null ? override.maxEntries() : base.maxEntries());
+  }
+
   private static Long normalizeGameInstanceId(Long gameInstanceId) {
     return gameInstanceId != null && gameInstanceId > 0L ? gameInstanceId : null;
   }
@@ -245,6 +265,7 @@ public class SharedEffectiveSettingsResolver {
         case PRESENTATION -> overrides.presentation() != null;
         case MOVEMENT -> overrides.movement() != null;
         case WORLD_TOPOLOGY -> overrides.worldTopology() != null;
+        case COMMAND_HISTORY -> overrides.commandHistory() != null;
       };
     }
   }

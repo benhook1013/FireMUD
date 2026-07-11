@@ -11,6 +11,11 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties"
     },
     {
+      "name": "firemud.command-history",
+      "type": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
+    },
+    {
       "name": "firemud.movement",
       "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
       "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
@@ -112,6 +117,20 @@
       "defaultValue": 65536,
       "description": "Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.command-history.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether accepted command history is available to players through the HISTORY command.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
+    },
+    {
+      "name": "firemud.command-history.max-entries",
+      "type": "java.lang.Integer",
+      "defaultValue": 10,
+      "description": "Maximum retained and displayable accepted command-history entries per player character; values are capped at 20.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
     },
     {
       "name": "firemud.movement.post-move-look-enabled",
