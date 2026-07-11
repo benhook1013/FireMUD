@@ -81,6 +81,9 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof WhoViewOutput whoView) {
           yield renderWhoView(whoView);
         }
+        if (output.payload() instanceof ActorStateViewOutput actorStateView) {
+          yield renderActorStateView(actorStateView);
+        }
         if (output.payload() instanceof FriendPresenceViewOutput friendsView) {
           yield renderFriendsView(friendsView);
         }
@@ -223,6 +226,7 @@ public class TextPlayerOutputRenderer {
       case RealmBrowseViewOutput ignored -> TextCommandType.REALMS;
       case CharacterBrowseViewOutput ignored -> TextCommandType.CHARS;
       case WhoViewOutput ignored -> TextCommandType.WHO;
+      case ActorStateViewOutput ignored -> TextCommandType.STATUS;
       case FriendPresenceViewOutput ignored -> TextCommandType.FRIENDS;
       case FriendDetailViewOutput ignored -> TextCommandType.FRIENDS;
       case FriendRosterSummaryViewOutput ignored -> TextCommandType.FRIENDS;
@@ -412,6 +416,31 @@ public class TextPlayerOutputRenderer {
         + output.players().size()
         + "]: "
         + renderWhoEntries(output.players());
+  }
+
+  private String renderActorStateView(ActorStateViewOutput output) {
+    StringBuilder rendered = new StringBuilder("Status:\n");
+    for (ActorStateViewOutput.Resource resource : output.resources()) {
+      rendered.append("- ").append(resource.key()).append(": ").append(resource.currentValue());
+      if (resource.maxValue() != null) {
+        rendered.append('/').append(resource.maxValue());
+      }
+      rendered.append('\n');
+    }
+    if (!output.conditions().isEmpty()) {
+      rendered.append("Conditions:\n");
+      for (ActorStateViewOutput.Condition condition : output.conditions()) {
+        rendered.append("- ").append(condition.key());
+        if (condition.stackCount() > 1) {
+          rendered.append(" x").append(condition.stackCount());
+        }
+        if (condition.expiresAt() != null && !condition.expiresAt().isBlank()) {
+          rendered.append(" (until ").append(condition.expiresAt()).append(')');
+        }
+        rendered.append('\n');
+      }
+    }
+    return rendered.toString().trim();
   }
 
   private String renderWhoEntries(List<WhoViewOutput.Entry> entries) {

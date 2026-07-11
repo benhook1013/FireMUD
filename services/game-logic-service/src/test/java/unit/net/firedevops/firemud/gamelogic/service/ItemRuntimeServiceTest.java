@@ -22,6 +22,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRespons
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
@@ -59,6 +61,42 @@ class ItemRuntimeServiceTest {
     assertThat(response.getItemsList())
         .extracting(InventoryItem::getItemName)
         .containsExactly("Torch");
+  }
+
+  @Test
+  void queryActorStateDelegatesToEntityRuntime() {
+    QueryActorStateRequest request =
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .build();
+    when(entityStub.queryActorState(request))
+        .thenReturn(QueryActorStateResponse.newBuilder().setCharacterId("7").build());
+
+    QueryActorStateResponse response = service.queryActorState(request);
+
+    assertThat(response.getCharacterId()).isEqualTo("7");
+  }
+
+  @Test
+  void queryActorStateBackendFailureBecomesApplicationError() {
+    QueryActorStateRequest request =
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .build();
+    when(entityStub.queryActorState(request))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE.withDescription("down")));
+
+    QueryActorStateResponse response = service.queryActorState(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("ACTOR_STATE_UNAVAILABLE");
   }
 
   @Test

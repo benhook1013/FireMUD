@@ -8,6 +8,7 @@ Goal: define one canonical gameplay-state model for numeric stats, bounded resou
 
 - Entity Management now owns persisted actor resource and active-condition state through `actor_resource_states` and `actor_active_conditions`, keyed by tenant, derived playable-state namespace, and character id rather than a raw game-instance shortcut.
 - `QueryActorState` exposes a gameplay-attested, playable-scope-aware read API that returns baseline character stats overlaid with persisted resource rows plus active non-expired conditions.
+- The first player-facing state reader is now live: in-world `STATUS` (alias `STAT`) reads the evaluated actor state through Game Session -> Game Logic -> Entity Management, renders a typed resources/visible-conditions view for text and first-party WebSocket clients, and never exposes internal effect payload or source provenance.
 - The first implementation is intentionally read-side only: active condition payload modifiers can influence evaluated resources, but the slice does not yet author stat/condition definitions, evaluate equipment/action modifiers, apply or expire effects, or resolve combat damage.
 - Runtime game instance identifiers remain opaque strings, matching existing inventory/equipment/room-state tables rather than requiring numeric ids.
 
@@ -222,7 +223,7 @@ This means the first proof should be able to express things like:
 
 ## 6. Game Session Service: Presentation and Help Expectations
 
-- [ ] Define the first player-facing output expectations for status/state inspection, such as a future `STATUS` or prompt-facing resource summary, without blocking the shared runtime model on final UX polish.
+- [x] Define and implement the first player-facing state inspection command: in-world `STATUS` / `STAT` projects evaluated resources and active visible conditions without making Game Session the source of truth.
 - [ ] Document how conditions, buffs, and action states will eventually surface in transcripts or prompts without making Game Session the source of truth for gameplay evaluation.
 - [ ] Ensure later help/docs can explain stats and conditions using canonical definition keys rather than hardcoded prose tied to one game.
 

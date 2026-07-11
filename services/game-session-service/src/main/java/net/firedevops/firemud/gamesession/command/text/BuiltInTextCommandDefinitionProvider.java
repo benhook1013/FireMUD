@@ -104,6 +104,15 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         List.of(TextCommandActionTag.SOCIAL_PRESENCE, TextCommandActionTag.UI));
     register(
         definitions,
+        TextCommandType.STATUS,
+        List.of("status", "stat"),
+        TextCommandDispatchGroup.STATUS,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI));
+    register(
+        definitions,
         TextCommandType.FRIENDS,
         List.of("friends"),
         TextCommandDispatchGroup.FRIENDS,

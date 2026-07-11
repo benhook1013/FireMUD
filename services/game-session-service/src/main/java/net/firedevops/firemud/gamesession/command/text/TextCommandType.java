@@ -14,6 +14,7 @@ public enum TextCommandType {
   AFK,
   BLOCK,
   WHO,
+  STATUS,
   FRIENDS,
   INVENTORY,
   EQUIPMENT,
@@ -51,6 +52,7 @@ public enum TextCommandType {
       case "AFK", "BRB" -> AFK;
       case "BLOCK", "GUARD" -> BLOCK;
       case "WHO" -> WHO;
+      case "STATUS", "STAT" -> STATUS;
       case "FRIENDS" -> FRIENDS;
       case "INVENTORY", "INV", "I" -> INVENTORY;
       case "EQUIPMENT", "EQUIP", "EQ" -> EQUIPMENT;

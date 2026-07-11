@@ -66,6 +66,11 @@ public record PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
   }
 
+  public static PlayerOutput view(ActorStateViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
   public static PlayerOutput view(FriendPresenceViewOutput payload) {
     return new PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
@@ -162,6 +167,7 @@ public record PlayerOutput(
       case RealmBrowseViewOutput ignored -> null;
       case CharacterBrowseViewOutput ignored -> null;
       case WhoViewOutput ignored -> null;
+      case ActorStateViewOutput ignored -> null;
       case FriendPresenceViewOutput ignored -> null;
       case FriendDetailViewOutput ignored -> null;
       case FriendRosterSummaryViewOutput ignored -> null;
