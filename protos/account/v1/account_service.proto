@@ -11,6 +11,8 @@ service AccountService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  rpc RequestEmailLoginOtp(RequestEmailLoginOtpRequest) returns (RequestEmailLoginOtpResponse);
+  rpc VerifyEmailLoginOtp(VerifyEmailLoginOtpRequest) returns (AuthenticateResponse);
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
   rpc EnsurePublicProductionPlayerMembership(EnsurePublicProductionPlayerMembershipRequest) returns (EnsurePublicProductionPlayerMembershipResponse);
@@ -69,6 +71,22 @@ message AuthenticateResponse {
   string auth_token = 1;
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message RequestEmailLoginOtpRequest {
+  string tenant_id = 1;
+  string email = 2;
+}
+
+message RequestEmailLoginOtpResponse {
+  bool accepted = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message VerifyEmailLoginOtpRequest {
+  string tenant_id = 1;
+  string email = 2;
+  string code = 3;
 }
 
 message GetTenantMembershipForRuntimeRequest {

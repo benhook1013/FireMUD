@@ -69,6 +69,8 @@ firemud:
     grpc:
       public-methods:
         - account.v1.AccountService/Authenticate
+        - account.v1.AccountService/RequestEmailLoginOtp
+        - account.v1.AccountService/VerifyEmailLoginOtp
         - account.v1.AccountService/Ping
         - account.v1.AccountService/GetTenantMembershipForRuntime
         - account.v1.AccountService/EnsurePublicProductionPlayerMembership
