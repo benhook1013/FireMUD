@@ -26,6 +26,11 @@ public class AccountEmailLoginChallengeRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** Serializes all email-login challenge mutations for one account in the current transaction. */
+  public void lockAccountChallenge(long accountId) {
+    dsl.fetch("select pg_advisory_xact_lock(?)", accountId);
+  }
+
   public AccountEmailLoginChallenge save(AccountEmailLoginChallenge entity) {
     if (entity.getId() == null) {
       Long id =

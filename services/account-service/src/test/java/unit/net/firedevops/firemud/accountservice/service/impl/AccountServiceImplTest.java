@@ -238,6 +238,7 @@ class AccountServiceImplTest {
                 net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge.class);
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
         .save(challengeCaptor.capture());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
     assertEquals(9L, challengeCaptor.getValue().getAccountId());
     assertFalse(challengeCaptor.getValue().getCodeHash().matches("\\d{6}"));
     org.mockito.Mockito.verify(emailService)
@@ -258,6 +259,36 @@ class AccountServiceImplTest {
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     verifyNoInteractions(accountEmailLoginChallengeRepository, sessionService);
+  }
+
+  @Test
+  void emailLoginOtpVerificationLocksChallengeBeforeConsumingIt() {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setRole("player");
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setGameplayAdmissionAllowed(true);
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(5L);
+    challenge.setAccountId(9L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+    challenge.setInvalidAttemptCount(0);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
+        .thenReturn(Optional.of(membership));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challenge));
+
+    AuthenticationResult result = service.verifyEmailLoginOtp(7L, "verified@example.com", "123456");
+
+    assertEquals(9L, result.accountId());
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
+    inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).delete(challenge);
   }
 
   @Test

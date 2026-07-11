@@ -250,6 +250,7 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalArgumentException ex) {
       return;
     }
+    accountEmailLoginChallengeRepository.lockAccountChallenge(resolvedAccount.getId());
     LocalDateTime now = LocalDateTime.now();
     Optional<AccountEmailLoginChallenge> existing =
         accountEmailLoginChallengeRepository.findByAccountId(resolvedAccount.getId());
@@ -278,6 +279,7 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByEmail(email == null ? "" : email.trim())
             .orElseThrow(this::invalidCredentials);
+    accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
     AccountEmailLoginChallenge challenge =
         accountEmailLoginChallengeRepository
             .findByAccountId(account.getId())
