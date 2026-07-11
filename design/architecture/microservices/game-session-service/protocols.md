@@ -1,5 +1,7 @@
 # Game Session Service Protocols
 
+This document defines Game Session transport framing and service-level protocol behavior. The canonical standard command catalog, command stages, capability policy, and game-authored command extension rules live in [Player Command Model](../../system-architecture-player-command-model.md).
+
 ## Minimal Text Command Protocol
 
 Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name, case-insensitive, and the rest of the line is command-specific arguments. Empty lines are ignored.
@@ -293,6 +295,8 @@ Exits: south, west
 ```
 
 ### Stage-aware command handling
+
+The canonical command stages and standard-command availability are defined in [Player Command Model](../../system-architecture-player-command-model.md). This protocol section defines only their text-client framing and stage-aware response behavior.
 
 The protocol should behave like a menu-driven MUD front door rather than treating all non-system input as premature gameplay:
 
