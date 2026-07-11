@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import io.micrometer.core.annotation.Timed;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.ActorStateViewOutput;
@@ -80,7 +81,10 @@ public class StatusCommandHandler {
         CommandEnqueueResult.failure(errorCode, reason),
         List.of(
             PlayerOutput.error(
-                errorCode, reason, "error.actor-state.unavailable", java.util.Map.of())));
+                errorCode,
+                reason,
+                "error.actor-state." + errorCode.toLowerCase(Locale.ROOT).replace('_', '-'),
+                java.util.Map.of())));
   }
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {

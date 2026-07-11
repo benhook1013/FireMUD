@@ -82,6 +82,24 @@ class ItemRuntimeServiceTest {
   }
 
   @Test
+  void queryActorStateBackendFailureBecomesApplicationError() {
+    QueryActorStateRequest request =
+        QueryActorStateRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("9")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setSessionAttestation("attestation")
+            .build();
+    when(entityStub.queryActorState(request))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE.withDescription("down")));
+
+    QueryActorStateResponse response = service.queryActorState(request);
+
+    assertThat(response.getError().getCode()).isEqualTo("ACTOR_STATE_UNAVAILABLE");
+  }
+
+  @Test
   void pickupAndDropPreserveEntityRuntimeResponses() {
     PickupItemFromRoomRequest pickupRequest =
         PickupItemFromRoomRequest.newBuilder()

@@ -9,6 +9,7 @@ import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
 import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.presentation.ActorStateViewOutput;
+import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -74,5 +75,7 @@ class StatusCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PERMISSION_DENIED");
     assertThat(result.outputs().get(0).text()).contains("actor read denied");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.actor-state.permission-denied");
   }
 }
