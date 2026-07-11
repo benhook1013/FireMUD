@@ -58,7 +58,7 @@ public class ResumeTranscriptEntryRepository {
                 .eq(tenantId)
                 .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId))
-                .and(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.lt(toLocalDateTime(cutoff))))
+                .and(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toLocalDateTime(cutoff))))
         .execute();
   }
 
@@ -70,7 +70,7 @@ public class ResumeTranscriptEntryRepository {
     List<Long> expiredIds =
         dsl.select(RESUME_TRANSCRIPT_ENTRY.ID)
             .from(RESUME_TRANSCRIPT_ENTRY)
-            .where(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.lt(toLocalDateTime(cutoff)))
+            .where(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.le(toLocalDateTime(cutoff)))
             .orderBy(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
             .limit(batchSize)
             .fetch(RESUME_TRANSCRIPT_ENTRY.ID);

@@ -107,17 +107,64 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
-  void deletesExpiredEntriesGloballyInBoundedBatches() {
-    ResumeTranscriptEntry earliest = entry("Earliest\n", Instant.parse("2026-07-12T01:00:00Z"));
-    ResumeTranscriptEntry next = entry("Next\n", Instant.parse("2026-07-12T01:01:00Z"));
-    repository.saveAll(List.of(earliest, next));
+  void deletesExpiredEntriesGloballyAtTheirExactExpiryWithoutRemovingTtlZeroRows() {
+    Instant cutoff = Instant.parse("2026-07-12T01:02:00Z");
+    ResumeTranscriptEntry expiredInPrimaryScope = entry("Primary\n", cutoff.minusSeconds(20));
+    expiredInPrimaryScope.setExpiresAt(cutoff);
+    ResumeTranscriptEntry expiredInOtherScope = entry("Other scope\n", cutoff.minusSeconds(30));
+    expiredInOtherScope.setTenantId(23L);
+    expiredInOtherScope.setGameInstanceId(8L);
+    expiredInOtherScope.setCharacterId(14L);
+    expiredInOtherScope.setExpiresAt(cutoff.minusSeconds(1));
+    ResumeTranscriptEntry ttlZero = entry("Retained\n", cutoff.minusSeconds(40));
+    ttlZero.setCharacterId(15L);
+    ttlZero.setExpiresAt(null);
+    repository.saveAll(List.of(expiredInPrimaryScope, expiredInOtherScope, ttlZero));
 
-    int deleted = repository.deleteExpiredBefore(Instant.parse("2026-07-12T01:02:00Z"), 1);
+    int deleted = repository.deleteExpiredBefore(cutoff, 1);
 
     assertThat(deleted).isEqualTo(1);
+    assertThat(repository.findByScope(23L, 8L, 14L)).isEmpty();
     assertThat(repository.findByScope(22L, 7L, 13L))
         .extracting(ResumeTranscriptEntry::getProtocolText)
-        .containsExactly("Next\n");
+        .containsExactly("Primary\n");
+
+    assertThat(repository.deleteExpiredBefore(cutoff, 10)).isEqualTo(1);
+    assertThat(repository.findByScope(22L, 7L, 13L)).isEmpty();
+    assertThat(repository.findByScope(22L, 7L, 15L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Retained\n");
+  }
+
+  @Test
+  void dropsExpiredTranscriptAfterTheDurableServiceIsRecreated() {
+    ReconnectionSettingsResolver settingsResolver =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(1L, 1, 1, 100, 200));
+    DurableScreenBufferService initial =
+        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+    initial.append(
+        22L,
+        7L,
+        13L,
+        List.of(
+            new ScreenBufferService.BufferedEntry(
+                "Expired reconnect line\n",
+                1,
+                23,
+                Instant.now().minusSeconds(1).toEpochMilli(),
+                null,
+                null,
+                null,
+                null,
+                null)));
+
+    DurableScreenBufferService recreated =
+        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+
+    assertThat(recreated.get(22L, 7L, 13L)).isEmpty();
   }
 
   private ResumeTranscriptEntry entry(String text, Instant appendedAt) {

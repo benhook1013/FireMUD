@@ -5,12 +5,17 @@ import java.time.Instant;
 import net.firedevops.firemud.gamesession.repository.ResumeTranscriptEntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Bounds durable reconnect storage even when a player never reconnects after expiry. */
 @Component
+@ConditionalOnProperty(
+    name = "firemud.reconnection.buffer.expiry-sweep.enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository is an internal shared Spring collaborator.")

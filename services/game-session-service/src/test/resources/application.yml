@@ -8,3 +8,7 @@ spring:
 firemud:
   grpc:
     plaintext: true
+  reconnection:
+    buffer:
+      expiry-sweep:
+        enabled: false
