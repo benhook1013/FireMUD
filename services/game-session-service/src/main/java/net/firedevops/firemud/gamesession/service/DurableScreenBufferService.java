@@ -52,10 +52,13 @@ public class DurableScreenBufferService implements ScreenBufferService {
 
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
-    expireIfConfigured(tenantId, gameInstanceId, characterId, buffer);
+    expireExpiredEntries(tenantId, gameInstanceId, characterId);
     repository.saveAll(
         filtered.stream()
-            .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry))
+            .map(
+                entry ->
+                    toEntity(
+                        tenantId, gameInstanceId, characterId, entry, expiresAt(entry, buffer)))
             .toList());
     trim(tenantId, gameInstanceId, characterId, buffer);
     appendToHotCache(tenantId, gameInstanceId, characterId, filtered);
@@ -64,9 +67,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
-    FiremudReconnectionProperties.Buffer buffer =
-        settingsResolver.resolve(tenantId, gameInstanceId).buffer();
-    boolean expired = expireIfConfigured(tenantId, gameInstanceId, characterId, buffer);
+    boolean expired = expireExpiredEntries(tenantId, gameInstanceId, characterId);
     if (expired) {
       clearHotCache(tenantId, gameInstanceId, characterId);
     } else {
@@ -98,17 +99,8 @@ public class DurableScreenBufferService implements ScreenBufferService {
     clearHotCache(tenantId, gameInstanceId, characterId);
   }
 
-  private boolean expireIfConfigured(
-      long tenantId,
-      long gameInstanceId,
-      long characterId,
-      FiremudReconnectionProperties.Buffer buffer) {
-    if (buffer.ttlMs() == 0L) {
-      return false;
-    }
-    return repository.deleteExpired(
-            tenantId, gameInstanceId, characterId, Instant.now().minusMillis(buffer.ttlMs()))
-        > 0;
+  private boolean expireExpiredEntries(long tenantId, long gameInstanceId, long characterId) {
+    return repository.deleteExpired(tenantId, gameInstanceId, characterId, Instant.now()) > 0;
   }
 
   private void trim(
@@ -140,7 +132,11 @@ public class DurableScreenBufferService implements ScreenBufferService {
   }
 
   private ResumeTranscriptEntry toEntity(
-      long tenantId, long gameInstanceId, long characterId, BufferedEntry entry) {
+      long tenantId,
+      long gameInstanceId,
+      long characterId,
+      BufferedEntry entry,
+      Instant expiresAt) {
     ResumeTranscriptEntry entity = new ResumeTranscriptEntry();
     entity.setTenantId(tenantId);
     entity.setGameInstanceId(gameInstanceId);
@@ -149,12 +145,20 @@ public class DurableScreenBufferService implements ScreenBufferService {
     entity.setLineCount(entry.lineCount());
     entity.setByteSize(entry.byteSize());
     entity.setAppendedAt(Instant.ofEpochMilli(entry.appendedAtMs()));
+    entity.setExpiresAt(expiresAt);
     entity.setOutputKind(entry.outputKind());
     entity.setReplayPolicy(entry.replayPolicy());
     entity.setBriefRenderPolicy(entry.briefRenderPolicy());
     entity.setPayloadType(entry.payloadType());
     entity.setPayloadJson(entry.payloadJson());
     return entity;
+  }
+
+  private Instant expiresAt(BufferedEntry entry, FiremudReconnectionProperties.Buffer buffer) {
+    if (buffer.ttlMs() == 0L) {
+      return null;
+    }
+    return Instant.ofEpochMilli(entry.appendedAtMs()).plusMillis(buffer.ttlMs());
   }
 
   private BufferedEntry toBufferedEntry(ResumeTranscriptEntry entry) {

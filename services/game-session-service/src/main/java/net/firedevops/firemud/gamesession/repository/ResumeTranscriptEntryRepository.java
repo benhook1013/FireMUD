@@ -58,8 +58,24 @@ public class ResumeTranscriptEntryRepository {
                 .eq(tenantId)
                 .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId))
-                .and(RESUME_TRANSCRIPT_ENTRY.APPENDED_AT.lt(toLocalDateTime(cutoff))))
+                .and(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.lt(toLocalDateTime(cutoff))))
         .execute();
+  }
+
+  /** Deletes one bounded batch of globally expired transcripts, independent of later reconnects. */
+  public int deleteExpiredBefore(Instant cutoff, int batchSize) {
+    if (batchSize <= 0) {
+      return 0;
+    }
+    List<Long> expiredIds =
+        dsl.select(RESUME_TRANSCRIPT_ENTRY.ID)
+            .from(RESUME_TRANSCRIPT_ENTRY)
+            .where(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.lt(toLocalDateTime(cutoff)))
+            .orderBy(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
+            .limit(batchSize)
+            .fetch(RESUME_TRANSCRIPT_ENTRY.ID);
+    deleteByIds(expiredIds);
+    return expiredIds.size();
   }
 
   public void deleteByIds(Collection<Long> ids) {
@@ -88,6 +104,7 @@ public class ResumeTranscriptEntryRepository {
     record.setLineCount(entry.getLineCount());
     record.setByteSize(entry.getByteSize());
     record.setAppendedAt(toLocalDateTime(entry.getAppendedAt()));
+    record.setExpiresAt(toLocalDateTime(entry.getExpiresAt()));
     record.setOutputKind(entry.getOutputKind());
     record.setReplayPolicy(entry.getReplayPolicy());
     record.setBriefRenderPolicy(entry.getBriefRenderPolicy());
@@ -105,6 +122,7 @@ public class ResumeTranscriptEntryRepository {
     entry.setLineCount(record.getLineCount());
     entry.setByteSize(record.getByteSize());
     entry.setAppendedAt(toInstant(record.getAppendedAt()));
+    entry.setExpiresAt(toInstant(record.getExpiresAt()));
     entry.setOutputKind(record.getOutputKind());
     entry.setReplayPolicy(record.getReplayPolicy());
     entry.setBriefRenderPolicy(record.getBriefRenderPolicy());

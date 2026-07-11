@@ -14,6 +14,7 @@ public class ResumeTranscriptEntry {
   private int lineCount;
   private int byteSize;
   private Instant appendedAt;
+  private Instant expiresAt;
   private String outputKind;
   private String replayPolicy;
   private String briefRenderPolicy;

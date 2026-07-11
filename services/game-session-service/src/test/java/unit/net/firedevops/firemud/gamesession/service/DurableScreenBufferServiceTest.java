@@ -61,6 +61,7 @@ class DurableScreenBufferServiceTest {
     assertThat(persisted.getCharacterId()).isEqualTo(13L);
     assertThat(persisted.getProtocolText()).isEqualTo("You say, \"hello\"\n");
     assertThat(persisted.getPayloadJson()).isEqualTo("{\"kind\":\"SAY\"}");
+    assertThat(persisted.getExpiresAt()).isNull();
     verify(repository, never()).deleteExpired(anyLong(), anyLong(), anyLong(), any());
     verify(hotCache).append(22L, 7L, 13L, List.of(entry));
   }
@@ -111,6 +112,26 @@ class DurableScreenBufferServiceTest {
     service.append(22L, 7L, 13L, List.of(ScreenBufferService.BufferedEntry.fromText("new")));
 
     verify(repository).deleteByIds(List.of(1L));
+  }
+
+  @Test
+  void appendPersistsConfiguredEntryExpiry() {
+    when(settingsResolver.resolve(22L, 7L))
+        .thenReturn(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(1_000L, 1, 1, 100, 200)));
+    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of());
+    ScreenBufferService.BufferedEntry entry =
+        new ScreenBufferService.BufferedEntry(
+            "Recent room line\n", 1, 17, 1_000L, null, null, null, null, null);
+
+    service.append(22L, 7L, 13L, List.of(entry));
+
+    ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
+    verify(repository).saveAll(entries.capture());
+    assertThat(entries.getValue().getFirst().getExpiresAt())
+        .isEqualTo(Instant.ofEpochMilli(2_000L));
   }
 
   private ResumeTranscriptEntry entry(Long id, String text, Instant appendedAt) {

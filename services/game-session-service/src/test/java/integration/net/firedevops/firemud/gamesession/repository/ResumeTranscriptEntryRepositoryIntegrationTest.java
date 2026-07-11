@@ -5,7 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
+import net.firedevops.firemud.gamesession.service.DurableScreenBufferService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -78,6 +83,43 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
         .containsExactly("Other\n");
   }
 
+  @Test
+  void rehydratesATranscriptAfterTheDurableServiceIsRecreated() {
+    ReconnectionSettingsResolver settingsResolver =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(60_000L, 1, 1, 100, 200));
+    DurableScreenBufferService initial =
+        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+    initial.append(
+        22L,
+        7L,
+        13L,
+        List.of(ScreenBufferService.BufferedEntry.fromText("Durable reconnect line\n")));
+
+    DurableScreenBufferService recreated =
+        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+
+    assertThat(recreated.get(22L, 7L, 13L))
+        .map(ScreenBufferService.BufferedScreen::protocolText)
+        .contains("Durable reconnect line\n");
+  }
+
+  @Test
+  void deletesExpiredEntriesGloballyInBoundedBatches() {
+    ResumeTranscriptEntry earliest = entry("Earliest\n", Instant.parse("2026-07-12T01:00:00Z"));
+    ResumeTranscriptEntry next = entry("Next\n", Instant.parse("2026-07-12T01:01:00Z"));
+    repository.saveAll(List.of(earliest, next));
+
+    int deleted = repository.deleteExpiredBefore(Instant.parse("2026-07-12T01:02:00Z"), 1);
+
+    assertThat(deleted).isEqualTo(1);
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Next\n");
+  }
+
   private ResumeTranscriptEntry entry(String text, Instant appendedAt) {
     ResumeTranscriptEntry entry = new ResumeTranscriptEntry();
     entry.setTenantId(22L);
@@ -87,11 +129,28 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     entry.setLineCount(1);
     entry.setByteSize(text.length());
     entry.setAppendedAt(appendedAt);
+    entry.setExpiresAt(appendedAt.plusSeconds(20));
     entry.setOutputKind("VIEW");
     entry.setReplayPolicy("REPLAY");
     entry.setBriefRenderPolicy("FULL");
     entry.setPayloadType("look-view");
     entry.setPayloadJson("{\"room\":\"R-1\"}");
     return entry;
+  }
+
+  private ScreenBufferService emptyHotCache() {
+    return new ScreenBufferService() {
+      @Override
+      public void append(
+          long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {}
+
+      @Override
+      public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
+        return Optional.empty();
+      }
+
+      @Override
+      public void clear(long tenantId, long gameInstanceId, long characterId) {}
+    };
   }
 }
