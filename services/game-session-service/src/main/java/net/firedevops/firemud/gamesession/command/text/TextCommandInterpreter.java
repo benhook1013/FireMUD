@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @SuppressFBWarnings(
     value = "CT_CONSTRUCTOR_THROW",
@@ -121,11 +122,13 @@ public class TextCommandInterpreter {
         Objects.requireNonNull(commandHistoryRecorder, "commandHistoryRecorder must not be null");
   }
 
+  @Transactional
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
     return interpret(sessionId, parser.parse(rawLine), requiresSoloTick);
   }
 
+  @Transactional
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
     TextCommandDefinition definition =

@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
-import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.PlayerCommandHistory.PLAYER_COMMAND_HISTORY;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.jooq.tables.records.PlayerCommandHistoryRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.SQLDialect;
 import org.springframework.stereotype.Repository;
 
 /** Persists accepted command-history rows for a specific player context. */
@@ -33,6 +34,17 @@ public class PlayerCommandHistoryRepository {
     populate(record, entry);
     record.store();
     entry.setId(record.getId());
+  }
+
+  /**
+   * Serializes command-history mutations for one scope without retaining a lock-row permanently.
+   */
+  public void lockScope(long tenantId, long gameInstanceId, long characterId) {
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return;
+    }
+    dsl.execute(
+        "select pg_advisory_xact_lock(?)", scopeLockKey(tenantId, gameInstanceId, characterId));
   }
 
   public List<PlayerCommandHistoryEntry> findByScope(
@@ -71,7 +83,7 @@ public class PlayerCommandHistoryRepository {
     record.setGameInstanceId(entry.getGameInstanceId());
     record.setCharacterId(entry.getCharacterId());
     record.setCommandText(entry.getCommandText());
-    record.setAcceptedAt(toLocalDateTime(entry.getAcceptedAt()));
+    record.setAcceptedAt(toOffsetDateTime(entry.getAcceptedAt()));
   }
 
   private PlayerCommandHistoryEntry toEntity(Record record) {
@@ -83,5 +95,11 @@ public class PlayerCommandHistoryRepository {
     entry.setCommandText(record.get(PLAYER_COMMAND_HISTORY.COMMAND_TEXT));
     entry.setAcceptedAt(toInstant(record.get(PLAYER_COMMAND_HISTORY.ACCEPTED_AT)));
     return entry;
+  }
+
+  private long scopeLockKey(long tenantId, long gameInstanceId, long characterId) {
+    long key = tenantId;
+    key = 31L * key + gameInstanceId;
+    return 31L * key + characterId;
   }
 }

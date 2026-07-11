@@ -33,6 +33,7 @@ public class PlayerCommandHistoryStorageService {
       return;
     }
 
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     PlayerCommandHistoryEntry entry = new PlayerCommandHistoryEntry();
     entry.setTenantId(tenantId);
     entry.setGameInstanceId(gameInstanceId);
@@ -43,16 +44,23 @@ public class PlayerCommandHistoryStorageService {
     trimToMaxEntries(tenantId, gameInstanceId, characterId, maxEntries);
   }
 
+  @Transactional
   public List<String> findRecent(
       long tenantId, long gameInstanceId, long characterId, int maxEntries) {
     if (maxEntries <= 0) {
       return List.of();
     }
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     List<PlayerCommandHistoryEntry> entries =
         repository.findByScope(tenantId, gameInstanceId, characterId);
     if (entries.size() <= maxEntries) {
       return entries.stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
     }
+    repository.deleteByIds(
+        entries.stream()
+            .limit(entries.size() - maxEntries)
+            .map(PlayerCommandHistoryEntry::getId)
+            .toList());
     int startIndex = entries.size() - maxEntries;
     return new ArrayList<>(entries.subList(startIndex, entries.size()))
         .stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
