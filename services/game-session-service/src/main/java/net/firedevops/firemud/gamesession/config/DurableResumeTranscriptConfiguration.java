@@ -9,7 +9,6 @@ import net.firedevops.firemud.gamesession.service.DurableScreenBufferService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.ObjectMapper;
 
@@ -19,7 +18,6 @@ import tools.jackson.databind.ObjectMapper;
 @Configuration
 public class DurableResumeTranscriptConfiguration {
   @Bean
-  @Primary
   public ScreenBufferService durableScreenBufferService(
       ResumeTranscriptEntryRepository repository,
       ReconnectionSettingsResolver settingsResolver,
