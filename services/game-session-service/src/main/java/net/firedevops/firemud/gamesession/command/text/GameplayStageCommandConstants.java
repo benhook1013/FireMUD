@@ -4,7 +4,7 @@ package net.firedevops.firemud.gamesession.command.text;
 public final class GameplayStageCommandConstants {
   public static final String LOGIN_REQUIRED_CODE = "LOGIN_REQUIRED";
   public static final String LOGIN_REQUIRED_MESSAGE =
-      "You must LOGIN first. Use LOGIN <email> <password>.";
+      "You must LOGIN first. Use LOGIN <email> [secret].";
 
   public static final String PLAY_REQUIRED_CODE = "PLAY_REQUIRED";
   public static final String PLAY_REQUIRED_MESSAGE =

@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -86,6 +87,11 @@ public final class LoginCommandHandler {
 
   public LoginCommandHandlingResult handle(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    Optional<TextCommandPayload.EmailLoginChallengeRequest> maybeChallengeRequest =
+        command.emailLoginChallengePayload();
+    if (maybeChallengeRequest.isPresent()) {
+      return handleEmailLoginChallenge(sessionId, maybeChallengeRequest.orElseThrow());
+    }
     Optional<TextCommandPayload.Credentials> maybeCredentials = command.credentialsPayload();
     if (maybeCredentials.isEmpty()) {
       return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
@@ -157,6 +163,37 @@ public final class LoginCommandHandler {
                 "Logged in as " + credentials.loginName(),
                 "message.login.success",
                 Map.of("loginName", credentials.loginName()))));
+  }
+
+  private LoginCommandHandlingResult handleEmailLoginChallenge(
+      String sessionId, TextCommandPayload.EmailLoginChallengeRequest challengeRequest) {
+    SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
+    if (!parsedSessionId.valid()) {
+      return invalidSessionFailure(parsedSessionId.errorMessage());
+    }
+    long numericSessionId = parsedSessionId.value();
+
+    long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
+    if (bootstrapGameInstanceId <= 0) {
+      return failure("SESSION_NOT_FOUND", "Session not found");
+    }
+    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
+    if (maybeInstance.isEmpty()) {
+      return failure("SESSION_NOT_FOUND", "Session not found");
+    }
+    GameInstance instance = maybeInstance.orElseThrow();
+
+    RequestEmailLoginOtpResponse response =
+        accountClient.requestEmailLoginOtp(
+            String.valueOf(instance.getTenantId()), challengeRequest.email());
+    if (hasError(response.getError()) || !response.getAccepted()) {
+      return failure("UPSTREAM_FAILURE", "Authentication service unavailable");
+    }
+    return new LoginCommandHandlingResult(
+        CommandEnqueueResult.success(),
+        List.of(
+            PlayerOutput.message(
+                LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, "message.login.code-sent")));
   }
 
   private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
@@ -434,6 +471,12 @@ public final class LoginCommandHandler {
       return "ACCOUNT_LOCKED";
     }
     return "UPSTREAM_FAILURE";
+  }
+
+  private boolean hasError(ErrorDetail error) {
+    return error != null
+        && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
+            || !Optional.ofNullable(error.getMessage()).orElse("").isBlank());
   }
 
   private SessionIdParsing.ParsedSessionId parseSessionId(String sessionIdText) {

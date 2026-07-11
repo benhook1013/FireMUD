@@ -8,6 +8,7 @@ public sealed interface TextCommandPayload
     permits TextCommandPayload.None,
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
+        TextCommandPayload.EmailLoginChallengeRequest,
         TextCommandPayload.RealmBrowseRequest,
         TextCommandPayload.CharacterBrowseRequest,
         TextCommandPayload.PlayRequest,
@@ -30,6 +31,8 @@ public sealed interface TextCommandPayload
   }
 
   record Credentials(String loginName, String password, String otp) implements TextCommandPayload {}
+
+  record EmailLoginChallengeRequest(String email) implements TextCommandPayload {}
 
   record RealmBrowseRequest(String worldSelector) implements TextCommandPayload {}
 
@@ -100,11 +103,15 @@ public sealed interface TextCommandPayload
           parseQuantityAwareItemReference(safeArgs)
               .map(itemReference -> (TextCommandPayload) itemReference)
               .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
-      case LOGIN ->
-          safeArgs.size() >= 2
-              ? new Credentials(
-                  safeArgs.get(0), safeArgs.get(1), safeArgs.size() > 2 ? safeArgs.get(2) : "")
-              : new Tokens(safeArgs);
+      case LOGIN -> {
+        if (safeArgs.size() == 1) {
+          yield new EmailLoginChallengeRequest(safeArgs.getFirst());
+        }
+        yield safeArgs.size() >= 2
+            ? new Credentials(
+                safeArgs.get(0), safeArgs.get(1), safeArgs.size() > 2 ? safeArgs.get(2) : "")
+            : new Tokens(safeArgs);
+      }
       case PLAY ->
           parsePlayRequest(safeArgs)
               .<TextCommandPayload>map(request -> request)

@@ -4,7 +4,10 @@ package net.firedevops.firemud.gamesession.command.text;
 public final class LoginCommandConstants {
   public static final String PROMPT_MODE_UNSUPPORTED_CODE = "PROMPT_LOGIN_UNSUPPORTED";
   public static final String PROMPT_MODE_UNSUPPORTED_MESSAGE =
-      "Prompt-based login is not implemented yet; send LOGIN <username> <password>.";
+      "Prompt-based login is not implemented yet; send LOGIN <email> [secret].";
+
+  public static final String EMAIL_LOGIN_CODE_MESSAGE =
+      "If that account is allowed to log in, a code has been sent. Use LOGIN <email> <code>.";
 
   public static final String ACCOUNT_MISMATCH_CODE = "ACCOUNT_MISMATCH";
   public static final String ACCOUNT_MISMATCH_MESSAGE =

@@ -80,7 +80,9 @@ public class HelpCommandHandler {
       case "HELP" -> success(topicIndex());
       case "LOGIN" ->
           success(
-              "LOGIN <email> <password> [otp]\n"
+              "LOGIN <email> [secret]\n"
+                  + "LOGIN <email>\n"
+                  + "Request a one-time email login code when the account allows it.\n"
                   + "Use LOGON as an alias if your client expects it.\n"
                   + "After login, use PLAY <world> [realm] [character].");
       case "PLAY" ->

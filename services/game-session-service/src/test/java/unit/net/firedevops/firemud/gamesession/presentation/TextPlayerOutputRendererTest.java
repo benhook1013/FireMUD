@@ -788,6 +788,25 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedEmailLoginChallengeMessageUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.message("fallback", "message.login.code-sent", java.util.Map.of()));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "Si ce compte est autorise a se connecter, un code a ete envoye. Utilisez LOGIN <email> <code>.");
+  }
+
+  @Test
   void localizedErrorUsesConfiguredLocaleTemplate() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -803,7 +822,7 @@ class TextPlayerOutputRendererTest {
                 "LOGIN_REQUIRED", "fallback", "error.login-required", java.util.Map.of()));
 
     assertThat(rendered)
-        .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.");
+        .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> [secret].");
   }
 
   @Test

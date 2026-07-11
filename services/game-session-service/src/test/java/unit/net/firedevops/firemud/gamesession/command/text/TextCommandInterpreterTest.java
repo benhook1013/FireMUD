@@ -537,7 +537,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.",
+        "ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> [secret].",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
