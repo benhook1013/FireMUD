@@ -70,7 +70,7 @@ class PlayerCommandHistoryRecorderTest {
   }
 
   @Test
-  void doesNotRecordRejectedOrCredentialCommands() {
+  void doesNotRecordRejectedCredentialOrDisplayOnlyHistoryCommands() {
     SessionContext context = gameplayContext(17L);
 
     recorder.record(
@@ -83,6 +83,11 @@ class PlayerCommandHistoryRecorderTest {
             TextCommandType.LOGIN,
             List.of("player@example.com", "secret", "123456"),
             "LOGIN player@example.com secret 123456"),
+        CommandEnqueueResult.success(),
+        Optional.of(context),
+        Optional.of(context));
+    recorder.record(
+        new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY"),
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
