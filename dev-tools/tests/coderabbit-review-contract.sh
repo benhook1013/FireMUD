@@ -321,14 +321,6 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
           "nodes": [
             {
               "author": {
-                "login": "benhook1013"
-              },
-              "body": "@coderabbitai review",
-              "createdAt": "2026-07-03T02:40:00Z",
-              "url": "https://example.test/review"
-            },
-            {
-              "author": {
                 "login": "coderabbitai"
               },
               "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
@@ -458,9 +450,10 @@ grep -q "reason=latest explicit CodeRabbit review request was acknowledged witho
 
 expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "explicit_review_after_latest_commit=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
-grep -q "reason=latest explicit CodeRabbit review request was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
 
 expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

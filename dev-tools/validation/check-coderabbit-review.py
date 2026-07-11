@@ -334,15 +334,19 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and latest_commit_at_dt is not None
         and latest_coderabbit_review_finished_dt >= latest_commit_at_dt
     )
-    if latest_explicit_review_request_dt is not None:
-        for comment in pr["comments"]["nodes"]:
-            if (comment.get("author") or {}).get("login", "") != "coderabbitai":
-                continue
-            created_at_dt = parse_timestamp(comment.get("createdAt"))
-            if created_at_dt is None or created_at_dt < latest_explicit_review_request_dt:
-                continue
-            body = comment.get("body", "")
+    for comment in pr["comments"]["nodes"]:
+        if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+            continue
+        created_at_dt = parse_timestamp(comment.get("createdAt"))
+        if created_at_dt is None:
+            continue
+        body = comment.get("body", "")
+        if latest_commit_at_dt is not None and created_at_dt >= latest_commit_at_dt:
             latest_review_request_rate_limited |= REVIEW_LIMIT_MARKER in body
+        if (
+            latest_explicit_review_request_dt is not None
+            and created_at_dt >= latest_explicit_review_request_dt
+        ):
             latest_review_request_noop |= NOOP_REVIEW_MARKER in body
     for comment in pr["comments"]["nodes"]:
         author = (comment.get("author") or {}).get("login", "")
@@ -409,7 +413,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     if not substantive_review_after_latest_commit:
         reasons.append("no substantive CodeRabbit review summary found after the latest PR commit")
     if latest_review_request_rate_limited:
-        reasons.append("latest explicit CodeRabbit review request was rate limited; do not retrigger yet")
+        reasons.append("latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet")
     if latest_review_request_noop:
         reasons.append(
             "latest explicit CodeRabbit review request was acknowledged without reviewing commits"
