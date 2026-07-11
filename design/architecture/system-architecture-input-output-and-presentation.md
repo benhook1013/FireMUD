@@ -279,6 +279,8 @@ The policy defines:
 
 When an entry or byte bound is exceeded, FireMUD evicts the oldest retained entries. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
 
+The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its canonical persisted structured-entry envelope. That envelope counts the entry metadata, structured payload, and any derived rendered-text compatibility projection exactly once. FireMUD never separately adds the same payload or rendered text again for transport projections. If one complete entry alone exceeds the configured byte bound, FireMUD does not retain a partial or truncated entry; it drops that entry and retains the prior valid window. Otherwise, eviction removes complete oldest entries until both the entry-count and byte bounds hold.
+
 ### Separate history features
 
 The resume transcript is not a command-input history or a complete player archive.

@@ -15,7 +15,7 @@ Direct generic WebSocket access to Game Session remains useful as an internal/te
 
 At the protocol level, commands are split into two groups:
 
-- **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules.
+- **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`/`LOGON`, `LOGOUT`/`LOGOFF`/`QUIT`, and lobby discovery/help commands that do not touch gameplay rules.
 - **Gameplay commands** – in-world actions such as `LOOK`, communication actions like `SAY`, `WHISPER`, and `TELL`, movement, and combat. Game Session validates session state and authorization, normalizes input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics here.
 
 The player-facing protocol is also stage-aware:
@@ -37,6 +37,7 @@ PLAY <world> [realm] [character]
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
+| `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |

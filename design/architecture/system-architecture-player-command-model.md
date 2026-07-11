@@ -2,6 +2,10 @@
 
 This document defines FireMUD's canonical player-command model. It is the architecture source of truth for standard commands, command stages, command capability policy, and game-authored command extension. Service protocol documents describe transport framing and service-local execution; they do not redefine player command semantics.
 
+## Implementation Notes
+
+`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet.
+
 ## Command Model
 
 Player commands are transport-independent. Telnet, generic WebSocket, first-party web, and future smart clients normalize player intent onto the same command model before execution.
@@ -33,7 +37,7 @@ The standard catalog is grouped by command family. Detailed domain behavior rema
 
 | Family | Canonical commands | Stage | Availability | Semantic owner |
 | --- | --- | --- | --- | --- |
-| Session lifecycle | `LOGIN`, `PLAY`, `LOGOUT` | Command-specific pre-login, lobby, or gameplay stage | Mandatory platform | Account Service and Game Session |
+| Session lifecycle | `LOGIN` (`LOGON` alias), `PLAY`, `LOGOUT` (`LOGOFF` and `QUIT` aliases) | `LOGIN` pre-login, `PLAY` lobby, `LOGOUT` any stage | Mandatory platform | Account Service and Game Session |
 | Discovery and help | `WORLDS`, `REALMS`, `CHARS`, `HELP` | Pre-login or lobby as applicable; `HELP` is stage-aware | Mandatory platform | Account Service, Game Session, and Game Design for authored help |
 | Gameplay foundation | `LOOK`, `QUICKLOOK`, movement | Gameplay | Mandatory for a tenant/game using the playable text-MUD profile | Game Logic, World Management, and Game Session rendering |
 | Platform utilities | `STATUS`, `AFK` | Gameplay | Universal platform utilities | Game Session |

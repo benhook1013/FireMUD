@@ -186,11 +186,11 @@ For clarity, Telnet clients never receive a hidden transport-preserving recovery
 
 Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
 
-- a bounded durable per-player resume transcript keyed to gameplay identity replays its retained narrative/system entries after successful `LOGIN` + `PLAY`; Redis may cache that context but is not authoritative;
+- a bounded durable resume transcript keyed by the admitted tenant/game, game-instance, and character identity replays its retained narrative/system entries after successful `LOGIN` + `PLAY`; Redis may cache that context but is not authoritative;
 - new screen-buffer entries retain structured player-output metadata alongside rendered protocol text when the output came from the structured `PlayerOutput` path, so first-party clients can receive typed replay entries while classic clients continue to receive text;
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
-This screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
+The hot reconnect screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
 
 Prompt/status output is a separate output class from transcript lines:
 
@@ -219,13 +219,13 @@ These remain implementation-level operator/file-env defaults today. They will co
 
 ### Canonical durable resume-transcript policy
 
-Every game retains a durable, bounded resume transcript. This is a short rolling player context, not an archive and not a player-selected setting. The effective policy resolves from platform defaults with an optional tenant/game override:
+Every admitted `{tenantId, gameInstanceId, characterId}` scope retains one durable, bounded resume transcript. This is a short rolling player context, not an archive and not a player-selected setting. The effective policy resolves from platform defaults with an optional tenant/game override:
 
 - maximum retained entry count;
 - maximum retained byte size;
 - optional expiry after configured character inactivity, or `never`.
 
-New entries evict the oldest retained entries when either size bound is exceeded. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD reprints the whole retained context in order, then sends fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
+New entries evict the oldest retained entries when either size bound is exceeded. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD replays complete retained structured entries in ordering-token order before sending fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
 
 Current implementation status remains intentionally narrower than the target model:
 
