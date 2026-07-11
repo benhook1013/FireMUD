@@ -482,6 +482,7 @@ class AccountServiceImplTest {
             .getAudience()
             .iterator()
             .next());
+    verifyNoInteractions(accountEmailLoginChallengeRepository);
   }
 
   @Test

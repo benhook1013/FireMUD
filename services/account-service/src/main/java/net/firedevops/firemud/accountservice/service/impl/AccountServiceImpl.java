@@ -226,7 +226,8 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, otp);
+    PrimaryAuthentication authentication =
+        authenticateAccountIdentity(username, password, otp, true);
     Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
@@ -315,7 +316,8 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(
       Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, otp);
+    PrimaryAuthentication authentication =
+        authenticateAccountIdentity(username, password, otp, false);
     Account account = authentication.account();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
@@ -1033,7 +1035,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
-      String username, String password, String otp) {
+      String username, String password, String otp, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
         accountOpt.orElseThrow(
@@ -1041,7 +1043,9 @@ public class AccountServiceImpl implements AccountService {
                 new AuthenticationException(
                     AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
     Optional<AccountEmailLoginChallenge> emailLoginChallenge =
-        allowsEmailLoginOtp(account) ? activeEmailLoginChallenge(account) : Optional.empty();
+        allowEmailLoginOtp && allowsEmailLoginOtp(account)
+            ? activeEmailLoginChallenge(account)
+            : Optional.empty();
     if (emailLoginChallenge
         .filter(challenge -> matchesEmailLoginOtp(challenge, password))
         .isPresent()) {
