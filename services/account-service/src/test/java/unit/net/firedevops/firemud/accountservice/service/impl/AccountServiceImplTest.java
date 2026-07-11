@@ -229,7 +229,13 @@ class AccountServiceImplTest {
         .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+                  invocation.getArgument(0);
+              challenge.setId(3L);
+              return challenge;
+            });
 
     service.requestEmailLoginOtp(7L, "verified@example.com");
 
@@ -297,7 +303,7 @@ class AccountServiceImplTest {
         .storeSession(
             org.mockito.ArgumentMatchers.eq(7L),
             org.mockito.ArgumentMatchers.eq(9L),
-            org.mockito.ArgumentMatchers.anyString());
+            org.mockito.ArgumentMatchers.eq(result.authToken()));
   }
 
   @Test

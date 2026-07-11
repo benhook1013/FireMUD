@@ -147,6 +147,27 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void requestEmailLoginOtpRejectsZeroTenantIdAsApplicationError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<RequestEmailLoginOtpResponse> observer = new RecordingObserver<>();
+
+    service.requestEmailLoginOtp(
+        RequestEmailLoginOtpRequest.newBuilder()
+            .setTenantId("0")
+            .setEmail("demo@example.com")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void verifyEmailLoginOtpReturnsAuthenticatedSession() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -177,6 +198,54 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("9", ref.get().getAccountId());
     assertEquals("jwt", ref.get().getAuthToken());
+  }
+
+  @Test
+  void verifyEmailLoginOtpRejectsZeroTenantIdAsApplicationError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setTenantId("0")
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void verifyEmailLoginOtpReturnsInvalidCredentialsAsApplicationError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.verifyEmailLoginOtp(7L, "demo@example.com", "123456"))
+        .thenThrow(
+            new AuthenticationException(
+                AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setTenantId("7")
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals(
+        AuthenticationErrorCodes.INVALID_CREDENTIALS, observer.response().getError().getCode());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
   }
 
   @Test
@@ -967,5 +1036,38 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+  }
+
+  private static final class RecordingObserver<T> implements StreamObserver<T> {
+    private T response;
+    private boolean receivedTransportError;
+    private boolean completed;
+
+    @Override
+    public void onNext(T value) {
+      response = value;
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      receivedTransportError = true;
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+
+    private T response() {
+      return response;
+    }
+
+    private boolean receivedTransportError() {
+      return receivedTransportError;
+    }
+
+    private boolean completed() {
+      return completed;
+    }
   }
 }
