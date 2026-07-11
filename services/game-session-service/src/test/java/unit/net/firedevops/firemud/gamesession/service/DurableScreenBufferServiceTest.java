@@ -3,13 +3,13 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
@@ -74,7 +74,6 @@ class DurableScreenBufferServiceTest {
     entry.setBriefRenderPolicy("FULL");
     entry.setPayloadType("look-view");
     entry.setPayloadJson("{\"room\":\"R-1\"}");
-    when(hotCache.get(22L, 7L, 13L)).thenReturn(Optional.empty());
     when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of(entry));
 
     ScreenBufferService.BufferedScreen screen = service.get(22L, 7L, 13L).orElseThrow();
@@ -82,6 +81,7 @@ class DurableScreenBufferServiceTest {
     assertThat(screen.protocolText()).isEqualTo("Recent room line\n");
     assertThat(screen.entries().getFirst().payloadJson()).isEqualTo("{\"room\":\"R-1\"}");
     verify(hotCache).append(eq(22L), eq(7L), eq(13L), eq(screen.entries()));
+    verify(hotCache, never()).get(22L, 7L, 13L);
   }
 
   @Test
@@ -110,6 +110,7 @@ class DurableScreenBufferServiceTest {
 
     service.append(22L, 7L, 13L, List.of(ScreenBufferService.BufferedEntry.fromText("new")));
 
+    inOrder(repository).verify(repository).lockScope(22L, 7L, 13L);
     verify(repository).deleteByIds(List.of(1L));
   }
 

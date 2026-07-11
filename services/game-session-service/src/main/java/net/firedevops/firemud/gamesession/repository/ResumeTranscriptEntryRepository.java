@@ -11,6 +11,7 @@ import java.util.List;
 import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
 import net.firedevops.firemud.gamesession.jooq.tables.records.ResumeTranscriptEntryRecord;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.springframework.stereotype.Repository;
 
 /** Persists the source-of-truth bounded reconnect transcript. */
@@ -35,6 +36,15 @@ public class ResumeTranscriptEntryRepository {
       record.store();
       entry.setId(record.getId());
     }
+  }
+
+  /** Serializes transcript mutations for one scope without retaining a lock-row permanently. */
+  public void lockScope(long tenantId, long gameInstanceId, long characterId) {
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return;
+    }
+    dsl.execute(
+        "select pg_advisory_xact_lock(?)", scopeLockKey(tenantId, gameInstanceId, characterId));
   }
 
   public List<ResumeTranscriptEntry> findByScope(
@@ -130,5 +140,11 @@ public class ResumeTranscriptEntryRepository {
     entry.setPayloadType(record.getPayloadType());
     entry.setPayloadJson(record.getPayloadJson());
     return entry;
+  }
+
+  private long scopeLockKey(long tenantId, long gameInstanceId, long characterId) {
+    long key = tenantId;
+    key = 31L * key + gameInstanceId;
+    return 31L * key + characterId;
   }
 }

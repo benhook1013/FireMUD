@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DurableResumeTranscriptExpiryJob {
   private static final Logger log = LoggerFactory.getLogger(DurableResumeTranscriptExpiryJob.class);
   private static final int BATCH_SIZE = 500;
+  private static final int MAX_BATCHES_PER_RUN = 20;
 
   private final ResumeTranscriptEntryRepository repository;
 
@@ -32,9 +33,17 @@ public class DurableResumeTranscriptExpiryJob {
   @Scheduled(fixedDelayString = "${firemud.reconnection.buffer.expiry-sweep-ms:60000}")
   @Transactional
   public void purgeExpiredTranscripts() {
-    int deleted = repository.deleteExpiredBefore(Instant.now(), BATCH_SIZE);
-    if (deleted > 0) {
-      log.info("Purged {} expired reconnect transcript entries", deleted);
+    int totalDeleted = 0;
+    int deleted;
+    int batches = 0;
+    do {
+      deleted = repository.deleteExpiredBefore(Instant.now(), BATCH_SIZE);
+      totalDeleted += deleted;
+      batches++;
+    } while (deleted == BATCH_SIZE && batches < MAX_BATCHES_PER_RUN);
+    if (totalDeleted > 0) {
+      log.info(
+          "Purged {} expired reconnect transcript entries in {} batch(es)", totalDeleted, batches);
     }
   }
 }

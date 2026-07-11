@@ -16,11 +16,11 @@ class DurableResumeTranscriptExpiryJobTest {
       new DurableResumeTranscriptExpiryJob(repository);
 
   @Test
-  void purgesOneBoundedBatchOfExpiredTranscripts() {
-    when(repository.deleteExpiredBefore(any(), eq(500))).thenReturn(2);
+  void drainsFullBatchesUpToTheConfiguredRunBound() {
+    when(repository.deleteExpiredBefore(any(), eq(500))).thenReturn(500, 2);
 
     job.purgeExpiredTranscripts();
 
-    verify(repository).deleteExpiredBefore(any(), eq(500));
+    verify(repository, org.mockito.Mockito.times(2)).deleteExpiredBefore(any(), eq(500));
   }
 }

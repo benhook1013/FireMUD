@@ -52,6 +52,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
 
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     expireExpiredEntries(tenantId, gameInstanceId, characterId);
     repository.saveAll(
         filtered.stream()
@@ -67,16 +68,12 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
-    boolean expired = expireExpiredEntries(tenantId, gameInstanceId, characterId);
-    if (expired) {
+    if (expireExpiredEntries(tenantId, gameInstanceId, characterId)) {
       clearHotCache(tenantId, gameInstanceId, characterId);
-    } else {
-      Optional<BufferedScreen> cached = getFromHotCache(tenantId, gameInstanceId, characterId);
-      if (cached.isPresent()) {
-        return cached;
-      }
     }
 
+    // Redis cannot retain each durable entry's immutable expiry after later appends reset its key
+    // TTL.
     List<ResumeTranscriptEntry> entries =
         repository.findByScope(tenantId, gameInstanceId, characterId);
     if (entries.isEmpty()) {
@@ -95,6 +92,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public void clear(long tenantId, long gameInstanceId, long characterId) {
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     repository.deleteByScope(tenantId, gameInstanceId, characterId);
     clearHotCache(tenantId, gameInstanceId, characterId);
   }
@@ -172,16 +170,6 @@ public class DurableScreenBufferService implements ScreenBufferService {
         entry.getBriefRenderPolicy(),
         entry.getPayloadType(),
         entry.getPayloadJson());
-  }
-
-  private Optional<BufferedScreen> getFromHotCache(
-      long tenantId, long gameInstanceId, long characterId) {
-    try {
-      return hotCache.get(tenantId, gameInstanceId, characterId);
-    } catch (RuntimeException ex) {
-      log.warn("Failed to read reconnect transcript cache", ex);
-      return Optional.empty();
-    }
   }
 
   private void appendToHotCache(
