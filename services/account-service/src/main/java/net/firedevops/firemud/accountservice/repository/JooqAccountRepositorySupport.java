@@ -33,6 +33,19 @@ final class JooqAccountRepositorySupport {
       String role,
       String twoFactorSecret,
       Boolean emailVerified) {
+    return partialAccount(
+        id, username, email, passwordHash, role, twoFactorSecret, emailVerified, null);
+  }
+
+  static Account partialAccount(
+      Long id,
+      String username,
+      String email,
+      String passwordHash,
+      String role,
+      String twoFactorSecret,
+      Boolean emailVerified,
+      String loginAuthModes) {
     if (id == null) {
       return null;
     }
@@ -44,6 +57,9 @@ final class JooqAccountRepositorySupport {
     account.setRole(role);
     account.setTwoFactorSecret(twoFactorSecret);
     account.setEmailVerified(Boolean.TRUE.equals(emailVerified));
+    if (loginAuthModes != null) {
+      account.setLoginAuthModes(loginAuthModes);
+    }
     return account;
   }
 

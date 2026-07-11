@@ -83,7 +83,8 @@ public class PasswordResetTokenRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(PASSWORD_RESET_TOKEN)
         .join(ACCOUNTS)
         .on(PASSWORD_RESET_TOKEN.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -100,7 +101,8 @@ public class PasswordResetTokenRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     token.setToken(record.get(PASSWORD_RESET_TOKEN.TOKEN));
     token.setExpiresAt(record.get(PASSWORD_RESET_TOKEN.EXPIRES_AT));
     return token;

@@ -50,6 +50,8 @@ import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
@@ -220,12 +222,14 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional(readOnly = true)
+  @Transactional
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp) {
-    Account account = authenticateAccountIdentity(username, password, otp);
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, otp);
+    Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
+    authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         jwtUtil.generateToken(
             account.getId().toString(),
@@ -241,7 +245,9 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.request_email_login_otp")
   public void requestEmailLoginOtp(Long tenantId, String email) {
     Optional<Account> account = accountRepository.findByEmail(email == null ? "" : email.trim());
-    if (account.isEmpty() || !account.orElseThrow().isEmailVerified()) {
+    if (account.isEmpty()
+        || !account.orElseThrow().isEmailVerified()
+        || !allowsEmailLoginOtp(account.orElseThrow())) {
       return;
     }
     Account resolvedAccount = account.orElseThrow();
@@ -278,6 +284,9 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByEmail(email == null ? "" : email.trim())
             .orElseThrow(this::invalidCredentials);
+    if (!allowsEmailLoginOtp(account)) {
+      throw invalidCredentials();
+    }
     AccountEmailLoginChallenge challenge =
         accountEmailLoginChallengeRepository
             .findByAccountId(account.getId())
@@ -306,7 +315,9 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(
       Long tenantId, String username, String password, String otp) {
-    Account account = authenticateAccountIdentity(username, password, otp);
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, otp);
+    Account account = authentication.account();
+    authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
     long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
@@ -1021,14 +1032,24 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository.findByEmail(usernameOrEmail);
   }
 
-  private Account authenticateAccountIdentity(String username, String password, String otp) {
+  private PrimaryAuthentication authenticateAccountIdentity(
+      String username, String password, String otp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
         accountOpt.orElseThrow(
             () ->
                 new AuthenticationException(
                     AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    if (!verifyPassword(password, account.getPasswordHash())) {
+    Optional<AccountEmailLoginChallenge> emailLoginChallenge =
+        allowsEmailLoginOtp(account) ? activeEmailLoginChallenge(account) : Optional.empty();
+    if (emailLoginChallenge
+        .filter(challenge -> matchesEmailLoginOtp(challenge, password))
+        .isPresent()) {
+      return new PrimaryAuthentication(account, emailLoginChallenge);
+    }
+    if (!allowsPassword(account) || !verifyPassword(password, account.getPasswordHash())) {
+      emailLoginChallenge.ifPresent(
+          challenge -> recordFailedEmailLoginAttempt(challenge, LocalDateTime.now()));
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
     }
@@ -1042,8 +1063,40 @@ public class AccountServiceImpl implements AccountService {
             AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
       }
     }
-    return account;
+    return new PrimaryAuthentication(account, Optional.empty());
   }
+
+  private Optional<AccountEmailLoginChallenge> activeEmailLoginChallenge(Account account) {
+    Optional<AccountEmailLoginChallenge> challenge =
+        accountEmailLoginChallengeRepository.findByAccountId(account.getId());
+    if (challenge.isEmpty()) {
+      return Optional.empty();
+    }
+    AccountEmailLoginChallenge resolvedChallenge = challenge.orElseThrow();
+    LocalDateTime now = LocalDateTime.now();
+    if (resolvedChallenge.getExpiresAt().isBefore(now)
+        || resolvedChallenge.getInvalidAttemptCount() >= EMAIL_LOGIN_OTP_MAX_ATTEMPTS) {
+      recordFailedEmailLoginAttempt(resolvedChallenge, now);
+      return Optional.empty();
+    }
+    return Optional.of(resolvedChallenge);
+  }
+
+  private boolean matchesEmailLoginOtp(AccountEmailLoginChallenge challenge, String secret) {
+    return verifyPassword(secret == null ? "" : secret, challenge.getCodeHash());
+  }
+
+  private boolean allowsEmailLoginOtp(Account account) {
+    return AccountLoginAuthModes.allows(
+        account.getLoginAuthModes(), AccountLoginAuthMode.EMAIL_OTP);
+  }
+
+  private boolean allowsPassword(Account account) {
+    return AccountLoginAuthModes.allows(account.getLoginAuthModes(), AccountLoginAuthMode.PASSWORD);
+  }
+
+  private record PrimaryAuthentication(
+      Account account, Optional<AccountEmailLoginChallenge> emailLoginChallenge) {}
 
   private Account requireAccount(Long accountId) {
     return accountRepository

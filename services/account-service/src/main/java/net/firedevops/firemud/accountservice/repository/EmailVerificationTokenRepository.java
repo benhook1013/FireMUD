@@ -78,7 +78,8 @@ public class EmailVerificationTokenRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(EMAIL_VERIFICATION_TOKEN)
         .join(ACCOUNTS)
         .on(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -95,7 +96,8 @@ public class EmailVerificationTokenRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     token.setToken(record.get(EMAIL_VERIFICATION_TOKEN.TOKEN));
     token.setExpiresAt(record.get(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT));
     return token;

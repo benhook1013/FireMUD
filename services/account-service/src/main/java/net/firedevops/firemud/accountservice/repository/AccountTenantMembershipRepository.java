@@ -125,7 +125,8 @@ public class AccountTenantMembershipRepository {
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
             ACCOUNTS.TWO_FACTOR_SECRET,
-            ACCOUNTS.EMAIL_VERIFIED)
+            ACCOUNTS.EMAIL_VERIFIED,
+            ACCOUNTS.LOGIN_AUTH_MODES)
         .from(ACCOUNT_TENANT_MEMBERSHIP)
         .join(ACCOUNTS)
         .on(ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID.eq(ACCOUNTS.ID));
@@ -142,7 +143,8 @@ public class AccountTenantMembershipRepository {
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
             record.get(ACCOUNTS.TWO_FACTOR_SECRET),
-            record.get(ACCOUNTS.EMAIL_VERIFIED)));
+            record.get(ACCOUNTS.EMAIL_VERIFIED),
+            record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     membership.setTenantId(record.get(ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID));
     membership.setGameplayAdmissionAllowed(
         Boolean.TRUE.equals(record.get(ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED)));

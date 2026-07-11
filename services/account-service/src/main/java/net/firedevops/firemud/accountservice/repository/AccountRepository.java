@@ -45,6 +45,7 @@ public class AccountRepository {
               .set(ACCOUNTS.ROLE, entity.getRole())
               .set(ACCOUNTS.TWO_FACTOR_SECRET, entity.getTwoFactorSecret())
               .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
+              .set(ACCOUNTS.LOGIN_AUTH_MODES, entity.getLoginAuthModes())
               .returningResult(ACCOUNTS.ID)
               .fetchOne(ACCOUNTS.ID);
       entity.setId(id);
@@ -58,6 +59,7 @@ public class AccountRepository {
             .set(ACCOUNTS.ROLE, entity.getRole())
             .set(ACCOUNTS.TWO_FACTOR_SECRET, entity.getTwoFactorSecret())
             .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
+            .set(ACCOUNTS.LOGIN_AUTH_MODES, entity.getLoginAuthModes())
             .where(ACCOUNTS.ID.eq(entity.getId()))
             .execute();
     if (updated != 1) {
@@ -80,6 +82,7 @@ public class AccountRepository {
         record.getPasswordHash(),
         record.getRole(),
         record.getTwoFactorSecret(),
-        record.getEmailVerified());
+        record.getEmailVerified(),
+        record.getLoginAuthModes());
   }
 }
