@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Durable per-player command-history storage with bounded retention by configured maximum. */
@@ -44,7 +45,7 @@ public class PlayerCommandHistoryStorageService {
     trimLocked(tenantId, gameInstanceId, characterId, maxEntries);
   }
 
-  @Transactional
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void trimToMaxEntries(
       long tenantId, long gameInstanceId, long characterId, int maxEntries) {
     if (maxEntries <= 0) {

@@ -20,6 +20,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class PlayerCommandHistoryRepository {
+  private static final long RETENTION_SWEEP_LOCK_KEY = 0x5043485357454550L;
+
   private final DSLContext dsl;
 
   public PlayerCommandHistoryRepository(DSLContext dsl) {
@@ -45,6 +47,16 @@ public class PlayerCommandHistoryRepository {
     }
     dsl.execute(
         "select pg_advisory_xact_lock(?)", scopeLockKey(tenantId, gameInstanceId, characterId));
+  }
+
+  /** Acquires the cross-replica retention-sweep lease for the current transaction when possible. */
+  public boolean tryLockRetentionSweep() {
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return true;
+    }
+    Record record =
+        dsl.fetchOne("select pg_try_advisory_xact_lock(?) as locked", RETENTION_SWEEP_LOCK_KEY);
+    return record != null && Boolean.TRUE.equals(record.get("locked", Boolean.class));
   }
 
   public List<PlayerCommandHistoryEntry> findByScope(

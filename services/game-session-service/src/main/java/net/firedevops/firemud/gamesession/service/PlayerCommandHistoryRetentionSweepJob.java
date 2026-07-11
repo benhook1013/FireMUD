@@ -5,6 +5,7 @@ import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettings
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Gradually enforces lowered command-history caps even for inactive characters. */
 @Component
@@ -26,7 +27,11 @@ public class PlayerCommandHistoryRetentionSweepJob {
   }
 
   @Scheduled(fixedDelayString = "${firemud.command-history.retention-sweep-ms:60000}")
+  @Transactional
   public void trimInactiveHistory() {
+    if (!repository.tryLockRetentionSweep()) {
+      return;
+    }
     List<PlayerCommandHistoryRepository.HistoryScope> scopes =
         repository.findDistinctScopesAfter(cursor, BATCH_SIZE);
     if (scopes.isEmpty()) {
