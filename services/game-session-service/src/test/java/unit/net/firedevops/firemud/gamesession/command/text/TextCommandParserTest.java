@@ -657,6 +657,52 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesHistoryWithoutCountAsHistoryRequest() {
+    TextCommand command = parser.parse("HISTORY");
+
+    assertEquals(TextCommandType.HISTORY, command.type());
+    assertEquals("HISTORY", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("HISTORY", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.HistoryRequest);
+    assertEquals(null, command.historyPayload().orElseThrow().count());
+  }
+
+  @Test
+  void parsesHistoryWithCountArgument() {
+    TextCommand command = parser.parse("HISTORY 5");
+
+    assertEquals(TextCommandType.HISTORY, command.type());
+    assertEquals("HISTORY", command.aliasUsed());
+    assertEquals(List.of("5"), command.args());
+    assertEquals("HISTORY 5", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.HistoryRequest);
+    assertEquals(5, command.historyPayload().orElseThrow().count());
+  }
+
+  @Test
+  void parsesMalformedHistoryCountAsTokens() {
+    TextCommand command = parser.parse("HISTORY now");
+
+    assertEquals(TextCommandType.HISTORY, command.type());
+    assertEquals("HISTORY", command.aliasUsed());
+    assertEquals(List.of("now"), command.args());
+    assertEquals("HISTORY now", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.Tokens);
+  }
+
+  @Test
+  void parsesHistoryWithTooManyArgumentsAsTokens() {
+    TextCommand command = parser.parse("HISTORY 5 NOW");
+
+    assertEquals(TextCommandType.HISTORY, command.type());
+    assertEquals("HISTORY", command.aliasUsed());
+    assertEquals(List.of("5", "NOW"), command.args());
+    assertEquals("HISTORY 5 NOW", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.Tokens);
+  }
+
+  @Test
   void parsesDirectionalAliasAsMove() {
     TextCommand command = parser.parse("north");
 
