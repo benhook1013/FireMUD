@@ -257,6 +257,7 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalArgumentException ex) {
       return;
     }
+    accountEmailLoginChallengeRepository.lockAccountChallenge(resolvedAccount.getId());
     LocalDateTime now = LocalDateTime.now();
     Optional<AccountEmailLoginChallenge> existing =
         accountEmailLoginChallengeRepository.findByAccountId(resolvedAccount.getId());
@@ -288,6 +289,7 @@ public class AccountServiceImpl implements AccountService {
     if (!allowsEmailLoginOtp(account)) {
       throw invalidCredentials();
     }
+    accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
     AccountEmailLoginChallenge challenge =
         accountEmailLoginChallengeRepository
             .findByAccountId(account.getId())
@@ -1042,10 +1044,11 @@ public class AccountServiceImpl implements AccountService {
             () ->
                 new AuthenticationException(
                     AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    Optional<AccountEmailLoginChallenge> emailLoginChallenge =
-        allowEmailLoginOtp && allowsEmailLoginOtp(account)
-            ? activeEmailLoginChallenge(account)
-            : Optional.empty();
+    Optional<AccountEmailLoginChallenge> emailLoginChallenge = Optional.empty();
+    if (allowEmailLoginOtp && allowsEmailLoginOtp(account)) {
+      accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
+      emailLoginChallenge = activeEmailLoginChallenge(account);
+    }
     if (emailLoginChallenge
         .filter(challenge -> matchesEmailLoginOtp(challenge, password))
         .isPresent()) {
