@@ -594,7 +594,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketLogoutClearsReplayStateAndClosesTransport() throws Exception {
+  void websocketLogoutRetainsReplayStateAndClosesTransport() throws Exception {
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("LOGOUT");
@@ -604,7 +604,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(closeEvent.statusCode()).isEqualTo(CloseStatus.NORMAL.getCode());
     assertThat(closeEvent.reason()).isEqualTo("LOGOUT");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
-    verify(screenBufferService).clear(22L, 1L, 123L);
+    verify(screenBufferService, never()).clear(22L, 1L, 123L);
     verify(commandService, never()).enqueue("41", "LOGOUT", false);
   }
 
@@ -1074,29 +1074,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyLogoutClearsReplayStateBeforeFreshReconnect() throws Exception {
-    java.util.concurrent.atomic.AtomicBoolean cleared =
-        new java.util.concurrent.atomic.AtomicBoolean();
+  void websocketFirstPartyLogoutRetainsReplayStateForFreshReconnect() throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
-        .thenAnswer(
-            invocation ->
-                cleared.get()
-                    ? Optional.empty()
-                    : Optional.of(
-                        new ScreenBufferService.BufferedScreen(
-                            java.util.List.of(
-                                ScreenBufferService.BufferedEntry.fromText(
-                                    "First-party stale replay\n")),
-                            1,
-                            1,
-                            44L)));
-    org.mockito.Mockito.doAnswer(
-            invocation -> {
-              cleared.set(true);
-              return null;
-            })
-        .when(screenBufferService)
-        .clear(22L, 1L, 123L);
+        .thenReturn(
+            Optional.of(
+                new ScreenBufferService.BufferedScreen(
+                    java.util.List.of(
+                        ScreenBufferService.BufferedEntry.fromText("First-party replay\n")),
+                    1,
+                    1,
+                    44L)));
 
     GameplayWebSocketDriver.CloseEvent firstCloseEvent;
     try (GameplayWebSocketDriver client =
@@ -1112,7 +1099,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     assertThat(firstCloseEvent.reason()).isEqualTo("LOGOUT");
-    assertThat(cleared.get()).isTrue();
+    verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
@@ -1132,10 +1119,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
     assertThat(secondPayloads)
-        .noneMatch(
+        .anyMatch(
             payload ->
                 "transcript_chunk".equals(json(payload).path("eventType").asText())
-                    && payload.contains("First-party stale replay"));
+                    && payload.contains("First-party replay"));
   }
 
   @Test

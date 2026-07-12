@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.RevisionMapper;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import tools.jackson.databind.ObjectMapper;
 
 class RevisionServiceImplTest {
   @Mock private RevisionRepository revisionRepository;
@@ -41,7 +43,12 @@ class RevisionServiceImplTest {
     RevisionMapper mapper = Mappers.getMapper(RevisionMapper.class);
     service =
         new RevisionServiceImpl(
-            revisionRepository, gameRepository, versionRepository, mapper, worldManagementClient);
+            revisionRepository,
+            gameRepository,
+            versionRepository,
+            mapper,
+            worldManagementClient,
+            new ObjectMapper());
   }
 
   @Test
@@ -59,6 +66,86 @@ class RevisionServiceImplTest {
     RevisionDto result = service.saveRevision(dto);
 
     assertEquals(10L, result.id());
+  }
+
+  @Test
+  void saveRevisionRejectsPublishedVersionBeforePersistingOrApplyingMutations() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("1");
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndId("1", 7L)).thenReturn(java.util.Optional.of(version));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null, "1", 7L, 3L, "{}", "COMMAND_DEFINITION", null, null, null, null)));
+
+    assertEquals("INVALID_ARGUMENT: published versions are immutable", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+    verify(worldManagementClient, never())
+        .applyWorldDesignMutation(any(), anyLong(), any(WorldDesignMutationRevisionDto.class));
+  }
+
+  @Test
+  void saveRevisionRejectsMalformedCommandDefinitionBeforePersisting() {
+    setupGameAndVersion();
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        "{\"schemaVersion\":1,\"commandId\":\"block\"}",
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("INVALID_ARGUMENT: commandDefinition semanticOwner is required", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionPersistsValidCommandDefinition() {
+    Game game = setupGameAndVersion();
+    Revision saved = new Revision();
+    saved.setId(12L);
+    saved.setTenantId(game.getTenantId());
+    saved.setVersionId(7L);
+    saved.setRevisionKind("COMMAND_DEFINITION");
+    saved.setData(validCommandDefinition());
+    when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
+
+    RevisionDto result =
+        service.saveRevision(
+            new RevisionDto(
+                null,
+                "1",
+                7L,
+                3L,
+                validCommandDefinition(),
+                "COMMAND_DEFINITION",
+                null,
+                null,
+                null,
+                null));
+
+    assertEquals(12L, result.id());
+    verify(revisionRepository).save(any(Revision.class));
   }
 
   @Test
@@ -235,6 +322,23 @@ class RevisionServiceImplTest {
         mutation,
         null,
         null);
+  }
+
+  private String validCommandDefinition() {
+    return """
+        {
+          "schemaVersion": 1,
+          "commandId": "block",
+          "semanticOwner": "GAME_LOGIC",
+          "executionDiscipline": "DURABLE_GAMEPLAY",
+          "stageRequirement": "GAMEPLAY",
+          "promptPolicy": "WHEN_GAMEPLAY",
+          "actionCategory": "GAMEPLAY",
+          "aliases": ["block", "guard"],
+          "actionTags": ["COMBAT"],
+          "effects": []
+        }
+        """;
   }
 
   private WorldDesignMutationRevisionDto generationSubtreeMutation() {

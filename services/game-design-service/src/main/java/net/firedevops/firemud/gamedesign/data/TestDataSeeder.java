@@ -116,6 +116,7 @@ public class TestDataSeeder implements ApplicationRunner {
     bundle.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
     bundle.setRequiredManifestAssetKeysJson("[]");
     bundle.setParticipantDigestsJson("[]");
+    bundle.setCommandDefinitionsJson("[]");
     bundle.setScriptOnly(false);
     bundle.setScriptPatchVersion(null);
     bundle = publishedReleaseBundleRepository.save(bundle);

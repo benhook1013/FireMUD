@@ -173,6 +173,7 @@ class GameDesignGrpcServiceTest {
                 List.of(
                     new PublishParticipantDigestDto(
                         "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
+                List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
                 "genrev-1",
                 false,
                 null,
@@ -193,6 +194,9 @@ class GameDesignGrpcServiceTest {
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
+    assertEquals(
+        List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
+        ref.get().getBundle().getCommandDefinitionsList());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
     assertEquals("publish", ref.get().getBundle().getWorkflowFamily());
     assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
