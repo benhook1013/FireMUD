@@ -4,7 +4,7 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Notes
 
-`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet.
+`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine.
 
 ## Command Model
 
@@ -17,9 +17,28 @@ Every command definition carries:
 - its action category and optional semantic tags;
 - its command capability and semantic owner;
 - whether it is a direct read/session operation or a durable gameplay action;
+- zero or more typed execution-effect declarations when it changes gameplay state;
 - its help/discovery metadata.
 
 The runtime command registry implements this model. It does not define the product contract independently of this document.
+
+## Typed Execution Effects
+
+Action category and tags are descriptive policy metadata. They answer questions such as whether activity is meaningful, whether a command is combat-related, or how output should be presented. They must not select a concrete gameplay mutation merely because a command has a broad tag such as `COMBAT`.
+
+Gameplay-changing commands instead declare one or more typed execution effects. An effect declaration has a registered `effectKind`, a schema-validated payload, targeting and authorization requirements, replay/idempotency semantics, and any ordering or atomicity requirements. Direct reads, session operations, and presentation-only commands declare no gameplay effects.
+
+For example, the seeded `BLOCK` command is a gameplay command with the `COMBAT` tag, but its concrete behavior is a separate action-state effect declaration equivalent to `APPLY_ACTION_STATE` with the typed `blocking` payload and bounded duration. `ATTACK`, `PARRY`, and `TAUNT` may all be combat-tagged without inheriting that blocking effect.
+
+The generic runtime owns only the effect engine:
+
+- validate declarations and payloads against registered effect schemas;
+- authorize, persist, order, replay, and execute declared effects through the durable effect ledger;
+- fail closed when a published declaration uses an unknown or unsupported effect kind or schema version.
+
+It does not execute arbitrary DML text, Java snippets, or unvalidated payloads. New behavior is made available by registering a safe effect kind and schema in the platform, then declaring version-scoped effect instances as Game Design data.
+
+Seeded platform commands and tenant/game-authored commands use the same declaration shape. Built-ins are canonical seed data, not permanently privileged Java-only command-to-handler mappings. A command may compose multiple declared effects only when its effect schema defines their ordering and transactional boundary explicitly.
 
 ## Player Stages
 
@@ -54,7 +73,7 @@ Platform-reserved commands and aliases cannot be shadowed by a game-authored act
 
 Game-authored actions must:
 
-- declare a canonical id, aliases, stage, action category, tags, capability requirements, execution discipline, and help metadata;
+- declare a canonical id, aliases, stage, action category, tags, capability requirements, typed execution effects where applicable, execution discipline, and help metadata;
 - reject collisions with reserved names and aliases;
 - use the same stage and output rules as standard commands;
 - remain tenant/game-scoped and never alter another tenant/game's command namespace.
