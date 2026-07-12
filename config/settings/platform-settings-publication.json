@@ -195,7 +195,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 1800000,
-      "constraints": "integer >= 1 ms"
+      "constraints": "integer >= 0 ms; 0 retains the bounded transcript until size eviction"
     },
     "firemud.reconnection.buffer.min-messages": {
       "group": "reconnection.buffer",

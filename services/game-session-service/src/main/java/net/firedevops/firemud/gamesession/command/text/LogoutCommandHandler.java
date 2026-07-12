@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -29,7 +28,6 @@ public final class LogoutCommandHandler {
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
-  private final ScreenBufferService screenBufferService;
   private final ScriptEventPublisher scriptEventPublisher;
 
   public LogoutCommandHandler(
@@ -39,7 +37,6 @@ public final class LogoutCommandHandler {
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      ScreenBufferService screenBufferService,
       ScriptEventPublisher scriptEventPublisher) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -58,8 +55,6 @@ public final class LogoutCommandHandler {
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    this.screenBufferService =
-        Objects.requireNonNull(screenBufferService, "screenBufferService must not be null");
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
   }
@@ -83,10 +78,6 @@ public final class LogoutCommandHandler {
       boolean stopSession = shouldStopSession(context, persistedContext);
       if (stopSession) {
         gameInstanceService.stopSession(context.gameInstanceId());
-      }
-      if (context.hasGameplayIdentity()) {
-        screenBufferService.clear(
-            context.tenantId(), context.gameInstanceId(), context.characterId());
       }
       gameplayPresenceLifecycleService.recordDisconnected(
           context.sessionId(), AccountRecentPresenceDisposition.LOGOUT);

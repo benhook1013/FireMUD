@@ -86,6 +86,13 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
+      "name": "firemud.reconnection.buffer.expiry-sweep.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether Game Session periodically removes expired durable reconnect transcript entries.",
+      "sourceType": "net.firedevops.firemud.gamesession.service.DurableResumeTranscriptExpiryJob"
+    },
+    {
       "name": "firemud.reconnection.buffer.min-messages",
       "type": "java.lang.Integer",
       "defaultValue": 8,
