@@ -97,7 +97,7 @@ public class RevisionServiceImpl implements RevisionService {
       }
       requireText(definition, "commandId");
       requireText(definition, "semanticOwner");
-      requireText(definition, "executionDiscipline");
+      requireEnum(definition, "executionDiscipline", "DURABLE_GAMEPLAY");
       requireEnum(definition, "stageRequirement", "NONE", "LOGIN", "GAMEPLAY");
       requireEnum(definition, "promptPolicy", "NEVER", "WHEN_LOGGED_IN", "WHEN_GAMEPLAY");
       requireEnum(definition, "actionCategory", "GAMEPLAY", "SOCIAL", "META", "ADMIN", "SYSTEM");
