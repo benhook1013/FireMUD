@@ -20,18 +20,22 @@ import net.firedevops.firemud.gamedesign.service.RevisionService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
 public class RevisionServiceImpl implements RevisionService {
   private static final Logger logger = LoggingUtil.getLogger(RevisionServiceImpl.class);
   private static final String WORLD_DESIGN_MUTATION_KIND = "WORLD_DESIGN_MUTATION";
+  private static final String COMMAND_DEFINITION_KIND = "COMMAND_DEFINITION";
 
   private final RevisionRepository revisionRepository;
   private final GameRepository gameRepository;
   private final VersionRepository versionRepository;
   private final RevisionMapper revisionMapper;
   private final WorldManagementClient worldManagementClient;
+  private final ObjectMapper objectMapper;
 
   @Override
   @Transactional
@@ -52,6 +56,7 @@ public class RevisionServiceImpl implements RevisionService {
     if (version.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: published versions are immutable");
     }
+    validateCommandDefinitionIfPresent(dto);
     AppliedWorldDesignMutationDto appliedWorldDesignMutation =
         applyWorldDesignMutationIfPresent(dto);
     Revision entity = revisionMapper.toEntity(dto);
@@ -79,6 +84,63 @@ public class RevisionServiceImpl implements RevisionService {
     validateWorldMutationRequest(dto);
     return worldManagementClient.applyWorldDesignMutation(
         dto.tenantId(), dto.versionId(), dto.worldDesignMutation());
+  }
+
+  private void validateCommandDefinitionIfPresent(RevisionDto dto) {
+    if (!COMMAND_DEFINITION_KIND.equals(dto.revisionKind())) {
+      return;
+    }
+    try {
+      JsonNode definition = objectMapper.readTree(dto.data());
+      if (!definition.isObject() || definition.path("schemaVersion").asInt() != 1) {
+        throw invalidCommandDefinition("schemaVersion must be 1");
+      }
+      requireText(definition, "commandId");
+      requireText(definition, "semanticOwner");
+      requireText(definition, "executionDiscipline");
+      requireEnum(definition, "stageRequirement", "NONE", "LOGIN", "GAMEPLAY");
+      requireEnum(definition, "promptPolicy", "NEVER", "WHEN_LOGGED_IN", "WHEN_GAMEPLAY");
+      requireEnum(definition, "actionCategory", "GAMEPLAY", "SOCIAL", "META", "ADMIN", "SYSTEM");
+      requireTextArray(definition, "aliases");
+      if (!definition.path("actionTags").isArray() || !definition.path("effects").isArray()) {
+        throw invalidCommandDefinition("actionTags and effects must be arrays");
+      }
+    } catch (IllegalArgumentException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw invalidCommandDefinition("must be valid JSON");
+    }
+  }
+
+  private void requireText(JsonNode definition, String field) {
+    if (!definition.path(field).isTextual() || definition.path(field).asText().isBlank()) {
+      throw invalidCommandDefinition(field + " is required");
+    }
+  }
+
+  private void requireEnum(JsonNode definition, String field, String... allowed) {
+    requireText(definition, field);
+    for (String value : allowed) {
+      if (value.equals(definition.path(field).asText())) {
+        return;
+      }
+    }
+    throw invalidCommandDefinition("unsupported " + field);
+  }
+
+  private void requireTextArray(JsonNode definition, String field) {
+    if (!definition.path(field).isArray()) {
+      throw invalidCommandDefinition(field + " must be an array");
+    }
+    for (JsonNode value : definition.path(field)) {
+      if (!value.isTextual() || value.asText().isBlank()) {
+        throw invalidCommandDefinition(field + " entries must be nonblank strings");
+      }
+    }
+  }
+
+  private IllegalArgumentException invalidCommandDefinition(String message) {
+    return new IllegalArgumentException("INVALID_ARGUMENT: commandDefinition " + message);
   }
 
   private void validateWorldMutationRequest(RevisionDto dto) {
