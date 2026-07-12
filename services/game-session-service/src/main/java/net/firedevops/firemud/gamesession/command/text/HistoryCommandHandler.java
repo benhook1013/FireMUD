@@ -47,7 +47,10 @@ final class HistoryCommandHandler {
     if (requestedCount != null && requestedCount <= 0) {
       return invalidCount();
     }
-    int limit = resolveLimit(requestedCount, settings.maxEntries());
+    if (requestedCount != null && requestedCount > settings.maxEntries()) {
+      return invalidCount();
+    }
+    int limit = requestedCount == null ? settings.maxEntries() : requestedCount;
     List<String> entries =
         historyStorageService.findRecent(
             context.tenantId(), context.gameInstanceId(), context.characterId(), limit);
@@ -57,13 +60,6 @@ final class HistoryCommandHandler {
     }
 
     return success(String.join("\n", entries));
-  }
-
-  private int resolveLimit(Integer requestedCount, int configuredMax) {
-    if (requestedCount == null) {
-      return configuredMax;
-    }
-    return Math.min(requestedCount, configuredMax);
   }
 
   private TextCommandInterpretationResult invalidCount() {

@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettings
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class HistoryCommandHandlerTest {
@@ -84,7 +83,7 @@ class HistoryCommandHandlerTest {
   }
 
   @Test
-  void clampsRequestedCountToConfiguredMax() {
+  void rejectsRequestedCountAboveConfiguredMax() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     HistoryCommandHandler handler =
@@ -93,10 +92,6 @@ class HistoryCommandHandlerTest {
             new EffectiveCommandHistorySettingsResolver(
                 new FiremudCommandHistoryProperties(true, 3),
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
-
-    Mockito.when(
-            storage.findRecent(Mockito.eq(7L), Mockito.eq(9L), Mockito.eq(7001L), Mockito.eq(3)))
-        .thenReturn(List.of("LOOK", "SAY hi", "DROP torch"));
 
     SessionContext context =
         new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -111,13 +106,9 @@ class HistoryCommandHandlerTest {
                 new TextCommandPayload.HistoryRequest(10)),
             context);
 
-    assertTrue(result.commandResult().accepted());
-    assertEquals("LOOK\nSAY hi\nDROP torch", result.outputs().get(0).text());
-
-    ArgumentCaptor<Integer> maxEntries = ArgumentCaptor.forClass(Integer.class);
-    Mockito.verify(storage)
-        .findRecent(Mockito.eq(7L), Mockito.eq(9L), Mockito.eq(7001L), maxEntries.capture());
-    assertEquals(3, maxEntries.getValue());
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    Mockito.verifyNoInteractions(storage);
   }
 
   @Test
