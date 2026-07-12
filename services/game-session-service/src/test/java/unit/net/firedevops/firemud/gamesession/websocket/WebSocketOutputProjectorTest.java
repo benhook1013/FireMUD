@@ -159,7 +159,7 @@ class WebSocketOutputProjectorTest {
             7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
     AdmittedTextCommandRegistryResolver admittedResolver =
         mock(AdmittedTextCommandRegistryResolver.class);
-    when(admittedResolver.resolveMetadata(context, "wave"))
+    when(admittedResolver.resolveMetadata(context, "wave", "wave"))
         .thenReturn(
             java.util.Optional.of(
                 new TextCommandMetadataResolver.ResolvedTextCommandMetadata(

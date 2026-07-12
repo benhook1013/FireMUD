@@ -37,10 +37,14 @@ final class AdmittedCommandDefinitionReader {
     if (context == null || context.tenantId() <= 0L || context.gameInstanceId() <= 0L) {
       return Optional.empty();
     }
-    return gameInstanceRepository
-        .findById(context.gameInstanceId())
-        .filter(instance -> matchesContext(instance, context))
-        .flatMap(instance -> readDefinitions(context.tenantId(), instance));
+    try {
+      return gameInstanceRepository
+          .findById(context.gameInstanceId())
+          .filter(instance -> matchesContext(instance, context))
+          .flatMap(instance -> readDefinitions(context.tenantId(), instance));
+    } catch (RuntimeException ex) {
+      return Optional.empty();
+    }
   }
 
   private boolean matchesContext(GameInstance instance, SessionContext context) {
@@ -176,11 +180,11 @@ final class AdmittedCommandDefinitionReader {
   }
 
   private String requiredText(JsonNode definition, String field) {
-    String value = definition.path(field).asText();
-    if (value == null || value.isBlank()) {
+    JsonNode node = definition.path(field);
+    if (!node.isTextual() || node.asText().isBlank()) {
       throw new IllegalArgumentException(field + " is required");
     }
-    return value;
+    return node.asText();
   }
 
   private String requiredIdentifier(JsonNode definition, String field) {

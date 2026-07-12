@@ -95,8 +95,8 @@ public final class WebSocketOutputProjector {
             "command_result",
             command.type().name(),
             command.commandId(),
-            resolveActionCategory(command, context),
-            resolveActionTags(command, context),
+            resolveActionCategory(command, interpretation, context),
+            resolveActionTags(command, interpretation, context),
             interpretation.commandResult().accepted(),
             interpretation.commandResult().errorCode(),
             interpretation.commandResult().errorMessage(),
@@ -252,23 +252,32 @@ public final class WebSocketOutputProjector {
   private record TranscriptEntryEnvelope(
       String eventType, String label, String text, FirstPartyPlayerOutputEnvelope output) {}
 
-  private String resolveActionCategory(TextCommand command, SessionContext context) {
-    return resolveMetadata(command, context)
+  private String resolveActionCategory(
+      TextCommand command, TextCommandInterpretationResult interpretation, SessionContext context) {
+    return resolveMetadata(command, interpretation, context)
         .map(TextCommandMetadataResolver.ResolvedTextCommandMetadata::actionCategory)
         .map(Enum::name)
         .orElse(null);
   }
 
-  private List<String> resolveActionTags(TextCommand command, SessionContext context) {
-    return resolveMetadata(command, context)
+  private List<String> resolveActionTags(
+      TextCommand command, TextCommandInterpretationResult interpretation, SessionContext context) {
+    return resolveMetadata(command, interpretation, context)
         .map(metadata -> metadata.actionTags().stream().map(Enum::name).toList())
         .orElse(java.util.List.of());
   }
 
   private java.util.Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata>
-      resolveMetadata(TextCommand command, SessionContext context) {
+      resolveMetadata(
+          TextCommand command,
+          TextCommandInterpretationResult interpretation,
+          SessionContext context) {
+    if (interpretation.resolvedMetadata() != null) {
+      return java.util.Optional.of(interpretation.resolvedMetadata());
+    }
     if (admittedRegistryResolver != null && context != null) {
-      return admittedRegistryResolver.resolveMetadata(context, command.commandId());
+      return admittedRegistryResolver.resolveMetadata(
+          context, command.commandId(), command.aliasUsed());
     }
     return textCommandMetadataResolver.resolve(command.commandId());
   }

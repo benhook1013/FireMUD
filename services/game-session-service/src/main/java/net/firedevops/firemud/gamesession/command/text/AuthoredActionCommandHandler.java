@@ -43,13 +43,4 @@ final class AuthoredActionCommandHandler implements AuthoredActionRuntimeHandler
     // turn one accepted command into a transient false rejection when the control-plane read fails.
     return new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of());
   }
-
-  private TextCommandInterpretationResult unknown(String commandId) {
-    return new TextCommandInterpretationResult(
-        CommandEnqueueResult.failure(
-            "UNKNOWN_AUTHORED_ACTION", "Unknown authored action: " + commandId),
-        List.of(
-            PlayerOutput.error(
-                "UNKNOWN_AUTHORED_ACTION", "Unknown authored action: " + commandId)));
-  }
 }

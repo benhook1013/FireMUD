@@ -893,8 +893,7 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class),
-            eq(context)))
+            any(PresentationProperties.class)))
         .thenReturn("OK SAY");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("You say, \"hello travelers\"\n"));

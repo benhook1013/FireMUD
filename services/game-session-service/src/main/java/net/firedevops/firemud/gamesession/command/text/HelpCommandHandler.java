@@ -270,8 +270,7 @@ public class HelpCommandHandler {
     }
     if (admittedRegistryResolver != null) {
       return maybeContext
-          .flatMap(
-              context -> admittedRegistryResolver.resolve(context).findDefinitionByAlias(topic))
+          .flatMap(context -> admittedRegistryResolver.resolveDefinition(context, topic))
           .filter(definition -> definition.type() == TextCommandType.AUTHORED)
           .map(definition -> "AUTHORED:" + definition.commandId())
           .orElse("");
@@ -310,7 +309,7 @@ public class HelpCommandHandler {
     List<TextCommandDefinition> admittedDefinitions =
         admittedRegistryResolver == null
             ? List.of()
-            : maybeContext.map(admittedRegistryResolver::definitions).orElse(List.of());
+            : maybeContext.map(admittedRegistryResolver::authoredDefinitions).orElse(List.of());
     if (!admittedDefinitions.isEmpty()) {
       lines.add("Authored topics:");
       for (TextCommandDefinition definition : admittedDefinitions) {

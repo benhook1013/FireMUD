@@ -150,6 +150,28 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
+  void createFullVersionBundleRejectsCanonicalIdAndAliasCollisions() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision first = new Revision();
+    first.setData(commandDefinition("salute", "greet"));
+    Revision second = new Revision();
+    second.setData(commandDefinition("hail", "SALUTE"));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(),
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+  }
+
+  @Test
   void createFullVersionBundleRejectsMalformedCommandEffectDeclaration() {
     VersionDto version = version();
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());

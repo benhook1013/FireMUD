@@ -1,8 +1,13 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.List;
 import java.util.Optional;
 
-interface TextCommandRegistry {
+public interface TextCommandRegistry {
+  default List<TextCommandDefinition> definitions() {
+    return List.of();
+  }
+
   default Optional<TextCommandDefinition> findDefinition(String commandId) {
     if (commandId == null || commandId.isBlank()) {
       return Optional.empty();

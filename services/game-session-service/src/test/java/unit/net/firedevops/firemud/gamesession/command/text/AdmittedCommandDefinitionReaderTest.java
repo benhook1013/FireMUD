@@ -82,6 +82,34 @@ class AdmittedCommandDefinitionReaderTest {
   }
 
   @Test
+  void treatsAdmittedInstanceLookupFailuresAsUnavailable() {
+    when(gameInstanceRepository.findById(44L))
+        .thenThrow(new IllegalStateException("game instance store unavailable"));
+
+    assertTrue(reader.definitionsFor(context()).isEmpty());
+  }
+
+  @Test
+  void rejectsNumericRequiredTextFieldsFromTheAdmittedBundle() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(
+                            validDefinition()
+                                .replace("\"commandId\":\"salute\"", "\"commandId\":7"))
+                        .build())
+                .build());
+
+    assertTrue(reader.definitionsFor(context()).isEmpty());
+  }
+
+  @Test
   void carriesRegisteredActionStateDeclarationsFromTheAdmittedBundle() {
     GameInstance instance = admittedInstance();
     when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));

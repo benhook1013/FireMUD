@@ -10,7 +10,9 @@ public record TextCommandInterpretationResult(
     CommandEnqueueResult commandResult,
     List<PlayerOutput> outputs,
     boolean reconnectRedrawRecommended,
-    boolean meaningfulGameplayActivity) {
+    boolean meaningfulGameplayActivity,
+    TextCommand resolvedCommand,
+    TextCommandMetadataResolver.ResolvedTextCommandMetadata resolvedMetadata) {
 
   public TextCommandInterpretationResult {
     Objects.requireNonNull(commandResult, "commandResult must not be null");
@@ -18,19 +20,28 @@ public record TextCommandInterpretationResult(
   }
 
   public TextCommandInterpretationResult(CommandEnqueueResult commandResult) {
-    this(commandResult, List.of(), false, false);
+    this(commandResult, List.of(), false, false, null, null);
   }
 
   public TextCommandInterpretationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {
-    this(commandResult, outputs, false, false);
+    this(commandResult, outputs, false, false, null, null);
   }
 
   public TextCommandInterpretationResult(
       CommandEnqueueResult commandResult,
       List<PlayerOutput> outputs,
       boolean reconnectRedrawRecommended) {
-    this(commandResult, outputs, reconnectRedrawRecommended, false);
+    this(commandResult, outputs, reconnectRedrawRecommended, false, null, null);
+  }
+
+  public TextCommandInterpretationResult(
+      CommandEnqueueResult commandResult,
+      List<PlayerOutput> outputs,
+      boolean reconnectRedrawRecommended,
+      boolean meaningfulGameplayActivity) {
+    this(
+        commandResult, outputs, reconnectRedrawRecommended, meaningfulGameplayActivity, null, null);
   }
 
   public boolean hasResponse() {

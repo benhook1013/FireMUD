@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
+import net.firedevops.firemud.gamesession.command.text.TextCommandRegistry;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -143,12 +144,12 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
+    TextCommandRegistry activeRegistry = null;
     if (admittedRegistryResolver != null) {
-      parsed =
-          textCommandParser.parse(
-              command.getCommandText(), admittedRegistryResolver.resolve(context));
+      activeRegistry = admittedRegistryResolver.resolve(context);
+      parsed = textCommandParser.parse(command.getCommandText(), activeRegistry);
     }
-    CommandExecutionRoute route = resolveRoute(command, parsed, context);
+    CommandExecutionRoute route = resolveRoute(command, parsed, activeRegistry);
     if (route == CommandExecutionRoute.IGNORE) {
       return Optional.empty();
     }
@@ -392,19 +393,17 @@ public final class DefaultDurableGameplayCommandExecutionService
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
 
   private CommandExecutionRoute resolveRoute(
-      GameplayCommand command, TextCommand parsed, SessionContext context) {
-    return resolveMetadata(command, parsed, context)
+      GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {
+    return resolveMetadata(command, parsed, activeRegistry)
         .map(metadata -> routeForMetadata(metadata, parsed))
         .orElseGet(() -> fallbackRoute(parsed.type()));
   }
 
   private Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
-      GameplayCommand command, TextCommand parsed, SessionContext context) {
-    if (admittedRegistryResolver != null && context != null) {
-      return admittedRegistryResolver
-          .resolveMetadata(context, parsed.commandId())
-          .or(() -> admittedRegistryResolver.resolveMetadata(context, command.getCommandName()))
-          .or(() -> admittedRegistryResolver.resolveMetadata(context, parsed.aliasUsed()));
+      GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {
+    if (activeRegistry != null) {
+      return admittedRegistryResolver.resolveMetadata(
+          activeRegistry, parsed.commandId(), command.getCommandName(), parsed.aliasUsed());
     }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())

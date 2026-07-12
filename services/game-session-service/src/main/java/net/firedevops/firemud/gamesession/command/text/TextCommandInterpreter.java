@@ -205,27 +205,38 @@ public class TextCommandInterpreter {
                 () ->
                     TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
     if (command.type() == TextCommandType.NOOP) {
-      return new TextCommandInterpretationResult(CommandEnqueueResult.success());
+      return withResolvedCommand(
+          new TextCommandInterpretationResult(CommandEnqueueResult.success()), command, definition);
     }
     if (command.type() == TextCommandType.UNKNOWN) {
       String message = "Unknown command";
-      return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
-          List.of(
-              PlayerOutput.error("UNKNOWN_COMMAND", message, "error.unknown-command", Map.of())));
+      return withResolvedCommand(
+          new TextCommandInterpretationResult(
+              CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
+              List.of(
+                  PlayerOutput.error(
+                      "UNKNOWN_COMMAND", message, "error.unknown-command", Map.of()))),
+          command,
+          definition);
     }
     boolean hasLogin = maybeContext.isPresent();
     boolean hasPlay = maybeContext.filter(SessionContext::hasGameplayRegionBinding).isPresent();
 
     if (definition.stageRequirement() != TextCommandStageRequirement.NONE && !hasLogin) {
-      return stageFailure(
-          GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
-          GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
+      return withResolvedCommand(
+          stageFailure(
+              GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
+              GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE),
+          command,
+          definition);
     }
     if (definition.stageRequirement() == TextCommandStageRequirement.GAMEPLAY && !hasPlay) {
-      return stageFailure(
-          GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
-          GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
+      return withResolvedCommand(
+          stageFailure(
+              GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+              GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE),
+          command,
+          definition);
     }
 
     TextCommandInterpretationResult dispatchResult =
@@ -236,9 +247,12 @@ public class TextCommandInterpreter {
         promptContextAfterDispatch(sessionId, definition, dispatchResult, maybeContext);
     TextCommandInterpretationResult promptApplied =
         applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
-    return withMeaningfulGameplayActivity(
-        promptApplied,
-        dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition));
+    return withResolvedCommand(
+        withMeaningfulGameplayActivity(
+            promptApplied,
+            dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition)),
+        command,
+        definition);
   }
 
   private TextCommandRegistry registryFor(Optional<SessionContext> context) {
@@ -264,7 +278,9 @@ public class TextCommandInterpreter {
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
                           result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity()))
+                          result.meaningfulGameplayActivity(),
+                          result.resolvedCommand(),
+                          result.resolvedMetadata()))
               .orElse(result);
       case WHEN_GAMEPLAY ->
           maybeContext
@@ -275,7 +291,9 @@ public class TextCommandInterpreter {
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
                           result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity()))
+                          result.meaningfulGameplayActivity(),
+                          result.resolvedCommand(),
+                          result.resolvedMetadata()))
               .orElse(result);
     };
   }
@@ -286,7 +304,26 @@ public class TextCommandInterpreter {
         result.commandResult(),
         result.outputs(),
         result.reconnectRedrawRecommended(),
-        meaningfulGameplayActivity);
+        meaningfulGameplayActivity,
+        result.resolvedCommand(),
+        result.resolvedMetadata());
+  }
+
+  private TextCommandInterpretationResult withResolvedCommand(
+      TextCommandInterpretationResult result,
+      TextCommand command,
+      TextCommandDefinition definition) {
+    return new TextCommandInterpretationResult(
+        result.commandResult(),
+        result.outputs(),
+        result.reconnectRedrawRecommended(),
+        result.meaningfulGameplayActivity(),
+        command,
+        new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+            definition.dispatchGroup(),
+            definition.promptPolicy(),
+            definition.actionCategory(),
+            definition.actionTags()));
   }
 
   private boolean isMeaningfulGameplay(TextCommandDefinition definition) {

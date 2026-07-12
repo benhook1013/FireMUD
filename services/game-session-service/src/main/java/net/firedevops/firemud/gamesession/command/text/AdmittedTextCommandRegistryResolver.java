@@ -26,8 +26,10 @@ public final class AdmittedTextCommandRegistryResolver {
   }
 
   public TextCommandRegistry resolve(SessionContext context) {
-    List<TextCommandDefinition> resolvedDefinitions = definitions(context);
-    if (resolvedDefinitions.isEmpty() && environment.acceptsProfiles(Profiles.of("test"))) {
+    Optional<List<TextCommandDefinition>> admittedDefinitions =
+        admittedCommandDefinitionReader.definitionsFor(context);
+    List<TextCommandDefinition> resolvedDefinitions = admittedDefinitions.orElse(List.of());
+    if (admittedDefinitions.isEmpty() && environment.acceptsProfiles(Profiles.of("test"))) {
       resolvedDefinitions =
           testFixtureDefinitionProvider
               .map(ConfiguredAuthoredActionDefinitionProvider::definitions)
@@ -49,15 +51,46 @@ public final class AdmittedTextCommandRegistryResolver {
     return admittedCommandDefinitionReader.definitionsFor(context).orElse(List.of());
   }
 
+  public List<TextCommandDefinition> authoredDefinitions(SessionContext context) {
+    return resolve(context).definitions().stream()
+        .filter(definition -> definition.type() == TextCommandType.AUTHORED)
+        .toList();
+  }
+
+  public Optional<TextCommandDefinition> resolveDefinition(SessionContext context, String token) {
+    return resolveDefinition(resolve(context), token);
+  }
+
+  public Optional<TextCommandDefinition> resolveDefinition(
+      TextCommandRegistry registry, String token) {
+    return registry.findDefinitionByAlias(token).or(() -> registry.findDefinition(token));
+  }
+
   public Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
       SessionContext context, String commandId) {
-    return resolve(context)
-        .findDefinition(commandId)
-        .map(
-            definition ->
-                new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                    definition.dispatchGroup(),
-                    definition.actionCategory(),
-                    definition.actionTags()));
+    return resolveMetadata(resolve(context), commandId);
+  }
+
+  public Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
+      SessionContext context, String... commandTokens) {
+    return resolveMetadata(resolve(context), commandTokens);
+  }
+
+  public Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
+      TextCommandRegistry registry, String... commandTokens) {
+    for (String commandToken : commandTokens) {
+      Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> metadata =
+          resolveDefinition(registry, commandToken)
+              .map(
+                  definition ->
+                      new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                          definition.dispatchGroup(),
+                          definition.actionCategory(),
+                          definition.actionTags()));
+      if (metadata.isPresent()) {
+        return metadata;
+      }
+    }
+    return Optional.empty();
   }
 }

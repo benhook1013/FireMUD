@@ -39,6 +39,17 @@ class AdmittedTextCommandRegistryResolverTest {
   }
 
   @Test
+  void keepsAValidEmptyAdmittedArtifactEmptyInTestFixtures() {
+    when(admittedCommandDefinitionReader.definitionsFor(null)).thenReturn(Optional.of(List.of()));
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("test");
+
+    TextCommandRegistry registry = resolver(environment).resolve(null);
+
+    assertThat(registry.findDefinitionByAlias("salute")).isEmpty();
+  }
+
+  @Test
   void fallsBackToBuiltInsWhenNoTestFixtureProviderIsRegistered() {
     when(admittedCommandDefinitionReader.definitionsFor(null))
         .thenReturn(java.util.Optional.empty());

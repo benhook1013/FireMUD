@@ -248,12 +248,10 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       return Optional.empty();
     }
     if (admittedRegistryResolver != null && context != null) {
-      return admittedRegistryResolver
-          .resolveMetadata(context, command.getCommandName())
-          .or(
-              () ->
-                  firstCommandToken(command.getCommandText())
-                      .flatMap(token -> admittedRegistryResolver.resolveMetadata(context, token)));
+      return admittedRegistryResolver.resolveMetadata(
+          context,
+          command.getCommandName(),
+          firstCommandToken(command.getCommandText()).orElse(null));
     }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())

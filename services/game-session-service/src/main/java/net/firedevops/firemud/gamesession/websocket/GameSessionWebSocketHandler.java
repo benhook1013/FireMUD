@@ -193,6 +193,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ensureBootstrapSessionContextIfMissing(session, sessionId);
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
+      TextCommand resolvedCommand =
+          interpretation.resolvedCommand() == null ? command : interpretation.resolvedCommand();
       recordGameplayActivity(sessionId, interpretation);
       Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(session, sessionId);
       PresentationProperties effectivePresentation =
@@ -202,10 +204,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               sessionId,
               maybeContext.orElse(null),
               interpretation.outputs(),
-              shouldForcePromptEmission(command, interpretation));
+              shouldForcePromptEmission(resolvedCommand, interpretation));
       maybePersistLocaleTag(maybeContext, resolveLocaleTag(session));
       String response =
-          formatResponse(command, interpretation, session, outputs, effectivePresentation);
+          formatResponse(resolvedCommand, interpretation, session, outputs, effectivePresentation);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(
@@ -337,8 +339,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         interpretation,
         outputs,
         resolveLocaleTag(session, resolveTransportSessionId(session)),
-        effectivePresentation,
-        resolveNormalizedSessionContext(session, resolveTransportSessionId(session)).orElse(null));
+        effectivePresentation);
   }
 
   private boolean shouldForcePromptEmission(
