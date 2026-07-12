@@ -410,19 +410,17 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFirstPartyAuthoredCommandFailsClosedWithStructuredMetadata() throws Exception {
+  void websocketFirstPartyConfiguredAuthoredAliasDoesNotBypassAdmittedDefinitions()
+      throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
 
     try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("authored-first-party")) {
       int baseline = client.responses().size();
       client.send("SALUTE captain");
-      JsonNode authored = awaitStructuredCommand(client, baseline, "AUTHORED");
-      GameplayStructuredCommandAssertions.requireStructuredCommand(
-          authored, "AUTHORED", "wave-salute", "SOCIAL", "AUTHORING", "COMMUNICATION");
-      assertThat(authored.path("accepted").asBoolean()).isFalse();
-      assertThat(authored.path("errorCode").asText())
-          .isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+      JsonNode unknown = awaitStructuredCommand(client, baseline, "UNKNOWN");
+      assertThat(unknown.path("accepted").asBoolean()).isFalse();
+      assertThat(unknown.path("errorCode").asText()).isEqualTo("UNKNOWN_COMMAND");
     }
   }
 

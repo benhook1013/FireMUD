@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
@@ -136,6 +137,28 @@ class AdmittedCommandDefinitionReaderTest {
   }
 
   @Test
+  void preservesOmittedActionStateModifierScopesAsAbsent() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validActionStateDefinitionWithoutScopes())
+                        .build())
+                .build());
+
+    var effect = reader.definitionsFor(context()).orElseThrow().getFirst().effects().getFirst();
+    var actionState = (TextCommandEffectDeclaration.ApplyActionState) effect;
+
+    assertNull(actionState.modifiers().getFirst().scopeKind());
+    assertNull(actionState.modifiers().getFirst().scopeKey());
+  }
+
+  @Test
   void rejectsUnregisteredCommandEffectsFromTheAdmittedBundle() {
     GameInstance instance = admittedInstance();
     when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
@@ -176,6 +199,12 @@ class AdmittedCommandDefinitionReaderTest {
   private String validActionStateDefinition() {
     return """
         {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1,"scope_kind":"ACTION_FAMILY","scope_key":"defense"}]}}}]}
+        """;
+  }
+
+  private String validActionStateDefinitionWithoutScopes() {
+    return """
+        {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1}]}}}]}
         """;
   }
 }

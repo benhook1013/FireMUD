@@ -197,7 +197,7 @@ final class AdmittedCommandDefinitionReader {
 
   private String optionalIdentifier(JsonNode definition, String field) {
     JsonNode value = definition.path(field);
-    return value.isMissingNode() ? "" : requiredIdentifier(definition, field);
+    return value.isMissingNode() ? null : requiredIdentifier(definition, field);
   }
 
   private List<String> textArray(JsonNode definition, String field) {
