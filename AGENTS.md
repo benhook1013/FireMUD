@@ -58,6 +58,7 @@ Subagents share the main weekly allowance. Use them only for bounded parallel wo
 - `gpt-5.6-luna`: Default for repository searches, focused investigation, narrow test work, and mechanical local fixes. Do not use Luna as independent review evidence.
 - `gpt-5.6-terra`: Use for bounded implementation that Luna cannot handle reliably, and for every independent review that substitutes for CodeRabbit on a tiny PR.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
+- Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
 
 ## Execution Style
 
