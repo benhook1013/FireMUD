@@ -27,7 +27,61 @@ public class TextCommandInterpreter {
   private final PromptComposer promptComposer;
   private final TextCommandParser parser;
   private final TextCommandRegistry registry;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final TextCommandDispatcher dispatcher;
+
+  TextCommandInterpreter(
+      CommandService commandService,
+      LookCommandHandler lookHandler,
+      LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
+      PlayCommandHandler playHandler,
+      MoveCommandHandler moveHandler,
+      AfkCommandHandler afkHandler,
+      HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
+      StatusCommandHandler statusHandler,
+      FriendsCommandHandler friendsHandler,
+      AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
+      CommunicationCommandHandler communicationHandler,
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
+      TextCommandRegistry registry,
+      TextCommandParser parser,
+      MeterRegistry meterRegistry) {
+    this(
+        commandService,
+        lookHandler,
+        loginHandler,
+        logoutHandler,
+        playHandler,
+        moveHandler,
+        afkHandler,
+        helpHandler,
+        whoHandler,
+        statusHandler,
+        friendsHandler,
+        authoredActionHandler,
+        authoredActionCatalog,
+        inventoryHandler,
+        equipmentHandler,
+        containerHandler,
+        sessionAuthenticationService,
+        scriptEventPublisher,
+        communicationHandler,
+        worldsHandler,
+        promptComposer,
+        registry,
+        parser,
+        null,
+        meterRegistry);
+  }
 
   @Autowired
   public TextCommandInterpreter(
@@ -54,12 +108,14 @@ public class TextCommandInterpreter {
       PromptComposer promptComposer,
       TextCommandRegistry registry,
       TextCommandParser parser,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       MeterRegistry meterRegistry) {
     this(
         sessionAuthenticationService,
         promptComposer,
         parser,
         registry,
+        admittedRegistryResolver,
         buildDispatcher(
             commandService,
             lookHandler,
@@ -91,24 +147,59 @@ public class TextCommandInterpreter {
       TextCommandParser parser,
       TextCommandRegistry registry,
       TextCommandDispatcher dispatcher) {
+    this(sessionAuthenticationService, promptComposer, parser, registry, null, dispatcher);
+  }
+
+  TextCommandInterpreter(
+      SessionAuthenticationService sessionAuthenticationService,
+      PromptComposer promptComposer,
+      TextCommandParser parser,
+      TextCommandRegistry registry,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      TextCommandDispatcher dispatcher) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.promptComposer = Objects.requireNonNull(promptComposer, "promptComposer must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
+    this.admittedRegistryResolver = admittedRegistryResolver;
     this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher must not be null");
   }
 
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
-    return interpret(sessionId, parser.parse(rawLine), requiresSoloTick);
+    Optional<SessionContext> context =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    TextCommandRegistry activeRegistry = registryFor(context);
+    return interpret(
+        sessionId,
+        parser.parse(rawLine, activeRegistry),
+        requiresSoloTick,
+        context,
+        activeRegistry);
   }
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    Optional<SessionContext> context =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    TextCommandRegistry activeRegistry = registryFor(context);
+    TextCommand activeCommand =
+        admittedRegistryResolver == null
+            ? command
+            : parser.parse(command.rawLine(), activeRegistry);
+    return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
+  }
+
+  private TextCommandInterpretationResult interpret(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      Optional<SessionContext> maybeContext,
+      TextCommandRegistry activeRegistry) {
     TextCommandDefinition definition =
-        registry
+        activeRegistry
             .findDefinition(command.commandId())
             .orElseGet(
                 () ->
@@ -123,8 +214,6 @@ public class TextCommandInterpreter {
           List.of(
               PlayerOutput.error("UNKNOWN_COMMAND", message, "error.unknown-command", Map.of())));
     }
-    Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionId);
     boolean hasLogin = maybeContext.isPresent();
     boolean hasPlay = maybeContext.filter(SessionContext::hasGameplayRegionBinding).isPresent();
 
@@ -150,6 +239,12 @@ public class TextCommandInterpreter {
     return withMeaningfulGameplayActivity(
         promptApplied,
         dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition));
+  }
+
+  private TextCommandRegistry registryFor(Optional<SessionContext> context) {
+    return admittedRegistryResolver == null
+        ? registry
+        : admittedRegistryResolver.resolve(context.orElse(null));
   }
 
   private TextCommandInterpretationResult applyPromptPolicy(
