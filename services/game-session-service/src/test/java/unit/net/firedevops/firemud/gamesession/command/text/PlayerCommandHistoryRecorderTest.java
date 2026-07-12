@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -116,6 +117,24 @@ class PlayerCommandHistoryRecorderTest {
             Mockito.anyLong(),
             Mockito.anyString(),
             Mockito.anyInt());
+  }
+
+  @Test
+  void quarantinesHistoryPersistenceFailure() {
+    SessionContext context = gameplayContext(17L);
+    when(settingsResolver.commandHistory(context))
+        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+    Mockito.doThrow(new IllegalStateException("history storage unavailable"))
+        .when(storageService)
+        .append(7L, 11L, 17L, "LOOK", 10);
+
+    assertDoesNotThrow(
+        () ->
+            recorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
   }
 
   private SessionContext gameplayContext(long characterId) {
