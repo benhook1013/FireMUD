@@ -92,7 +92,13 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                                         TextCommandDispatchGroup.AUTHORED,
                                         TextCommandActionCategory.SOCIAL,
                                         java.util.List.of(TextCommandActionTag.COMMUNICATION)))
-                                : Optional.empty()),
+                                : "taunt".equalsIgnoreCase(commandId)
+                                    ? Optional.of(
+                                        new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                                            TextCommandDispatchGroup.ACTIVITY,
+                                            TextCommandActionCategory.GAMEPLAY,
+                                            java.util.List.of(TextCommandActionTag.COMBAT)))
+                                    : Optional.empty()),
             authoredActionCommandHandler,
             durableGameplayReplayService,
             movementEffectIdempotencyService,
@@ -111,6 +117,22 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
     assertThat(result).isEmpty();
     verify(moveCommandHandler, never()).prepare(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void executeDoesNotInferActionStateFromCombatMetadata() {
+    GameplayCommand command = gameplayCommand("TAUNT", "TAUNT");
+    when(parser.parse("TAUNT"))
+        .thenReturn(
+            new TextCommand(
+                "taunt", TextCommandType.AUTHORED, java.util.List.of(), "TAUNT", "taunt", null));
+
+    Optional<DurableGameplayCommandExecutionResult> result =
+        service.execute(tickEffect("tfx-combat", "cmd-combat"), command);
+
+    assertThat(result).isEmpty();
+    verify(actionStateCommandHandler, never())
+        .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class), Mockito.any());
   }
 
   @Test

@@ -13,7 +13,6 @@ import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
@@ -339,7 +338,7 @@ public final class DefaultDurableGameplayCommandExecutionService
 
   private CommandExecutionRoute resolveRoute(GameplayCommand command, TextCommand parsed) {
     return resolveMetadata(command, parsed)
-        .map(this::routeForMetadata)
+        .map(metadata -> routeForMetadata(metadata, parsed))
         .orElseGet(() -> fallbackRoute(parsed.type()));
   }
 
@@ -352,16 +351,18 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private CommandExecutionRoute routeForMetadata(
-      TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata) {
+      TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata, TextCommand parsed) {
     return switch (metadata.dispatchGroup()) {
       case ITEM -> CommandExecutionRoute.ITEM_MUTATION;
       case COMMUNICATION -> CommandExecutionRoute.COMMUNICATION;
       case MOVE -> CommandExecutionRoute.MOVE;
       case AUTHORED -> CommandExecutionRoute.AUTHORED;
       case ACTIVITY ->
-          metadata.actionTags().contains(TextCommandActionTag.COMBAT)
-              ? CommandExecutionRoute.ACTION_STATE
-              : CommandExecutionRoute.AFK;
+          switch (parsed.type()) {
+            case AFK -> CommandExecutionRoute.AFK;
+            case BLOCK -> CommandExecutionRoute.ACTION_STATE;
+            default -> CommandExecutionRoute.IGNORE;
+          };
       default -> CommandExecutionRoute.IGNORE;
     };
   }
