@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
@@ -40,6 +41,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final MoveCommandHandler moveCommandHandler;
   private final ItemCommandHandler itemCommandHandler;
@@ -68,8 +70,44 @@ public final class DefaultDurableGameplayCommandExecutionService
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService,
       ScriptEventPublisher scriptEventPublisher) {
+    this(
+        meterRegistry,
+        textCommandParser,
+        null,
+        sessionAuthenticationService,
+        moveCommandHandler,
+        itemCommandHandler,
+        communicationCommandHandler,
+        afkCommandHandler,
+        actionStateCommandHandler,
+        textCommandMetadataResolver,
+        authoredActionCommandHandler,
+        durableGameplayReplayService,
+        movementEffectIdempotencyService,
+        playerOutputDeliveryService,
+        scriptEventPublisher);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public DefaultDurableGameplayCommandExecutionService(
+      MeterRegistry meterRegistry,
+      TextCommandParser textCommandParser,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      SessionAuthenticationService sessionAuthenticationService,
+      MoveCommandHandler moveCommandHandler,
+      ItemCommandHandler itemCommandHandler,
+      CommunicationCommandHandler communicationCommandHandler,
+      AfkCommandHandler afkCommandHandler,
+      ActionStateCommandHandler actionStateCommandHandler,
+      TextCommandMetadataResolver textCommandMetadataResolver,
+      AuthoredActionRuntimeHandler authoredActionCommandHandler,
+      DurableGameplayReplayService durableGameplayReplayService,
+      MovementEffectIdempotencyService movementEffectIdempotencyService,
+      PlayerOutputDeliveryService playerOutputDeliveryService,
+      ScriptEventPublisher scriptEventPublisher) {
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
+    this.admittedRegistryResolver = admittedRegistryResolver;
     this.sessionAuthenticationService = sessionAuthenticationService;
     this.moveCommandHandler = moveCommandHandler;
     this.itemCommandHandler = itemCommandHandler;
@@ -88,8 +126,8 @@ public final class DefaultDurableGameplayCommandExecutionService
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
     TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    CommandExecutionRoute route = resolveRoute(command, parsed);
-    if (route == CommandExecutionRoute.IGNORE) {
+    if (resolveRoute(command, parsed) == CommandExecutionRoute.IGNORE
+        && parsed.type() != TextCommandType.UNKNOWN) {
       return Optional.empty();
     }
     Optional<SessionContext> maybeContext = resolveExecutionContext(command);
@@ -105,10 +143,21 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
+    if (admittedRegistryResolver != null) {
+      parsed =
+          textCommandParser.parse(
+              command.getCommandText(), admittedRegistryResolver.resolve(context));
+    }
+    CommandExecutionRoute route = resolveRoute(command, parsed);
+    if (route == CommandExecutionRoute.IGNORE) {
+      return Optional.empty();
+    }
+    TextCommand activeParsed = parsed;
     return switch (route) {
       case ITEM_MUTATION -> {
         publishCommandEventForLiveExecution(context, command);
-        yield Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
+        yield Optional.of(
+            executeItemMutation(context, activeParsed, command, effect.getEffectId()));
       }
       case COMMUNICATION ->
           Optional.of(
@@ -118,7 +167,8 @@ public final class DefaultDurableGameplayCommandExecutionService
                   effect.getEffectId(),
                   () -> {
                     var result =
-                        communicationCommandHandler.handle(context, parsed, effect.getEffectId());
+                        communicationCommandHandler.handle(
+                            context, activeParsed, effect.getEffectId());
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AFK ->
@@ -128,7 +178,7 @@ public final class DefaultDurableGameplayCommandExecutionService
                   command,
                   effect.getEffectId(),
                   () -> {
-                    var result = afkCommandHandler.handle(context, parsed);
+                    var result = afkCommandHandler.handle(context, activeParsed);
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case ACTION_STATE ->
@@ -139,7 +189,8 @@ public final class DefaultDurableGameplayCommandExecutionService
                   effect.getEffectId(),
                   () -> {
                     var result =
-                        actionStateCommandHandler.handle(context, parsed, effect.getEffectId());
+                        actionStateCommandHandler.handle(
+                            context, activeParsed, effect.getEffectId());
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AUTHORED ->
@@ -149,12 +200,12 @@ public final class DefaultDurableGameplayCommandExecutionService
                   command,
                   effect.getEffectId(),
                   () -> {
-                    var result = authoredActionCommandHandler.handle(parsed);
+                    var result = authoredActionCommandHandler.handle(activeParsed);
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
-        PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
+        PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);
         if (!prepared.commandResult().accepted()) {
           if (prepared.responseOutput() != null) {
             playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);

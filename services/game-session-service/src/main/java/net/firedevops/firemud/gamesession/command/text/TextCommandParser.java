@@ -30,7 +30,7 @@ public class TextCommandParser {
     return parse(rawLine, registry);
   }
 
-  TextCommand parse(String rawLine, TextCommandRegistry registry) {
+  public TextCommand parse(String rawLine, TextCommandRegistry registry) {
     Objects.requireNonNull(registry, "registry must not be null");
     String source = rawLine == null ? "" : rawLine;
     String trimmed = source.trim();
