@@ -335,7 +335,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         interpretation,
         outputs,
         resolveLocaleTag(session, resolveTransportSessionId(session)),
-        effectivePresentation);
+        effectivePresentation,
+        resolveNormalizedSessionContext(session, resolveTransportSessionId(session)).orElse(null));
   }
 
   private boolean shouldForcePromptEmission(

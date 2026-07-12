@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -139,6 +141,54 @@ class WebSocketOutputProjectorTest {
     JsonNode json = objectMapper.readTree(payload);
     assertThat(json.path("commandType").asText()).isEqualTo("AUTHORED");
     assertThat(json.path("commandId").asText()).isEqualTo("wave");
+    assertThat(json.path("actionCategory").asText()).isEqualTo("SOCIAL");
+    assertThat(json.path("actionTags"))
+        .extracting(JsonNode::asText)
+        .containsExactly("AUTHORING", "COMMUNICATION");
+  }
+
+  @Test
+  void firstPartyWebUsesAdmittedMetadataForAuthoredCommand() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    SessionContext context =
+        new SessionContext(
+            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    AdmittedTextCommandRegistryResolver admittedResolver =
+        mock(AdmittedTextCommandRegistryResolver.class);
+    when(admittedResolver.resolveMetadata(context, "wave"))
+        .thenReturn(
+            java.util.Optional.of(
+                new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                    net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup
+                        .AUTHORED,
+                    TextCommandActionCategory.SOCIAL,
+                    List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION))));
+    WebSocketOutputProjector scopedProjector =
+        new WebSocketOutputProjector(
+            new TextPlayerOutputRenderer(presentation), metadataResolver, admittedResolver);
+
+    String payload =
+        scopedProjector.projectCommandResponse(
+            session,
+            new TextCommand(
+                "wave",
+                TextCommandType.AUTHORED,
+                List.of("hello"),
+                "wave hello",
+                "wave",
+                new TextCommandPayload.AuthoredActionInvocation("wave", List.of("hello"))),
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(PlayerOutput.message("You wave hello."))),
+            List.of(PlayerOutput.message("You wave hello.")),
+            "en-NZ",
+            presentation,
+            context);
+
+    JsonNode json = objectMapper.readTree(payload);
     assertThat(json.path("actionCategory").asText()).isEqualTo("SOCIAL");
     assertThat(json.path("actionTags"))
         .extracting(JsonNode::asText)

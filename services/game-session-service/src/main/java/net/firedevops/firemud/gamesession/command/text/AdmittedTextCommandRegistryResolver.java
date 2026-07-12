@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
 
@@ -26,5 +27,17 @@ public final class AdmittedTextCommandRegistryResolver {
 
   List<TextCommandDefinition> definitions(SessionContext context) {
     return admittedCommandDefinitionReader.definitionsFor(context).orElse(List.of());
+  }
+
+  public Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
+      SessionContext context, String commandId) {
+    return resolve(context)
+        .findDefinition(commandId)
+        .map(
+            definition ->
+                new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                    definition.dispatchGroup(),
+                    definition.actionCategory(),
+                    definition.actionTags()));
   }
 }
