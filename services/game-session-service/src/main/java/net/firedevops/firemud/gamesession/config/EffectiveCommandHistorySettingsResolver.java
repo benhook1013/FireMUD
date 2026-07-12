@@ -42,14 +42,14 @@ public class EffectiveCommandHistorySettingsResolver {
 
   public ResolvedValue<FiremudCommandHistoryProperties> resolvedCommandHistory(
       SessionContext context) {
+    Long gameInstanceId = resolveGameInstanceId(context);
     SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
         context == null || context.tenantId() <= 0L
             ? new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
                 ScopedSettingsOverrides.empty(),
                 ScopedSettingsOverrides.empty(),
                 ScopedSettingsOverrides.empty())
-            : sharedEffectiveSettingsResolver.resolve(
-                context.tenantId(), resolveGameInstanceId(context));
+            : sharedEffectiveSettingsResolver.resolve(context.tenantId(), gameInstanceId);
     FiremudCommandHistoryProperties effective =
         merge(defaults, persistedOverrides.effectiveOverrides().commandHistory());
     List<String> sources = new java.util.ArrayList<>(List.of("operatorDefaults"));
@@ -57,7 +57,7 @@ public class EffectiveCommandHistorySettingsResolver {
         persistedOverrides.sourcesFor(
             ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY,
             context == null ? 0L : context.tenantId(),
-            resolveGameInstanceId(context)));
+            gameInstanceId));
     return new ResolvedValue<>(effective, sources);
   }
 
