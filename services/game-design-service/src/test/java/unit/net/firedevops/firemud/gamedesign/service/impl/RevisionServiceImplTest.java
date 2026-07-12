@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.RevisionMapper;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -59,6 +60,32 @@ class RevisionServiceImplTest {
     RevisionDto result = service.saveRevision(dto);
 
     assertEquals(10L, result.id());
+  }
+
+  @Test
+  void saveRevisionRejectsPublishedVersionBeforePersistingOrApplyingMutations() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("1");
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndId("1", 7L)).thenReturn(java.util.Optional.of(version));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null, "1", 7L, 3L, "{}", "COMMAND_DEFINITION", null, null, null, null)));
+
+    assertEquals("INVALID_ARGUMENT: published versions are immutable", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+    verify(worldManagementClient, never())
+        .applyWorldDesignMutation(any(), anyLong(), any(WorldDesignMutationRevisionDto.class));
   }
 
   @Test

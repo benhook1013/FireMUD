@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.RevisionMapper;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -48,6 +49,9 @@ public class RevisionServiceImpl implements RevisionService {
         versionRepository
             .findByTenantIdAndId(dto.tenantId(), dto.versionId())
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
+    if (version.getVersionState() != VersionLifecycleState.DRAFT) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: published versions are immutable");
+    }
     AppliedWorldDesignMutationDto appliedWorldDesignMutation =
         applyWorldDesignMutationIfPresent(dto);
     Revision entity = revisionMapper.toEntity(dto);
