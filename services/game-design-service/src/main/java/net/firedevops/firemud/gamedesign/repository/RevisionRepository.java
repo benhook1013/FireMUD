@@ -90,6 +90,18 @@ public class RevisionRepository {
             .fetchOne(this::toEntity));
   }
 
+  public List<Revision> findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+      String tenantId, Long versionId, String revisionKind) {
+    return dsl.selectFrom(TABLE_REF)
+        .where(
+            TENANT_ID
+                .eq(tenantId)
+                .and(VERSION_ID.eq(versionId))
+                .and(REVISION_KIND.eq(revisionKind)))
+        .orderBy(ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public List<Revision> findAll() {
     return dsl.selectFrom(TABLE_REF).orderBy(ID.asc()).fetch(this::toEntity);
   }

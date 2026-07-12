@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
+import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -25,14 +26,17 @@ public class ControlPlaneDigestServiceImpl implements ControlPlaneDigestService 
 
   private final GameTemplateRepository gameTemplateRepository;
   private final GameAssetRepository gameAssetRepository;
+  private final RevisionRepository revisionRepository;
   private final ObjectMapper objectMapper;
 
   public ControlPlaneDigestServiceImpl(
       GameTemplateRepository gameTemplateRepository,
       GameAssetRepository gameAssetRepository,
+      RevisionRepository revisionRepository,
       ObjectMapper objectMapper) {
     this.gameTemplateRepository = gameTemplateRepository;
     this.gameAssetRepository = gameAssetRepository;
+    this.revisionRepository = revisionRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -82,6 +86,21 @@ public class ControlPlaneDigestServiceImpl implements ControlPlaneDigestService 
                           "contentType", entity.getContentType(),
                           "byteLength", entity.getData() == null ? 0 : entity.getData().length))
               .toList();
+      List<Map<String, Object>> commandDefinitions =
+          revisionRepository
+              .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+                  version.tenantId(), version.id(), "COMMAND_DEFINITION")
+              .stream()
+              .map(
+                  revision ->
+                      Map.<String, Object>of(
+                          "logicalRevisionId",
+                          revision.getLogicalRevisionId() == null
+                              ? ""
+                              : revision.getLogicalRevisionId(),
+                          "data",
+                          revision.getData()))
+              .toList();
       String canonicalJson =
           objectMapper.writeValueAsString(
               Map.of(
@@ -102,7 +121,9 @@ public class ControlPlaneDigestServiceImpl implements ControlPlaneDigestService 
                   "templates",
                   templates,
                   "assets",
-                  assets));
+                  assets,
+                  "commandDefinitions",
+                  commandDefinitions));
       return sha256(canonicalJson);
     } catch (Exception ex) {
       throw new IllegalStateException("failed to compute design control-plane digest", ex);
