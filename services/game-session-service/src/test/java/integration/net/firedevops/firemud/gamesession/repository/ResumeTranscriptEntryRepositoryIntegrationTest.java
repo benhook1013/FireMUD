@@ -137,6 +137,25 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
+  void findsOnlyActiveEntriesWithoutDeletingExpiredRowsOnTheReadPath() {
+    Instant cutoff = Instant.parse("2026-07-12T01:02:00Z");
+    ResumeTranscriptEntry expired = entry("Expired\n", cutoff.minusSeconds(20));
+    expired.setExpiresAt(cutoff);
+    ResumeTranscriptEntry active = entry("Active\n", cutoff.minusSeconds(10));
+    active.setExpiresAt(cutoff.plusSeconds(1));
+    ResumeTranscriptEntry noExpiry = entry("Retained\n", cutoff.minusSeconds(5));
+    noExpiry.setExpiresAt(null);
+    repository.saveAll(List.of(expired, active, noExpiry));
+
+    assertThat(repository.findActiveByScope(22L, 7L, 13L, cutoff))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Active\n", "Retained\n");
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Expired\n", "Active\n", "Retained\n");
+  }
+
+  @Test
   void dropsExpiredTranscriptAfterTheDurableServiceIsRecreated() {
     ReconnectionSettingsResolver settingsResolver =
         (tenantId, gameInstanceId) ->

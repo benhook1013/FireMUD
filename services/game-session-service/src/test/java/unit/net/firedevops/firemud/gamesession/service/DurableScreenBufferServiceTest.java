@@ -48,7 +48,7 @@ class DurableScreenBufferServiceTest {
             "FULL",
             "player-output",
             "{\"kind\":\"SAY\"}");
-    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of());
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
 
     service.append(22L, 7L, 13L, List.of(entry));
 
@@ -61,7 +61,7 @@ class DurableScreenBufferServiceTest {
     assertThat(persisted.getProtocolText()).isEqualTo("You say, \"hello\"\n");
     assertThat(persisted.getPayloadJson()).isEqualTo("{\"kind\":\"SAY\"}");
     assertThat(persisted.getExpiresAt()).isNull();
-    verify(repository).deleteExpired(eq(22L), eq(7L), eq(13L), any());
+    verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
     verify(hotCache).append(22L, 7L, 13L, List.of(entry));
   }
 
@@ -74,7 +74,7 @@ class DurableScreenBufferServiceTest {
     entry.setBriefRenderPolicy("FULL");
     entry.setPayloadType("look-view");
     entry.setPayloadJson("{\"room\":\"R-1\"}");
-    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of(entry));
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of(entry));
 
     ScreenBufferService.BufferedScreen screen = service.get(22L, 7L, 13L).orElseThrow();
 
@@ -85,18 +85,13 @@ class DurableScreenBufferServiceTest {
   }
 
   @Test
-  void getDropsExpiredDurableEntriesAndInvalidatesTheHotCache() {
-    when(settingsResolver.resolve(22L, 7L))
-        .thenReturn(
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(1L, 1, 1, 100, 200)));
-    when(repository.deleteExpired(eq(22L), eq(7L), eq(13L), any())).thenReturn(1);
-    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of());
+  void getDoesNotReplayExpiredDurableEntriesAndInvalidatesTheHotCache() {
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
 
     assertThat(service.get(22L, 7L, 13L)).isEmpty();
 
     verify(hotCache).clear(22L, 7L, 13L);
+    verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
     verify(hotCache, never()).get(22L, 7L, 13L);
   }
 
@@ -106,7 +101,8 @@ class DurableScreenBufferServiceTest {
     first.setByteSize(80);
     ResumeTranscriptEntry second = entry(2L, "new", Instant.parse("2026-07-12T01:01:00Z"));
     second.setByteSize(80);
-    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of(first, second));
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
+        .thenReturn(List.of(first, second));
 
     service.append(22L, 7L, 13L, List.of(ScreenBufferService.BufferedEntry.fromText("new")));
 
@@ -121,7 +117,7 @@ class DurableScreenBufferServiceTest {
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
                 new FiremudReconnectionProperties.Buffer(1_000L, 1, 1, 100, 200)));
-    when(repository.findByScope(22L, 7L, 13L)).thenReturn(List.of());
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
     ScreenBufferService.BufferedEntry entry =
         new ScreenBufferService.BufferedEntry(
             "Recent room line\n", 1, 17, 1_000L, null, null, null, null, null);

@@ -53,7 +53,9 @@ public class DurableScreenBufferService implements ScreenBufferService {
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
     repository.lockScope(tenantId, gameInstanceId, characterId);
-    expireExpiredEntries(tenantId, gameInstanceId, characterId);
+    if (buffer.ttlMs() > 0L) {
+      expireExpiredEntries(tenantId, gameInstanceId, characterId);
+    }
     repository.saveAll(
         filtered.stream()
             .map(
@@ -68,15 +70,12 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
-    if (expireExpiredEntries(tenantId, gameInstanceId, characterId)) {
-      clearHotCache(tenantId, gameInstanceId, characterId);
-    }
-
     // Redis cannot retain each durable entry's immutable expiry after later appends reset its key
     // TTL.
     List<ResumeTranscriptEntry> entries =
-        repository.findByScope(tenantId, gameInstanceId, characterId);
+        repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now());
     if (entries.isEmpty()) {
+      clearHotCache(tenantId, gameInstanceId, characterId);
       return Optional.empty();
     }
     List<BufferedEntry> bufferedEntries = entries.stream().map(this::toBufferedEntry).toList();
@@ -107,7 +106,8 @@ public class DurableScreenBufferService implements ScreenBufferService {
       long characterId,
       FiremudReconnectionProperties.Buffer buffer) {
     List<ResumeTranscriptEntry> retained =
-        new ArrayList<>(repository.findByScope(tenantId, gameInstanceId, characterId));
+        new ArrayList<>(
+            repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
     List<Long> discardedIds = new ArrayList<>();
     while (retained.size() > 1
         && totalBytes(retained) > buffer.softMaxBytes()

@@ -6,6 +6,7 @@ import static net.firedevops.firemud.gamesession.jooq.tables.ResumeTranscriptEnt
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
@@ -30,12 +31,13 @@ public class ResumeTranscriptEntryRepository {
     if (entries == null || entries.isEmpty()) {
       return;
     }
+    List<ResumeTranscriptEntryRecord> records = new ArrayList<>(entries.size());
     for (ResumeTranscriptEntry entry : entries) {
       ResumeTranscriptEntryRecord record = dsl.newRecord(RESUME_TRANSCRIPT_ENTRY);
       populate(record, entry);
-      record.store();
-      entry.setId(record.getId());
+      records.add(record);
     }
+    dsl.batchInsert(records).execute();
   }
 
   /** Serializes transcript mutations for one scope without retaining a lock-row permanently. */
@@ -56,6 +58,25 @@ public class ResumeTranscriptEntryRepository {
                 .eq(tenantId)
                 .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId)))
+        .orderBy(RESUME_TRANSCRIPT_ENTRY.APPENDED_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
+        .fetch(this::toEntity);
+  }
+
+  /** Returns only entries whose immutable expiry has not passed at the supplied cutoff. */
+  public List<ResumeTranscriptEntry> findActiveByScope(
+      long tenantId, long gameInstanceId, long characterId, Instant cutoff) {
+    return dsl.selectFrom(RESUME_TRANSCRIPT_ENTRY)
+        .where(
+            RESUME_TRANSCRIPT_ENTRY
+                .TENANT_ID
+                .eq(tenantId)
+                .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId))
+                .and(
+                    RESUME_TRANSCRIPT_ENTRY
+                        .EXPIRES_AT
+                        .isNull()
+                        .or(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.gt(toOffsetDateTime(cutoff)))))
         .orderBy(RESUME_TRANSCRIPT_ENTRY.APPENDED_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
         .fetch(this::toEntity);
   }
