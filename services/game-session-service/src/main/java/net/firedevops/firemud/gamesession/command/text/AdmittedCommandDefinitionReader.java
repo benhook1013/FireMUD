@@ -49,15 +49,15 @@ final class AdmittedCommandDefinitionReader {
 
   private Optional<List<TextCommandDefinition>> readDefinitions(
       long tenantId, GameInstance instance) {
-    GetPublishedReleaseBundleResponse response =
-        gameDesignClient.getPublishedReleaseBundle(tenantId, instance.getVersionId());
-    if (response.hasError()
-        || !response.hasBundle()
-        || response.getBundle().getId() != instance.getReleaseBundleId()
-        || response.getBundle().getVersionId() != instance.getVersionId()) {
-      return Optional.empty();
-    }
     try {
+      GetPublishedReleaseBundleResponse response =
+          gameDesignClient.getPublishedReleaseBundle(tenantId, instance.getVersionId());
+      if (response.hasError()
+          || !response.hasBundle()
+          || response.getBundle().getId() != instance.getReleaseBundleId()
+          || response.getBundle().getVersionId() != instance.getVersionId()) {
+        return Optional.empty();
+      }
       List<TextCommandDefinition> definitions = new ArrayList<>();
       for (String json : response.getBundle().getCommandDefinitionsList()) {
         definitions.add(parseDefinition(json));
