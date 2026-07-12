@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.AuthoredActionExecutionOutcome;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
@@ -196,8 +197,8 @@ public final class DefaultDurableGameplayCommandExecutionService
                       "REJECTED",
                       "COMPLETED",
                       "NOT_APPLIED",
-                      "AUTHORED_ACTION_EXECUTION_UNAVAILABLE",
-                      "Authored action execution is not available")));
+                      AuthoredActionExecutionOutcome.CODE,
+                      AuthoredActionExecutionOutcome.MESSAGE)));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
         PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);

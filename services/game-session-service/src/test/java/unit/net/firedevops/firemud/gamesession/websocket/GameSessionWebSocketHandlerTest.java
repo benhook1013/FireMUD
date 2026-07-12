@@ -707,7 +707,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOOK");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("Recent room line\n"));
@@ -741,7 +742,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOOK");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("Recent room line\n"));
@@ -775,7 +777,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK WHO");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(
@@ -811,7 +814,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK PLAY");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("Entering Demo World\n"));
@@ -854,7 +858,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK CUSTOM-PLAY");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("Custom session response\n"));
@@ -893,7 +898,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK SAY");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("You say, \"hello travelers\"\n"));
@@ -902,6 +908,15 @@ class GameSessionWebSocketHandlerTest {
 
     verify(promptBurstCoordinator)
         .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(false));
+    verify(outputProjector)
+        .projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class),
+            eq(context));
     verify(decoratedSession).sendMessage(argThat(message -> "OK SAY".equals(message.getPayload())));
     verify(session, never()).sendMessage(any(TextMessage.class));
   }
@@ -928,7 +943,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK PLAY");
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
@@ -958,7 +974,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK PLAY");
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
@@ -996,7 +1013,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of(output)),
             eq("en-NZ"),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOOK");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
         .thenReturn(ScreenBufferService.BufferedEntry.fromText("Recent room line\n"));
@@ -1047,7 +1065,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq(null),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOGIN");
 
     handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
@@ -1119,7 +1138,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq(null),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOGIN");
 
     handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
@@ -1184,7 +1204,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq(null),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOGIN");
 
     handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
@@ -1260,7 +1281,8 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq(null),
-            any(PresentationProperties.class)))
+            any(PresentationProperties.class),
+            any()))
         .thenReturn("OK LOGIN");
 
     handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));

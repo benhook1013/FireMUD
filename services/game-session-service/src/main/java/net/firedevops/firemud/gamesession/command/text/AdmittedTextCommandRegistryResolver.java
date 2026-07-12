@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
@@ -10,6 +12,8 @@ import org.springframework.stereotype.Component;
 /** Builds an instance-scoped command registry from built-ins and the admitted release artifact. */
 @Component
 public final class AdmittedTextCommandRegistryResolver {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(AdmittedTextCommandRegistryResolver.class);
   private final AdmittedCommandDefinitionReader admittedCommandDefinitionReader;
   private final Optional<ConfiguredAuthoredActionDefinitionProvider> testFixtureDefinitionProvider;
   private final Environment environment;
@@ -43,6 +47,7 @@ public final class AdmittedTextCommandRegistryResolver {
       return new AggregatingTextCommandRegistry(
           List.of(new BuiltInTextCommandDefinitionProvider(), () -> registryDefinitions));
     } catch (IllegalArgumentException | IllegalStateException ex) {
+      LOG.warn("Unable to build admitted text command registry; using built-in commands", ex);
       return builtIns;
     }
   }

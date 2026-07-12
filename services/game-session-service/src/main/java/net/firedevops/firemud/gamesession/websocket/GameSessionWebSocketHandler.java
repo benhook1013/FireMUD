@@ -207,7 +207,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               shouldForcePromptEmission(resolvedCommand, interpretation));
       maybePersistLocaleTag(maybeContext, resolveLocaleTag(session));
       String response =
-          formatResponse(resolvedCommand, interpretation, session, outputs, effectivePresentation);
+          formatResponse(
+              resolvedCommand,
+              interpretation,
+              session,
+              outputs,
+              effectivePresentation,
+              maybeContext.orElse(null));
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(
@@ -332,14 +338,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation,
       WebSocketSession session,
       java.util.List<PlayerOutput> outputs,
-      PresentationProperties effectivePresentation) {
+      PresentationProperties effectivePresentation,
+      SessionContext context) {
     return outputProjector.projectCommandResponse(
         session,
         command,
         interpretation,
         outputs,
         resolveLocaleTag(session, resolveTransportSessionId(session)),
-        effectivePresentation);
+        effectivePresentation,
+        context);
   }
 
   private boolean shouldForcePromptEmission(

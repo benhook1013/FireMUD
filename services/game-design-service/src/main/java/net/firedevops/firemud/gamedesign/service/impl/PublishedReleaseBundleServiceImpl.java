@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -132,10 +134,14 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
 
   private void validateDistinctCommandDefinitions(List<String> commandDefinitions) {
     Map<String, String> tokenOwners = new HashMap<>();
+    Set<String> commandIds = new HashSet<>();
     for (String commandDefinition : commandDefinitions) {
       var definition = objectMapper.readTree(commandDefinition);
       CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
       String commandId = normalizeCommandToken(definition.path("commandId").asText());
+      if (!commandIds.add(commandId)) {
+        throw new IllegalStateException("duplicate published commandDefinition id " + commandId);
+      }
       ensureSingleTokenOwner(tokenOwners, commandId, commandId);
       for (var alias : definition.path("aliases")) {
         String normalizedAlias = normalizeCommandToken(alias.asText());

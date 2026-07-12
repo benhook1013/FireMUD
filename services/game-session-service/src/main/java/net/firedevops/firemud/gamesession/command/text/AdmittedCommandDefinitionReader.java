@@ -10,6 +10,8 @@ import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -17,6 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 /** Resolves authored definitions only from the release bundle admitted for a live game instance. */
 @Component
 final class AdmittedCommandDefinitionReader {
+  private static final Logger LOG = LoggerFactory.getLogger(AdmittedCommandDefinitionReader.class);
   private static final Set<String> EFFECT_OPERATIONS =
       Set.of("ADD", "MULTIPLY", "CLAMP_MIN", "CLAMP_MAX", "GRANT_FLAG", "GRANT_CONDITION");
   private static final String IDENTIFIER_PATTERN = "[A-Za-z][A-Za-z0-9_]{0,63}";
@@ -43,6 +46,11 @@ final class AdmittedCommandDefinitionReader {
           .filter(instance -> matchesContext(instance, context))
           .flatMap(instance -> readDefinitions(context.tenantId(), instance));
     } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to resolve admitted command definitions tenantId={} gameInstanceId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          ex);
       return Optional.empty();
     }
   }
@@ -73,6 +81,12 @@ final class AdmittedCommandDefinitionReader {
       }
       return Optional.of(List.copyOf(definitions));
     } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to read admitted command definitions tenantId={} versionId={} releaseBundleId={}",
+          tenantId,
+          instance.getVersionId(),
+          instance.getReleaseBundleId(),
+          ex);
       return Optional.empty();
     }
   }

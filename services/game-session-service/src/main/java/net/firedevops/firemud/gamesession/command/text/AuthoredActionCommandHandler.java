@@ -36,12 +36,15 @@ final class AuthoredActionCommandHandler {
                             "Unknown authored action: " + invocation.commandId()))));
   }
 
+  @Timed(value = "gamesession.command.authored")
   public TextCommandInterpretationResult handle(SessionContext context, TextCommand command) {
     // Admitted declarations are executable only once their declared effect has a runtime handler.
     // Never acknowledge a command that would otherwise enqueue and complete as a no-op.
-    String message = "Authored action execution is not available";
     return new TextCommandInterpretationResult(
-        CommandEnqueueResult.failure("AUTHORED_ACTION_EXECUTION_UNAVAILABLE", message),
-        List.of(PlayerOutput.error("AUTHORED_ACTION_EXECUTION_UNAVAILABLE", message)));
+        CommandEnqueueResult.failure(
+            AuthoredActionExecutionOutcome.CODE, AuthoredActionExecutionOutcome.MESSAGE),
+        List.of(
+            PlayerOutput.error(
+                AuthoredActionExecutionOutcome.CODE, AuthoredActionExecutionOutcome.MESSAGE)));
   }
 }
