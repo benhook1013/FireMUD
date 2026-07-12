@@ -11,7 +11,7 @@ CREATE TABLE player_command_history (
     game_instance_id bigint NOT NULL,
     character_id bigint NOT NULL,
     command_text text NOT NULL,
-    accepted_at timestamp without time zone NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
     CONSTRAINT player_command_history_pkey PRIMARY KEY (id)
 );
 

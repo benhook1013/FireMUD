@@ -69,8 +69,8 @@ Bounded accepted player-command history defaults surfaced by Game Session.
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.command-history.enabled` | `commandHistory.capability` | Whether accepted command history is available to players through the HISTORY command. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `true` |
-| `firemud.command-history.max-entries` | `commandHistory.retention` | Maximum retained and displayable accepted command-history entries per player character; values are capped at 20. | `10` | integer from 1 to 20 | `operator-only` | `tenant/game-configurable within the platform maximum` | `no` | `no` | `10` |
+| `firemud.command-history.enabled` | `commandHistory.capability` | Whether accepted command history is available to players through the HISTORY command. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `true` |
+| `firemud.command-history.max-entries` | `commandHistory.retention` | Maximum retained and displayable accepted command-history entries per player character; values are capped at 20. | `10` | integer from 1 to 20 | `tenant/game-configurable within the platform maximum` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `10` |
 
 ## `firemud.movement`
 

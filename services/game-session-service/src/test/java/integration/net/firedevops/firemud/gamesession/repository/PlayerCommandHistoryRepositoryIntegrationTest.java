@@ -5,7 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
+import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -14,7 +19,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -28,6 +36,8 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
 
   private DSLContext dsl;
   private PlayerCommandHistoryRepository repository;
+  private PlayerCommandHistoryStorageService storageService;
+  private TransactionTemplate transactionTemplate;
 
   @BeforeAll
   void setUpRepository() {
@@ -44,8 +54,10 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
         .load()
         .migrate();
 
-    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     repository = new PlayerCommandHistoryRepository(dsl);
+    storageService = new PlayerCommandHistoryStorageService(repository);
+    transactionTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
   }
 
   @BeforeEach
@@ -94,6 +106,41 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
     assertThat(repository.findByScope(22L, 7L, 13L))
         .extracting(PlayerCommandHistoryEntry::getCommandText)
         .containsExactly("tenant-one");
+  }
+
+  @Test
+  void concurrentAppendsKeepTheDurableScopeWithinItsConfiguredMaximum() throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> appendAfterBarrier("LOOK", ready, start));
+      var second = executor.submit(() -> appendAfterBarrier("SAY hello", ready, start));
+
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      first.get(10, TimeUnit.SECONDS);
+      second.get(10, TimeUnit.SECONDS);
+    }
+
+    assertThat(repository.findByScope(22L, 7L, 13L)).hasSize(1);
+  }
+
+  private void appendAfterBarrier(String command, CountDownLatch ready, CountDownLatch start) {
+    transactionTemplate.executeWithoutResult(
+        status -> {
+          ready.countDown();
+          try {
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException(
+                  "Timed out waiting to start concurrent history append");
+            }
+          } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                "Interrupted while starting concurrent history append", ex);
+          }
+          storageService.append(22L, 7L, 13L, command, 1);
+        });
   }
 
   private PlayerCommandHistoryEntry historyEntry(String commandText, Instant acceptedAt) {

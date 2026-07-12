@@ -1,0 +1,49 @@
+package net.firedevops.firemud.gamesession.service;
+
+import java.util.List;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
+import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Gradually enforces lowered command-history caps even for inactive characters. */
+@Component
+public class PlayerCommandHistoryRetentionSweepJob {
+  private static final int BATCH_SIZE = 500;
+
+  private final PlayerCommandHistoryRepository repository;
+  private final PlayerCommandHistoryStorageService storageService;
+  private final EffectiveCommandHistorySettingsResolver settingsResolver;
+  private PlayerCommandHistoryRepository.HistoryScope cursor;
+
+  public PlayerCommandHistoryRetentionSweepJob(
+      PlayerCommandHistoryRepository repository,
+      PlayerCommandHistoryStorageService storageService,
+      EffectiveCommandHistorySettingsResolver settingsResolver) {
+    this.repository = repository;
+    this.storageService = storageService;
+    this.settingsResolver = settingsResolver;
+  }
+
+  @Scheduled(fixedDelayString = "${firemud.command-history.retention-sweep-ms:60000}")
+  @Transactional
+  public void trimInactiveHistory() {
+    if (!repository.tryLockRetentionSweep()) {
+      return;
+    }
+    List<PlayerCommandHistoryRepository.HistoryScope> scopes =
+        repository.findDistinctScopesAfter(cursor, BATCH_SIZE);
+    if (scopes.isEmpty()) {
+      cursor = null;
+      return;
+    }
+    for (PlayerCommandHistoryRepository.HistoryScope scope : scopes) {
+      int maxEntries =
+          settingsResolver.commandHistory(scope.tenantId(), scope.gameInstanceId()).maxEntries();
+      storageService.trimToMaxEntries(
+          scope.tenantId(), scope.gameInstanceId(), scope.characterId(), maxEntries);
+    }
+    cursor = scopes.getLast();
+  }
+}

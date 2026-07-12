@@ -33,6 +33,7 @@ class PlayerCommandHistoryStorageServiceTest {
 
     service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, "say hi", 1);
 
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
     ArgumentCaptor<PlayerCommandHistoryEntry> entryCaptor = ArgumentCaptor.captor();
     verify(repository).save(entryCaptor.capture());
     PlayerCommandHistoryEntry saved = entryCaptor.getValue();
@@ -53,6 +54,8 @@ class PlayerCommandHistoryStorageServiceTest {
 
     assertThat(service.findRecent(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, 2))
         .containsExactly("middle", "newest");
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository).deleteByIds(List.of(1L));
   }
 
   private PlayerCommandHistoryEntry existingEntry(Long id) {

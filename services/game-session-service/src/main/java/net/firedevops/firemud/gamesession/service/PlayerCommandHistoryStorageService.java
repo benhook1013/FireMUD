@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Durable per-player command-history storage with bounded retention by configured maximum. */
@@ -33,6 +34,7 @@ public class PlayerCommandHistoryStorageService {
       return;
     }
 
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     PlayerCommandHistoryEntry entry = new PlayerCommandHistoryEntry();
     entry.setTenantId(tenantId);
     entry.setGameInstanceId(gameInstanceId);
@@ -40,26 +42,42 @@ public class PlayerCommandHistoryStorageService {
     entry.setCommandText(commandText);
     entry.setAcceptedAt(Instant.now(clock));
     repository.save(entry);
-    trimToMaxEntries(tenantId, gameInstanceId, characterId, maxEntries);
+    trimLocked(tenantId, gameInstanceId, characterId, maxEntries);
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void trimToMaxEntries(
+      long tenantId, long gameInstanceId, long characterId, int maxEntries) {
+    if (maxEntries <= 0) {
+      return;
+    }
+    repository.lockScope(tenantId, gameInstanceId, characterId);
+    trimLocked(tenantId, gameInstanceId, characterId, maxEntries);
+  }
+
+  @Transactional
   public List<String> findRecent(
       long tenantId, long gameInstanceId, long characterId, int maxEntries) {
     if (maxEntries <= 0) {
       return List.of();
     }
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     List<PlayerCommandHistoryEntry> entries =
         repository.findByScope(tenantId, gameInstanceId, characterId);
     if (entries.size() <= maxEntries) {
       return entries.stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
     }
+    repository.deleteByIds(
+        entries.stream()
+            .limit(entries.size() - maxEntries)
+            .map(PlayerCommandHistoryEntry::getId)
+            .toList());
     int startIndex = entries.size() - maxEntries;
     return new ArrayList<>(entries.subList(startIndex, entries.size()))
         .stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
   }
 
-  private void trimToMaxEntries(
-      long tenantId, long gameInstanceId, long characterId, int maxEntries) {
+  private void trimLocked(long tenantId, long gameInstanceId, long characterId, int maxEntries) {
     List<PlayerCommandHistoryEntry> retained =
         new ArrayList<>(repository.findByScope(tenantId, gameInstanceId, characterId));
     if (retained.size() <= maxEntries) {
