@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -48,7 +49,14 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+    // The integration runtime includes other services' db/migration resources; scan this module
+    // only.
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .load()
+        .migrate();
 
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     repository = new PlayerCommandHistoryRepository(dsl);
