@@ -9,7 +9,7 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
-- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
+- **Remaining work** – Durable resume-transcript persistence is planned; current replay uses the hot reconnect buffer and fresh authoritative redraw. Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
 
 ## Reconnection Layers
 
@@ -225,13 +225,7 @@ Every admitted `{tenantId, gameInstanceId, characterId}` scope retains one durab
 - maximum retained byte size;
 - optional expiry after configured character inactivity, or `never`.
 
-New entries evict the oldest retained entries when either size bound is exceeded. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD replays complete retained structured entries in ordering-token order before sending fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
-
-Current implementation status remains intentionally narrower than the target model:
-
-- structured replay metadata is already stored in the hot reconnect buffer for new replayable outputs;
-- legacy text-only reconnect buffer entries remain readable;
-- the durable resume transcript is later implementation work, but it must reuse the same canonical structured entry model rather than inventing a text-only transport cache.
+New entries evict complete oldest retained entries when either size bound is exceeded. Byte accounting uses the deterministic canonical structured-entry serialization defined in [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#resume-transcript-bounds). If a single complete entry exceeds the byte bound, FireMUD drops it rather than retaining a partial or truncated entry; the prior valid window remains intact. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD replays complete retained structured entries in ordering-token order before sending fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
 
 Command-input history and complete player transcript archive/export are separate future features. They do not alter the reconnect context contract; see [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features).
 

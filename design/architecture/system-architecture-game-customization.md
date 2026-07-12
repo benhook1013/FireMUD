@@ -47,7 +47,7 @@ Example `manifest.json`:
 
 ## Command And Effect Declarations
 
-Player commands and gameplay effects are version-scoped Game Design data. Creators use typed Game Design DML/revision operations with the `COMMAND_DEFINITION` revision kind to declare one stable logical command identity, aliases, stage, category, semantic tags, capability requirements, help metadata, and typed execution effects. Seeded platform commands use the same declaration model as tenant/game-authored commands.
+The [Player Command Model](./system-architecture-player-command-model.md) is authoritative for command semantics and the complete command-definition contract. Player commands and gameplay effects are version-scoped Game Design data. Creators use typed Game Design DML/revision operations with the `COMMAND_DEFINITION` revision kind to declare one stable logical command identity, aliases, stage, category, semantic tags, capability requirements, help metadata, execution discipline, and typed execution effects. This is a summary, not an exhaustive schema: the complete definition also carries canonical identity and semantic ownership plus any effect ordering and atomicity rules. Seeded platform commands use the same declaration model as tenant/game-authored commands.
 
 An execution effect declaration identifies a registered safe effect kind, schema version, typed payload, targeting/authorization requirements, and replay/idempotency policy. For example, a blocking action declares a typed action-state effect; it is not inferred merely because the command carries a broad `COMBAT` tag. Categories and tags remain descriptive policy metadata for activity, presentation, analytics, and subscriptions.
 

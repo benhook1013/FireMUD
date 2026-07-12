@@ -60,14 +60,14 @@ A command may be valid in more than one stage only when its contract explicitly 
 
 ## Standard Command Catalog
 
-The standard catalog is grouped by command family. Detailed domain behavior remains in its owning architecture documentation; this table defines availability, stage, and ownership.
+The standard catalog is grouped by command family. Detailed domain behavior remains in its owning architecture documentation; this table defines availability, stage, aliases, and ownership. `Any` means every player stage. Gameplay-only commands require an admitted gameplay context.
 
 | Family | Canonical commands | Stage | Availability | Semantic owner |
 | --- | --- | --- | --- | --- |
 | Session lifecycle | `LOGIN` (`LOGON` alias), `PLAY`, `LOGOUT` (`LOGOFF` and `QUIT` aliases) | `LOGIN` pre-login, `PLAY` lobby, `LOGOUT` any stage | Mandatory platform | Account Service and Game Session |
-| Discovery and help | `WORLDS`, `REALMS`, `CHARS`, `HELP` | Pre-login or lobby as applicable; `HELP` is stage-aware | Mandatory platform | Account Service, Game Session, and Game Design for authored help |
-| Gameplay foundation | `LOOK`, `QUICKLOOK`, movement | Gameplay | Mandatory for a tenant/game using the playable text-MUD profile | Game Logic, World Management, and Game Session rendering |
-| Platform utilities | `STATUS`, `AFK` | Gameplay | Universal platform utilities | Game Session |
+| Discovery and help | `WORLDS`; `REALMS`; `CHARS`; `HELP` | `WORLDS` and `HELP` any; `REALMS` and `CHARS` lobby or gameplay | Mandatory platform | Account Service, Game Session, and Game Design for authored help |
+| Gameplay foundation | `LOOK` (`L`); `QUICKLOOK` (`QLOOK`); `MOVE` (`GO`, cardinal direction names, and `N`/`S`/`E`/`W`/`U`/`D`) | Gameplay | Mandatory for a tenant/game using the playable text-MUD profile | Game Logic, World Management, and Game Session rendering |
+| Platform utilities | `STATUS` (`STAT`); `AFK` (`BRB`) | Gameplay | Universal platform utilities | Game Session |
 | Social and presence | `SAY`, `WHISPER`, `TELL`, `WHO`, `FRIENDS` | Gameplay | Optional tenant/game capabilities | Game Logic, Social & Groups, and Game Session |
 | Inventory and equipment | `INVENTORY`, `EQUIPMENT`, `CONTAINER`, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE` | Gameplay | Optional tenant/game capability | Entity Management, Game Logic, and Game Session |
 | Command history | `HISTORY [count]` | Gameplay | Future optional tenant/game capability | Game Session command-history surface |

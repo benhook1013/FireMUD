@@ -15,7 +15,7 @@ Direct generic WebSocket access to Game Session remains useful as an internal/te
 
 At the protocol level, commands are split into two groups:
 
-- **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`/`LOGON`, `LOGOUT`/`LOGOFF`/`QUIT`, and lobby discovery/help commands that do not touch gameplay rules.
+- **System commands** – protocol-boundary session and connectivity operations handled by Game Session, such as `LOGIN`/`LOGON`, `LOGOUT`/`LOGOFF`/`QUIT`, and lobby discovery/help commands that do not touch gameplay rules. Their canonical semantic ownership is defined by the [Player Command Model](../../system-architecture-player-command-model.md).
 - **Gameplay commands** – in-world actions such as `LOOK`, communication actions like `SAY`, `WHISPER`, and `TELL`, movement, and combat. Game Session validates session state and authorization, normalizes input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics here.
 
 The player-facing protocol is also stage-aware:
