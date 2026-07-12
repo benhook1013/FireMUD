@@ -11,8 +11,10 @@ import java.util.Optional;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
+import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,13 +24,15 @@ import tools.jackson.databind.ObjectMapper;
 
 class PublishedReleaseBundleServiceImplTest {
   @Mock private PublishedReleaseBundleRepository repository;
+  @Mock private RevisionRepository revisionRepository;
 
   private PublishedReleaseBundleServiceImpl service;
 
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
-    service = new PublishedReleaseBundleServiceImpl(repository, new ObjectMapper());
+    service =
+        new PublishedReleaseBundleServiceImpl(repository, revisionRepository, new ObjectMapper());
   }
 
   @Test
@@ -47,6 +51,11 @@ class PublishedReleaseBundleServiceImplTest {
             LocalDateTime.now(),
             LocalDateTime.now());
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision commandDefinition = new Revision();
+    commandDefinition.setData("{\"commandId\":\"block\",\"schemaVersion\":1}");
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(commandDefinition));
     when(repository.save(any(PublishedReleaseBundle.class)))
         .thenAnswer(
             invocation -> {
@@ -72,6 +81,8 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals("genrev-1", dto.generationConfigRevision());
     assertEquals(List.of("logo.png", "manifest.json"), dto.requiredManifestAssetKeys());
     assertEquals(1, dto.participantDigests().size());
+    assertEquals(
+        List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
   }
 

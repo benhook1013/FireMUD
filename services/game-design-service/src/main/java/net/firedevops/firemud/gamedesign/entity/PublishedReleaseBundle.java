@@ -15,6 +15,7 @@ public class PublishedReleaseBundle {
   private String generationConfigRevision;
   private String requiredManifestAssetKeysJson;
   private String participantDigestsJson = "[]";
+  private String commandDefinitionsJson = "[]";
   private boolean scriptOnly;
   private String scriptPatchVersion;
   private LocalDateTime publishedAt = LocalDateTime.now();

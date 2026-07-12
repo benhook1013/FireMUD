@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
+import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.springframework.stereotype.Service;
@@ -21,11 +22,16 @@ import tools.jackson.databind.ObjectMapper;
 public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundleService {
 
   private final PublishedReleaseBundleRepository repository;
+  private final RevisionRepository revisionRepository;
   private final ObjectMapper objectMapper;
 
   public PublishedReleaseBundleServiceImpl(
-      PublishedReleaseBundleRepository repository, ObjectMapper objectMapper) {
+      PublishedReleaseBundleRepository repository,
+      RevisionRepository revisionRepository,
+      ObjectMapper objectMapper) {
     this.repository = Objects.requireNonNull(repository, "repository must not be null");
+    this.revisionRepository =
+        Objects.requireNonNull(revisionRepository, "revisionRepository must not be null");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
   }
 
@@ -58,6 +64,14 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
+    entity.setCommandDefinitionsJson(
+        serializeCommandDefinitions(
+            revisionRepository
+                .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+                    version.tenantId(), version.id(), "COMMAND_DEFINITION")
+                .stream()
+                .map(revision -> revision.getData())
+                .toList()));
     entity.setScriptOnly(version.scriptOnly());
     entity.setScriptPatchVersion(version.scriptPatchVersion());
     return toDto(repository.save(entity));
@@ -83,6 +97,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getManifestHash(),
         deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
         deserializeParticipantDigests(entity.getParticipantDigestsJson()),
+        deserializeCommandDefinitions(entity.getCommandDefinitionsJson()),
         entity.getGenerationConfigRevision(),
         entity.isScriptOnly(),
         entity.getScriptPatchVersion(),
@@ -104,6 +119,19 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
     return objectMapper.writeValueAsString(
         participantDigests == null ? List.of() : List.copyOf(participantDigests));
+  }
+
+  private String serializeCommandDefinitions(List<String> commandDefinitions) {
+    return objectMapper.writeValueAsString(
+        commandDefinitions == null ? List.of() : commandDefinitions);
+  }
+
+  private List<String> deserializeCommandDefinitions(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    return objectMapper.readValue(
+        json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
   }
 
   private List<PublishParticipantDigestDto> deserializeParticipantDigests(String json) {
