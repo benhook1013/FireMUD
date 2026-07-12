@@ -11,14 +11,14 @@ import org.springframework.stereotype.Component;
 @Component
 public final class AdmittedTextCommandRegistryResolver {
   private final AdmittedCommandDefinitionReader admittedCommandDefinitionReader;
-  private final ConfiguredAuthoredActionDefinitionProvider testFixtureDefinitionProvider;
+  private final Optional<ConfiguredAuthoredActionDefinitionProvider> testFixtureDefinitionProvider;
   private final Environment environment;
   private final TextCommandRegistry builtIns =
       new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
 
   AdmittedTextCommandRegistryResolver(
       AdmittedCommandDefinitionReader admittedCommandDefinitionReader,
-      ConfiguredAuthoredActionDefinitionProvider testFixtureDefinitionProvider,
+      Optional<ConfiguredAuthoredActionDefinitionProvider> testFixtureDefinitionProvider,
       Environment environment) {
     this.admittedCommandDefinitionReader = admittedCommandDefinitionReader;
     this.testFixtureDefinitionProvider = testFixtureDefinitionProvider;
@@ -28,7 +28,10 @@ public final class AdmittedTextCommandRegistryResolver {
   public TextCommandRegistry resolve(SessionContext context) {
     List<TextCommandDefinition> resolvedDefinitions = definitions(context);
     if (resolvedDefinitions.isEmpty() && environment.acceptsProfiles(Profiles.of("test"))) {
-      resolvedDefinitions = testFixtureDefinitionProvider.definitions();
+      resolvedDefinitions =
+          testFixtureDefinitionProvider
+              .map(ConfiguredAuthoredActionDefinitionProvider::definitions)
+              .orElse(List.of());
     }
     if (resolvedDefinitions.isEmpty()) {
       return builtIns;

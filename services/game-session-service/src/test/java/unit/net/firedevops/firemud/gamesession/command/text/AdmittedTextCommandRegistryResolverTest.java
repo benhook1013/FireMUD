@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +38,22 @@ class AdmittedTextCommandRegistryResolverTest {
     assertThat(registry.findDefinitionByAlias("salute")).isEmpty();
   }
 
+  @Test
+  void fallsBackToBuiltInsWhenNoTestFixtureProviderIsRegistered() {
+    when(admittedCommandDefinitionReader.definitionsFor(null))
+        .thenReturn(java.util.Optional.empty());
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("test");
+
+    TextCommandRegistry registry =
+        new AdmittedTextCommandRegistryResolver(
+                admittedCommandDefinitionReader, Optional.empty(), environment)
+            .resolve(null);
+
+    assertThat(registry.findDefinitionByAlias("look")).isPresent();
+    assertThat(registry.findDefinitionByAlias("salute")).isEmpty();
+  }
+
   private AdmittedTextCommandRegistryResolver resolver(MockEnvironment environment) {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action salute = new AuthoredActionProperties.Action();
@@ -46,8 +63,9 @@ class AdmittedTextCommandRegistryResolverTest {
     properties.setActions(List.of(salute));
     return new AdmittedTextCommandRegistryResolver(
         admittedCommandDefinitionReader,
-        new ConfiguredAuthoredActionDefinitionProvider(
-            new ConfiguredAuthoredActionCatalog(properties)),
+        Optional.of(
+            new ConfiguredAuthoredActionDefinitionProvider(
+                new ConfiguredAuthoredActionCatalog(properties))),
         environment);
   }
 }
