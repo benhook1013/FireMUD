@@ -65,19 +65,8 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
     }
 
     SessionContext context = historyContext.get();
-    FiremudCommandHistoryProperties settings = settingsResolver.commandHistory(context);
-    if (!settings.enabled()) {
-      return;
-    }
     try {
-      commandHistoryExecutor.execute(
-          () ->
-              persist(
-                  context.tenantId(),
-                  context.gameInstanceId(),
-                  context.characterId(),
-                  command.rawLine().trim(),
-                  settings.maxEntries()));
+      commandHistoryExecutor.execute(() -> persist(context, command.rawLine().trim()));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Player command history scheduling failed tenantId={} gameInstanceId={} characterId={}",
@@ -88,16 +77,24 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
     }
   }
 
-  private void persist(
-      long tenantId, long gameInstanceId, long characterId, String commandText, int maxEntries) {
+  private void persist(SessionContext context, String commandText) {
     try {
-      storageService.append(tenantId, gameInstanceId, characterId, commandText, maxEntries);
+      FiremudCommandHistoryProperties settings = settingsResolver.commandHistory(context);
+      if (!settings.enabled()) {
+        return;
+      }
+      storageService.append(
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          commandText,
+          settings.maxEntries());
     } catch (RuntimeException ex) {
       LOG.warn(
           "Player command history persistence failed tenantId={} gameInstanceId={} characterId={}",
-          tenantId,
-          gameInstanceId,
-          characterId,
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
           ex);
     }
   }

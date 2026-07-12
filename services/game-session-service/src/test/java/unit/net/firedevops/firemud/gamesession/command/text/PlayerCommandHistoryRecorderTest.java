@@ -138,6 +138,30 @@ class PlayerCommandHistoryRecorderTest {
   }
 
   @Test
+  void quarantinesHistorySettingsResolutionFailure() {
+    SessionContext context = gameplayContext(17L);
+    Mockito.doThrow(new IllegalStateException("settings authority unavailable"))
+        .when(settingsResolver)
+        .commandHistory(context);
+
+    assertDoesNotThrow(
+        () ->
+            recorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+  }
+
+  @Test
   void quarantinesHistorySchedulingFailure() {
     SessionContext context = gameplayContext(17L);
     when(settingsResolver.commandHistory(context))
