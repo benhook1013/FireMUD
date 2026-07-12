@@ -67,6 +67,20 @@ class AdmittedCommandDefinitionReaderTest {
     assertTrue(reader.definitionsFor(context()).isEmpty());
   }
 
+  @Test
+  void treatsPublishedBundleReadFailuresAsUnavailable() {
+    GameInstance instance = new GameInstance();
+    instance.setId(44L);
+    instance.setTenantId(7L);
+    instance.setVersionId(9L);
+    instance.setReleaseBundleId(12L);
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenThrow(new IllegalStateException("game design unavailable"));
+
+    assertTrue(reader.definitionsFor(context()).isEmpty());
+  }
+
   private SessionContext context() {
     return new SessionContext(1L, 7L, 2L, "player", 3L, "hero", 44L, "room", "jwt", 0L);
   }

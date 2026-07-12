@@ -18,10 +18,15 @@ public final class AdmittedTextCommandRegistryResolver {
 
   public TextCommandRegistry resolve(SessionContext context) {
     List<TextCommandDefinition> definitions = definitions(context);
-    return definitions.isEmpty()
-        ? builtIns
-        : new AggregatingTextCommandRegistry(
-            List.of(new BuiltInTextCommandDefinitionProvider(), () -> definitions));
+    if (definitions.isEmpty()) {
+      return builtIns;
+    }
+    try {
+      return new AggregatingTextCommandRegistry(
+          List.of(new BuiltInTextCommandDefinitionProvider(), () -> definitions));
+    } catch (IllegalArgumentException | IllegalStateException ex) {
+      return builtIns;
+    }
   }
 
   List<TextCommandDefinition> definitions(SessionContext context) {
