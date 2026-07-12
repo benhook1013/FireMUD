@@ -4,7 +4,7 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Notes
 
-The durable storage and accepted-command recording foundation for `HISTORY` is live. It persists only safe, accepted gameplay commands under the resolved tenant/game/character identity and applies the effective bounded retention policy without affecting command success when history persistence is unavailable. The player-facing parser, dispatch, capability, and presentation surface remains the next implementation boundary; existing clients cannot invoke `HISTORY` yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine.
+`HISTORY [count]` is live through the shared parser, registry, dispatch, capability, persistence, and presentation path. It reads only safe, accepted gameplay commands under the resolved tenant/game/character identity, applies the effective bounded retention policy, and never records its own display invocation. History persistence remains best-effort and cannot change the outcome of the player command it observes. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine.
 
 ## Command Model
 
@@ -70,7 +70,7 @@ The standard catalog is grouped by command family. Detailed domain behavior rema
 | Platform utilities | `STATUS` (`STAT`); `AFK` (`BRB`) | Gameplay | Universal platform utilities | Game Session |
 | Social and presence | `SAY`, `WHISPER`, `TELL`, `WHO`, `FRIENDS` | Gameplay | Optional tenant/game capabilities | Game Logic, Social & Groups, and Game Session |
 | Inventory and equipment | `INVENTORY`, `EQUIPMENT`, `CONTAINER`, `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, `REMOVE` | Gameplay | Optional tenant/game capability | Entity Management, Game Logic, and Game Session |
-| Command history | `HISTORY [count]` | Gameplay | Future optional tenant/game capability | Game Session command-history surface |
+| Command history | `HISTORY [count]` | Gameplay | Optional tenant/game capability | Game Session command-history surface |
 | Game-authored actions | Tenant/game-defined commands | Declared by the action definition | Tenant/game-defined | Game Design declaration with Game Session ingress and Game Logic execution |
 
 Disabled optional capabilities are not advertised by `HELP` and return a bounded feature-unavailable result when invoked. They are not silently repurposed or made available through an alternate alias.
@@ -90,7 +90,7 @@ Games may extend standard behavior only through explicitly documented extension 
 
 ## Command History
 
-`HISTORY [count]` is a future command-input history feature, not a screen transcript reader. It returns the caller's safe, accepted prior commands for the current tenant/game and character binding. Malformed, unknown, and failed input is not retained. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display.
+`HISTORY [count]` is a command-input history feature, not a screen transcript reader. It returns the caller's safe, accepted prior commands for the current tenant/game and character binding. Malformed, unknown, and failed input is not retained. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display.
 
 The platform default is `10` entries and the platform maximum is `20`. A tenant/game may configure its own effective default and maximum within those platform limits. A supplied `count` returns the newest requested subset, bounded by the effective maximum.
 
