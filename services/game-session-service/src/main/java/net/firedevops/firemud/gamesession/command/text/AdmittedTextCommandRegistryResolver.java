@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,10 @@ public final class AdmittedTextCommandRegistryResolver {
 
   public Optional<TextCommandDefinition> resolveDefinition(SessionContext context, String token) {
     return resolveDefinition(resolve(context), token);
+  }
+
+  Optional<AuthoredCommandAdmission> resolveAdmission(SessionContext context, String commandId) {
+    return admittedCommandDefinitionReader.admissionFor(context, commandId);
   }
 
   public Optional<TextCommandDefinition> resolveDefinition(

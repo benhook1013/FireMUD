@@ -32,6 +32,8 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @SuppressFBWarnings(
@@ -39,6 +41,7 @@ import org.springframework.stereotype.Service;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
+  private static final ObjectMapper JSON = new ObjectMapper();
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
@@ -143,7 +146,12 @@ public final class DefaultDurableGameplayCommandExecutionService
       activeRegistry = admittedRegistryResolver.resolve(context);
       parsed = textCommandParser.parse(command.getCommandText(), activeRegistry);
     }
-    CommandExecutionRoute route = resolveRoute(command, parsed, activeRegistry);
+    // An admitted authored snapshot is the execution contract. Do not reclassify it from a
+    // later live registry read, otherwise a released-definition change can strand a command.
+    CommandExecutionRoute route =
+        hasAuthoredActionSnapshot(command)
+            ? CommandExecutionRoute.AUTHORED
+            : resolveRoute(command, parsed, activeRegistry);
     if (route == CommandExecutionRoute.IGNORE) {
       return Optional.empty();
     }
@@ -189,15 +197,7 @@ public final class DefaultDurableGameplayCommandExecutionService
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AUTHORED ->
-          Optional.of(
-              recordResult(
-                  command,
-                  new DurableGameplayCommandExecutionResult(
-                      "REJECTED",
-                      "COMPLETED",
-                      "NOT_APPLIED",
-                      AuthoredActionExecutionOutcome.CODE,
-                      AuthoredActionExecutionOutcome.MESSAGE)));
+          Optional.of(executeAuthoredActionState(context, command, effect.getEffectId()));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
         PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);
@@ -269,6 +269,78 @@ public final class DefaultDurableGameplayCommandExecutionService
             "NOT_APPLIED",
             result.commandResult().errorCode(),
             result.commandResult().errorMessage()));
+  }
+
+  private DurableGameplayCommandExecutionResult executeAuthoredActionState(
+      SessionContext context, GameplayCommand command, String effectId) {
+    Optional<AuthoredActionState> actionState = authoredActionState(command);
+    if (actionState.isEmpty()) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "AUTHORED_ACTION_SNAPSHOT_INVALID",
+              "Authored action declaration snapshot is unavailable or unsupported"));
+    }
+    AuthoredActionState declaration = actionState.orElseThrow();
+    return executeReplayBackedLocalMutation(
+        context,
+        command,
+        effectId,
+        () -> {
+          var result =
+              actionStateCommandHandler.apply(
+                  context,
+                  declaration.conditionKey(),
+                  declaration.duration(),
+                  declaration.effectPayloadJson(),
+                  effectId,
+                  "Action applied.");
+          return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+        });
+  }
+
+  private Optional<AuthoredActionState> authoredActionState(GameplayCommand command) {
+    if (command.getAdmittedReleaseBundleId() == null
+        || command.getAdmittedReleaseBundleId() <= 0L
+        || command.getAdmittedVersionId() == null
+        || command.getAdmittedVersionId() <= 0L
+        || command.getDeclaredEffectsJson() == null) {
+      return Optional.empty();
+    }
+    try {
+      JsonNode effects = JSON.readTree(command.getDeclaredEffectsJson());
+      if (!effects.isArray() || effects.size() != 1) {
+        return Optional.empty();
+      }
+      JsonNode effect = effects.get(0);
+      JsonNode payload = effect.path("payload");
+      JsonNode effectPayload = payload.path("effectPayload");
+      if (!"APPLY_ACTION_STATE".equals(effect.path("effectKind").asText())
+          || effect.path("schemaVersion").asInt() != 1
+          || !"SELF".equals(effect.path("targeting").asText())
+          || !"EFFECT_IDEMPOTENT".equals(effect.path("replayPolicy").asText())
+          || !payload.path("conditionKey").isTextual()
+          || !payload.path("durationSeconds").isInt()
+          || payload.path("durationSeconds").asInt() <= 0
+          || payload.path("durationSeconds").asInt() > 3600
+          || !effectPayload.isObject()) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          new AuthoredActionState(
+              payload.path("conditionKey").asText(),
+              java.time.Duration.ofSeconds(payload.path("durationSeconds").asInt()),
+              effectPayload.toString()));
+    } catch (RuntimeException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private boolean hasAuthoredActionSnapshot(GameplayCommand command) {
+    return command.getDeclaredEffectsJson() != null && !command.getDeclaredEffectsJson().isBlank();
   }
 
   private DurableGameplayCommandExecutionResult executeReplayBackedLocalMutation(
@@ -382,6 +454,9 @@ public final class DefaultDurableGameplayCommandExecutionService
 
   private record ReplayBackedMutationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
+
+  private record AuthoredActionState(
+      String conditionKey, java.time.Duration duration, String effectPayloadJson) {}
 
   private CommandExecutionRoute resolveRoute(
       GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {

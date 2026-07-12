@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +53,48 @@ final class AdmittedCommandDefinitionReader {
           context.tenantId(),
           context.gameInstanceId(),
           ex);
+      return Optional.empty();
+    }
+  }
+
+  Optional<AuthoredCommandAdmission> admissionFor(SessionContext context, String commandId) {
+    if (context == null
+        || context.tenantId() <= 0L
+        || context.gameInstanceId() <= 0L
+        || commandId == null
+        || commandId.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return gameInstanceRepository
+          .findById(context.gameInstanceId())
+          .filter(instance -> matchesContext(instance, context))
+          .flatMap(
+              instance -> {
+                GetPublishedReleaseBundleResponse response =
+                    gameDesignClient.getPublishedReleaseBundle(
+                        context.tenantId(), instance.getVersionId());
+                if (response.hasError()
+                    || !response.hasBundle()
+                    || response.getBundle().getId() != instance.getReleaseBundleId()
+                    || response.getBundle().getVersionId() != instance.getVersionId()) {
+                  return Optional.empty();
+                }
+                for (String json : response.getBundle().getCommandDefinitionsList()) {
+                  JsonNode definition = objectMapper.readTree(json);
+                  if (commandId.equals(definition.path("commandId").asText())) {
+                    parseDefinition(json);
+                    return Optional.of(
+                        new AuthoredCommandAdmission(
+                            instance.getReleaseBundleId(),
+                            instance.getVersionId(),
+                            commandId,
+                            definition.path("effects").toString()));
+                  }
+                }
+                return Optional.empty();
+              });
+    } catch (RuntimeException ex) {
       return Optional.empty();
     }
   }

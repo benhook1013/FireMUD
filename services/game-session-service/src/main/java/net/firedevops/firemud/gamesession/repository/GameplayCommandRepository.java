@@ -246,6 +246,9 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.REGION_ID, entity.getRegionId())
             .set(GAMEPLAY_COMMAND.REGION_EPOCH, entity.getRegionEpoch())
             .set(GAMEPLAY_COMMAND.DUE_TICK_ID, entity.getDueTickId())
+            .set(GAMEPLAY_COMMAND.ADMITTED_RELEASE_BUNDLE_ID, entity.getAdmittedReleaseBundleId())
+            .set(GAMEPLAY_COMMAND.ADMITTED_VERSION_ID, entity.getAdmittedVersionId())
+            .set(GAMEPLAY_COMMAND.DECLARED_EFFECTS_JSON, entity.getDeclaredEffectsJson())
             .where(GAMEPLAY_COMMAND.ID.eq(entity.getId()))
             .execute();
     if (updated != 1) {
@@ -308,6 +311,9 @@ public class GameplayCommandRepository {
     record.setRegionId(entity.getRegionId());
     record.setRegionEpoch(entity.getRegionEpoch());
     record.setDueTickId(entity.getDueTickId());
+    record.setAdmittedReleaseBundleId(entity.getAdmittedReleaseBundleId());
+    record.setAdmittedVersionId(entity.getAdmittedVersionId());
+    record.setDeclaredEffectsJson(entity.getDeclaredEffectsJson());
   }
 
   private GameplayCommand toEntity(Record record) {
@@ -362,6 +368,9 @@ public class GameplayCommandRepository {
     entity.setRegionId(record.get(GAMEPLAY_COMMAND.REGION_ID));
     entity.setRegionEpoch(record.get(GAMEPLAY_COMMAND.REGION_EPOCH));
     entity.setDueTickId(record.get(GAMEPLAY_COMMAND.DUE_TICK_ID));
+    entity.setAdmittedReleaseBundleId(record.get(GAMEPLAY_COMMAND.ADMITTED_RELEASE_BUNDLE_ID));
+    entity.setAdmittedVersionId(record.get(GAMEPLAY_COMMAND.ADMITTED_VERSION_ID));
+    entity.setDeclaredEffectsJson(record.get(GAMEPLAY_COMMAND.DECLARED_EFFECTS_JSON));
     return entity;
   }
 }

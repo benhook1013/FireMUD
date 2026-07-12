@@ -50,6 +50,8 @@ Game Design persists each command definition as a typed `COMMAND_DEFINITION` rev
 
 At runtime, Game Session resolves only the declaration artifact pinned to the player's admitted tenant/game version and, where applicable, its approved script-patch version. The durable command and effect ledgers retain that version identity and the declared effect identity for replay. A runtime must fail closed rather than reinterpret a command against a newer definition or silently fall back to process-local configuration when the admitted artifact is unavailable or incompatible.
 
+For the first live effect path, accepted authored ingress persists the admitted release-bundle id, version id, canonical command id, and immutable declared-effect JSON on the durable gameplay command. Execution selects that snapshot rather than a later live registry read, accepts only one supported `APPLY_ACTION_STATE` v1 declaration, and uses the durable effect replay record before applying the downstream actor condition. Missing, malformed, or unsupported snapshots fail closed before replay lookup or script publication.
+
 The initial migration may adapt existing configuration-backed authored-action fields into this payload shape, but application configuration is not the target source of truth for published gameplay behavior.
 
 ## Player Stages

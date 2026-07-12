@@ -41,15 +41,43 @@ public class ActionStateCommandHandler {
     if (command.type() != TextCommandType.BLOCK || !command.args().isEmpty()) {
       return failure("INVALID_ARGUMENT", "Usage: BLOCK");
     }
-    Instant expiresAt = clock.instant().plus(BLOCK_DURATION);
+    return apply(
+        context,
+        "blocking",
+        BLOCK_DURATION,
+        BLOCK_EFFECT_PAYLOAD,
+        effectId,
+        "You brace for the next blow.");
+  }
+
+  public ActionStateCommandHandlingResult apply(
+      SessionContext context,
+      String conditionKey,
+      Duration duration,
+      String effectPayload,
+      String effectId,
+      String successMessage) {
+    if (context == null || !context.hasGameplayIdentity()) {
+      return failure("NOT_PLAYING", "You are not in the game.");
+    }
+    if (conditionKey == null
+        || conditionKey.isBlank()
+        || duration == null
+        || duration.isNegative()
+        || duration.isZero()
+        || effectPayload == null
+        || effectPayload.isBlank()) {
+      return failure("INVALID_ARGUMENT", "Invalid action-state declaration.");
+    }
+    Instant expiresAt = clock.instant().plus(duration);
     ApplyActorConditionResponse response =
         gameLogicClient.applyActorCondition(
             context,
-            "blocking",
+            conditionKey,
             "ACTION_STATE",
             effectId == null ? "" : effectId,
             expiresAt,
-            BLOCK_EFFECT_PAYLOAD);
+            effectPayload);
     if (response.hasError()) {
       String message =
           response.getError().getMessage().isBlank()
@@ -62,8 +90,7 @@ public class ActionStateCommandHandler {
       return failure(code, message);
     }
     return new ActionStateCommandHandlingResult(
-        CommandEnqueueResult.success(),
-        List.of(PlayerOutput.notice("You brace for the next blow.")));
+        CommandEnqueueResult.success(), List.of(PlayerOutput.notice(successMessage)));
   }
 
   private ActionStateCommandHandlingResult failure(String code, String message) {

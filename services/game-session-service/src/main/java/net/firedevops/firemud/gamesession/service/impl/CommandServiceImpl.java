@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -76,6 +77,15 @@ public class CommandServiceImpl implements CommandService {
   @Override
   public CommandEnqueueResult enqueue(
       String sessionIdText, String command, boolean requiresSoloTick) {
+    return enqueue(sessionIdText, command, requiresSoloTick, null);
+  }
+
+  @Override
+  public CommandEnqueueResult enqueue(
+      String sessionIdText,
+      String command,
+      boolean requiresSoloTick,
+      AuthoredCommandAdmission authoredAdmission) {
     String traceId = Span.current().getSpanContext().getTraceId();
     if (command == null || command.isBlank()) {
       return CommandEnqueueResult.failure("INVALID_ARGUMENT", "Command cannot be blank");
@@ -117,7 +127,12 @@ public class CommandServiceImpl implements CommandService {
 
       GameplayCommand gameplayCommand =
           persistAcceptedCommand(
-              sessionId, command, requiresSoloTick, queueTarget.get(), sessionContext);
+              sessionId,
+              command,
+              requiresSoloTick,
+              queueTarget.get(),
+              sessionContext,
+              authoredAdmission);
       logger.info(
           "Accepted gameplay command commandId={} tenantId={} gameInstanceId={} sessionId={} command={}",
           gameplayCommand.getCommandId(),
@@ -153,7 +168,8 @@ public class CommandServiceImpl implements CommandService {
       String command,
       boolean requiresSoloTick,
       QueueTarget queueTarget,
-      Optional<SessionContext> sessionContext) {
+      Optional<SessionContext> sessionContext,
+      AuthoredCommandAdmission authoredAdmission) {
     Instant now = Instant.now();
     GameplayCommand gameplayCommand = new GameplayCommand();
     gameplayCommand.setCommandId("cmd-" + UUID.randomUUID());
@@ -173,6 +189,12 @@ public class CommandServiceImpl implements CommandService {
               gameplayCommand.setTargetEntityId(Long.toString(characterId));
             });
     gameplayCommand.setCommandName(commandName(command));
+    if (authoredAdmission != null) {
+      gameplayCommand.setCommandName(authoredAdmission.commandId());
+      gameplayCommand.setAdmittedReleaseBundleId(authoredAdmission.releaseBundleId());
+      gameplayCommand.setAdmittedVersionId(authoredAdmission.versionId());
+      gameplayCommand.setDeclaredEffectsJson(authoredAdmission.declaredEffectsJson());
+    }
     gameplayCommand.setCommandText(command);
     gameplayCommand.setSanitizedCommandText(GameSessionCommandLogSanitizer.sanitize(command));
     gameplayCommand.setRequiresSoloTick(requiresSoloTick);

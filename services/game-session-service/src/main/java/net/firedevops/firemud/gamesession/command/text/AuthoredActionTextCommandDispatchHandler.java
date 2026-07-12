@@ -1,22 +1,22 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
+import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispatchHandler {
-  private static final Logger LOG =
-      LoggerFactory.getLogger(AuthoredActionTextCommandDispatchHandler.class);
   private final AuthoredActionCommandHandler handler;
-  private final ScriptEventPublisher scriptEventPublisher;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
+  private final CommandService commandService;
 
   AuthoredActionTextCommandDispatchHandler(
-      AuthoredActionCommandHandler handler, ScriptEventPublisher scriptEventPublisher) {
+      AuthoredActionCommandHandler handler,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      CommandService commandService) {
     this.handler = handler;
-    this.scriptEventPublisher = scriptEventPublisher;
+    this.admittedRegistryResolver = admittedRegistryResolver;
+    this.commandService = commandService;
   }
 
   @Override
@@ -26,32 +26,22 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    TextCommandInterpretationResult result =
-        request
-            .sessionContext()
-            .map(context -> handler.handle(context, request.command()))
-            .orElseGet(() -> handler.handle(request.command()));
-    if (result.commandResult().accepted()) {
-      request
-          .sessionContext()
-          .ifPresent(context -> publishCommandEvent(context, request.command()));
+    if (request.sessionContext().isEmpty()) {
+      return handler.handle(request.command());
     }
-    return result;
-  }
-
-  private void publishCommandEvent(SessionContext context, TextCommand command) {
-    try {
-      scriptEventPublisher.publishCommandEvent(
-          context,
-          ScriptEventGameplayCommands.synthetic("authored", command, command.commandId(), null));
-    } catch (RuntimeException ex) {
-      LOG.warn(
-          "Authored script event publish failed tenantId={} gameInstanceId={} characterId={} commandId={}",
-          context.tenantId(),
-          context.gameInstanceId(),
-          context.characterId(),
-          command.commandId(),
-          ex);
-    }
+    SessionContext context = request.sessionContext().orElseThrow();
+    return admittedRegistryResolver
+        .resolveAdmission(context, request.command().commandId())
+        .map(
+            admission ->
+                handler.handle(
+                    context,
+                    request.command(),
+                    commandService.enqueue(
+                        request.sessionId(),
+                        request.command().rawLine(),
+                        request.requiresSoloTick(),
+                        admission)))
+        .orElseGet(() -> handler.handle(context, request.command()));
   }
 }

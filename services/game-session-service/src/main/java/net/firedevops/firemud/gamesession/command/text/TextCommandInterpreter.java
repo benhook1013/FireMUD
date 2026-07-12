@@ -138,6 +138,7 @@ public class TextCommandInterpreter {
             friendsHandler,
             authoredActionHandler,
             authoredActionCatalog,
+            admittedRegistryResolver,
             new ItemCommandHandler(
                 inventoryHandler,
                 equipmentHandler,
@@ -424,6 +425,7 @@ public class TextCommandInterpreter {
       FriendsCommandHandler friendsHandler,
       AuthoredActionCommandHandler authoredActionHandler,
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       ItemCommandHandler itemHandler,
       ScriptEventPublisher scriptEventPublisher,
       CommunicationCommandHandler communicationHandler,
@@ -440,7 +442,7 @@ public class TextCommandInterpreter {
             new StatusTextCommandDispatchHandler(statusHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(
-                authoredActionHandler, scriptEventPublisher),
+                authoredActionHandler, admittedRegistryResolver, commandService),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),

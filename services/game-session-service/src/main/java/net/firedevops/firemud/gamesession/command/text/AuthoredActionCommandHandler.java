@@ -47,4 +47,14 @@ final class AuthoredActionCommandHandler {
             PlayerOutput.error(
                 AuthoredActionExecutionOutcome.CODE, AuthoredActionExecutionOutcome.MESSAGE)));
   }
+
+  TextCommandInterpretationResult handle(
+      SessionContext context, TextCommand command, CommandEnqueueResult enqueueResult) {
+    if (enqueueResult.accepted()) {
+      return new TextCommandInterpretationResult(enqueueResult, List.of());
+    }
+    return new TextCommandInterpretationResult(
+        enqueueResult,
+        List.of(PlayerOutput.error(enqueueResult.errorCode(), enqueueResult.errorMessage())));
+  }
 }
