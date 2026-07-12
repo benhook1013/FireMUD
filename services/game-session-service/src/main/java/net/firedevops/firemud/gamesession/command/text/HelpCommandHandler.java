@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -24,7 +23,6 @@ public class HelpCommandHandler {
   private final GameAuthoredHelpReader authoredHelpReader;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
 
-  @Autowired
   HelpCommandHandler(
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader) {
