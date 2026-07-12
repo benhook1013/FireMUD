@@ -30,6 +30,8 @@ Gameplay-changing commands instead declare one or more typed execution effects. 
 
 For example, the seeded `BLOCK` command is a gameplay command with the `COMBAT` tag, but its concrete behavior is a separate action-state effect declaration equivalent to `APPLY_ACTION_STATE` with the typed `blocking` payload and bounded duration. `ATTACK`, `PARRY`, and `TAUNT` may all be combat-tagged without inheriting that blocking effect.
 
+The first registered declaration is `APPLY_ACTION_STATE` schema version `1`. It requires `targeting: SELF`, `replayPolicy: EFFECT_IDEMPOTENT`, and a payload with an identifier `conditionKey`, integer `durationSeconds` from `1` through `3600`, and an `effectPayload.modifiers` array. Each modifier uses one registered operation (`ADD`, `MULTIPLY`, `CLAMP_MIN`, `CLAMP_MAX`, `GRANT_FLAG`, or `GRANT_CONDITION`), an identifier `target_key`, numeric `value`, optional identifier scope fields, and optional integer priority. This data contract is the only authorable action-state behavior; it cannot embed arbitrary DML or Java.
+
 The generic runtime owns only the effect engine:
 
 - validate declarations and payloads against registered effect schemas;

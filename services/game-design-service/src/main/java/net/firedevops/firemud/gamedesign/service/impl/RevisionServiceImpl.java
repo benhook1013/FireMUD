@@ -102,9 +102,10 @@ public class RevisionServiceImpl implements RevisionService {
       requireEnum(definition, "promptPolicy", "NEVER", "WHEN_LOGGED_IN", "WHEN_GAMEPLAY");
       requireEnum(definition, "actionCategory", "GAMEPLAY", "SOCIAL", "META", "ADMIN", "SYSTEM");
       requireTextArray(definition, "aliases");
-      if (!definition.path("actionTags").isArray() || !definition.path("effects").isArray()) {
-        throw invalidCommandDefinition("actionTags and effects must be arrays");
+      if (!definition.path("actionTags").isArray()) {
+        throw invalidCommandDefinition("actionTags must be an array");
       }
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
     } catch (IllegalArgumentException ex) {
       throw ex;
     } catch (Exception ex) {

@@ -149,6 +149,93 @@ class RevisionServiceImplTest {
   }
 
   @Test
+  void saveRevisionRejectsUnsupportedCommandEffectKindBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition =
+        validCommandDefinition()
+            .replace("\"effectKind\": \"APPLY_ACTION_STATE\"", "\"effectKind\": \"RUN_SQL\"");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition uses an unsupported effectKind", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsCommandEffectWithMalformedModifierBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition =
+        validCommandDefinition().replace("\"value\": 1", "\"value\": \"one\"");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition effect modifier value must be numeric",
+        ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsFractionalActionStateDurationBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition =
+        validCommandDefinition().replace("\"durationSeconds\": 5", "\"durationSeconds\": 1.5");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition APPLY_ACTION_STATE durationSeconds must be between 1 and 3600",
+        ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
   void saveRevisionAppliesWorldMutationBeforePersisting() {
     Game game = setupGameAndVersion();
     when(worldManagementClient.applyWorldDesignMutation(
@@ -336,7 +423,29 @@ class RevisionServiceImplTest {
           "actionCategory": "GAMEPLAY",
           "aliases": ["block", "guard"],
           "actionTags": ["COMBAT"],
-          "effects": []
+          "effects": [
+            {
+              "effectKind": "APPLY_ACTION_STATE",
+              "schemaVersion": 1,
+              "targeting": "SELF",
+              "replayPolicy": "EFFECT_IDEMPOTENT",
+              "payload": {
+                "conditionKey": "blocking",
+                "durationSeconds": 5,
+                "effectPayload": {
+                  "modifiers": [
+                    {
+                      "operation": "ADD",
+                      "target_key": "block_mitigation",
+                      "value": 1,
+                      "scope_kind": "ACTION_FAMILY",
+                      "scope_key": "defense"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         }
         """;
   }
