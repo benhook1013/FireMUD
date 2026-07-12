@@ -4,6 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository and storage service are framework-managed collaborators.")
 public class PlayerCommandHistoryRetentionSweepJob {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(PlayerCommandHistoryRetentionSweepJob.class);
   private static final int BATCH_SIZE = 500;
 
   private final PlayerCommandHistoryRepository repository;
@@ -43,10 +47,19 @@ public class PlayerCommandHistoryRetentionSweepJob {
       return;
     }
     for (PlayerCommandHistoryRepository.HistoryScope scope : scopes) {
-      int maxEntries =
-          settingsResolver.commandHistory(scope.tenantId(), scope.gameInstanceId()).maxEntries();
-      storageService.trimToMaxEntries(
-          scope.tenantId(), scope.gameInstanceId(), scope.characterId(), maxEntries);
+      try {
+        int maxEntries =
+            settingsResolver.commandHistory(scope.tenantId(), scope.gameInstanceId()).maxEntries();
+        storageService.trimToMaxEntries(
+            scope.tenantId(), scope.gameInstanceId(), scope.characterId(), maxEntries);
+      } catch (RuntimeException ex) {
+        LOG.warn(
+            "Player command-history retention sweep failed tenantId={} gameInstanceId={} characterId={}",
+            scope.tenantId(),
+            scope.gameInstanceId(),
+            scope.characterId(),
+            ex);
+      }
     }
     cursor = scopes.getLast();
   }

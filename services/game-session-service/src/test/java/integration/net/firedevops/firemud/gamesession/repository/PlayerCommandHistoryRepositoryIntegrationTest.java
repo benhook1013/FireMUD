@@ -109,6 +109,20 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
   }
 
   @Test
+  void deletesOnlyTheRequestedOldestEntriesWithoutLoadingTheScope() {
+    repository.save(historyEntry("oldest", Instant.parse("2026-07-12T01:00:00Z")));
+    repository.save(historyEntry("middle", Instant.parse("2026-07-12T01:00:01Z")));
+    repository.save(historyEntry("newest", Instant.parse("2026-07-12T01:00:02Z")));
+
+    assertThat(repository.countByScope(22L, 7L, 13L)).isEqualTo(3);
+    repository.deleteOldestByScope(22L, 7L, 13L, 2);
+
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(PlayerCommandHistoryEntry::getCommandText)
+        .containsExactly("newest");
+  }
+
+  @Test
   void concurrentAppendsKeepTheDurableScopeWithinItsConfiguredMaximum() throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
