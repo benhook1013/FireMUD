@@ -36,8 +36,10 @@ public class AsyncConfig {
   @Bean(name = "commandHistoryExecutor")
   public Executor commandHistoryExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setCorePoolSize(2);
-    executor.setMaxPoolSize(4);
+    // History is best-effort. One writer prevents it from contending with concurrent gameplay
+    // transactions for the service's shared JDBC pool.
+    executor.setCorePoolSize(1);
+    executor.setMaxPoolSize(1);
     executor.setQueueCapacity(500);
     executor.setThreadNamePrefix("command-history-");
     executor.initialize();
