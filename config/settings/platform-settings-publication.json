@@ -248,16 +248,16 @@
     },
     "firemud.command-history.enabled": {
       "group": "commandHistory.capability",
-      "scope": "operator-only",
-      "futureScope": "tenant/game-configurable",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
       "hotReloadable": false,
       "advanced": false,
       "exampleValue": true
     },
     "firemud.command-history.max-entries": {
       "group": "commandHistory.retention",
-      "scope": "operator-only",
-      "futureScope": "tenant/game-configurable within the platform maximum",
+      "scope": "tenant/game-configurable within the platform maximum",
+      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
       "hotReloadable": false,
       "advanced": false,
       "exampleValue": 10,
