@@ -4,7 +4,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
+import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -20,9 +20,6 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 final class AdmittedCommandDefinitionReader {
   private static final Logger LOG = LoggerFactory.getLogger(AdmittedCommandDefinitionReader.class);
-  private static final Set<String> EFFECT_OPERATIONS =
-      Set.of("ADD", "MULTIPLY", "CLAMP_MIN", "CLAMP_MAX", "GRANT_FLAG", "GRANT_CONDITION");
-  private static final String IDENTIFIER_PATTERN = "[A-Za-z][A-Za-z0-9_]{0,63}";
   private final GameInstanceRepository gameInstanceRepository;
   private final GameDesignClient gameDesignClient;
   private final ObjectMapper objectMapper;
@@ -148,8 +145,7 @@ final class AdmittedCommandDefinitionReader {
     String conditionKey = requiredIdentifier(payload, "conditionKey");
     JsonNode durationSeconds = payload.path("durationSeconds");
     if (!durationSeconds.isInt()
-        || durationSeconds.asInt() <= 0
-        || durationSeconds.asInt() > 3600) {
+        || !CommandEffectDeclarationConstraints.isValidDurationSeconds(durationSeconds.asInt())) {
       throw new IllegalArgumentException("command effect durationSeconds is invalid");
     }
     return new TextCommandEffectDeclaration.ApplyActionState(
@@ -169,7 +165,7 @@ final class AdmittedCommandDefinitionReader {
         throw new IllegalArgumentException("command effect modifier must be an object");
       }
       String operation = requiredText(modifier, "operation");
-      if (!EFFECT_OPERATIONS.contains(operation)) {
+      if (!CommandEffectDeclarationConstraints.SUPPORTED_MODIFIER_OPERATIONS.contains(operation)) {
         throw new IllegalArgumentException("command effect modifier operation is unsupported");
       }
       String targetKey = requiredIdentifier(modifier, "target_key");
@@ -203,7 +199,7 @@ final class AdmittedCommandDefinitionReader {
 
   private String requiredIdentifier(JsonNode definition, String field) {
     String value = requiredText(definition, field);
-    if (!value.matches(IDENTIFIER_PATTERN)) {
+    if (!CommandEffectDeclarationConstraints.isIdentifier(value)) {
       throw new IllegalArgumentException(field + " must be an identifier");
     }
     return value;

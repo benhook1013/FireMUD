@@ -76,25 +76,18 @@ public class HelpCommandHandler {
       return success(authoredTopic.orElseThrow());
     }
 
-    String resolvedTopic = canonicalTopic(args.get(0), maybeContext);
-    if (resolvedTopic.startsWith("AUTHORED:")) {
-      if (admittedRegistryResolver != null) {
-        return maybeContext
-            .flatMap(
-                context ->
-                    admittedRegistryResolver
-                        .resolve(context)
-                        .findDefinition(resolvedTopic.substring("AUTHORED:".length())))
-            .map(this::success)
-            .orElseGet(() -> unknownTopic(args.get(0)));
-      }
+    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext);
+    if (resolvedTopic.admittedDefinition() != null) {
+      return success(resolvedTopic.admittedDefinition());
+    }
+    if (resolvedTopic.canonicalTopic().startsWith("AUTHORED:")) {
       return authoredActionCatalog
-          .find(resolvedTopic.substring("AUTHORED:".length()))
+          .find(resolvedTopic.canonicalTopic().substring("AUTHORED:".length()))
           .map(this::success)
           .orElseGet(() -> unknownTopic(args.get(0)));
     }
 
-    return switch (resolvedTopic) {
+    return switch (resolvedTopic.canonicalTopic()) {
       case "HELP" -> success(topicIndex(maybeContext));
       case "LOGIN" ->
           success(
@@ -236,9 +229,9 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private String canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
+  private ResolvedHelpTopic canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
     if (!StringUtils.hasText(topic)) {
-      return "";
+      return new ResolvedHelpTopic("", null);
     }
     String canonical =
         switch (topic.trim().toUpperCase(Locale.ROOT)) {
@@ -266,20 +259,24 @@ public class HelpCommandHandler {
           default -> "";
         };
     if (!canonical.isEmpty()) {
-      return canonical;
+      return new ResolvedHelpTopic(canonical, null);
     }
     if (admittedRegistryResolver != null) {
       return maybeContext
           .flatMap(context -> admittedRegistryResolver.resolveDefinition(context, topic))
           .filter(definition -> definition.type() == TextCommandType.AUTHORED)
-          .map(definition -> "AUTHORED:" + definition.commandId())
-          .orElse("");
+          .map(
+              definition -> new ResolvedHelpTopic("AUTHORED:" + definition.commandId(), definition))
+          .orElse(new ResolvedHelpTopic("", null));
     }
     return authoredActionCatalog
         .findByAlias(topic)
-        .map(action -> "AUTHORED:" + action.commandId())
-        .orElse("");
+        .map(action -> new ResolvedHelpTopic("AUTHORED:" + action.commandId(), null))
+        .orElse(new ResolvedHelpTopic("", null));
   }
+
+  private record ResolvedHelpTopic(
+      String canonicalTopic, TextCommandDefinition admittedDefinition) {}
 
   private String topicIndex(Optional<SessionContext> maybeContext) {
     ArrayList<String> lines =

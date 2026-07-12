@@ -1,13 +1,10 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import java.util.Set;
+import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import tools.jackson.databind.JsonNode;
 
 /** Validates the registered typed execution-effect schemas allowed in command definitions. */
 final class CommandEffectDeclarationValidator {
-  private static final Set<String> EFFECT_OPERATIONS =
-      Set.of("ADD", "MULTIPLY", "CLAMP_MIN", "CLAMP_MAX", "GRANT_FLAG", "GRANT_CONDITION");
-
   private CommandEffectDeclarationValidator() {}
 
   static void validateAll(JsonNode effects) {
@@ -42,8 +39,7 @@ final class CommandEffectDeclarationValidator {
     requireIdentifier(payload, "conditionKey");
     JsonNode durationSeconds = payload.path("durationSeconds");
     if (!durationSeconds.isInt()
-        || durationSeconds.asInt() <= 0
-        || durationSeconds.asInt() > 3600) {
+        || !CommandEffectDeclarationConstraints.isValidDurationSeconds(durationSeconds.asInt())) {
       throw invalid("APPLY_ACTION_STATE durationSeconds must be between 1 and 3600");
     }
     validateEffectPayload(payload.path("effectPayload"));
@@ -58,7 +54,7 @@ final class CommandEffectDeclarationValidator {
         throw invalid("effect modifiers must be objects");
       }
       String operation = requiredText(modifier, "operation");
-      if (!EFFECT_OPERATIONS.contains(operation)) {
+      if (!CommandEffectDeclarationConstraints.SUPPORTED_MODIFIER_OPERATIONS.contains(operation)) {
         throw invalid("effect modifier uses an unsupported operation");
       }
       requireIdentifier(modifier, "target_key");
@@ -83,7 +79,7 @@ final class CommandEffectDeclarationValidator {
 
   private static void requireIdentifier(JsonNode source, String field) {
     String value = requiredText(source, field);
-    if (!value.matches("[A-Za-z][A-Za-z0-9_]{0,63}")) {
+    if (!CommandEffectDeclarationConstraints.isIdentifier(value)) {
       throw invalid(field + " must be an identifier");
     }
   }
