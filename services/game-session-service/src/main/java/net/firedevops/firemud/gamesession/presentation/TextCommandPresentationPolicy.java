@@ -51,10 +51,7 @@ final class TextCommandPresentationPolicy {
   }
 
   private boolean isMovementAction(TextCommand command) {
-    if (hasActionTag(command, TextCommandActionTag.MOVEMENT)) {
-      return true;
-    }
-    return command.type() == TextCommandType.MOVE;
+    return hasActionTag(command, TextCommandActionTag.MOVEMENT);
   }
 
   private boolean hasActionTag(TextCommand command, TextCommandActionTag actionTag) {

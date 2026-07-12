@@ -32,6 +32,7 @@ class RegistryBackedTextCommandMetadataResolverTest {
         .satisfies(
             metadata -> {
               assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.SESSION);
+              assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.NEVER);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.META);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.SESSION);
             });
@@ -44,6 +45,7 @@ class RegistryBackedTextCommandMetadataResolverTest {
         .satisfies(
             metadata -> {
               assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.AUTHORED);
+              assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.WHEN_GAMEPLAY);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.SOCIAL);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.COMMUNICATION);
             });
