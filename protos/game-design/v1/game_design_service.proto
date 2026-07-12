@@ -486,6 +486,7 @@ message PublishedReleaseBundle {
   string workflow_run_id = 13;
   string workflow_status = 14;
   string workflow_family = 15;
+  repeated string command_definitions = 16;
 }
 
 message LaunchDescriptor {

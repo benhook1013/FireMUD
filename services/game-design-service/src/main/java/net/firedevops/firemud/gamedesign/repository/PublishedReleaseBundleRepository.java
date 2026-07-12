@@ -35,6 +35,8 @@ public class PublishedReleaseBundleRepository {
       DSL.field(DSL.name("required_manifest_asset_keys_json"), String.class);
   private static final Field<String> PARTICIPANT_DIGESTS_JSON =
       DSL.field(DSL.name("participant_digests_json"), String.class);
+  private static final Field<String> COMMAND_DEFINITIONS_JSON =
+      DSL.field(DSL.name("command_definitions_json"), String.class);
   private static final Field<Boolean> SCRIPT_ONLY =
       DSL.field(DSL.name("script_only"), Boolean.class);
   private static final Field<String> SCRIPT_PATCH_VERSION =
@@ -72,6 +74,7 @@ public class PublishedReleaseBundleRepository {
               .set(GENERATION_CONFIG_REVISION, bundle.getGenerationConfigRevision())
               .set(REQUIRED_MANIFEST_ASSET_KEYS_JSON, bundle.getRequiredManifestAssetKeysJson())
               .set(PARTICIPANT_DIGESTS_JSON, bundle.getParticipantDigestsJson())
+              .set(COMMAND_DEFINITIONS_JSON, bundle.getCommandDefinitionsJson())
               .set(SCRIPT_ONLY, bundle.isScriptOnly())
               .set(SCRIPT_PATCH_VERSION, bundle.getScriptPatchVersion())
               .set(PUBLISHED_AT, Timestamp.valueOf(publishedAt))
@@ -89,6 +92,7 @@ public class PublishedReleaseBundleRepository {
         .set(GENERATION_CONFIG_REVISION, bundle.getGenerationConfigRevision())
         .set(REQUIRED_MANIFEST_ASSET_KEYS_JSON, bundle.getRequiredManifestAssetKeysJson())
         .set(PARTICIPANT_DIGESTS_JSON, bundle.getParticipantDigestsJson())
+        .set(COMMAND_DEFINITIONS_JSON, bundle.getCommandDefinitionsJson())
         .set(SCRIPT_ONLY, bundle.isScriptOnly())
         .set(SCRIPT_PATCH_VERSION, bundle.getScriptPatchVersion())
         .set(PUBLISHED_AT, Timestamp.valueOf(publishedAt))
@@ -112,6 +116,7 @@ public class PublishedReleaseBundleRepository {
     bundle.setGenerationConfigRevision(record.get(GENERATION_CONFIG_REVISION));
     bundle.setRequiredManifestAssetKeysJson(record.get(REQUIRED_MANIFEST_ASSET_KEYS_JSON));
     bundle.setParticipantDigestsJson(record.get(PARTICIPANT_DIGESTS_JSON));
+    bundle.setCommandDefinitionsJson(record.get(COMMAND_DEFINITIONS_JSON));
     bundle.setScriptOnly(Boolean.TRUE.equals(record.get(SCRIPT_ONLY)));
     bundle.setScriptPatchVersion(record.get(SCRIPT_PATCH_VERSION));
     Timestamp publishedAt = record.get(PUBLISHED_AT);
