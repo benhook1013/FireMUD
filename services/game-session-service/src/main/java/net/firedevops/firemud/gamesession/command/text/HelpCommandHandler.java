@@ -22,19 +22,29 @@ import org.springframework.util.StringUtils;
 public class HelpCommandHandler {
   private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
   private final GameAuthoredHelpReader authoredHelpReader;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
 
   @Autowired
   HelpCommandHandler(
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader) {
+    this(authoredActionCatalog, authoredHelpReader, null);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  HelpCommandHandler(
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      GameAuthoredHelpReader authoredHelpReader,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver) {
     this.authoredActionCatalog =
         Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
     this.authoredHelpReader =
         Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
+    this.admittedRegistryResolver = admittedRegistryResolver;
   }
 
   HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
-    this(authoredActionCatalog, (context, topic) -> Optional.empty());
+    this(authoredActionCatalog, (context, topic) -> Optional.empty(), null);
   }
 
   HelpCommandHandler() {
@@ -68,8 +78,18 @@ public class HelpCommandHandler {
       return success(authoredTopic.orElseThrow());
     }
 
-    String resolvedTopic = canonicalTopic(args.get(0));
+    String resolvedTopic = canonicalTopic(args.get(0), maybeContext);
     if (resolvedTopic.startsWith("AUTHORED:")) {
+      if (admittedRegistryResolver != null) {
+        return maybeContext
+            .flatMap(
+                context ->
+                    admittedRegistryResolver
+                        .resolve(context)
+                        .findDefinition(resolvedTopic.substring("AUTHORED:".length())))
+            .map(this::success)
+            .orElseGet(() -> unknownTopic(args.get(0)));
+      }
       return authoredActionCatalog
           .find(resolvedTopic.substring("AUTHORED:".length()))
           .map(this::success)
@@ -218,7 +238,7 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private String canonicalTopic(String topic) {
+  private String canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
     if (!StringUtils.hasText(topic)) {
       return "";
     }
@@ -249,6 +269,14 @@ public class HelpCommandHandler {
         };
     if (!canonical.isEmpty()) {
       return canonical;
+    }
+    if (admittedRegistryResolver != null) {
+      return maybeContext
+          .flatMap(
+              context -> admittedRegistryResolver.resolve(context).findDefinitionByAlias(topic))
+          .filter(definition -> definition.type() == TextCommandType.AUTHORED)
+          .map(definition -> "AUTHORED:" + definition.commandId())
+          .orElse("");
     }
     return authoredActionCatalog
         .findByAlias(topic)
@@ -302,6 +330,14 @@ public class HelpCommandHandler {
             + (StringUtils.hasText(action.helpDetails()) ? "\n" + action.helpDetails().trim() : "")
             + authoredAliasSuffix(action);
     return success(body);
+  }
+
+  private TextCommandInterpretationResult success(TextCommandDefinition definition) {
+    String topic =
+        definition.aliases().isEmpty()
+            ? definition.commandId().toUpperCase(Locale.ROOT)
+            : definition.aliases().getFirst().toUpperCase(Locale.ROOT);
+    return success(topic + "\nGame-authored action.");
   }
 
   private TextCommandInterpretationResult success(GameAuthoredHelpReader.ResolvedTopic topic) {
