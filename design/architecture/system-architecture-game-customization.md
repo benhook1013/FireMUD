@@ -47,11 +47,11 @@ Example `manifest.json`:
 
 ## Command And Effect Declarations
 
-Player commands and gameplay effects are version-scoped Game Design data. Creators use typed Game Design DML/revision operations to declare command aliases, stage, category, semantic tags, capability requirements, and typed execution effects. Seeded platform commands use the same declaration model as tenant/game-authored commands.
+Player commands and gameplay effects are version-scoped Game Design data. Creators use typed Game Design DML/revision operations with the `COMMAND_DEFINITION` revision kind to declare one stable logical command identity, aliases, stage, category, semantic tags, capability requirements, help metadata, and typed execution effects. Seeded platform commands use the same declaration model as tenant/game-authored commands.
 
 An execution effect declaration identifies a registered safe effect kind, schema version, typed payload, targeting/authorization requirements, and replay/idempotency policy. For example, a blocking action declares a typed action-state effect; it is not inferred merely because the command carries a broad `COMBAT` tag. Categories and tags remain descriptive policy metadata for activity, presentation, analytics, and subscriptions.
 
-Game Design validates these declarations during revision and publish. Publication fails closed for unknown effect kinds, unsupported schema versions, invalid payloads, unsafe effect composition, or command/effect bindings that collide with reserved platform behavior. Published declarations are immutable runtime inputs and are resolved into the same durable effect engine for seeded and authored commands.
+Game Design validates these declarations during revision and publish. Publication fails closed for unknown effect kinds, unsupported schema versions, invalid payloads, unsafe effect composition, duplicate aliases, or command/effect bindings that collide with reserved platform behavior. Publication freezes an immutable command-definition artifact and digest for the version. Runtime command resolution uses only the artifact matching the admitted version and approved script-patch identity; it must not silently fall back to process-local action configuration or reinterpret a command against newer draft data.
 
 The platform deliberately does not execute arbitrary SQL/DML text, Java snippets, or unvalidated script payloads as command behavior. The generic runtime code owns safe effect schemas, validation, authorization, durable ordering, replay, and execution; DML selects and configures approved effects within those schemas. See [Player Command Model](./system-architecture-player-command-model.md#typed-execution-effects) for the canonical command/effect boundary.
 

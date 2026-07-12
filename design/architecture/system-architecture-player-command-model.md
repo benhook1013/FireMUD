@@ -40,6 +40,14 @@ It does not execute arbitrary DML text, Java snippets, or unvalidated payloads. 
 
 Seeded platform commands and tenant/game-authored commands use the same declaration shape. Built-ins are canonical seed data, not permanently privileged Java-only command-to-handler mappings. A command may compose multiple declared effects only when its effect schema defines their ordering and transactional boundary explicitly.
 
+### Versioned Declaration Lifecycle
+
+Game Design persists each command definition as a typed `COMMAND_DEFINITION` revision payload with one stable logical command identity. The payload contains command aliases, stage, category, tags, capability requirements, help metadata, and its typed execution-effect declarations. Revisions are version-scoped DML inputs; publish validates them, freezes an immutable command-definition artifact and digest for the version, and rejects ambiguous aliases, invalid effect payloads, or unsupported effect schemas.
+
+At runtime, Game Session resolves only the declaration artifact pinned to the player's admitted tenant/game version and, where applicable, its approved script-patch version. The durable command and effect ledgers retain that version identity and the declared effect identity for replay. A runtime must fail closed rather than reinterpret a command against a newer definition or silently fall back to process-local configuration when the admitted artifact is unavailable or incompatible.
+
+The initial migration may adapt existing configuration-backed authored-action fields into this payload shape, but application configuration is not the target source of truth for published gameplay behavior.
+
 ## Player Stages
 
 FireMUD recognizes three player stages:
