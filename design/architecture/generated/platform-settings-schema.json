@@ -394,6 +394,55 @@
       ]
     },
     {
+      "name": "commandHistory",
+      "keyPrefix": "firemud.command-history",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Bounded accepted player-command history defaults surfaced by Game Session.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.command-history.enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties",
+          "description": "Whether accepted command history is available to players through the HISTORY command.",
+          "defaultValue": true,
+          "domain": "commandHistory",
+          "group": "commandHistory.capability",
+          "scope": "tenant/game-configurable",
+          "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.command-history.max-entries",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties",
+          "description": "Maximum retained and displayable accepted command-history entries per player character; values are capped at 20.",
+          "defaultValue": 10,
+          "domain": "commandHistory",
+          "group": "commandHistory.retention",
+          "scope": "tenant/game-configurable within the platform maximum",
+          "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": 10,
+          "allowedValues": [],
+          "constraints": "integer from 1 to 20"
+        }
+      ]
+    },
+    {
       "name": "movement",
       "keyPrefix": "firemud.movement",
       "service": "game-session-service",

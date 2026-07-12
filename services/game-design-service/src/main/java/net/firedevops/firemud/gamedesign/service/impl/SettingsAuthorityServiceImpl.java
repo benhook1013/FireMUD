@@ -48,6 +48,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     String normalizedTenantId = normalizeTenantId(tenantId);
     Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
     Object payload = extractDomainPayload(domain, overrides);
+    validateDomainPayload(domain, payload);
 
     GameSettingsOverride entity =
         normalizedGameInstanceId == null
@@ -92,6 +93,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     ScopedSettingsOverrides.PresentationOverride presentation = null;
     ScopedSettingsOverrides.MovementOverride movement = null;
     ScopedSettingsOverrides.WorldTopologyOverride worldTopology = null;
+    ScopedSettingsOverrides.CommandHistoryOverride commandHistory = null;
 
     for (GameSettingsOverride row : rows) {
       ScopedSettingsOverrides.SettingsDomain domain =
@@ -112,10 +114,13 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
         case WORLD_TOPOLOGY ->
             worldTopology =
                 deserialize(row.getPayload(), ScopedSettingsOverrides.WorldTopologyOverride.class);
+        case COMMAND_HISTORY ->
+            commandHistory =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.CommandHistoryOverride.class);
       }
     }
     return new ScopedSettingsOverrides(
-        reconnection, communication, presentation, movement, worldTopology);
+        reconnection, communication, presentation, movement, worldTopology, commandHistory);
   }
 
   private Object extractDomainPayload(
@@ -130,11 +135,25 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
           case PRESENTATION -> overrides.presentation();
           case MOVEMENT -> overrides.movement();
           case WORLD_TOPOLOGY -> overrides.worldTopology();
+          case COMMAND_HISTORY -> overrides.commandHistory();
         };
     if (payload == null) {
       throw new IllegalArgumentException("Overrides payload must include the selected domain");
     }
     return payload;
+  }
+
+  private void validateDomainPayload(
+      ScopedSettingsOverrides.SettingsDomain domain, Object payload) {
+    if (domain != ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY) {
+      return;
+    }
+    ScopedSettingsOverrides.CommandHistoryOverride commandHistory =
+        (ScopedSettingsOverrides.CommandHistoryOverride) payload;
+    Integer maxEntries = commandHistory.maxEntries();
+    if (maxEntries != null && (maxEntries < 1 || maxEntries > 20)) {
+      throw new IllegalArgumentException("Command history maxEntries must be between 1 and 20");
+    }
   }
 
   private String normalizeTenantId(String tenantId) {

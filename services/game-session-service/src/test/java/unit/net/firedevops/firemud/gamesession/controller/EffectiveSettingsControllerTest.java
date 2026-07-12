@@ -5,9 +5,11 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
@@ -24,6 +26,8 @@ class EffectiveSettingsControllerTest {
       Mockito.mock(EffectiveSettingsResolver.class);
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver =
       Mockito.mock(EffectiveReconnectionSettingsResolver.class);
+  private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver =
+      Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver =
       Mockito.mock(SharedEffectiveSettingsResolver.class);
   private final SessionAuthenticationService sessionAuthenticationService =
@@ -37,6 +41,7 @@ class EffectiveSettingsControllerTest {
         new EffectiveSettingsController(
             settingsResolver,
             reconnectionSettingsResolver,
+            commandHistorySettingsResolver,
             sharedEffectiveSettingsResolver,
             sessionAuthenticationService);
   }
@@ -50,6 +55,7 @@ class EffectiveSettingsControllerTest {
     MovementProperties movement = new MovementProperties();
     WorldTopologyProperties worldTopology = new WorldTopologyProperties();
     FiremudReconnectionProperties reconnection = new FiremudReconnectionProperties(null, null);
+    FiremudCommandHistoryProperties commandHistory = new FiremudCommandHistoryProperties(true, 10);
 
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
         .thenReturn(java.util.Optional.of(cleared));
@@ -65,6 +71,10 @@ class EffectiveSettingsControllerTest {
         .thenReturn(
             new EffectiveReconnectionSettingsResolver.ResolvedValue<>(
                 reconnection, List.of("default")));
+    when(commandHistorySettingsResolver.resolvedCommandHistory(cleared))
+        .thenReturn(
+            new EffectiveCommandHistorySettingsResolver.ResolvedValue<>(
+                commandHistory, List.of("default")));
     when(sharedEffectiveSettingsResolver.resolve(22L, 1L))
         .thenReturn(
             new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
@@ -81,5 +91,6 @@ class EffectiveSettingsControllerTest {
     assertThat(response.scope().gameInstanceId()).isZero();
     assertThat(response.scope().bootstrapGameInstanceId()).isEqualTo(1L);
     assertThat(response.scope().localeTag()).isEqualTo("en-NZ");
+    assertThat(response.commandHistory().effective()).isEqualTo(commandHistory);
   }
 }

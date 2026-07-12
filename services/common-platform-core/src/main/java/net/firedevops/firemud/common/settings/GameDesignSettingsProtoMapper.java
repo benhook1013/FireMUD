@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.settings;
 
+import net.firedevops.firemud.gamedesign.v1.CommandHistorySettingsOverride;
 import net.firedevops.firemud.gamedesign.v1.CommunicationDefaultsOverride;
 import net.firedevops.firemud.gamedesign.v1.CommunicationSettingsOverride;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
@@ -38,7 +39,8 @@ public final class GameDesignSettingsProtoMapper {
         source.hasCommunication() ? fromProto(source.getCommunication()) : null,
         source.hasPresentation() ? fromProto(source.getPresentation()) : null,
         source.hasMovement() ? fromProto(source.getMovement()) : null,
-        source.hasWorldTopology() ? fromProto(source.getWorldTopology()) : null);
+        source.hasWorldTopology() ? fromProto(source.getWorldTopology()) : null,
+        source.hasCommandHistory() ? fromProto(source.getCommandHistory()) : null);
   }
 
   public static SettingsOverrides toProto(ScopedSettingsOverrides source) {
@@ -61,6 +63,9 @@ public final class GameDesignSettingsProtoMapper {
     if (source.worldTopology() != null && !source.worldTopology().isEmpty()) {
       builder.setWorldTopology(toProto(source.worldTopology()));
     }
+    if (source.commandHistory() != null && !source.commandHistory().isEmpty()) {
+      builder.setCommandHistory(toProto(source.commandHistory()));
+    }
     return builder.build();
   }
 
@@ -71,6 +76,7 @@ public final class GameDesignSettingsProtoMapper {
       case PRESENTATION -> SettingsDomain.SETTINGS_DOMAIN_PRESENTATION;
       case MOVEMENT -> SettingsDomain.SETTINGS_DOMAIN_MOVEMENT;
       case WORLD_TOPOLOGY -> SettingsDomain.SETTINGS_DOMAIN_WORLD_TOPOLOGY;
+      case COMMAND_HISTORY -> SettingsDomain.SETTINGS_DOMAIN_COMMAND_HISTORY;
     };
   }
 
@@ -81,6 +87,8 @@ public final class GameDesignSettingsProtoMapper {
       case SETTINGS_DOMAIN_PRESENTATION -> ScopedSettingsOverrides.SettingsDomain.PRESENTATION;
       case SETTINGS_DOMAIN_MOVEMENT -> ScopedSettingsOverrides.SettingsDomain.MOVEMENT;
       case SETTINGS_DOMAIN_WORLD_TOPOLOGY -> ScopedSettingsOverrides.SettingsDomain.WORLD_TOPOLOGY;
+      case SETTINGS_DOMAIN_COMMAND_HISTORY ->
+          ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY;
       default -> throw new IllegalArgumentException("Unsupported settings domain: " + domain);
     };
   }
@@ -159,6 +167,13 @@ public final class GameDesignSettingsProtoMapper {
         source.hasRegionsEnabled() ? source.getRegionsEnabled() : null);
   }
 
+  private static ScopedSettingsOverrides.CommandHistoryOverride fromProto(
+      CommandHistorySettingsOverride source) {
+    return new ScopedSettingsOverrides.CommandHistoryOverride(
+        source.hasEnabled() ? source.getEnabled() : null,
+        source.hasMaxEntries() ? source.getMaxEntries() : null);
+  }
+
   private static ReconnectionSettingsOverride toProto(
       ScopedSettingsOverrides.ReconnectionOverride source) {
     ReconnectionSettingsOverride.Builder builder = ReconnectionSettingsOverride.newBuilder();
@@ -167,6 +182,18 @@ public final class GameDesignSettingsProtoMapper {
     }
     if (source.buffer() != null) {
       builder.setBuffer(toProto(source.buffer()));
+    }
+    return builder.build();
+  }
+
+  private static CommandHistorySettingsOverride toProto(
+      ScopedSettingsOverrides.CommandHistoryOverride source) {
+    CommandHistorySettingsOverride.Builder builder = CommandHistorySettingsOverride.newBuilder();
+    if (source.enabled() != null) {
+      builder.setEnabled(source.enabled());
+    }
+    if (source.maxEntries() != null) {
+      builder.setMaxEntries(source.maxEntries());
     }
     return builder.build();
   }

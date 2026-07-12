@@ -713,6 +713,7 @@ enum SettingsDomain {
   SETTINGS_DOMAIN_PRESENTATION = 3;
   SETTINGS_DOMAIN_MOVEMENT = 4;
   SETTINGS_DOMAIN_WORLD_TOPOLOGY = 5;
+  SETTINGS_DOMAIN_COMMAND_HISTORY = 6;
 }
 
 message SettingsOverrides {
@@ -721,11 +722,17 @@ message SettingsOverrides {
   PresentationSettingsOverride presentation = 3;
   MovementSettingsOverride movement = 4;
   WorldTopologySettingsOverride world_topology = 5;
+  CommandHistorySettingsOverride command_history = 6;
 }
 
 message ReconnectionSettingsOverride {
   ReconnectionPolicyOverride policy = 1;
   ReconnectionBufferOverride buffer = 2;
+}
+
+message CommandHistorySettingsOverride {
+  optional bool enabled = 1;
+  optional int32 max_entries = 2;
 }
 
 message ReconnectionPolicyOverride {

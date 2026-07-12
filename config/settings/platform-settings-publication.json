@@ -54,6 +54,19 @@
       ]
     },
     {
+      "name": "commandHistory",
+      "keyPrefix": "firemud.command-history",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Bounded accepted player-command history defaults surfaced by Game Session.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        "firemud.command-history.enabled",
+        "firemud.command-history.max-entries"
+      ]
+    },
+    {
       "name": "movement",
       "keyPrefix": "firemud.movement",
       "service": "game-session-service",
@@ -232,6 +245,23 @@
       "advanced": true,
       "exampleValue": 65536,
       "constraints": "integer >= 1 bytes"
+    },
+    "firemud.command-history.enabled": {
+      "group": "commandHistory.capability",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": true
+    },
+    "firemud.command-history.max-entries": {
+      "group": "commandHistory.retention",
+      "scope": "tenant/game-configurable within the platform maximum",
+      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": 10,
+      "constraints": "integer from 1 to 20"
     },
     "firemud.movement.post-move-look-enabled": {
       "group": "movement.postMoveView",

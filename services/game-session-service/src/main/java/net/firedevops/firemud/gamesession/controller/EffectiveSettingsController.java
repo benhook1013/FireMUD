@@ -2,9 +2,11 @@ package net.firedevops.firemud.gamesession.controller;
 
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
@@ -28,16 +30,19 @@ import org.springframework.web.server.ResponseStatusException;
 public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;
+  private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
   private final SessionAuthenticationService sessionAuthenticationService;
 
   public EffectiveSettingsController(
       EffectiveSettingsResolver settingsResolver,
       EffectiveReconnectionSettingsResolver reconnectionSettingsResolver,
+      EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver,
       SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver,
       SessionAuthenticationService sessionAuthenticationService) {
     this.settingsResolver = settingsResolver;
     this.reconnectionSettingsResolver = reconnectionSettingsResolver;
+    this.commandHistorySettingsResolver = commandHistorySettingsResolver;
     this.sharedEffectiveSettingsResolver = sharedEffectiveSettingsResolver;
     this.sessionAuthenticationService = sessionAuthenticationService;
   }
@@ -58,6 +63,9 @@ public class EffectiveSettingsController {
         settingsResolver.resolvedWorldTopology(resolution.context());
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties>
         reconnection = reconnectionSettingsResolver.resolvedReconnection(resolution.context());
+    EffectiveCommandHistorySettingsResolver.ResolvedValue<FiremudCommandHistoryProperties>
+        commandHistory =
+            commandHistorySettingsResolver.resolvedCommandHistory(resolution.context());
     Long effectiveGameInstanceId = effectiveGameInstanceId(resolution.context());
     SharedEffectiveSettingsResolver.ResolvedScopedSettings sharedOverrides =
         resolution.context().tenantId() > 0L
@@ -84,6 +92,7 @@ public class EffectiveSettingsController {
             new DomainSettings<>(reconnection.effective(), reconnection.sources()),
             new DomainSettings<>(reconnection.effective().policy(), reconnection.sources()),
             new DomainSettings<>(reconnection.effective().buffer(), reconnection.sources()),
+            new DomainSettings<>(commandHistory.effective(), commandHistory.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
             new DomainSettings<>(
                 MovementPostMoveViewSettings.from(movement.effective()), movement.sources()),
@@ -151,6 +160,7 @@ public class EffectiveSettingsController {
       DomainSettings<FiremudReconnectionProperties> reconnection,
       DomainSettings<FiremudReconnectionProperties.Policy> reconnectionPolicy,
       DomainSettings<FiremudReconnectionProperties.Buffer> reconnectBuffer,
+      DomainSettings<FiremudCommandHistoryProperties> commandHistory,
       DomainSettings<MovementProperties> movement,
       DomainSettings<MovementPostMoveViewSettings> movementPostMoveView,
       DomainSettings<WorldTopologyProperties> worldTopology,
