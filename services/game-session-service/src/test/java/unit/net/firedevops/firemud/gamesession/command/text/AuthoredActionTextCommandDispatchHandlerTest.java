@@ -17,10 +17,10 @@ class AuthoredActionTextCommandDispatchHandlerTest {
       new ConfiguredAuthoredActionCatalog(configuredAuthoredActions());
   private final AuthoredActionTextCommandDispatchHandler handler =
       new AuthoredActionTextCommandDispatchHandler(
-          new AuthoredActionCommandHandler(catalog), catalog, scriptEventPublisher);
+          new AuthoredActionCommandHandler(catalog), scriptEventPublisher);
 
   @Test
-  void publishesCommandEventForGameplayScopedAuthoredAction() {
+  void rejectsGameplayScopedAuthoredActionUntilItsDeclaredEffectHasARuntimeHandler() {
     SessionContext context =
         new SessionContext(
             7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -33,20 +33,14 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "wave-salute".equals(gameplayCommand.getCommandName())
-                        && "salute captain".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("authored-")));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
   @Test
-  void doesNotPublishConfigurationOnlyExecutionHooks() {
+  void rejectsConfigurationOnlyExecutionHooksInGameplayContext() {
     ScriptEventPublisher dedicatedPublisher = Mockito.mock(ScriptEventPublisher.class);
     AuthoredActionProperties properties = configuredAuthoredActions();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
@@ -58,29 +52,24 @@ class AuthoredActionTextCommandDispatchHandlerTest {
     ConfiguredAuthoredActionCatalog hookCatalog = new ConfiguredAuthoredActionCatalog(properties);
     AuthoredActionTextCommandDispatchHandler hookHandler =
         new AuthoredActionTextCommandDispatchHandler(
-            new AuthoredActionCommandHandler(hookCatalog), hookCatalog, dedicatedPublisher);
+            new AuthoredActionCommandHandler(hookCatalog), dedicatedPublisher);
 
     SessionContext context =
         new SessionContext(
             7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
-    hookHandler.handle(
-        new TextCommandDispatchRequest(
-            "session-1",
-            authoredAction("hooked-wave", "hooked-wave", List.of("hook")),
-            false,
-            Optional.of(context)));
+    TextCommandInterpretationResult result =
+        hookHandler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                authoredAction("hooked-wave", "hooked-wave", List.of("hook")),
+                false,
+                Optional.of(context)));
 
-    Mockito.verify(dedicatedPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "hooked-wave".equals(gameplayCommand.getCommandName())
-                        && "hooked-wave".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("authored-")
-                        && gameplayCommand.getExecutionHook() == null));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    Mockito.verifyNoInteractions(dedicatedPublisher);
   }
 
   @Test

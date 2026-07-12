@@ -11,15 +11,11 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
   private static final Logger LOG =
       LoggerFactory.getLogger(AuthoredActionTextCommandDispatchHandler.class);
   private final AuthoredActionCommandHandler handler;
-  private final ConfiguredAuthoredActionCatalog catalog;
   private final ScriptEventPublisher scriptEventPublisher;
 
   AuthoredActionTextCommandDispatchHandler(
-      AuthoredActionCommandHandler handler,
-      ConfiguredAuthoredActionCatalog catalog,
-      ScriptEventPublisher scriptEventPublisher) {
+      AuthoredActionCommandHandler handler, ScriptEventPublisher scriptEventPublisher) {
     this.handler = handler;
-    this.catalog = catalog;
     this.scriptEventPublisher = scriptEventPublisher;
   }
 

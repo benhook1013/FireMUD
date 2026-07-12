@@ -347,31 +347,24 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted()) {
       return false;
     }
-    if (isUiTaggedCommand(command)) {
+    TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata =
+        interpretation.resolvedMetadata() != null
+            ? interpretation.resolvedMetadata()
+            : textCommandMetadataResolver.resolve(command.commandId()).orElse(null);
+    if (metadata == null) {
+      return interpretation.outputs().stream()
+          .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
+    }
+    if (metadata.actionTags().contains(TextCommandActionTag.UI)) {
       return true;
     }
-    if (isGameplayEntryPromptCommand(command) && !interpretation.reconnectRedrawRecommended()) {
+    if (metadata.dispatchGroup() == TextCommandDispatchGroup.SESSION
+        && metadata.promptPolicy() == TextCommandPromptPolicy.WHEN_GAMEPLAY
+        && !interpretation.reconnectRedrawRecommended()) {
       return true;
     }
     return interpretation.outputs().stream()
         .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
-  }
-
-  private boolean isUiTaggedCommand(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
-        .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.UI))
-        .orElse(false);
-  }
-
-  private boolean isGameplayEntryPromptCommand(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
-        .map(
-            metadata ->
-                metadata.dispatchGroup() == TextCommandDispatchGroup.SESSION
-                    && metadata.promptPolicy() == TextCommandPromptPolicy.WHEN_GAMEPLAY)
-        .orElse(false);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {

@@ -4,7 +4,7 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Notes
 
-`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
+`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine. Admitted authored commands are currently discoverable and validated, but reject with `AUTHORED_ACTION_EXECUTION_UNAVAILABLE` before durable replay because no typed authored-effect handler is live yet. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
 
 ## Command Model
 

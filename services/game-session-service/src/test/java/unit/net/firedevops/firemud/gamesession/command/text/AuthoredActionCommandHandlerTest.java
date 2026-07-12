@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
@@ -59,7 +60,7 @@ class AuthoredActionCommandHandlerTest {
   }
 
   @Test
-  void admittedAuthoredActionSucceedsWithoutConfiguredFallback() {
+  void admittedAuthoredActionFailsClosedUntilItsDeclaredEffectHasARuntimeHandler() {
     AuthoredActionCommandHandler handler =
         new AuthoredActionCommandHandler(
             new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
@@ -78,6 +79,8 @@ class AuthoredActionCommandHandlerTest {
             new SessionContext(1L, 1L, 2L, "player@example.com", 3L, "Player", 4L, "room", "jwt"),
             command);
 
-    assertTrue(result.commandResult().accepted());
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTHORED_ACTION_EXECUTION_UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(PlayerOutputKind.ERROR, result.outputs().getFirst().kind());
   }
 }

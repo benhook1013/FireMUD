@@ -400,7 +400,7 @@ public class TextCommandInterpreter {
             new StatusTextCommandDispatchHandler(statusHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(
-                authoredActionHandler, authoredActionCatalog, scriptEventPublisher),
+                authoredActionHandler, scriptEventPublisher),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),

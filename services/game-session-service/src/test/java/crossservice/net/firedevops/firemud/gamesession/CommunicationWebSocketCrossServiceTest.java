@@ -410,7 +410,7 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFirstPartyAuthoredCommunicationUsesStructuredMetadata() throws Exception {
+  void websocketFirstPartyAuthoredCommandFailsClosedWithStructuredMetadata() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
 
@@ -420,7 +420,9 @@ class CommunicationWebSocketCrossServiceTest {
       JsonNode authored = awaitStructuredCommand(client, baseline, "AUTHORED");
       GameplayStructuredCommandAssertions.requireStructuredCommand(
           authored, "AUTHORED", "wave-salute", "SOCIAL", "AUTHORING", "COMMUNICATION");
-      assertThat(authored.path("accepted").asBoolean()).isTrue();
+      assertThat(authored.path("accepted").asBoolean()).isFalse();
+      assertThat(authored.path("errorCode").asText())
+          .isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
     }
   }
 

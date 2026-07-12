@@ -8,7 +8,6 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
@@ -49,7 +48,6 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final AfkCommandHandler afkCommandHandler;
   private final ActionStateCommandHandler actionStateCommandHandler;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
-  private final AuthoredActionRuntimeHandler authoredActionCommandHandler;
   private final DurableGameplayReplayService durableGameplayReplayService;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
@@ -65,7 +63,6 @@ public final class DefaultDurableGameplayCommandExecutionService
       AfkCommandHandler afkCommandHandler,
       ActionStateCommandHandler actionStateCommandHandler,
       TextCommandMetadataResolver textCommandMetadataResolver,
-      AuthoredActionRuntimeHandler authoredActionCommandHandler,
       DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService,
@@ -81,7 +78,6 @@ public final class DefaultDurableGameplayCommandExecutionService
         afkCommandHandler,
         actionStateCommandHandler,
         textCommandMetadataResolver,
-        authoredActionCommandHandler,
         durableGameplayReplayService,
         movementEffectIdempotencyService,
         playerOutputDeliveryService,
@@ -100,7 +96,6 @@ public final class DefaultDurableGameplayCommandExecutionService
       AfkCommandHandler afkCommandHandler,
       ActionStateCommandHandler actionStateCommandHandler,
       TextCommandMetadataResolver textCommandMetadataResolver,
-      AuthoredActionRuntimeHandler authoredActionCommandHandler,
       DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService,
@@ -115,7 +110,6 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.afkCommandHandler = afkCommandHandler;
     this.actionStateCommandHandler = actionStateCommandHandler;
     this.textCommandMetadataResolver = textCommandMetadataResolver;
-    this.authoredActionCommandHandler = authoredActionCommandHandler;
     this.durableGameplayReplayService = durableGameplayReplayService;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
@@ -196,17 +190,14 @@ public final class DefaultDurableGameplayCommandExecutionService
                   }));
       case AUTHORED ->
           Optional.of(
-              executeReplayBackedLocalMutation(
-                  context,
+              recordResult(
                   command,
-                  effect.getEffectId(),
-                  () -> {
-                    var result =
-                        admittedRegistryResolver == null
-                            ? authoredActionCommandHandler.handle(activeParsed)
-                            : authoredActionCommandHandler.handle(context, activeParsed);
-                    return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
-                  }));
+                  new DurableGameplayCommandExecutionResult(
+                      "REJECTED",
+                      "COMPLETED",
+                      "NOT_APPLIED",
+                      "AUTHORED_ACTION_EXECUTION_UNAVAILABLE",
+                      "Authored action execution is not available")));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
         PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);
