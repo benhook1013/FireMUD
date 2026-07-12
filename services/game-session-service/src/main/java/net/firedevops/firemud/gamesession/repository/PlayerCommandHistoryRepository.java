@@ -59,6 +59,64 @@ public class PlayerCommandHistoryRepository {
     return record != null && Boolean.TRUE.equals(record.get("locked", Boolean.class));
   }
 
+  /** Returns the shared retention-sweep state held durably across scheduler replicas. */
+  public RetentionSweepState retentionSweepState() {
+    Record record =
+        dsl.fetchOne(
+            """
+            select cursor_tenant_id, cursor_game_instance_id, cursor_character_id, batches_since_wrap
+            from player_command_history_retention_sweep_state
+            where singleton = true
+            """);
+    if (record == null) {
+      return new RetentionSweepState(null, 0);
+    }
+    Long tenantId = record.get("cursor_tenant_id", Long.class);
+    Long gameInstanceId = record.get("cursor_game_instance_id", Long.class);
+    Long characterId = record.get("cursor_character_id", Long.class);
+    Integer batchesSinceWrap = record.get("batches_since_wrap", Integer.class);
+    if (tenantId == null || gameInstanceId == null || characterId == null) {
+      return new RetentionSweepState(null, batchesSinceWrap == null ? 0 : batchesSinceWrap);
+    }
+    return new RetentionSweepState(
+        new HistoryScope(tenantId, gameInstanceId, characterId),
+        batchesSinceWrap == null ? 0 : batchesSinceWrap);
+  }
+
+  /** Persists the next sweep state in the same transaction as the sweep lease and work. */
+  public void saveRetentionSweepState(RetentionSweepState state) {
+    RetentionSweepState resolvedState = state == null ? new RetentionSweepState(null, 0) : state;
+    HistoryScope cursor = resolvedState.cursor();
+    Long tenantId = cursor == null ? null : cursor.tenantId();
+    Long gameInstanceId = cursor == null ? null : cursor.gameInstanceId();
+    Long characterId = cursor == null ? null : cursor.characterId();
+    int updated =
+        dsl.execute(
+            """
+            update player_command_history_retention_sweep_state
+            set cursor_tenant_id = ?, cursor_game_instance_id = ?, cursor_character_id = ?,
+                batches_since_wrap = ?
+            where singleton = true
+            """,
+            tenantId,
+            gameInstanceId,
+            characterId,
+            resolvedState.batchesSinceWrap());
+    if (updated == 0) {
+      dsl.execute(
+          """
+          insert into player_command_history_retention_sweep_state (
+              singleton, cursor_tenant_id, cursor_game_instance_id, cursor_character_id,
+              batches_since_wrap)
+          values (true, ?, ?, ?, ?)
+          """,
+          tenantId,
+          gameInstanceId,
+          characterId,
+          resolvedState.batchesSinceWrap());
+    }
+  }
+
   public List<PlayerCommandHistoryEntry> findByScope(
       long tenantId, long gameInstanceId, long characterId) {
     return dsl.selectFrom(PLAYER_COMMAND_HISTORY)
@@ -188,4 +246,6 @@ public class PlayerCommandHistoryRepository {
   }
 
   public record HistoryScope(long tenantId, long gameInstanceId, long characterId) {}
+
+  public record RetentionSweepState(HistoryScope cursor, int batchesSinceWrap) {}
 }

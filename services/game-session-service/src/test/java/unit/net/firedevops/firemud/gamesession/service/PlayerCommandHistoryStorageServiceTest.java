@@ -58,6 +58,21 @@ class PlayerCommandHistoryStorageServiceTest {
     verify(repository, never()).deleteByIds(Mockito.anyCollection());
   }
 
+  @Test
+  void appendSkipsPersistenceForNullCommandTextOrNonPositiveMaximum() {
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null, 5);
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, "say hi", 0);
+
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void findRecentReturnsEmptyWithoutReadingForNonPositiveMaximum() {
+    assertThat(service.findRecent(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, 0)).isEmpty();
+
+    Mockito.verifyNoInteractions(repository);
+  }
+
   private PlayerCommandHistoryEntry existingEntry(Long id) {
     PlayerCommandHistoryEntry entry = new PlayerCommandHistoryEntry();
     entry.setId(id);

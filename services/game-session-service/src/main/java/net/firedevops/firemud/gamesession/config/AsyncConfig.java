@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /** Provides bounded executors for background Game Session work. */
 @Configuration
@@ -44,5 +45,14 @@ public class AsyncConfig {
     executor.setThreadNamePrefix("command-history-");
     executor.initialize();
     return executor;
+  }
+
+  @Bean(name = "commandHistoryRetentionScheduler")
+  public ThreadPoolTaskScheduler commandHistoryRetentionScheduler() {
+    ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+    scheduler.setPoolSize(1);
+    scheduler.setThreadNamePrefix("command-history-retention-");
+    scheduler.initialize();
+    return scheduler;
   }
 }

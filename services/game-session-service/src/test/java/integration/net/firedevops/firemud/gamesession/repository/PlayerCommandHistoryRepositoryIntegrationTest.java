@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -22,6 +21,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.interceptor.TransactionProxyFactoryBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -47,17 +48,13 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
-        .load()
-        .migrate();
+    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
 
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     repository = new PlayerCommandHistoryRepository(dsl);
-    storageService = new PlayerCommandHistoryStorageService(repository);
-    transactionTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    PlatformTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    storageService = transactionalStorageService(repository, transactionManager);
+    transactionTemplate = new TransactionTemplate(transactionManager);
   }
 
   @BeforeEach
@@ -139,6 +136,38 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
     assertThat(repository.findByScope(22L, 7L, 13L)).hasSize(1);
   }
 
+  @Test
+  void appendCommitsIndependentlyWhenTheCallerTransactionRollsBack() {
+    transactionTemplate.executeWithoutResult(
+        status -> {
+          storageService.append(22L, 7L, 13L, "LOOK", 5);
+          status.setRollbackOnly();
+        });
+
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(PlayerCommandHistoryEntry::getCommandText)
+        .containsExactly("LOOK");
+  }
+
+  @Test
+  void persistsTheRetentionSweepCursorAcrossRepositoryInstances() {
+    PlayerCommandHistoryRepository.HistoryScope cursor =
+        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L);
+    PlayerCommandHistoryRepository.RetentionSweepState sweepState =
+        new PlayerCommandHistoryRepository.RetentionSweepState(cursor, 3);
+
+    assertThat(repository.retentionSweepState())
+        .isEqualTo(new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
+    repository.saveRetentionSweepState(sweepState);
+
+    PlayerCommandHistoryRepository reloadedRepository = new PlayerCommandHistoryRepository(dsl);
+    assertThat(reloadedRepository.retentionSweepState()).isEqualTo(sweepState);
+    reloadedRepository.saveRetentionSweepState(
+        new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
+    assertThat(reloadedRepository.retentionSweepState())
+        .isEqualTo(new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
+  }
+
   private void appendAfterBarrier(String command, CountDownLatch ready, CountDownLatch start) {
     transactionTemplate.executeWithoutResult(
         status -> {
@@ -155,6 +184,22 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
           }
           storageService.append(22L, 7L, 13L, command, 1);
         });
+  }
+
+  private PlayerCommandHistoryStorageService transactionalStorageService(
+      PlayerCommandHistoryRepository commandHistoryRepository,
+      PlatformTransactionManager transactionManager) {
+    TransactionProxyFactoryBean proxyFactory = new TransactionProxyFactoryBean();
+    proxyFactory.setTransactionManager(transactionManager);
+    proxyFactory.setTarget(new PlayerCommandHistoryStorageService(commandHistoryRepository));
+    proxyFactory.setProxyTargetClass(true);
+    java.util.Properties transactionAttributes = new java.util.Properties();
+    transactionAttributes.setProperty("append", "PROPAGATION_REQUIRES_NEW");
+    transactionAttributes.setProperty("trimToMaxEntries", "PROPAGATION_REQUIRES_NEW");
+    transactionAttributes.setProperty("findRecent", "PROPAGATION_REQUIRED,readOnly");
+    proxyFactory.setTransactionAttributes(transactionAttributes);
+    proxyFactory.afterPropertiesSet();
+    return (PlayerCommandHistoryStorageService) proxyFactory.getObject();
   }
 
   private PlayerCommandHistoryEntry historyEntry(String commandText, Instant acceptedAt) {

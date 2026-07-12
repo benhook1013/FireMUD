@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
 import org.slf4j.Logger;
@@ -19,11 +20,12 @@ public class PlayerCommandHistoryRetentionSweepJob {
   private static final Logger LOG =
       LoggerFactory.getLogger(PlayerCommandHistoryRetentionSweepJob.class);
   private static final int BATCH_SIZE = 500;
+  // Bound one forward pass so newly created high-sort scopes cannot starve older scopes forever.
+  private static final int MAX_BATCHES_PER_PASS = 20;
 
   private final PlayerCommandHistoryRepository repository;
   private final PlayerCommandHistoryStorageService storageService;
   private final EffectiveCommandHistorySettingsResolver settingsResolver;
-  private PlayerCommandHistoryRepository.HistoryScope cursor;
 
   public PlayerCommandHistoryRetentionSweepJob(
       PlayerCommandHistoryRepository repository,
@@ -34,22 +36,36 @@ public class PlayerCommandHistoryRetentionSweepJob {
     this.settingsResolver = settingsResolver;
   }
 
-  @Scheduled(fixedDelayString = "${firemud.command-history.retention-sweep-ms:60000}")
+  @Scheduled(
+      fixedDelayString = "${firemud.command-history.retention-sweep-ms:60000}",
+      scheduler = "commandHistoryRetentionScheduler")
   @Transactional
   public void trimInactiveHistory() {
     if (!repository.tryLockRetentionSweep()) {
       return;
     }
+    PlayerCommandHistoryRepository.RetentionSweepState sweepState =
+        repository.retentionSweepState();
+    PlayerCommandHistoryRepository.HistoryScope cursor = sweepState.cursor();
     List<PlayerCommandHistoryRepository.HistoryScope> scopes =
         repository.findDistinctScopesAfter(cursor, BATCH_SIZE);
     if (scopes.isEmpty()) {
-      cursor = null;
+      repository.saveRetentionSweepState(
+          new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
       return;
     }
+    Map<TenantGameScope, Integer> maxEntriesByScope = new java.util.HashMap<>();
     for (PlayerCommandHistoryRepository.HistoryScope scope : scopes) {
       try {
+        TenantGameScope settingsScope =
+            new TenantGameScope(scope.tenantId(), scope.gameInstanceId());
         int maxEntries =
-            settingsResolver.commandHistory(scope.tenantId(), scope.gameInstanceId()).maxEntries();
+            maxEntriesByScope.computeIfAbsent(
+                settingsScope,
+                ignored ->
+                    settingsResolver
+                        .commandHistory(scope.tenantId(), scope.gameInstanceId())
+                        .maxEntries());
         storageService.trimToMaxEntries(
             scope.tenantId(), scope.gameInstanceId(), scope.characterId(), maxEntries);
       } catch (RuntimeException ex) {
@@ -61,6 +77,15 @@ public class PlayerCommandHistoryRetentionSweepJob {
             ex);
       }
     }
-    cursor = scopes.getLast();
+    int nextBatchCount = sweepState.batchesSinceWrap() + 1;
+    if (nextBatchCount >= MAX_BATCHES_PER_PASS) {
+      repository.saveRetentionSweepState(
+          new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
+      return;
+    }
+    repository.saveRetentionSweepState(
+        new PlayerCommandHistoryRepository.RetentionSweepState(scopes.getLast(), nextBatchCount));
   }
+
+  private record TenantGameScope(long tenantId, long gameInstanceId) {}
 }
