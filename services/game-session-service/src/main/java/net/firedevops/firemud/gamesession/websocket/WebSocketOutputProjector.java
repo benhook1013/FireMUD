@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.gamesession.presentation.TextMessageOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -41,19 +43,28 @@ import org.springframework.web.socket.WebSocketSession;
 public final class WebSocketOutputProjector {
   private final TextPlayerOutputRenderer textRenderer;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
       new com.fasterxml.jackson.databind.ObjectMapper();
 
   public WebSocketOutputProjector(TextPlayerOutputRenderer textRenderer) {
-    this(textRenderer, commandId -> java.util.Optional.empty());
+    this(textRenderer, commandId -> java.util.Optional.empty(), null);
+  }
+
+  public WebSocketOutputProjector(
+      TextPlayerOutputRenderer textRenderer,
+      TextCommandMetadataResolver textCommandMetadataResolver) {
+    this(textRenderer, textCommandMetadataResolver, null);
   }
 
   @Autowired
   public WebSocketOutputProjector(
       TextPlayerOutputRenderer textRenderer,
-      TextCommandMetadataResolver textCommandMetadataResolver) {
+      TextCommandMetadataResolver textCommandMetadataResolver,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver) {
     this.textRenderer = textRenderer;
     this.textCommandMetadataResolver = textCommandMetadataResolver;
+    this.admittedRegistryResolver = admittedRegistryResolver;
   }
 
   public String projectCommandResponse(
@@ -63,6 +74,18 @@ public final class WebSocketOutputProjector {
       List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentation) {
+    return projectCommandResponse(
+        session, command, interpretation, outputs, localeTag, effectivePresentation, null);
+  }
+
+  public String projectCommandResponse(
+      WebSocketSession session,
+      TextCommand command,
+      TextCommandInterpretationResult interpretation,
+      List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentation,
+      SessionContext context) {
     if (!isFirstPartyWeb(session)) {
       return textRenderer.renderAll(
           command, interpretation.commandResult(), outputs, localeTag, effectivePresentation);
@@ -72,8 +95,8 @@ public final class WebSocketOutputProjector {
             "command_result",
             command.type().name(),
             command.commandId(),
-            resolveActionCategory(command),
-            resolveActionTags(command),
+            resolveActionCategory(command, context),
+            resolveActionTags(command, context),
             interpretation.commandResult().accepted(),
             interpretation.commandResult().errorCode(),
             interpretation.commandResult().errorMessage(),
@@ -229,17 +252,24 @@ public final class WebSocketOutputProjector {
   private record TranscriptEntryEnvelope(
       String eventType, String label, String text, FirstPartyPlayerOutputEnvelope output) {}
 
-  private String resolveActionCategory(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
-        .map(metadata -> metadata.actionCategory().name())
+  private String resolveActionCategory(TextCommand command, SessionContext context) {
+    return resolveMetadata(command, context)
+        .map(TextCommandMetadataResolver.ResolvedTextCommandMetadata::actionCategory)
+        .map(Enum::name)
         .orElse(null);
   }
 
-  private List<String> resolveActionTags(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
+  private List<String> resolveActionTags(TextCommand command, SessionContext context) {
+    return resolveMetadata(command, context)
         .map(metadata -> metadata.actionTags().stream().map(Enum::name).toList())
         .orElse(java.util.List.of());
+  }
+
+  private java.util.Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata>
+      resolveMetadata(TextCommand command, SessionContext context) {
+    if (admittedRegistryResolver != null && context != null) {
+      return admittedRegistryResolver.resolveMetadata(context, command.commandId());
+    }
+    return textCommandMetadataResolver.resolve(command.commandId());
   }
 }
