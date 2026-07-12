@@ -8,7 +8,7 @@ deploy_open="$(python3 "$SCRIPT" --operation deploy --state open --base-ref deve
 grep -q '^eligible=true$' <<<"$deploy_open"
 grep -q '^reason=eligible$' <<<"$deploy_open"
 
-deploy_stacked="$(python3 "$SCRIPT" --operation deploy --state open --base-ref feature/design-and-vip --author benhook1013)"
+deploy_stacked="$(python3 "$SCRIPT" --operation deploy --state open --base-ref feature/design-and-mvp --author benhook1013)"
 grep -q '^eligible=false$' <<<"$deploy_stacked"
 grep -q '^reason=unsupported-base-branch$' <<<"$deploy_stacked"
 
@@ -24,7 +24,7 @@ destroy_closed="$(python3 "$SCRIPT" --operation destroy --state closed --base-re
 grep -q '^eligible=true$' <<<"$destroy_closed"
 grep -q '^reason=eligible$' <<<"$destroy_closed"
 
-destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-vip --author benhook1013)"
+destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-mvp --author benhook1013)"
 grep -q '^eligible=false$' <<<"$destroy_unsupported_base"
 grep -q '^reason=unsupported-base-branch$' <<<"$destroy_unsupported_base"
 

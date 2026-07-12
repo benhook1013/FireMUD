@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,8 +29,7 @@ class PlayerCommandHistoryStorageServiceTest {
 
   @Test
   void appendPersistsAndTrimsToConfiguredMaximum() {
-    when(repository.findByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID))
-        .thenReturn(List.of(existingEntry(1L), existingEntry(2L)));
+    when(repository.countByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID)).thenReturn(3);
 
     service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, "say hi", 1);
 
@@ -42,7 +42,7 @@ class PlayerCommandHistoryStorageServiceTest {
     assertThat(saved.getCharacterId()).isEqualTo(CHARACTER_ID);
     assertThat(saved.getCommandText()).isEqualTo("say hi");
     assertThat(saved.getAcceptedAt()).isEqualTo(ACCEPTED_AT);
-    verify(repository).deleteByIds(List.of(1L));
+    verify(repository).deleteOldestByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, 2);
   }
 
   @Test
@@ -55,7 +55,7 @@ class PlayerCommandHistoryStorageServiceTest {
     assertThat(service.findRecent(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, 2))
         .containsExactly("middle", "newest");
     verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
-    verify(repository).deleteByIds(List.of(1L));
+    verify(repository, never()).deleteByIds(Mockito.anyCollection());
   }
 
   private PlayerCommandHistoryEntry existingEntry(Long id) {

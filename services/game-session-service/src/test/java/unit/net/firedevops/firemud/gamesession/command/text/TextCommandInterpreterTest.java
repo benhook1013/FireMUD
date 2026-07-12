@@ -465,7 +465,6 @@ class TextCommandInterpreterTest {
                 pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
-                screenBufferService,
                 scriptEventPublisher),
             playHandler,
             moveHandler,

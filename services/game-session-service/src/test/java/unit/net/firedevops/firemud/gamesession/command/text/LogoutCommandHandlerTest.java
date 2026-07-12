@@ -7,7 +7,6 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
-import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -33,7 +32,6 @@ class LogoutCommandHandlerTest {
       Mockito.mock(GameplayPresenceLifecycleService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
-  private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private final ScriptEventPublisher scriptEventPublisher =
       Mockito.mock(ScriptEventPublisher.class);
 
@@ -45,11 +43,10 @@ class LogoutCommandHandlerTest {
           gameplayAdmissionPointerAuthorityService,
           gameplayPresenceLifecycleService,
           firstPartyConnectContextRegistry,
-          screenBufferService,
           scriptEventPublisher);
 
   @Test
-  void logoutClearsGameplayAndReplayStateWithoutStoppingSharedRuntime() {
+  void logoutPreservesDurableReplayContextWithoutStoppingSharedRuntime() {
     SessionContext context =
         new SessionContext(
             41L,
@@ -78,7 +75,6 @@ class LogoutCommandHandlerTest {
     verify(scriptEventPublisher, never())
         .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 1L, 123L);
     verify(gameplayPresenceLifecycleService)
         .recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
     verify(firstPartyConnectContextRegistry).unregister(41L);
@@ -111,7 +107,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService).stopSession(7L);
-    verify(screenBufferService).clear(22L, 7L, 123L);
   }
 
   @Test
@@ -155,7 +150,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 1L, 123L);
   }
 
   @Test
@@ -184,7 +178,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 1L, 123L);
   }
 
   @Test
@@ -214,7 +207,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 7L, 123L);
   }
 
   @Test
@@ -271,7 +263,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 7L, 123L);
   }
 
   @Test
@@ -315,7 +306,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService).clear(22L, 7L, 123L);
   }
 
   @Test
@@ -343,8 +333,6 @@ class LogoutCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
-    verify(screenBufferService, never())
-        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
     verify(gameplayPresenceLifecycleService)
         .recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
@@ -361,8 +349,6 @@ class LogoutCommandHandlerTest {
     verify(scriptEventPublisher, never())
         .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     verify(gameInstanceService, never()).stopSession(Mockito.anyLong());
-    verify(screenBufferService, never())
-        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
     verify(sessionContextService, never()).deleteBySessionId(Mockito.anyLong(), Mockito.anyLong());
   }
 

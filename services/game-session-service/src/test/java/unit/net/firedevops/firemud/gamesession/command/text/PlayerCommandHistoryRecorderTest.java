@@ -1,10 +1,12 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -140,6 +142,64 @@ class PlayerCommandHistoryRecorderTest {
                 CommandEnqueueResult.success(),
                 Optional.of(context),
                 Optional.of(context)));
+  }
+
+  @Test
+  void quarantinesHistorySettingsResolutionFailure() {
+    SessionContext context = gameplayContext(17L);
+    Mockito.doThrow(new IllegalStateException("settings authority unavailable"))
+        .when(settingsResolver)
+        .commandHistory(context);
+
+    assertDoesNotThrow(
+        () ->
+            recorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+  }
+
+  @Test
+  void quarantinesHistorySchedulingFailure() {
+    SessionContext context = gameplayContext(17L);
+    when(settingsResolver.commandHistory(context))
+        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PlayerCommandHistoryRecorder rejectingRecorder =
+        new PlayerCommandHistoryRecorder(
+            storageService,
+            settingsResolver,
+            runnable -> {
+              throw new java.util.concurrent.RejectedExecutionException("history queue full");
+            },
+            meterRegistry);
+
+    assertDoesNotThrow(
+        () ->
+            rejectingRecorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+    assertThat(meterRegistry.counter(PlayerCommandHistoryRecorder.REJECTED_METRIC).count())
+        .isEqualTo(1.0d);
   }
 
   private SessionContext gameplayContext(long characterId) {

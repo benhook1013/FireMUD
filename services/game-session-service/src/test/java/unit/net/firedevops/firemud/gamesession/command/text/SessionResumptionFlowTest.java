@@ -289,7 +289,6 @@ class SessionResumptionFlowTest {
                 pointerAuthorityService,
                 gameplayPresenceLifecycleService,
                 firstPartyConnectContextRegistry,
-                screenBufferService,
                 scriptEventPublisher),
             playHandler,
             moveHandler,

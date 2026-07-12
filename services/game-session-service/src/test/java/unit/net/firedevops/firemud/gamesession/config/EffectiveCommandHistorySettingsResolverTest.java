@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -52,5 +53,20 @@ class EffectiveCommandHistorySettingsResolverTest {
   @Test
   void clampsConfiguredHistoryToThePlatformMaximum() {
     assertThat(new FiremudCommandHistoryProperties(true, 99).maxEntries()).isEqualTo(20);
+  }
+
+  @Test
+  void normalizesNonPositiveGameInstanceIdsToTheTenantScope() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+    when(authorityReader.readOverrides(22L, null)).thenReturn(ScopedSettingsSnapshot.empty());
+    EffectiveCommandHistorySettingsResolver resolver =
+        new EffectiveCommandHistorySettingsResolver(
+            new FiremudCommandHistoryProperties(true, 10), authorityReader);
+
+    assertThat(resolver.commandHistory(22L, 0L))
+        .isEqualTo(new FiremudCommandHistoryProperties(true, 10));
+
+    verify(authorityReader).readOverrides(22L, null);
   }
 }

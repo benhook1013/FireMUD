@@ -658,6 +658,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setWorkflowFamily(workflowMetadata.workflowFamily())
               .setManifestHash(bundle.manifestHash())
               .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
+              .addAllCommandDefinitions(bundle.commandDefinitions())
               .addAllParticipantDigests(
                   bundle.participantDigests().stream()
                       .map(

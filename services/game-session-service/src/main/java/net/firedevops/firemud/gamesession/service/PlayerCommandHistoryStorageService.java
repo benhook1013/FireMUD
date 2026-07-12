@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
@@ -27,6 +26,10 @@ public class PlayerCommandHistoryStorageService {
     this.clock = clock;
   }
 
+  /**
+   * Records history independently of the gameplay transaction. History is best-effort observability
+   * and must not roll back an otherwise accepted player command when its storage is unavailable.
+   */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void append(
       long tenantId, long gameInstanceId, long characterId, String commandText, int maxEntries) {
@@ -64,31 +67,17 @@ public class PlayerCommandHistoryStorageService {
     repository.lockScope(tenantId, gameInstanceId, characterId);
     List<PlayerCommandHistoryEntry> entries =
         repository.findByScope(tenantId, gameInstanceId, characterId);
-    if (entries.size() <= maxEntries) {
-      return entries.stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
-    }
-    repository.deleteByIds(
-        entries.stream()
-            .limit(entries.size() - maxEntries)
-            .map(PlayerCommandHistoryEntry::getId)
-            .toList());
-    int startIndex = entries.size() - maxEntries;
-    return new ArrayList<>(entries.subList(startIndex, entries.size()))
-        .stream().map(PlayerCommandHistoryEntry::getCommandText).toList();
+    int startIndex = Math.max(0, entries.size() - maxEntries);
+    return entries.subList(startIndex, entries.size()).stream()
+        .map(PlayerCommandHistoryEntry::getCommandText)
+        .toList();
   }
 
   private void trimLocked(long tenantId, long gameInstanceId, long characterId, int maxEntries) {
-    List<PlayerCommandHistoryEntry> retained =
-        new ArrayList<>(repository.findByScope(tenantId, gameInstanceId, characterId));
-    if (retained.size() <= maxEntries) {
+    int excess = repository.countByScope(tenantId, gameInstanceId, characterId) - maxEntries;
+    if (excess <= 0) {
       return;
     }
-
-    List<Long> toDelete =
-        retained.stream()
-            .limit(retained.size() - maxEntries)
-            .map(PlayerCommandHistoryEntry::getId)
-            .toList();
-    repository.deleteByIds(toDelete);
+    repository.deleteOldestByScope(tenantId, gameInstanceId, characterId, excess);
   }
 }

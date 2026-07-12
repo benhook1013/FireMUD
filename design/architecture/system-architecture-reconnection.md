@@ -9,7 +9,7 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
-- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
+- **Remaining work** – Durable resume-transcript persistence is planned. Current replay uses the hot reconnect buffer, which stores structured metadata for new replayable outputs, remains able to read legacy text-only entries, and ends with fresh authoritative redraw. Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
 
 ## Reconnection Layers
 
@@ -186,11 +186,11 @@ For clarity, Telnet clients never receive a hidden transport-preserving recovery
 
 Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
 
-- a bounded per-player screen buffer keyed to gameplay identity may replay the most recent narrative/system transcript lines for that player after successful `LOGIN` + `PLAY`;
+- a bounded durable resume transcript keyed by the admitted tenant/game, game-instance, and character identity replays its retained narrative/system entries after successful `LOGIN` + `PLAY`; Redis may cache that context but is not authoritative;
 - new screen-buffer entries retain structured player-output metadata alongside rendered protocol text when the output came from the structured `PlayerOutput` path, so first-party clients can receive typed replay entries while classic clients continue to receive text;
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
-This screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
+The hot reconnect screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
 
 Prompt/status output is a separate output class from transcript lines:
 
@@ -205,7 +205,7 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
-The reconnect/session-recovery and screen-buffer defaults themselves are exposed through:
+The current hot-cache reconnect settings are exposed through:
 
 - `firemud.reconnection.policy.resume-window-ms`
 - `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
@@ -215,19 +215,19 @@ The reconnect/session-recovery and screen-buffer defaults themselves are exposed
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+These remain implementation-level operator/file-env defaults today. They will converge on the durable resume-transcript policy below; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
-The canonical transcript retention model sitting behind these reconnect settings is now explicit:
+### Canonical durable resume-transcript policy
 
-- `RECONNECT_ONLY`: only the hot reconnect buffer is retained; no durable transcript history is written.
-- `SHORT_HISTORY`: the same transcript-entry model used by reconnect replay is also written to bounded durable history suitable for normal operator troubleshooting and recent-player replay.
-- `EXTENDED_HISTORY`: the same transcript-entry model is retained for a longer bounded durable history window when a product/operator explicitly wants richer replay retention.
+Every admitted `{tenantId, gameInstanceId, characterId}` scope retains one durable, bounded resume transcript. This is a short rolling player context, not an archive and not a player-selected setting. The effective policy resolves from platform defaults with an optional tenant/game override:
 
-Current implementation status remains intentionally narrower than the full model:
+- maximum retained entry count;
+- maximum retained byte size;
+- optional expiry after configured character inactivity, or `never`.
 
-- structured replay metadata is already stored in the hot reconnect buffer for new replayable outputs;
-- legacy text-only reconnect buffer entries remain readable;
-- durable transcript history for `SHORT_HISTORY` and `EXTENDED_HISTORY` is still later implementation work, but it must reuse the same canonical transcript-entry model rather than inventing a second transport- or client-specific history contract.
+New entries evict complete oldest retained entries when either size bound is exceeded. Byte accounting uses the deterministic canonical structured-entry serialization defined in [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#resume-transcript-bounds). If a single complete entry exceeds the byte bound, FireMUD drops it rather than retaining a partial or truncated entry; the prior valid window remains intact. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD replays complete retained structured entries in ordering-token order before sending fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
+
+Command-input history and complete player transcript archive/export are separate future features. They do not alter the reconnect context contract; see [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features).
 
 ### Abnormal WebSocket Transport Loss
 

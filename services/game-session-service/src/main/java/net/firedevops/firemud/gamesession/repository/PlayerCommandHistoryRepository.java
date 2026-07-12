@@ -72,6 +72,36 @@ public class PlayerCommandHistoryRepository {
         .fetch(this::toEntity);
   }
 
+  public int countByScope(long tenantId, long gameInstanceId, long characterId) {
+    return dsl.fetchCount(
+        PLAYER_COMMAND_HISTORY,
+        PLAYER_COMMAND_HISTORY
+            .TENANT_ID
+            .eq(tenantId)
+            .and(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(PLAYER_COMMAND_HISTORY.CHARACTER_ID.eq(characterId)));
+  }
+
+  /** Deletes up to {@code count} oldest entries without materializing command text. */
+  public void deleteOldestByScope(long tenantId, long gameInstanceId, long characterId, int count) {
+    if (count <= 0) {
+      return;
+    }
+    List<Long> ids =
+        dsl.select(PLAYER_COMMAND_HISTORY.ID)
+            .from(PLAYER_COMMAND_HISTORY)
+            .where(
+                PLAYER_COMMAND_HISTORY
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(PLAYER_COMMAND_HISTORY.CHARACTER_ID.eq(characterId)))
+            .orderBy(PLAYER_COMMAND_HISTORY.ACCEPTED_AT.asc(), PLAYER_COMMAND_HISTORY.ID.asc())
+            .limit(count)
+            .fetch(PLAYER_COMMAND_HISTORY.ID);
+    deleteByIds(ids);
+  }
+
   /** Returns one deterministic page of scopes for background retention enforcement. */
   public List<HistoryScope> findDistinctScopesAfter(HistoryScope after, int batchSize) {
     if (batchSize <= 0) {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -56,6 +57,13 @@ class RedisScreenBufferServiceTest {
             })
         .when(valueOperations)
         .set(eq(REDIS_KEY), any(String.class), any(Duration.class));
+    doAnswer(
+            invocation -> {
+              pendingPayload.set((String) invocation.getArgument(1));
+              return null;
+            })
+        .when(valueOperations)
+        .set(eq(REDIS_KEY), any(String.class));
     when(valueOperations.get(REDIS_KEY)).thenAnswer(invocation -> storedPayload.get());
     doAnswer(
             invocation -> {
@@ -130,5 +138,21 @@ class RedisScreenBufferServiceTest {
     assertThat(valueCaptor.getAllValues()).hasSize(2);
     assertThat(valueCaptor.getAllValues().get(1)).contains("\"SECOND");
     assertThat(valueCaptor.getAllValues().get(1)).contains("\"payloadType\":\"text_message\"");
+  }
+
+  @Test
+  void zeroTtlKeepsTheBoundedTranscriptWithoutRedisExpiry() {
+    RedisScreenBufferService noExpiryCache =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null, new FiremudReconnectionProperties.Buffer(0L, 8, 24, 16_384, 65_536)));
+
+    noExpiryCache.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("ONE\n")));
+
+    verify(valueOperations, times(2)).set(eq(REDIS_KEY), anyString());
   }
 }
