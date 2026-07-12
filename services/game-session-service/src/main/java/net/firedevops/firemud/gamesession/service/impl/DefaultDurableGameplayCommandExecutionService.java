@@ -126,7 +126,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
     TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    if (resolveRoute(command, parsed) == CommandExecutionRoute.IGNORE
+    if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
         && parsed.type() != TextCommandType.UNKNOWN) {
       return Optional.empty();
     }
@@ -148,7 +148,7 @@ public final class DefaultDurableGameplayCommandExecutionService
           textCommandParser.parse(
               command.getCommandText(), admittedRegistryResolver.resolve(context));
     }
-    CommandExecutionRoute route = resolveRoute(command, parsed);
+    CommandExecutionRoute route = resolveRoute(command, parsed, context);
     if (route == CommandExecutionRoute.IGNORE) {
       return Optional.empty();
     }
@@ -391,14 +391,21 @@ public final class DefaultDurableGameplayCommandExecutionService
   private record ReplayBackedMutationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
 
-  private CommandExecutionRoute resolveRoute(GameplayCommand command, TextCommand parsed) {
-    return resolveMetadata(command, parsed)
+  private CommandExecutionRoute resolveRoute(
+      GameplayCommand command, TextCommand parsed, SessionContext context) {
+    return resolveMetadata(command, parsed, context)
         .map(this::routeForMetadata)
         .orElseGet(() -> fallbackRoute(parsed.type()));
   }
 
   private Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
-      GameplayCommand command, TextCommand parsed) {
+      GameplayCommand command, TextCommand parsed, SessionContext context) {
+    if (admittedRegistryResolver != null && context != null) {
+      return admittedRegistryResolver
+          .resolveMetadata(context, parsed.commandId())
+          .or(() -> admittedRegistryResolver.resolveMetadata(context, command.getCommandName()))
+          .or(() -> admittedRegistryResolver.resolveMetadata(context, parsed.aliasUsed()));
+    }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())
         .or(() -> textCommandMetadataResolver.resolve(parsed.commandId()))
