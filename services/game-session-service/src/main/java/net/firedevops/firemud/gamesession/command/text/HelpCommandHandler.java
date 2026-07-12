@@ -64,7 +64,7 @@ public class HelpCommandHandler {
 
     List<String> args = command.args();
     if (args.isEmpty()) {
-      return success(topicIndex());
+      return success(topicIndex(maybeContext));
     }
     if (args.size() > 1) {
       return unknownTopic(args.get(0));
@@ -95,7 +95,7 @@ public class HelpCommandHandler {
     }
 
     return switch (resolvedTopic) {
-      case "HELP" -> success(topicIndex());
+      case "HELP" -> success(topicIndex(maybeContext));
       case "LOGIN" ->
           success(
               "LOGIN <email> [secret]\n"
@@ -282,7 +282,7 @@ public class HelpCommandHandler {
         .orElse("");
   }
 
-  private String topicIndex() {
+  private String topicIndex(Optional<SessionContext> maybeContext) {
     ArrayList<String> lines =
         new ArrayList<>(
             List.of(
@@ -307,7 +307,20 @@ public class HelpCommandHandler {
                 "- HELP SAY",
                 "- HELP WHISPER",
                 "- HELP TELL"));
-    if (!authoredActionCatalog.all().isEmpty()) {
+    List<TextCommandDefinition> admittedDefinitions =
+        admittedRegistryResolver == null
+            ? List.of()
+            : maybeContext.map(admittedRegistryResolver::definitions).orElse(List.of());
+    if (!admittedDefinitions.isEmpty()) {
+      lines.add("Authored topics:");
+      for (TextCommandDefinition definition : admittedDefinitions) {
+        String topic =
+            definition.aliases().isEmpty()
+                ? definition.commandId()
+                : definition.aliases().getFirst();
+        lines.add("- HELP " + topic.toUpperCase(Locale.ROOT));
+      }
+    } else if (admittedRegistryResolver == null && !authoredActionCatalog.all().isEmpty()) {
       lines.add("Authored topics:");
       for (ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action :
           authoredActionCatalog.all()) {

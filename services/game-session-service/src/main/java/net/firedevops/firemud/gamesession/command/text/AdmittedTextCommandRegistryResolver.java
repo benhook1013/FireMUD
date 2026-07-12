@@ -17,12 +17,14 @@ public final class AdmittedTextCommandRegistryResolver {
   }
 
   public TextCommandRegistry resolve(SessionContext context) {
-    return admittedCommandDefinitionReader
-        .definitionsFor(context)
-        .<TextCommandRegistry>map(
-            definitions ->
-                new AggregatingTextCommandRegistry(
-                    List.of(new BuiltInTextCommandDefinitionProvider(), () -> definitions)))
-        .orElse(builtIns);
+    List<TextCommandDefinition> definitions = definitions(context);
+    return definitions.isEmpty()
+        ? builtIns
+        : new AggregatingTextCommandRegistry(
+            List.of(new BuiltInTextCommandDefinitionProvider(), () -> definitions));
+  }
+
+  List<TextCommandDefinition> definitions(SessionContext context) {
+    return admittedCommandDefinitionReader.definitionsFor(context).orElse(List.of());
   }
 }
