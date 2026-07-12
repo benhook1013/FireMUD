@@ -217,17 +217,21 @@ The reconnect/session-recovery and screen-buffer defaults themselves are exposed
 
 These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
-The canonical transcript retention model sitting behind these reconnect settings is now explicit:
+The canonical transcript retention model sitting behind these reconnect settings is durable by default. The hot reconnect buffer is a bounded delivery cache, not the sole retained copy of replayable player output. When an entry falls out of that hot window, it remains available through the same durable transcript-entry contract for the effective retention window.
 
-- `RECONNECT_ONLY`: only the hot reconnect buffer is retained; no durable transcript history is written.
-- `SHORT_HISTORY`: the same transcript-entry model used by reconnect replay is also written to bounded durable history suitable for normal operator troubleshooting and recent-player replay.
-- `EXTENDED_HISTORY`: the same transcript-entry model is retained for a longer bounded durable history window when a product/operator explicitly wants richer replay retention.
+Effective transcript retention is tenant/game-configurable within platform caps:
+
+- a bounded entry and byte budget limits how much recent output is retained;
+- an optional maximum age expires older entries; an omitted age does not expire entries by time;
+- the durable recent-history window may therefore be indefinitely retained by age while remaining bounded by size.
+
+The reconnect window is only the most recent replay slice of that durable output history. It is not a separate transient retention mode.
 
 Current implementation status remains intentionally narrower than the full model:
 
 - structured replay metadata is already stored in the hot reconnect buffer for new replayable outputs;
 - legacy text-only reconnect buffer entries remain readable;
-- durable transcript history for `SHORT_HISTORY` and `EXTENDED_HISTORY` is still later implementation work, but it must reuse the same canonical transcript-entry model rather than inventing a second transport- or client-specific history contract.
+- durable transcript history is still later implementation work, but it must reuse the same canonical transcript-entry model rather than inventing a second transport- or client-specific history contract.
 
 ### Abnormal WebSocket Transport Loss
 

@@ -259,27 +259,26 @@ The canonical persisted transcript unit is one transcript entry carrying:
 For the current architecture, that means:
 
 - a reconnect buffer entry may keep derived rendered text alongside the structured transcript entry so Telnet and generic WebSocket replay remain simple;
-- later durable transcript history should persist the same conceptual transcript entry model rather than inventing a second browser-only or archive-only contract;
+- durable transcript history persists the same conceptual transcript-entry model rather than inventing a second browser-only or archive-only contract;
 - prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
 
 Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.
 
-The first retention classes are intentionally simple:
+### Durable Recent Output
 
-- `RECONNECT_ONLY`
-- `SHORT_HISTORY`
-- `EXTENDED_HISTORY`
+Replayable output is always retained durably. The reconnect buffer is a hot, bounded delivery cache over that durable recent-output history, not a distinct transient-only retention class. Effective tenant/game settings define a bounded entry and byte budget plus an optional maximum age. Omitting the age allows a game to retain its bounded recent output indefinitely by time; it never means retaining unbounded gameplay output forever.
 
-Their intended behavior is:
+This keeps reconnect replay and durable recent output on one transcript contract while still allowing a hot reconnect cache in Redis or equivalent runtime storage.
 
-- `RECONNECT_ONLY`: keep entries only in the hot reconnect buffer; do not write durable transcript history.
-- `SHORT_HISTORY`: keep entries in the hot reconnect buffer and also persist bounded durable transcript history suitable for normal operator troubleshooting and recent-player replay.
-- `EXTENDED_HISTORY`: keep the same transcript-entry model with a longer bounded durable history window for operators or products that explicitly opt into richer replay/history retention.
+### Player History And Export
 
-This model keeps reconnect replay, durable transcript history, and richer client replay on one transcript contract while still allowing the current implementation split:
+Player-facing command history and player-visible output history are separate products with shared identity and ordering conventions:
 
-- hot reconnect buffer in Redis or equivalent runtime storage;
-- longer transcript history in durable storage when that later implementation work lands.
+- `HISTORY [count]` displays only safe, successfully accepted player commands. Unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns the default count, the maximum request count, and the retained command-entry bound; the optional argument selects a smaller newest subset.
+- Durable recent output retains the bounded transcript needed to situate a reconnecting player. It is not a `HISTORY` command source and must not be conflated with command-entry history.
+- A later player-history archive/export capability may capture the complete ordered player-visible transcript to a configured export destination. That capability has its own bounded server-side retention and delivery lifecycle so a player can retain an export independently without making the ordinary reconnect or recent-output store unbounded.
+
+The archive/export capability is intentionally future work. It must consume the canonical transcript-entry model and must not introduce a transport-specific text log as a competing source of truth.
 
 ---
 
