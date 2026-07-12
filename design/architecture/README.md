@@ -48,6 +48,7 @@ Open or amend the architecture docs before implementation when a change would al
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout and versioning.
 - [**system-architecture-logging-monitoring.md**](./system-architecture-logging-monitoring.md) – Logging and observability stack.
 - [**system-architecture-input-output-and-presentation.md**](./system-architecture-input-output-and-presentation.md) – Canonical structured input, structured output, late rendering, prompt, color, and `BRIEF` model for player-facing traffic.
+- [**system-architecture-player-command-model.md**](./system-architecture-player-command-model.md) – Canonical standard player-command catalog, stages, capability policy, and game-authored command extension rules.
 - [**system-architecture-settings-model.md**](./system-architecture-settings-model.md) – Canonical layered settings ownership, scopes, domains, and effective-config precedence.
 - [**system-architecture-llm-content-tools.md**](./system-architecture-llm-content-tools.md) – Design-time LLM-assisted content authoring workflows.
 - [**system-architecture-mud-client-protocol.md**](./system-architecture-mud-client-protocol.md) – Mud Client Protocol integration for external editors and scripted clients.
