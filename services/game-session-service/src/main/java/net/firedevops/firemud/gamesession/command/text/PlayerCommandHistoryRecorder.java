@@ -8,6 +8,8 @@ import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettings
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Persists only safe accepted commands that have a durable gameplay identity. */
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Component;
     value = "CT_CONSTRUCTOR_THROW",
     justification = "Constructor validation only guards injected collaborators before recording.")
 class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
+  private static final Logger LOG = LoggerFactory.getLogger(PlayerCommandHistoryRecorder.class);
+
   private final PlayerCommandHistoryStorageService storageService;
   private final EffectiveCommandHistorySettingsResolver settingsResolver;
 
@@ -51,12 +55,21 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
     if (!settings.enabled()) {
       return;
     }
-    storageService.append(
-        context.tenantId(),
-        context.gameInstanceId(),
-        context.characterId(),
-        command.rawLine().trim(),
-        settings.maxEntries());
+    try {
+      storageService.append(
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          command.rawLine().trim(),
+          settings.maxEntries());
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Player command history persistence failed tenantId={} gameInstanceId={} characterId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          ex);
+    }
   }
 
   private boolean isRecordable(TextCommand command, CommandEnqueueResult commandResult) {

@@ -27,7 +27,7 @@ public class PlayerCommandHistoryStorageService {
     this.clock = clock;
   }
 
-  @Transactional
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void append(
       long tenantId, long gameInstanceId, long characterId, String commandText, int maxEntries) {
     if (commandText == null || maxEntries <= 0) {
