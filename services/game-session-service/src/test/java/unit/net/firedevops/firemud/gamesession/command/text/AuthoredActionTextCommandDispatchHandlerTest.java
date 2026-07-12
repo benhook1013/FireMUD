@@ -46,7 +46,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesExecutionHookForConfiguredAuthoredActionWhenPresent() {
+  void doesNotPublishConfigurationOnlyExecutionHooks() {
     ScriptEventPublisher dedicatedPublisher = Mockito.mock(ScriptEventPublisher.class);
     AuthoredActionProperties properties = configuredAuthoredActions();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
@@ -80,7 +80,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                         && "hooked-wave".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("authored-")
-                        && "runtime.workflow.wave".equals(gameplayCommand.getExecutionHook())));
+                        && gameplayCommand.getExecutionHook() == null));
   }
 
   @Test

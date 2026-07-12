@@ -200,7 +200,10 @@ public final class DefaultDurableGameplayCommandExecutionService
                   command,
                   effect.getEffectId(),
                   () -> {
-                    var result = authoredActionCommandHandler.handle(activeParsed);
+                    var result =
+                        admittedRegistryResolver == null
+                            ? authoredActionCommandHandler.handle(activeParsed)
+                            : authoredActionCommandHandler.handle(context, activeParsed);
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case MOVE -> {
