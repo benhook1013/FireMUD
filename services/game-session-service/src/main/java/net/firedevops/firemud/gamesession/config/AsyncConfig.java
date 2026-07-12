@@ -6,7 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-/** Provides the executor used for running tick processing in parallel. */
+/** Provides bounded executors for background Game Session work. */
 @Configuration
 @EnableAsync
 public class AsyncConfig {
@@ -29,6 +29,17 @@ public class AsyncConfig {
     executor.setMaxPoolSize(4);
     executor.setQueueCapacity(200);
     executor.setThreadNamePrefix("script-event-");
+    executor.initialize();
+    return executor;
+  }
+
+  @Bean(name = "commandHistoryExecutor")
+  public Executor commandHistoryExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(4);
+    executor.setQueueCapacity(500);
+    executor.setThreadNamePrefix("command-history-");
     executor.initialize();
     return executor;
   }

@@ -137,6 +137,36 @@ class PlayerCommandHistoryRecorderTest {
                 Optional.of(context)));
   }
 
+  @Test
+  void quarantinesHistorySchedulingFailure() {
+    SessionContext context = gameplayContext(17L);
+    when(settingsResolver.commandHistory(context))
+        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+    PlayerCommandHistoryRecorder rejectingRecorder =
+        new PlayerCommandHistoryRecorder(
+            storageService,
+            settingsResolver,
+            runnable -> {
+              throw new java.util.concurrent.RejectedExecutionException("history queue full");
+            });
+
+    assertDoesNotThrow(
+        () ->
+            rejectingRecorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+  }
+
   private SessionContext gameplayContext(long characterId) {
     return new SessionContext(1L, 7L, 9L, characterId, 11L, "R-1", "token");
   }
