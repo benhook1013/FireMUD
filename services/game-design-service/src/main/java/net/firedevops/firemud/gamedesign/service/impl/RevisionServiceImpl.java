@@ -117,6 +117,7 @@ public class RevisionServiceImpl implements RevisionService {
       if (!definition.path("effects").isArray()) {
         throw invalidCommandDefinition("effects must be an array");
       }
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
     } catch (IllegalArgumentException ex) {
       throw ex;
     } catch (Exception ex) {

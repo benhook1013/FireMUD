@@ -135,6 +135,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     Set<String> aliases = new HashSet<>();
     for (String commandDefinition : commandDefinitions) {
       var definition = objectMapper.readTree(commandDefinition);
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
       String commandId = normalizeCommandToken(definition.path("commandId").asText());
       if (!commandIds.add(commandId)) {
         throw new IllegalStateException(
