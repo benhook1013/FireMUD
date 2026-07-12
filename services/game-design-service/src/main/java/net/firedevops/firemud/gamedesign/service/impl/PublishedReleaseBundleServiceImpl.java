@@ -1,8 +1,11 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -64,14 +67,15 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
-    entity.setCommandDefinitionsJson(
-        serializeCommandDefinitions(
-            revisionRepository
-                .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-                    version.tenantId(), version.id(), "COMMAND_DEFINITION")
-                .stream()
-                .map(revision -> revision.getData())
-                .toList()));
+    List<String> commandDefinitions =
+        revisionRepository
+            .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+                version.tenantId(), version.id(), "COMMAND_DEFINITION")
+            .stream()
+            .map(revision -> revision.getData())
+            .toList();
+    validateDistinctCommandDefinitions(commandDefinitions);
+    entity.setCommandDefinitionsJson(serializeCommandDefinitions(commandDefinitions));
     entity.setScriptOnly(version.scriptOnly());
     entity.setScriptPatchVersion(version.scriptPatchVersion());
     return toDto(repository.save(entity));
@@ -124,6 +128,33 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   private String serializeCommandDefinitions(List<String> commandDefinitions) {
     return objectMapper.writeValueAsString(
         commandDefinitions == null ? List.of() : commandDefinitions);
+  }
+
+  private void validateDistinctCommandDefinitions(List<String> commandDefinitions) {
+    Set<String> commandIds = new HashSet<>();
+    Set<String> aliases = new HashSet<>();
+    for (String commandDefinition : commandDefinitions) {
+      var definition = objectMapper.readTree(commandDefinition);
+      String commandId = normalizeCommandToken(definition.path("commandId").asText());
+      if (!commandIds.add(commandId)) {
+        throw new IllegalStateException(
+            "duplicate published commandDefinition commandId " + commandId);
+      }
+      for (var alias : definition.path("aliases")) {
+        String normalizedAlias = normalizeCommandToken(alias.asText());
+        if (!aliases.add(normalizedAlias)) {
+          throw new IllegalStateException(
+              "duplicate published commandDefinition alias " + normalizedAlias);
+        }
+      }
+    }
+  }
+
+  private String normalizeCommandToken(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalStateException("published commandDefinition token must not be blank");
+    }
+    return value.trim().toLowerCase(Locale.ROOT);
   }
 
   private List<String> deserializeCommandDefinitions(String json) {
