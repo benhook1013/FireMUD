@@ -614,7 +614,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             context,
             "SALUTING",
             java.time.Duration.ofSeconds(30),
-            "{\"source\":\"wave\"}",
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"block_mitigation\",\"value\":1}]}",
             "tfx-8",
             "Action applied."))
         .thenReturn(
@@ -629,7 +629,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             context,
             "SALUTING",
             java.time.Duration.ofSeconds(30),
-            "{\"source\":\"wave\"}",
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"block_mitigation\",\"value\":1}]}",
             "tfx-8",
             "Action applied.");
     verify(durableGameplayReplayService)
@@ -696,6 +696,48 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
+  @Test
+  void executeRejectsAuthoredSnapshotWithAnInvalidModifierBeforeReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(
+        """
+        [{
+          "effectKind": "APPLY_ACTION_STATE",
+          "schemaVersion": 1,
+          "targeting": "SELF",
+          "replayPolicy": "EFFECT_IDEMPOTENT",
+          "payload": {
+            "conditionKey": "SALUTING",
+            "durationSeconds": 30,
+            "effectPayload": {"modifiers": [{"operation": "ARBITRARY", "target_key": "flag", "value": 1}]}
+          }
+        }]
+        """);
+    TickEffect effect = tickEffect("tfx-invalid-modifier", "cmd-invalid-modifier");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_SNAPSHOT_INVALID");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
   private String authoredActionEffectsJson() {
     return """
         [{
@@ -706,7 +748,11 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
           "payload": {
             "conditionKey": "SALUTING",
             "durationSeconds": 30,
-            "effectPayload": {"source": "wave"}
+            "effectPayload": {
+              "modifiers": [
+                {"operation": "ADD", "target_key": "block_mitigation", "value": 1}
+              ]
+            }
           }
         }]
         """;

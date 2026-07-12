@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
@@ -42,6 +43,9 @@ import tools.jackson.databind.ObjectMapper;
 public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
   private static final ObjectMapper JSON = new ObjectMapper();
+  private static final Set<String> ACTION_STATE_MODIFIER_OPERATIONS =
+      Set.of("ADD", "MULTIPLY", "CLAMP_MIN", "CLAMP_MAX", "GRANT_FLAG", "GRANT_CONDITION");
+  private static final String IDENTIFIER_PATTERN = "[A-Za-z][A-Za-z0-9_]{0,63}";
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
@@ -318,15 +322,18 @@ public final class DefaultDurableGameplayCommandExecutionService
       JsonNode effect = effects.get(0);
       JsonNode payload = effect.path("payload");
       JsonNode effectPayload = payload.path("effectPayload");
-      if (!"APPLY_ACTION_STATE".equals(effect.path("effectKind").asText())
+      if (!effect.isObject()
+          || !"APPLY_ACTION_STATE".equals(effect.path("effectKind").asText())
+          || !effect.path("schemaVersion").isInt()
           || effect.path("schemaVersion").asInt() != 1
           || !"SELF".equals(effect.path("targeting").asText())
           || !"EFFECT_IDEMPOTENT".equals(effect.path("replayPolicy").asText())
-          || !payload.path("conditionKey").isTextual()
+          || !payload.isObject()
+          || !isIdentifier(payload.path("conditionKey"))
           || !payload.path("durationSeconds").isInt()
           || payload.path("durationSeconds").asInt() <= 0
           || payload.path("durationSeconds").asInt() > 3600
-          || !effectPayload.isObject()) {
+          || !validActionStatePayload(effectPayload)) {
         return Optional.empty();
       }
       return Optional.of(
@@ -337,6 +344,31 @@ public final class DefaultDurableGameplayCommandExecutionService
     } catch (RuntimeException ex) {
       return Optional.empty();
     }
+  }
+
+  private boolean validActionStatePayload(JsonNode effectPayload) {
+    JsonNode modifiers = effectPayload.path("modifiers");
+    if (!effectPayload.isObject() || !modifiers.isArray()) {
+      return false;
+    }
+    for (JsonNode modifier : modifiers) {
+      if (!modifier.isObject()
+          || !ACTION_STATE_MODIFIER_OPERATIONS.contains(modifier.path("operation").asText())
+          || !isIdentifier(modifier.path("target_key"))
+          || !modifier.path("value").isNumber()
+          || (!modifier.path("priority").isMissingNode() && !modifier.path("priority").isInt())
+          || (!modifier.path("scope_kind").isMissingNode()
+              && !isIdentifier(modifier.path("scope_kind")))
+          || (!modifier.path("scope_key").isMissingNode()
+              && !isIdentifier(modifier.path("scope_key")))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean isIdentifier(JsonNode value) {
+    return value.isTextual() && value.asText().matches(IDENTIFIER_PATTERN);
   }
 
   private boolean hasAuthoredActionSnapshot(GameplayCommand command) {
