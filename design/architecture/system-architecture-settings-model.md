@@ -10,13 +10,14 @@ This document defines the canonical FireMUD settings model for operator/bootstra
   - `firemud.presentation`
   - `firemud.movement`
   - `firemud.world-topology`
+  - `firemud.command-history`
 - Game Session and Game Logic now publish generation-ready configuration metadata and service-level configuration reference docs for the surfaced domains above.
 - The first consolidated generated publication outputs are now checked in at `design/architecture/generated/platform-settings-schema.json` and `design/architecture/generated/platform-settings-reference.md`, both produced from the surfaced Spring metadata plus one machine-readable publication spec for the extra operator/admin fields.
 - The canonical layered ownership model is agreed and documented here.
-- Game Design now owns the first shared persisted tenant/game settings authority for `reconnection`, `communication`, `presentation`, `movement`, and `worldTopology`.
+- Game Design now owns the first shared persisted tenant/game settings authority for `reconnection`, `communication`, `presentation`, `movement`, `worldTopology`, and `commandHistory`.
 - `common-platform-core` now owns the first shared effective persisted-override resolver for those surfaced domains, merging tenant then game-instance overrides into one bounded read model for runtime consumers.
 - Game Session and Game Logic now consume that shared merged persisted layer and apply their service-owned operator defaults on top.
-- Game Session exposes the current effective result at `/actuator/settings/effective`, including resolved `presentation`, `prompts`, `reconnection`, `movement`, and `worldTopology`, plus normalized subgroup views for the live room-view/transcript seams (`transcriptRendering`, `reconnectionPolicy`, and `reconnectBuffer`), movement/topology seams (`movementPostMoveView`, `worldTopologyScopeModel`, and `worldTopologyRegionBehavior`), and the current scoped `communication` override layer it sees for the same session or synthesized scope.
+- Game Session exposes the current effective result at `/actuator/settings/effective`, including resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, and `commandHistory`, plus normalized subgroup views for the live room-view/transcript seams (`transcriptRendering`, `reconnectionPolicy`, and `reconnectBuffer`), movement/topology seams (`movementPostMoveView`, `worldTopologyScopeModel`, and `worldTopologyRegionBehavior`), and the current scoped `communication` and `commandHistory` override layers it sees for the same session or synthesized scope.
 - Game Logic exposes the current effective `communication` result at `/actuator/settings/effective/communication`.
 - The shared authority reader now has explicit bounded local cache semantics: normal reads use a short TTL cache, callers may force refresh, and callers may evict one scope locally. Distributed push invalidation, full centralized operator-default/caps resolution, and preset-baseline expansion are still future work.
 
@@ -76,6 +77,7 @@ The current settings domains are:
 - `presentation`
 - `movement`
 - `worldTopology`
+- `commandHistory`
 
 The next expected gameplay-facing domains are:
 
@@ -100,6 +102,8 @@ The currently surfaced subgroup names are:
 - `movement.postMoveView`
 - `worldTopology.scopeModel`
 - `worldTopology.regionBehavior`
+- `commandHistory.capability`
+- `commandHistory.retention`
 
 These group names are the canonical behavior buckets even when the first live file/env-backed properties are still split across service-local configuration classes. Service-local property classes must map back into one shared settings model rather than becoming unrelated permanent config blobs.
 
@@ -139,6 +143,9 @@ Today, operator defaults still come from service-local typed properties, while t
 - `worldTopology.scopeModel` and `worldTopology.regionBehavior`
   - operator-only today
   - later tenant/game-configurable when topology becomes part of per-game design state
+- `commandHistory.capability` and `commandHistory.retention`
+  - operator defaults provide the initial enabled state and bounded maximum
+  - tenant/game overrides control player-facing availability and the retained/displayable accepted-command bound within the platform maximum
 
 ## Schema Metadata
 
@@ -185,7 +192,7 @@ Current practical rule:
 - Game Design owns persisted tenant/game overrides for the currently surfaced pre-`06` settings domains;
 - `common-platform-core` resolves one merged persisted override layer per `{tenantId, optional gameInstanceId}` by applying tenant overrides before game-instance overrides;
 - runtime services consume that shared merged persisted layer and perform only the final merge with their own typed operator defaults for now;
-- Game Session exposes the resolved `presentation`, `prompts`, `reconnection`, `movement`, and `worldTopology` result through `/actuator/settings/effective`, and also includes normalized subgroup payloads for transcript, movement, and world-topology seams plus the current scoped `communication` override view for the same session or synthesized scope, while Game Logic exposes the fully merged effective `communication` result through `/actuator/settings/effective/communication`;
+- Game Session exposes the resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, and `commandHistory` result through `/actuator/settings/effective`, and also includes normalized subgroup payloads for transcript, movement, world-topology, and command-history seams plus the current scoped `communication` override view for the same session or synthesized scope, while Game Logic exposes the fully merged effective `communication` result through `/actuator/settings/effective/communication`;
 - the first authority stays bounded and domain-oriented; it is not a general distributed config platform;
 - cache invalidation remains bounded and local to each runtime process through explicit refresh/evict operations on the shared reader rather than a distributed push fabric;
 - centralized operator-default/caps resolution ownership and preset expansion remain later slices rather than compatibility scaffolding in this one.
