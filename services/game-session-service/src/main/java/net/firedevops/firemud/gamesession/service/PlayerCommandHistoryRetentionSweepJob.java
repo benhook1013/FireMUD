@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
@@ -9,6 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Gradually enforces lowered command-history caps even for inactive characters. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repository and storage service are framework-managed collaborators.")
 public class PlayerCommandHistoryRetentionSweepJob {
   private static final int BATCH_SIZE = 500;
 
