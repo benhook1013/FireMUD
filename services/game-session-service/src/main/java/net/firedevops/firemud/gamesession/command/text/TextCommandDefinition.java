@@ -18,7 +18,8 @@ record TextCommandDefinition(
     long cooldownMs,
     String costKey,
     long costAmount,
-    String executionHook) {
+    String executionHook,
+    List<TextCommandEffectDeclaration> effects) {
   TextCommandDefinition {
     Objects.requireNonNull(commandId, "commandId must not be null");
     Objects.requireNonNull(type, "type must not be null");
@@ -31,10 +32,46 @@ record TextCommandDefinition(
     Objects.requireNonNull(source, "source must not be null");
     aliases = List.copyOf(aliases);
     actionTags = List.copyOf(actionTags);
+    effects = List.copyOf(effects == null ? List.of() : effects);
     targetingMode = targetingMode == null || targetingMode.isBlank() ? "NONE" : targetingMode;
     if (executionHook != null && executionHook.isBlank()) {
       executionHook = null;
     }
+  }
+
+  TextCommandDefinition(
+      String commandId,
+      TextCommandType type,
+      List<String> aliases,
+      TextCommandDispatchGroup dispatchGroup,
+      TextCommandStageRequirement stageRequirement,
+      TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags,
+      TextCommandSource source,
+      String targetingMode,
+      String cooldownKey,
+      long cooldownMs,
+      String costKey,
+      long costAmount,
+      String executionHook) {
+    this(
+        commandId,
+        type,
+        aliases,
+        dispatchGroup,
+        stageRequirement,
+        promptPolicy,
+        actionCategory,
+        actionTags,
+        source,
+        targetingMode,
+        cooldownKey,
+        cooldownMs,
+        costKey,
+        costAmount,
+        executionHook,
+        List.of());
   }
 
   static TextCommandDefinition extensionDefinition(TextCommandType type, String commandId) {
