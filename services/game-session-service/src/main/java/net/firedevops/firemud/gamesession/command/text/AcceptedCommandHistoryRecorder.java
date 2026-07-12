@@ -6,7 +6,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 
 /** Records accepted, safe player commands after command dispatch has settled session identity. */
 @FunctionalInterface
-interface AcceptedCommandHistoryRecorder {
+public interface AcceptedCommandHistoryRecorder {
   AcceptedCommandHistoryRecorder NOOP =
       (command, commandResult, contextBefore, contextAfter) -> {
         // Used by focused interpreter seams that do not exercise durable history.

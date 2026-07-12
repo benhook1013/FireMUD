@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class TextCommandInterpreterDispatchSeamTest {
@@ -89,11 +90,15 @@ class TextCommandInterpreterDispatchSeamTest {
     assertEquals(
         expectedDispatchResult.reconnectRedrawRecommended(), actual.reconnectRedrawRecommended());
     assertEquals(false, actual.meaningfulGameplayActivity());
+    ArgumentCaptor<TextCommand> recordedCommand = ArgumentCaptor.forClass(TextCommand.class);
     verify(commandHistoryRecorder)
         .record(
-            Mockito.any(TextCommand.class),
+            recordedCommand.capture(),
             Mockito.eq(expectedDispatchResult.commandResult()),
             Mockito.eq(Optional.of(gameplayContext)),
             Mockito.eq(Optional.of(gameplayContext)));
+    assertEquals(TextCommandType.LOOK, recordedCommand.getValue().type());
+    assertEquals("LOOK", recordedCommand.getValue().rawLine());
+    assertEquals(List.of(), recordedCommand.getValue().args());
   }
 }

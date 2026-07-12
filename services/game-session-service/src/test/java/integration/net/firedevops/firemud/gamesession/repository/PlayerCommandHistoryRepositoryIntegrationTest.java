@@ -68,6 +68,7 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
   @BeforeEach
   void cleanTable() {
     dsl.execute("TRUNCATE TABLE player_command_history RESTART IDENTITY");
+    dsl.execute("TRUNCATE TABLE player_command_history_retention_sweep_state");
   }
 
   @Test

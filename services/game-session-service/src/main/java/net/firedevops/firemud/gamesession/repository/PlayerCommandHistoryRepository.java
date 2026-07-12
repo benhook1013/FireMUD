@@ -20,7 +20,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class PlayerCommandHistoryRepository {
-  private static final long RETENTION_SWEEP_LOCK_KEY = 0x5043485357454550L;
+  private static final int RETENTION_SWEEP_LOCK_NAMESPACE = 0x50434853;
+  private static final int RETENTION_SWEEP_LOCK_KEY = 0x57454550;
 
   private final DSLContext dsl;
 
@@ -55,7 +56,10 @@ public class PlayerCommandHistoryRepository {
       return true;
     }
     Record record =
-        dsl.fetchOne("select pg_try_advisory_xact_lock(?) as locked", RETENTION_SWEEP_LOCK_KEY);
+        dsl.fetchOne(
+            "select pg_try_advisory_xact_lock(?, ?) as locked",
+            RETENTION_SWEEP_LOCK_NAMESPACE,
+            RETENTION_SWEEP_LOCK_KEY);
     return record != null && Boolean.TRUE.equals(record.get("locked", Boolean.class));
   }
 
@@ -90,31 +94,22 @@ public class PlayerCommandHistoryRepository {
     Long tenantId = cursor == null ? null : cursor.tenantId();
     Long gameInstanceId = cursor == null ? null : cursor.gameInstanceId();
     Long characterId = cursor == null ? null : cursor.characterId();
-    int updated =
-        dsl.execute(
-            """
-            update player_command_history_retention_sweep_state
-            set cursor_tenant_id = ?, cursor_game_instance_id = ?, cursor_character_id = ?,
-                batches_since_wrap = ?
-            where singleton = true
-            """,
-            tenantId,
-            gameInstanceId,
-            characterId,
-            resolvedState.batchesSinceWrap());
-    if (updated == 0) {
-      dsl.execute(
-          """
-          insert into player_command_history_retention_sweep_state (
-              singleton, cursor_tenant_id, cursor_game_instance_id, cursor_character_id,
-              batches_since_wrap)
-          values (true, ?, ?, ?, ?)
-          """,
-          tenantId,
-          gameInstanceId,
-          characterId,
-          resolvedState.batchesSinceWrap());
-    }
+    dsl.execute(
+        """
+        insert into player_command_history_retention_sweep_state (
+            singleton, cursor_tenant_id, cursor_game_instance_id, cursor_character_id,
+            batches_since_wrap)
+        values (true, ?, ?, ?, ?)
+        on conflict (singleton) do update
+        set cursor_tenant_id = excluded.cursor_tenant_id,
+            cursor_game_instance_id = excluded.cursor_game_instance_id,
+            cursor_character_id = excluded.cursor_character_id,
+            batches_since_wrap = excluded.batches_since_wrap
+        """,
+        tenantId,
+        gameInstanceId,
+        characterId,
+        resolvedState.batchesSinceWrap());
   }
 
   public List<PlayerCommandHistoryEntry> findByScope(
