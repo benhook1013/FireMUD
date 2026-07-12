@@ -6,10 +6,20 @@ public record ScopedSettingsOverrides(
     CommunicationOverride communication,
     PresentationOverride presentation,
     MovementOverride movement,
-    WorldTopologyOverride worldTopology) {
+    WorldTopologyOverride worldTopology,
+    CommandHistoryOverride commandHistory) {
+
+  public ScopedSettingsOverrides(
+      ReconnectionOverride reconnection,
+      CommunicationOverride communication,
+      PresentationOverride presentation,
+      MovementOverride movement,
+      WorldTopologyOverride worldTopology) {
+    this(reconnection, communication, presentation, movement, worldTopology, null);
+  }
 
   public static ScopedSettingsOverrides empty() {
-    return new ScopedSettingsOverrides(null, null, null, null, null);
+    return new ScopedSettingsOverrides(null, null, null, null, null, null);
   }
 
   public boolean isEmpty() {
@@ -17,7 +27,8 @@ public record ScopedSettingsOverrides(
         && communication == null
         && presentation == null
         && movement == null
-        && worldTopology == null;
+        && worldTopology == null
+        && commandHistory == null;
   }
 
   public enum SettingsDomain {
@@ -25,7 +36,8 @@ public record ScopedSettingsOverrides(
     COMMUNICATION,
     PRESENTATION,
     MOVEMENT,
-    WORLD_TOPOLOGY
+    WORLD_TOPOLOGY,
+    COMMAND_HISTORY
   }
 
   public record ReconnectionOverride(PolicyOverride policy, BufferOverride buffer) {
@@ -93,6 +105,12 @@ public record ScopedSettingsOverrides(
       MAP_ONLY,
       AREA_AND_MAP,
       REGION_AREA_AND_MAP
+    }
+  }
+
+  public record CommandHistoryOverride(Boolean enabled, Integer maxEntries) {
+    public boolean isEmpty() {
+      return enabled == null && maxEntries == null;
     }
   }
 }

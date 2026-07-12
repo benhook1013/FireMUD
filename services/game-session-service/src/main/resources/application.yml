@@ -103,6 +103,9 @@ firemud:
       min-lines: 24
       soft-max-bytes: 16384
       hard-max-bytes: 65536
+  command-history:
+    enabled: true
+    max-entries: 10
   movement:
     post-move-look-enabled: true
   world-topology:

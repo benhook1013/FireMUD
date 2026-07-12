@@ -52,11 +52,25 @@ Reconnect/session recovery and bounded transcript replay defaults surfaced by Ga
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `firemud.reconnection.policy.resume-window-ms` | `reconnection.policy` | Maximum resume window, in milliseconds, before a stale gameplay binding is treated as non-resumable. | `180000` | integer >= 1 ms | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `180000` |
 | `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry` | `reconnection.policy` | Whether a stale or invalid resumable binding should fall through to fresh entry when current admission still allows PLAY. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
-| `firemud.reconnection.buffer.ttl-ms` | `reconnection.buffer` | TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding. | `1800000` | integer >= 1 ms | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `1800000` |
+| `firemud.reconnection.buffer.ttl-ms` | `reconnection.buffer` | TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding. | `1800000` | integer >= 0 ms; 0 retains the bounded transcript until size eviction | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `1800000` |
 | `firemud.reconnection.buffer.min-messages` | `reconnection.buffer` | Minimum message floor retained for reconnect transcript replay before byte ceilings are applied. | `8` | integer >= 1 | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `8` |
 | `firemud.reconnection.buffer.min-lines` | `reconnection.buffer` | Minimum line floor retained for reconnect transcript replay before byte ceilings are applied. | `24` | integer >= 1 | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `24` |
 | `firemud.reconnection.buffer.soft-max-bytes` | `reconnection.buffer` | Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied. | `16384` | integer >= 1 bytes | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `16384` |
 | `firemud.reconnection.buffer.hard-max-bytes` | `reconnection.buffer` | Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text. | `65536` | integer >= 1 bytes | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `65536` |
+
+## `firemud.command-history`
+
+Bounded accepted player-command history defaults surfaced by Game Session.
+
+- Service owner: `game-session-service`
+- Current operator-default owner: `game-session-service operator defaults`
+- Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
+- Runtime/effective inspection surface: `/actuator/settings/effective`
+
+| Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `firemud.command-history.enabled` | `commandHistory.capability` | Whether accepted command history is available to players through the HISTORY command. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `true` |
+| `firemud.command-history.max-entries` | `commandHistory.retention` | Maximum retained and displayable accepted command-history entries per player character; values are capped at 20. | `10` | integer from 1 to 20 | `tenant/game-configurable within the platform maximum` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `10` |
 
 ## `firemud.movement`
 

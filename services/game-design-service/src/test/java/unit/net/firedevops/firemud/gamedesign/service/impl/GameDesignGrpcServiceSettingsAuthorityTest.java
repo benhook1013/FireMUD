@@ -86,6 +86,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
                         null,
                         null),
                     null,
+                    null,
                     null),
                 ScopedSettingsOverrides.empty()));
     CapturingObserver<GetScopedSettingsOverridesResponse> observer = new CapturingObserver<>();
@@ -147,7 +148,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             7L,
             ScopedSettingsOverrides.SettingsDomain.MOVEMENT,
             new ScopedSettingsOverrides(
-                null, null, null, new ScopedSettingsOverrides.MovementOverride(false), null));
+                null, null, null, new ScopedSettingsOverrides.MovementOverride(false), null, null));
     assertThat(putObserver.value.hasError()).isFalse();
 
     CapturingObserver<DeleteSettingsDomainOverrideResponse> deleteObserver =

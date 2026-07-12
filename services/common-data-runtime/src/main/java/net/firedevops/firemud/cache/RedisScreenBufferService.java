@@ -62,9 +62,15 @@ public class RedisScreenBufferService implements ScreenBufferService {
                   trimPayload(payload, properties.buffer());
                   try {
                     operations.multi();
-                    operations
-                        .opsForValue()
-                        .set(redisKey, objectMapper.writeValueAsString(payload), ttl);
+                    if (ttl.isZero()) {
+                      operations
+                          .opsForValue()
+                          .set(redisKey, objectMapper.writeValueAsString(payload));
+                    } else {
+                      operations
+                          .opsForValue()
+                          .set(redisKey, objectMapper.writeValueAsString(payload), ttl);
+                    }
                   } catch (JacksonException ex) {
                     operations.unwatch();
                     throw new IllegalStateException(

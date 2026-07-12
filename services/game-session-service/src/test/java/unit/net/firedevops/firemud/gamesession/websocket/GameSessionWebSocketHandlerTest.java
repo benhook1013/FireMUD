@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -96,6 +97,28 @@ class GameSessionWebSocketHandlerTest {
     when(session.getAttributes())
         .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
     when(settingsResolver.presentation(any())).thenReturn(new PresentationProperties());
+  }
+
+  private GameSessionWebSocketHandler handlerWithMetadata(
+      TextCommandMetadataResolver textCommandMetadataResolver) {
+    return new GameSessionWebSocketHandler(
+        interpreter,
+        lookHandler,
+        sessionAuthenticationService,
+        sessionContextService,
+        activeTransportSessionRegistry,
+        firstPartyConnectContextService,
+        firstPartyConnectContextRegistry,
+        gameplayAdmissionPointerAuthorityService,
+        gameplayPresenceLifecycleService,
+        screenBufferService,
+        outputProjector,
+        promptBurstCoordinator,
+        promptComposer,
+        settingsResolver,
+        runtimeIdentity,
+        parser,
+        textCommandMetadataResolver);
   }
 
   @Test
@@ -763,6 +786,83 @@ class GameSessionWebSocketHandlerTest {
 
     verify(promptBurstCoordinator)
         .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(true));
+  }
+
+  @Test
+  void handleMessageForcesPromptBurstForGameplayEntryMetadata() throws Exception {
+    TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
+    PlayerOutput output = PlayerOutput.message("Entering Demo World");
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(context), eq(List.of(output)), eq(true)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK PLAY");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(ScreenBufferService.BufferedEntry.fromText("Entering Demo World\n"));
+
+    handler.handleMessage(session, new TextMessage("PLAY demo"));
+
+    verify(promptBurstCoordinator)
+        .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(true));
+  }
+
+  @Test
+  void handleMessageDoesNotForcePromptBurstForPlayTypeWithoutGameplayEntryMetadata()
+      throws Exception {
+    handler = handlerWithMetadata(commandId -> Optional.empty());
+    TextCommand command =
+        new TextCommand(
+            "custom-play",
+            TextCommandType.PLAY,
+            List.of("demo"),
+            "CUSTOM-PLAY demo",
+            "custom-play",
+            null);
+    PlayerOutput output = PlayerOutput.message("Custom session response");
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    when(parser.parse("CUSTOM-PLAY demo")).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(output), false, false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(promptBurstCoordinator.applyPromptWindow(
+            eq("41"), eq(context), eq(List.of(output)), eq(false)))
+        .thenReturn(List.of(output));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of(output)),
+            eq("en-NZ"),
+            any(PresentationProperties.class)))
+        .thenReturn("OK CUSTOM-PLAY");
+    when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
+        .thenReturn(ScreenBufferService.BufferedEntry.fromText("Custom session response\n"));
+
+    handler.handleMessage(session, new TextMessage("CUSTOM-PLAY demo"));
+
+    verify(promptBurstCoordinator)
+        .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(false));
   }
 
   @Test

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.grpc;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.*;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -8,6 +9,9 @@ import io.opentelemetry.context.Scope;
 import java.util.Objects;
 
 /** gRPC interceptor that creates an OpenTelemetry span for each call. */
+@SuppressFBWarnings(
+    value = "CT_CONSTRUCTOR_THROW",
+    justification = "Constructor validation only guards the injected tracer before interception.")
 public class TracingInterceptor implements ServerInterceptor {
   private final Tracer tracer;
 

@@ -20,7 +20,7 @@ public record FiremudReconnectionProperties(Policy policy, Buffer buffer) {
       long ttlMs, int minMessages, int minLines, int softMaxBytes, int hardMaxBytes) {
     Buffer normalize() {
       return new Buffer(
-          ttlMs > 0L ? ttlMs : 1_800_000L,
+          ttlMs >= 0L ? ttlMs : 1_800_000L,
           minMessages > 0 ? minMessages : 8,
           minLines > 0 ? minLines : 24,
           softMaxBytes > 0 ? softMaxBytes : 16_384,

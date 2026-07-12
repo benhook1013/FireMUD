@@ -8,8 +8,9 @@ import java.util.Objects;
 
 /** Records gRPC call metrics using Micrometer. */
 @SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "MeterRegistry is injected and safe to store")
+    value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
+    justification =
+        "Constructor validation only guards the injected MeterRegistry, which is safe to store.")
 public class MetricsInterceptor implements ServerInterceptor {
   private final MeterRegistry registry;
 

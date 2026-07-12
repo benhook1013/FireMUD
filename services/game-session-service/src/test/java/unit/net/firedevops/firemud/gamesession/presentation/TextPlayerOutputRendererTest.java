@@ -694,6 +694,43 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllDoesNotInferMovementFromAnUnclassifiedCommandType() {
+    TextCommandMetadataResolver metadataResolver = commandId -> java.util.Optional.empty();
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)),
+            new PresentationMessageCatalog(),
+            new TextCommandPresentationPolicy(metadataResolver));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                "custom-move",
+                TextCommandType.MOVE,
+                List.of("north"),
+                "CUSTOM-MOVE north",
+                "custom-move",
+                new TextCommandPayload.Directional("north")),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        List.of(),
+                        List.of()))));
+
+    assertThat(rendered).startsWith("OK CUSTOM-MOVE\n");
+  }
+
+  @Test
   void moveRefreshUsesBriefStyleLongDescriptionSuppressionByDefault() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
