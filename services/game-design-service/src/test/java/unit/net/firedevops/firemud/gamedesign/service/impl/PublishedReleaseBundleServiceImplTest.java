@@ -114,4 +114,39 @@ class PublishedReleaseBundleServiceImplTest {
                 "genrev-1",
                 List.of()));
   }
+
+  @Test
+  void createFullVersionBundleRejectsDuplicateCommandDefinitionAlias() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision first = new Revision();
+    first.setData("{\"commandId\":\"salute\",\"aliases\":[\"hail\"]}");
+    Revision second = new Revision();
+    second.setData("{\"commandId\":\"greet\",\"aliases\":[\"HAIL\"]}");
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version,
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+  }
 }
