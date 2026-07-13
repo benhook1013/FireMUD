@@ -321,6 +321,7 @@ public class HelpCommandHandler {
         commandHistorySettingsResolver.commandHistory(maybeContext.orElse(null));
     return effective.enabled();
   }
+
   private TextCommandInterpretationResult success(TextCommandDefinition definition) {
     String topic =
         definition.aliases().isEmpty()

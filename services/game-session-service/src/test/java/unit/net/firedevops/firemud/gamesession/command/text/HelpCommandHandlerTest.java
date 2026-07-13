@@ -221,10 +221,7 @@ class HelpCommandHandlerTest {
   @Test
   void helpIndexHidesHistoryWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
-        new HelpCommandHandler(
-            (context, topic) -> Optional.empty(),
-            null,
-            historyResolver(false));
+        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(false));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -240,10 +237,7 @@ class HelpCommandHandlerTest {
   @Test
   void helpHistoryTopicUnavailableWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
-        new HelpCommandHandler(
-            (context, topic) -> Optional.empty(),
-            null,
-            historyResolver(false));
+        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(false));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -260,10 +254,7 @@ class HelpCommandHandlerTest {
   @Test
   void helpHistoryTopicAvailableWhenFeatureEnabled() {
     HelpCommandHandler enabledHandler =
-        new HelpCommandHandler(
-            (context, topic) -> Optional.empty(),
-            null,
-            historyResolver(true));
+        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(true));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
