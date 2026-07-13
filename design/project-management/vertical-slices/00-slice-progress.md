@@ -66,16 +66,14 @@ These are not broad audit topics anymore; they are real future slices with known
 1. [02.1.1 Email OTP and Text Auth Options](./02.1.1-task-list-email-otp-and-text-auth-options-vertical-slice.md)
 2. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
 3. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-4. [02.13.10 Structured Transcript and Replay End State](./02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-   Remaining: the hot reconnect buffer now stores structured `PlayerOutput` replay metadata alongside classic rendered protocol text for new entries and keeps text-only legacy entries readable; the narrower storage-model follow-through is now locked at the design boundary, so the remaining work is bounded durable transcript history on top of that explicit transcript-entry and retention-class contract.
-5. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
-6. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
+4. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+5. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
    Remaining: Entity Management now has evaluated actor state, persisted resource/condition rows, shared effect evaluation, equipped-item contributions, replay-guarded action-state mutation/expiry, and the first release-admitted authored action-effect execution; generic stat/condition definitions, resource-cost mutation, multi-effect actions, and damage/mitigation remain future work.
-7. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
+6. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
    Remaining: the typed evaluation seam now consumes active conditions, equipment payloads, replay-guarded action states, and the first admitted authored `APPLY_ACTION_STATE` declaration. The honest tail is generic authored stat/condition definitions, additional effect kinds, resource costs/cooldowns, and combat consumers.
-8. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+7. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
    Remaining: equipped item templates contribute through actor-state reads, and player-authored `BLOCK` / `GUARD` plus the first release-admitted action-state effect execute through the replay-guarded condition mutation/expiry seam. Richer scoped combat-facing consumption remains future work.
-9. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+8. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Lower-priority platform/settings expansion
 
