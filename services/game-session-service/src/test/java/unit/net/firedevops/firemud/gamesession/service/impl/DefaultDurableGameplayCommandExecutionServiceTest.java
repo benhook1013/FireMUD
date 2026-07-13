@@ -404,6 +404,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     command.setSessionId(0L);
     command.setTenantId(22L);
     command.setGameInstanceId(7L);
+    command.setCharacterId(null);
     command.setTargetEntityId("npc-alpha");
     TickEffect effect = tickEffect("tfx-malformed", "cmd-malformed");
     when(parser.parse("SAY Hello there"))
@@ -425,6 +426,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     command.setSessionId(0L);
     command.setTenantId(22L);
     command.setGameInstanceId(7L);
+    command.setCharacterId(null);
     command.setTargetEntityId("0");
     TickEffect effect = tickEffect("tfx-zero", "cmd-zero");
     when(parser.parse("SAY Hello there"))
@@ -673,6 +675,28 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
+  void executeRejectsAuthoredActionWhenTheSessionSwitchedGameplayIdentity() {
+    SessionContext switchedContext =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 92L, "Other", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
+    TickEffect effect = tickEffect("tfx-stale-identity", "cmd-stale-identity");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(switchedContext));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.failureCode()).isEqualTo("STALE_SESSION_CONTEXT");
+    verifyNoInteractions(
+        durableGameplayReplayService, actionStateCommandHandler, scriptEventPublisher);
+  }
+
+  @Test
   void executeRejectsMalformedAuthoredSnapshotBeforeReplayOrScriptPublication() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
@@ -794,7 +818,10 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private GameplayCommand gameplayCommand(String commandName, String commandText) {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("cmd-1");
+    command.setTenantId(22L);
+    command.setGameInstanceId(5L);
     command.setSessionId(42L);
+    command.setCharacterId(91L);
     command.setCommandName(commandName);
     command.setCommandText(commandText);
     command.setSanitizedCommandText(commandText);

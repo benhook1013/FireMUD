@@ -273,6 +273,16 @@ public final class DefaultDurableGameplayCommandExecutionService
 
   private DurableGameplayCommandExecutionResult executeAuthoredActionState(
       SessionContext context, GameplayCommand command, String effectId) {
+    if (!matchesAuthoredCommandIdentity(context, command)) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "STALE_SESSION_CONTEXT",
+              "The gameplay session identity changed before the authored action could execute"));
+    }
     Optional<AuthoredActionState> actionState = authoredActionState(command);
     if (actionState.isEmpty()) {
       return recordResult(
@@ -300,6 +310,18 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Action applied.");
           return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
         });
+  }
+
+  private boolean matchesAuthoredCommandIdentity(SessionContext context, GameplayCommand command) {
+    return command.getTenantId() != null
+        && command.getTenantId() > 0L
+        && command.getGameInstanceId() != null
+        && command.getGameInstanceId() > 0L
+        && command.getCharacterId() != null
+        && command.getCharacterId() > 0L
+        && context.tenantId() == command.getTenantId()
+        && context.gameInstanceId() == command.getGameInstanceId()
+        && context.characterId() == command.getCharacterId();
   }
 
   private Optional<AuthoredActionState> authoredActionState(GameplayCommand command) {
