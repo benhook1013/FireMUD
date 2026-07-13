@@ -27,11 +27,65 @@ public class TextCommandInterpreter {
   private final PromptComposer promptComposer;
   private final TextCommandParser parser;
   private final TextCommandRegistry registry;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final TextCommandDispatcher dispatcher;
   private final AcceptedCommandHistoryRecorder commandHistoryRecorder;
 
-  @Autowired
-  public TextCommandInterpreter(
+  TextCommandInterpreter(
+      CommandService commandService,
+      LookCommandHandler lookHandler,
+      LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
+      PlayCommandHandler playHandler,
+      MoveCommandHandler moveHandler,
+      AfkCommandHandler afkHandler,
+      HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
+      StatusCommandHandler statusHandler,
+      FriendsCommandHandler friendsHandler,
+      AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
+      CommunicationCommandHandler communicationHandler,
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
+      TextCommandRegistry registry,
+      TextCommandParser parser,
+      MeterRegistry meterRegistry) {
+    this(
+        commandService,
+        lookHandler,
+        loginHandler,
+        logoutHandler,
+        playHandler,
+        moveHandler,
+        afkHandler,
+        helpHandler,
+        whoHandler,
+        statusHandler,
+        friendsHandler,
+        authoredActionHandler,
+        authoredActionCatalog,
+        inventoryHandler,
+        equipmentHandler,
+        containerHandler,
+        sessionAuthenticationService,
+        scriptEventPublisher,
+        communicationHandler,
+        worldsHandler,
+        promptComposer,
+        registry,
+        parser,
+        null,
+        meterRegistry,
+        AcceptedCommandHistoryRecorder.NOOP);
+  }
+
+  TextCommandInterpreter(
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
@@ -58,10 +112,68 @@ public class TextCommandInterpreter {
       MeterRegistry meterRegistry,
       AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this(
+        commandService,
+        lookHandler,
+        loginHandler,
+        logoutHandler,
+        playHandler,
+        moveHandler,
+        afkHandler,
+        helpHandler,
+        whoHandler,
+        statusHandler,
+        friendsHandler,
+        authoredActionHandler,
+        authoredActionCatalog,
+        inventoryHandler,
+        equipmentHandler,
+        containerHandler,
+        sessionAuthenticationService,
+        scriptEventPublisher,
+        communicationHandler,
+        worldsHandler,
+        promptComposer,
+        registry,
+        parser,
+        null,
+        meterRegistry,
+        commandHistoryRecorder);
+  }
+
+  @Autowired
+  public TextCommandInterpreter(
+      CommandService commandService,
+      LookCommandHandler lookHandler,
+      LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
+      PlayCommandHandler playHandler,
+      MoveCommandHandler moveHandler,
+      AfkCommandHandler afkHandler,
+      HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
+      StatusCommandHandler statusHandler,
+      FriendsCommandHandler friendsHandler,
+      AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
+      CommunicationCommandHandler communicationHandler,
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
+      TextCommandRegistry registry,
+      TextCommandParser parser,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      MeterRegistry meterRegistry,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
+    this(
         sessionAuthenticationService,
         promptComposer,
         parser,
         registry,
+        admittedRegistryResolver,
         buildDispatcher(
             commandService,
             lookHandler,
@@ -99,6 +211,7 @@ public class TextCommandInterpreter {
         promptComposer,
         parser,
         registry,
+        null,
         dispatcher,
         AcceptedCommandHistoryRecorder.NOOP);
   }
@@ -110,12 +223,31 @@ public class TextCommandInterpreter {
       TextCommandRegistry registry,
       TextCommandDispatcher dispatcher,
       AcceptedCommandHistoryRecorder commandHistoryRecorder) {
+    this(
+        sessionAuthenticationService,
+        promptComposer,
+        parser,
+        registry,
+        null,
+        dispatcher,
+        commandHistoryRecorder);
+  }
+
+  TextCommandInterpreter(
+      SessionAuthenticationService sessionAuthenticationService,
+      PromptComposer promptComposer,
+      TextCommandParser parser,
+      TextCommandRegistry registry,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      TextCommandDispatcher dispatcher,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.promptComposer = Objects.requireNonNull(promptComposer, "promptComposer must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
+    this.admittedRegistryResolver = admittedRegistryResolver;
     this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher must not be null");
     this.commandHistoryRecorder =
         Objects.requireNonNull(commandHistoryRecorder, "commandHistoryRecorder must not be null");
@@ -123,41 +255,74 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
-    return interpret(sessionId, parser.parse(rawLine), requiresSoloTick);
+    Optional<SessionContext> context =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    TextCommandRegistry activeRegistry = registryFor(context);
+    return interpret(
+        sessionId,
+        parser.parse(rawLine, activeRegistry),
+        requiresSoloTick,
+        context,
+        activeRegistry);
   }
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    Optional<SessionContext> context =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    TextCommandRegistry activeRegistry = registryFor(context);
+    TextCommand activeCommand =
+        admittedRegistryResolver == null
+            ? command
+            : parser.parse(command.rawLine(), activeRegistry);
+    return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
+  }
+
+  private TextCommandInterpretationResult interpret(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      Optional<SessionContext> maybeContext,
+      TextCommandRegistry activeRegistry) {
     TextCommandDefinition definition =
-        registry
+        activeRegistry
             .findDefinition(command.commandId())
             .orElseGet(
                 () ->
                     TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
     if (command.type() == TextCommandType.NOOP) {
-      return new TextCommandInterpretationResult(CommandEnqueueResult.success());
+      return withResolvedCommand(
+          new TextCommandInterpretationResult(CommandEnqueueResult.success()), command, definition);
     }
     if (command.type() == TextCommandType.UNKNOWN) {
       String message = "Unknown command";
-      return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
-          List.of(
-              PlayerOutput.error("UNKNOWN_COMMAND", message, "error.unknown-command", Map.of())));
+      return withResolvedCommand(
+          new TextCommandInterpretationResult(
+              CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
+              List.of(
+                  PlayerOutput.error(
+                      "UNKNOWN_COMMAND", message, "error.unknown-command", Map.of()))),
+          command,
+          definition);
     }
-    Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionId);
     boolean hasLogin = maybeContext.isPresent();
     boolean hasPlay = maybeContext.filter(SessionContext::hasGameplayRegionBinding).isPresent();
 
     if (definition.stageRequirement() != TextCommandStageRequirement.NONE && !hasLogin) {
-      return stageFailure(
-          GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
-          GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
+      return withResolvedCommand(
+          stageFailure(
+              GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
+              GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE),
+          command,
+          definition);
     }
     if (definition.stageRequirement() == TextCommandStageRequirement.GAMEPLAY && !hasPlay) {
-      return stageFailure(
-          GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
-          GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
+      return withResolvedCommand(
+          stageFailure(
+              GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+              GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE),
+          command,
+          definition);
     }
 
     TextCommandInterpretationResult dispatchResult =
@@ -170,9 +335,18 @@ public class TextCommandInterpreter {
         command, dispatchResult.commandResult(), maybeContext, promptContext);
     TextCommandInterpretationResult promptApplied =
         applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
-    return withMeaningfulGameplayActivity(
-        promptApplied,
-        dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition));
+    return withResolvedCommand(
+        withMeaningfulGameplayActivity(
+            promptApplied,
+            dispatchResult.commandResult().accepted() && isMeaningfulGameplay(definition)),
+        command,
+        definition);
+  }
+
+  private TextCommandRegistry registryFor(Optional<SessionContext> context) {
+    return admittedRegistryResolver == null
+        ? registry
+        : admittedRegistryResolver.resolve(context.orElse(null));
   }
 
   private TextCommandInterpretationResult applyPromptPolicy(
@@ -192,7 +366,9 @@ public class TextCommandInterpreter {
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
                           result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity()))
+                          result.meaningfulGameplayActivity(),
+                          result.resolvedCommand(),
+                          result.resolvedMetadata()))
               .orElse(result);
       case WHEN_GAMEPLAY ->
           maybeContext
@@ -203,7 +379,9 @@ public class TextCommandInterpreter {
                           result.commandResult(),
                           appendPrompt(context, result.outputs()),
                           result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity()))
+                          result.meaningfulGameplayActivity(),
+                          result.resolvedCommand(),
+                          result.resolvedMetadata()))
               .orElse(result);
     };
   }
@@ -214,7 +392,26 @@ public class TextCommandInterpreter {
         result.commandResult(),
         result.outputs(),
         result.reconnectRedrawRecommended(),
-        meaningfulGameplayActivity);
+        meaningfulGameplayActivity,
+        result.resolvedCommand(),
+        result.resolvedMetadata());
+  }
+
+  private TextCommandInterpretationResult withResolvedCommand(
+      TextCommandInterpretationResult result,
+      TextCommand command,
+      TextCommandDefinition definition) {
+    return new TextCommandInterpretationResult(
+        result.commandResult(),
+        result.outputs(),
+        result.reconnectRedrawRecommended(),
+        result.meaningfulGameplayActivity(),
+        command,
+        new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+            definition.dispatchGroup(),
+            definition.promptPolicy(),
+            definition.actionCategory(),
+            definition.actionTags()));
   }
 
   private boolean isMeaningfulGameplay(TextCommandDefinition definition) {
@@ -291,7 +488,7 @@ public class TextCommandInterpreter {
             new StatusTextCommandDispatchHandler(statusHandler),
             new FriendsTextCommandDispatchHandler(friendsHandler),
             new AuthoredActionTextCommandDispatchHandler(
-                authoredActionHandler, authoredActionCatalog, scriptEventPublisher),
+                authoredActionHandler, scriptEventPublisher),
             new ItemTextCommandDispatchHandler(commandService, itemHandler),
             new CommunicationTextCommandDispatchHandler(commandService),
             new MoveTextCommandDispatchHandler(commandService),

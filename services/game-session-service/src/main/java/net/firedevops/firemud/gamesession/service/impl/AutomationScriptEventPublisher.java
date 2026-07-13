@@ -9,6 +9,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver.ResolvedTextCommandMetadata;
@@ -36,6 +37,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameInstanceRepository gameInstanceRepository;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final Executor scriptEventExecutor;
 
@@ -46,10 +48,30 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       TextCommandMetadataResolver textCommandMetadataResolver,
       BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       @Qualifier("scriptEventExecutor") Executor scriptEventExecutor) {
+    this(
+        client,
+        runtimeRegionStatusRepository,
+        gameInstanceRepository,
+        textCommandMetadataResolver,
+        null,
+        builtInTextCommandAliasResolver,
+        scriptEventExecutor);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AutomationScriptEventPublisher(
+      AutomationScriptingClient client,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameInstanceRepository gameInstanceRepository,
+      TextCommandMetadataResolver textCommandMetadataResolver,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      @Qualifier("scriptEventExecutor") Executor scriptEventExecutor) {
     this.client = client;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameInstanceRepository = gameInstanceRepository;
     this.textCommandMetadataResolver = textCommandMetadataResolver;
+    this.admittedRegistryResolver = admittedRegistryResolver;
     this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.scriptEventExecutor = scriptEventExecutor;
   }
@@ -82,7 +104,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                               + scope.regionEpoch()
                               + ":"
                               + command.getCommandId(),
-                          commandPayload(command)),
+                          commandPayload(context, command)),
                       scope.routingBundle())
                   .build();
           logIfNotAdmitted(
@@ -192,7 +214,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         });
   }
 
-  private String commandPayload(GameplayCommand command) {
+  private String commandPayload(SessionContext context, GameplayCommand command) {
     StringBuilder payload =
         new StringBuilder("{\"commandId\":\"")
             .append(escape(command.getCommandId()))
@@ -208,7 +230,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     resolveBuiltInCommandAlias(command)
         .ifPresent(
             alias -> payload.append(",\"commandAlias\":\"").append(escape(alias)).append("\""));
-    resolveCommandMetadata(command)
+    resolveCommandMetadata(context, command)
         .ifPresent(
             metadata -> {
               payload
@@ -220,9 +242,16 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     return payload.append("}").toString();
   }
 
-  private Optional<ResolvedTextCommandMetadata> resolveCommandMetadata(GameplayCommand command) {
+  private Optional<ResolvedTextCommandMetadata> resolveCommandMetadata(
+      SessionContext context, GameplayCommand command) {
     if (command == null) {
       return Optional.empty();
+    }
+    if (admittedRegistryResolver != null && context != null) {
+      return admittedRegistryResolver.resolveMetadata(
+          context,
+          command.getCommandName(),
+          firstCommandToken(command.getCommandText()).orElse(null));
     }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())

@@ -1,9 +1,8 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
-import org.springframework.stereotype.Component;
 
-@Component
+/** Legacy fixture adapter; production authored definitions come from admitted release bundles. */
 final class ConfiguredAuthoredActionDefinitionProvider implements TextCommandDefinitionProvider {
   private final ConfiguredAuthoredActionCatalog catalog;
 

@@ -4,7 +4,9 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Notes
 
-The durable storage and accepted-command recording foundation for `HISTORY` is live. It persists only safe, accepted gameplay commands under the resolved tenant/game/character identity in an independent transaction, avoiding an executor queue that could discard accepted commands under saturation or shutdown. Storage failure is quarantined so it cannot reverse command acceptance. Retention runs on a dedicated scheduler with a durable bounded-pass cursor, so replica changes cannot lose progress and continual creation of higher-sorting scopes cannot starve earlier scopes indefinitely. The player-facing parser, dispatch, capability, and presentation surface remains the next implementation boundary; existing clients cannot invoke `HISTORY` yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine.
+The durable storage and accepted-command recording foundation for `HISTORY` is live. It persists only safe, accepted gameplay commands under the resolved tenant/game/character identity in an independent transaction, avoiding an executor queue that could discard accepted commands under saturation or shutdown. Storage failure is quarantined so it cannot reverse command acceptance. Retention runs on a dedicated scheduler with a durable bounded-pass cursor, so replica changes cannot lose progress and continual creation of higher-sorting scopes cannot starve earlier scopes indefinitely. The player-facing parser, dispatch, capability, and presentation surface remains the next implementation boundary; existing clients cannot invoke `HISTORY` yet.
+
+Typed, data-defined command execution effects are now live for the first release-admitted `APPLY_ACTION_STATE` declaration. Built-ins still contain transitional handler routing until their declarations converge on the shared effect engine, and additional authored effect kinds remain unavailable. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
 
 ## Command Model
 
@@ -29,6 +31,8 @@ Action category and tags are descriptive policy metadata. They answer questions 
 Gameplay-changing commands instead declare one or more typed execution effects. An effect declaration has a registered `effectKind`, a schema-validated payload, targeting and authorization requirements, replay/idempotency semantics, and any ordering or atomicity requirements. Direct reads, session operations, and presentation-only commands declare no gameplay effects.
 
 For example, the seeded `BLOCK` command is a gameplay command with the `COMBAT` tag, but its concrete behavior is a separate action-state effect declaration equivalent to `APPLY_ACTION_STATE` with the typed `blocking` payload and bounded duration. `ATTACK`, `PARRY`, and `TAUNT` may all be combat-tagged without inheriting that blocking effect.
+
+The first registered declaration is `APPLY_ACTION_STATE` schema version `1`. It requires `targeting: SELF`, `replayPolicy: EFFECT_IDEMPOTENT`, and a payload with an identifier `conditionKey`, integer `durationSeconds` from `1` through `3600`, and an `effectPayload.modifiers` array. Each modifier uses one registered operation (`ADD`, `MULTIPLY`, `CLAMP_MIN`, `CLAMP_MAX`, `GRANT_FLAG`, or `GRANT_CONDITION`), an identifier `target_key`, numeric `value`, optional identifier scope fields, and optional integer priority. This data contract is the only authorable action-state behavior; it cannot embed arbitrary DML or Java.
 
 The generic runtime owns only the effect engine:
 

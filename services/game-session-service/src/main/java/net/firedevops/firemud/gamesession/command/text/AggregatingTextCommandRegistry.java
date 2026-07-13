@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -63,6 +64,13 @@ final class AggregatingTextCommandRegistry implements TextCommandRegistry {
     this.definitionsByCommandId = Map.copyOf(definitionByCommandIdMap);
     this.definitions = Map.copyOf(definitionMap);
     this.definitionsByAlias = Map.copyOf(aliasMap);
+  }
+
+  @Override
+  public List<TextCommandDefinition> definitions() {
+    return definitionsByCommandId.values().stream()
+        .sorted(Comparator.comparing(TextCommandDefinition::commandId))
+        .toList();
   }
 
   @Override

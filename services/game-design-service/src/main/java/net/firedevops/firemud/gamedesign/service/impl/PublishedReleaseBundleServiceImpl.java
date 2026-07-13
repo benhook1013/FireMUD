@@ -1,9 +1,11 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -131,22 +133,28 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   }
 
   private void validateDistinctCommandDefinitions(List<String> commandDefinitions) {
+    Map<String, String> tokenOwners = new HashMap<>();
     Set<String> commandIds = new HashSet<>();
-    Set<String> aliases = new HashSet<>();
     for (String commandDefinition : commandDefinitions) {
       var definition = objectMapper.readTree(commandDefinition);
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
       String commandId = normalizeCommandToken(definition.path("commandId").asText());
       if (!commandIds.add(commandId)) {
-        throw new IllegalStateException(
-            "duplicate published commandDefinition commandId " + commandId);
+        throw new IllegalStateException("duplicate published commandDefinition id " + commandId);
       }
+      ensureSingleTokenOwner(tokenOwners, commandId, commandId);
       for (var alias : definition.path("aliases")) {
         String normalizedAlias = normalizeCommandToken(alias.asText());
-        if (!aliases.add(normalizedAlias)) {
-          throw new IllegalStateException(
-              "duplicate published commandDefinition alias " + normalizedAlias);
-        }
+        ensureSingleTokenOwner(tokenOwners, normalizedAlias, commandId);
       }
+    }
+  }
+
+  private void ensureSingleTokenOwner(
+      Map<String, String> tokenOwners, String token, String commandId) {
+    String existingOwner = tokenOwners.putIfAbsent(token, commandId);
+    if (existingOwner != null && !existingOwner.equals(commandId)) {
+      throw new IllegalStateException("ambiguous published commandDefinition token " + token);
     }
   }
 

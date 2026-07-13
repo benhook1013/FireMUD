@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.commandDefinition;
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +54,7 @@ class PublishedReleaseBundleServiceImplTest {
             LocalDateTime.now());
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     Revision commandDefinition = new Revision();
-    commandDefinition.setData("{\"commandId\":\"block\",\"schemaVersion\":1}");
+    commandDefinition.setData(validCommandDefinition());
     when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
             "tenant-1", 7L, "COMMAND_DEFINITION"))
         .thenReturn(List.of(commandDefinition));
@@ -81,8 +83,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals("genrev-1", dto.generationConfigRevision());
     assertEquals(List.of("logo.png", "manifest.json"), dto.requiredManifestAssetKeys());
     assertEquals(1, dto.participantDigests().size());
-    assertEquals(
-        List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"), dto.commandDefinitions());
+    assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
   }
 
@@ -132,9 +133,9 @@ class PublishedReleaseBundleServiceImplTest {
             LocalDateTime.now());
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     Revision first = new Revision();
-    first.setData("{\"commandId\":\"salute\",\"aliases\":[\"hail\"]}");
+    first.setData(commandDefinition("salute", "hail"));
     Revision second = new Revision();
-    second.setData("{\"commandId\":\"greet\",\"aliases\":[\"HAIL\"]}");
+    second.setData(commandDefinition("greet", "HAIL"));
     when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
             "tenant-1", 7L, "COMMAND_DEFINITION"))
         .thenReturn(List.of(first, second));
@@ -148,5 +149,85 @@ class PublishedReleaseBundleServiceImplTest {
                 new ExportedAssetManifest("abc123", List.of("manifest.json")),
                 "genrev-1",
                 List.of()));
+  }
+
+  @Test
+  void createFullVersionBundleRejectsDuplicateCanonicalCommandIds() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision first = new Revision();
+    first.setData(commandDefinition("salute", "hail"));
+    Revision second = new Revision();
+    second.setData(commandDefinition("SALUTE", "greet"));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(),
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+  }
+
+  @Test
+  void createFullVersionBundleRejectsCanonicalIdAndAliasCollisions() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision first = new Revision();
+    first.setData(commandDefinition("salute", "greet"));
+    Revision second = new Revision();
+    second.setData(commandDefinition("hail", "SALUTE"));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(),
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+  }
+
+  @Test
+  void createFullVersionBundleRejectsMalformedCommandEffectDeclaration() {
+    VersionDto version = version();
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision commandDefinition = new Revision();
+    commandDefinition.setData(validCommandDefinition().replace("\"value\":1", "\"value\":\"one\""));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(commandDefinition));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.createFullVersionBundle(
+                version,
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+  }
+
+  private VersionDto version() {
+    return new VersionDto(
+        7L,
+        "tenant-1",
+        8,
+        VersionLifecycleState.PUBLISHED,
+        2L,
+        null,
+        null,
+        false,
+        "notes",
+        LocalDateTime.now(),
+        LocalDateTime.now());
   }
 }

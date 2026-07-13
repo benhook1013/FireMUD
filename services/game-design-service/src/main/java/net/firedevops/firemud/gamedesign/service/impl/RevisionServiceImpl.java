@@ -102,9 +102,22 @@ public class RevisionServiceImpl implements RevisionService {
       requireEnum(definition, "promptPolicy", "NEVER", "WHEN_LOGGED_IN", "WHEN_GAMEPLAY");
       requireEnum(definition, "actionCategory", "GAMEPLAY", "SOCIAL", "META", "ADMIN", "SYSTEM");
       requireTextArray(definition, "aliases");
-      if (!definition.path("actionTags").isArray() || !definition.path("effects").isArray()) {
-        throw invalidCommandDefinition("actionTags and effects must be arrays");
+      requireEnumArray(
+          definition,
+          "actionTags",
+          "MOVEMENT",
+          "COMMUNICATION",
+          "COMBAT",
+          "INVENTORY",
+          "WORLD_BROWSE",
+          "SOCIAL_PRESENCE",
+          "AUTHORING",
+          "SESSION",
+          "UI");
+      if (!definition.path("effects").isArray()) {
+        throw invalidCommandDefinition("effects must be an array");
       }
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
     } catch (IllegalArgumentException ex) {
       throw ex;
     } catch (Exception ex) {
@@ -135,6 +148,16 @@ public class RevisionServiceImpl implements RevisionService {
     for (JsonNode value : definition.path(field)) {
       if (!value.isTextual() || value.asText().isBlank()) {
         throw invalidCommandDefinition(field + " entries must be nonblank strings");
+      }
+    }
+  }
+
+  private void requireEnumArray(JsonNode definition, String field, String... allowed) {
+    requireTextArray(definition, field);
+    for (JsonNode value : definition.path(field)) {
+      boolean supported = java.util.Arrays.asList(allowed).contains(value.asText());
+      if (!supported) {
+        throw invalidCommandDefinition("unsupported " + field + " entry");
       }
     }
   }

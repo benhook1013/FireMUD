@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -146,6 +147,92 @@ class RevisionServiceImplTest {
 
     assertEquals(12L, result.id());
     verify(revisionRepository).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsUnsupportedCommandEffectKindBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition =
+        validCommandDefinition()
+            .replace("\"effectKind\":\"APPLY_ACTION_STATE\"", "\"effectKind\":\"RUN_SQL\"");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition uses an unsupported effectKind", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsCommandEffectWithMalformedModifierBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition = validCommandDefinition().replace("\"value\":1", "\"value\":\"one\"");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition effect modifier value must be numeric",
+        ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsFractionalActionStateDurationBeforePersisting() {
+    setupGameAndVersion();
+    String invalidDefinition =
+        validCommandDefinition().replace("\"durationSeconds\":5", "\"durationSeconds\":1.5");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition APPLY_ACTION_STATE durationSeconds must be between 1 and 3600",
+        ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
   }
 
   @Test
@@ -322,23 +409,6 @@ class RevisionServiceImplTest {
         mutation,
         null,
         null);
-  }
-
-  private String validCommandDefinition() {
-    return """
-        {
-          "schemaVersion": 1,
-          "commandId": "block",
-          "semanticOwner": "GAME_LOGIC",
-          "executionDiscipline": "DURABLE_GAMEPLAY",
-          "stageRequirement": "GAMEPLAY",
-          "promptPolicy": "WHEN_GAMEPLAY",
-          "actionCategory": "GAMEPLAY",
-          "aliases": ["block", "guard"],
-          "actionTags": ["COMBAT"],
-          "effects": []
-        }
-        """;
   }
 
   private WorldDesignMutationRevisionDto generationSubtreeMutation() {

@@ -11,15 +11,11 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
   private static final Logger LOG =
       LoggerFactory.getLogger(AuthoredActionTextCommandDispatchHandler.class);
   private final AuthoredActionCommandHandler handler;
-  private final ConfiguredAuthoredActionCatalog catalog;
   private final ScriptEventPublisher scriptEventPublisher;
 
   AuthoredActionTextCommandDispatchHandler(
-      AuthoredActionCommandHandler handler,
-      ConfiguredAuthoredActionCatalog catalog,
-      ScriptEventPublisher scriptEventPublisher) {
+      AuthoredActionCommandHandler handler, ScriptEventPublisher scriptEventPublisher) {
     this.handler = handler;
-    this.catalog = catalog;
     this.scriptEventPublisher = scriptEventPublisher;
   }
 
@@ -30,7 +26,11 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    TextCommandInterpretationResult result = handler.handle(request.command());
+    TextCommandInterpretationResult result =
+        request
+            .sessionContext()
+            .map(context -> handler.handle(context, request.command()))
+            .orElseGet(() -> handler.handle(request.command()));
     if (result.commandResult().accepted()) {
       request
           .sessionContext()
@@ -41,15 +41,9 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {
     try {
-      String executionHook =
-          catalog
-              .find(command.commandId())
-              .map(ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction::executionHook)
-              .orElse(null);
       scriptEventPublisher.publishCommandEvent(
           context,
-          ScriptEventGameplayCommands.synthetic(
-              "authored", command, command.commandId(), executionHook));
+          ScriptEventGameplayCommands.synthetic("authored", command, command.commandId(), null));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Authored script event publish failed tenantId={} gameInstanceId={} characterId={} commandId={}",

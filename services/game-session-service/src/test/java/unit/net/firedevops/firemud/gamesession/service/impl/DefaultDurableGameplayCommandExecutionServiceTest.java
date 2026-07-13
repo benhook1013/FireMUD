@@ -3,14 +3,15 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
@@ -52,8 +53,6 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   private final AfkCommandHandler afkCommandHandler = Mockito.mock(AfkCommandHandler.class);
   private final ActionStateCommandHandler actionStateCommandHandler =
       Mockito.mock(ActionStateCommandHandler.class);
-  private final AuthoredActionRuntimeHandler authoredActionCommandHandler =
-      Mockito.mock(AuthoredActionRuntimeHandler.class);
   private final DurableGameplayReplayService durableGameplayReplayService =
       Mockito.mock(DurableGameplayReplayService.class);
   private final MovementEffectIdempotencyService movementEffectIdempotencyService =
@@ -92,8 +91,13 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
                                         TextCommandDispatchGroup.AUTHORED,
                                         TextCommandActionCategory.SOCIAL,
                                         java.util.List.of(TextCommandActionTag.COMMUNICATION)))
-                                : Optional.empty()),
-            authoredActionCommandHandler,
+                                : "taunt".equalsIgnoreCase(commandId)
+                                    ? Optional.of(
+                                        new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                                            TextCommandDispatchGroup.ACTIVITY,
+                                            TextCommandActionCategory.GAMEPLAY,
+                                            java.util.List.of(TextCommandActionTag.COMBAT)))
+                                    : Optional.empty()),
             durableGameplayReplayService,
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
@@ -111,6 +115,53 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
     assertThat(result).isEmpty();
     verify(moveCommandHandler, never()).prepare(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void executeIgnoresNonDurableCommandsBeforeResolvingAnAdmittedRegistry() {
+    AdmittedTextCommandRegistryResolver admittedRegistryResolver =
+        Mockito.mock(AdmittedTextCommandRegistryResolver.class);
+    DefaultDurableGameplayCommandExecutionService admittedRegistryService =
+        new DefaultDurableGameplayCommandExecutionService(
+            meterRegistry,
+            parser,
+            admittedRegistryResolver,
+            sessionAuthenticationService,
+            moveCommandHandler,
+            itemCommandHandler,
+            communicationCommandHandler,
+            afkCommandHandler,
+            actionStateCommandHandler,
+            builtInMetadataResolver,
+            durableGameplayReplayService,
+            movementEffectIdempotencyService,
+            playerOutputDeliveryService,
+            scriptEventPublisher);
+    GameplayCommand command = gameplayCommand("LOOK", "LOOK");
+    when(parser.parse("LOOK"))
+        .thenReturn(new TextCommand(TextCommandType.LOOK, java.util.List.of(), "LOOK"));
+
+    Optional<DurableGameplayCommandExecutionResult> result =
+        admittedRegistryService.execute(tickEffect("tfx-ignore", "cmd-ignore"), command);
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(admittedRegistryResolver, sessionAuthenticationService);
+  }
+
+  @Test
+  void executeDoesNotInferActionStateFromCombatMetadata() {
+    GameplayCommand command = gameplayCommand("TAUNT", "TAUNT");
+    when(parser.parse("TAUNT"))
+        .thenReturn(
+            new TextCommand(
+                "taunt", TextCommandType.AUTHORED, java.util.List.of(), "TAUNT", "taunt", null));
+
+    Optional<DurableGameplayCommandExecutionResult> result =
+        service.execute(tickEffect("tfx-combat", "cmd-combat"), command);
+
+    assertThat(result).isEmpty();
+    verify(actionStateCommandHandler, never())
+        .handle(Mockito.any(SessionContext.class), Mockito.any(TextCommand.class), Mockito.any());
   }
 
   @Test
@@ -545,7 +596,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
-  void executeAppliesDurableAuthoredActionAndStoresReplay() {
+  void executeRejectsAuthoredActionBeforeReplayOrScriptPublication() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     GameplayCommand command = gameplayCommand("wave", "wave captain");
@@ -562,26 +613,21 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     when(parser.parse("wave captain")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
-    when(durableGameplayReplayService.find(22L, 42L, "tfx-8")).thenReturn(Optional.empty());
-    when(authoredActionCommandHandler.handle(parsed))
-        .thenReturn(
-            new TextCommandInterpretationResult(
-                CommandEnqueueResult.success(), java.util.List.of()));
-
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
-    assertThat(result.effectStatus()).isEqualTo("APPLIED");
-    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
-    assertThat(result.gameplayResult()).isEqualTo("APPLIED");
-    verify(durableGameplayReplayService)
-        .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of());
+    assertThat(result.effectStatus()).isEqualTo("REJECTED");
+    assertThat(result.commandExecutionOutcome()).isEqualTo("COMPLETED");
+    assertThat(result.gameplayResult()).isEqualTo("NOT_APPLIED");
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
     verify(playerOutputDeliveryService, never())
         .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
-    verify(scriptEventPublisher).publishCommandEvent(context, command);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   @Test
-  void executePublishesSessionlessAuthoredActionOnlyForLiveExecution() {
+  void executeRejectsSessionlessAuthoredActionBeforeReplayOrScriptPublication() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     GameplayCommand command = gameplayCommand("wave", "wave captain");
@@ -602,21 +648,18 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     when(parser.parse("wave captain")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 7L, 91L))
         .thenReturn(Optional.of(context));
-    when(durableGameplayReplayService.find(22L, 42L, "tfx-8b")).thenReturn(Optional.empty());
-    when(authoredActionCommandHandler.handle(parsed))
-        .thenReturn(
-            new TextCommandInterpretationResult(
-                CommandEnqueueResult.success(), java.util.List.of()));
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
-    service.execute(effect, command).orElseThrow();
-
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
     verify(playerOutputDeliveryService, never())
         .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
-    verify(scriptEventPublisher).publishCommandEvent(context, command);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
   }
 
   @Test
-  void executeReplaysStoredAuthoredActionWithoutInvokingHandler() {
+  void executeRejectsAuthoredActionEvenWhenAnObsoleteReplayExists() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     GameplayCommand command = gameplayCommand("wave", "wave captain");
@@ -633,18 +676,11 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     when(parser.parse("wave captain")).thenReturn(parsed);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
-    when(durableGameplayReplayService.find(22L, 42L, "tfx-8"))
-        .thenReturn(
-            Optional.of(
-                new DurableGameplayReplayService.ReplayRecord(
-                    true, null, null, java.util.List.of())));
-
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
-    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
-    assertThat(result.commandExecutionOutcome()).isEqualTo("APPLIED");
-    assertThat(result.gameplayResult()).isEqualTo("REPLAY_NOOP");
-    verify(authoredActionCommandHandler, never()).handle(Mockito.any());
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
     verify(playerOutputDeliveryService, never())
         .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
     verify(scriptEventPublisher, never()).publishCommandEvent(context, command);

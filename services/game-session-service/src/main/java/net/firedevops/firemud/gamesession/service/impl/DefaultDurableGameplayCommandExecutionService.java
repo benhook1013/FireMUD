@@ -6,17 +6,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.AuthoredActionRuntimeHandler;
+import net.firedevops.firemud.gamesession.command.text.AuthoredActionExecutionOutcome;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.PreparedMoveCommandResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandMetadataResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
+import net.firedevops.firemud.gamesession.command.text.TextCommandRegistry;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -40,6 +41,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final MoveCommandHandler moveCommandHandler;
   private final ItemCommandHandler itemCommandHandler;
@@ -47,7 +49,6 @@ public final class DefaultDurableGameplayCommandExecutionService
   private final AfkCommandHandler afkCommandHandler;
   private final ActionStateCommandHandler actionStateCommandHandler;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
-  private final AuthoredActionRuntimeHandler authoredActionCommandHandler;
   private final DurableGameplayReplayService durableGameplayReplayService;
   private final MovementEffectIdempotencyService movementEffectIdempotencyService;
   private final PlayerOutputDeliveryService playerOutputDeliveryService;
@@ -63,13 +64,46 @@ public final class DefaultDurableGameplayCommandExecutionService
       AfkCommandHandler afkCommandHandler,
       ActionStateCommandHandler actionStateCommandHandler,
       TextCommandMetadataResolver textCommandMetadataResolver,
-      AuthoredActionRuntimeHandler authoredActionCommandHandler,
+      DurableGameplayReplayService durableGameplayReplayService,
+      MovementEffectIdempotencyService movementEffectIdempotencyService,
+      PlayerOutputDeliveryService playerOutputDeliveryService,
+      ScriptEventPublisher scriptEventPublisher) {
+    this(
+        meterRegistry,
+        textCommandParser,
+        null,
+        sessionAuthenticationService,
+        moveCommandHandler,
+        itemCommandHandler,
+        communicationCommandHandler,
+        afkCommandHandler,
+        actionStateCommandHandler,
+        textCommandMetadataResolver,
+        durableGameplayReplayService,
+        movementEffectIdempotencyService,
+        playerOutputDeliveryService,
+        scriptEventPublisher);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public DefaultDurableGameplayCommandExecutionService(
+      MeterRegistry meterRegistry,
+      TextCommandParser textCommandParser,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      SessionAuthenticationService sessionAuthenticationService,
+      MoveCommandHandler moveCommandHandler,
+      ItemCommandHandler itemCommandHandler,
+      CommunicationCommandHandler communicationCommandHandler,
+      AfkCommandHandler afkCommandHandler,
+      ActionStateCommandHandler actionStateCommandHandler,
+      TextCommandMetadataResolver textCommandMetadataResolver,
       DurableGameplayReplayService durableGameplayReplayService,
       MovementEffectIdempotencyService movementEffectIdempotencyService,
       PlayerOutputDeliveryService playerOutputDeliveryService,
       ScriptEventPublisher scriptEventPublisher) {
     this.meterRegistry = meterRegistry;
     this.textCommandParser = textCommandParser;
+    this.admittedRegistryResolver = admittedRegistryResolver;
     this.sessionAuthenticationService = sessionAuthenticationService;
     this.moveCommandHandler = moveCommandHandler;
     this.itemCommandHandler = itemCommandHandler;
@@ -77,7 +111,6 @@ public final class DefaultDurableGameplayCommandExecutionService
     this.afkCommandHandler = afkCommandHandler;
     this.actionStateCommandHandler = actionStateCommandHandler;
     this.textCommandMetadataResolver = textCommandMetadataResolver;
-    this.authoredActionCommandHandler = authoredActionCommandHandler;
     this.durableGameplayReplayService = durableGameplayReplayService;
     this.movementEffectIdempotencyService = movementEffectIdempotencyService;
     this.playerOutputDeliveryService = playerOutputDeliveryService;
@@ -88,8 +121,8 @@ public final class DefaultDurableGameplayCommandExecutionService
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
     TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    CommandExecutionRoute route = resolveRoute(command, parsed);
-    if (route == CommandExecutionRoute.IGNORE) {
+    if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
+        && parsed.type() != TextCommandType.UNKNOWN) {
       return Optional.empty();
     }
     Optional<SessionContext> maybeContext = resolveExecutionContext(command);
@@ -105,10 +138,21 @@ public final class DefaultDurableGameplayCommandExecutionService
                   "Session context no longer exists for command execution")));
     }
     SessionContext context = maybeContext.orElseThrow();
+    TextCommandRegistry activeRegistry = null;
+    if (admittedRegistryResolver != null) {
+      activeRegistry = admittedRegistryResolver.resolve(context);
+      parsed = textCommandParser.parse(command.getCommandText(), activeRegistry);
+    }
+    CommandExecutionRoute route = resolveRoute(command, parsed, activeRegistry);
+    if (route == CommandExecutionRoute.IGNORE) {
+      return Optional.empty();
+    }
+    TextCommand activeParsed = parsed;
     return switch (route) {
       case ITEM_MUTATION -> {
         publishCommandEventForLiveExecution(context, command);
-        yield Optional.of(executeItemMutation(context, parsed, command, effect.getEffectId()));
+        yield Optional.of(
+            executeItemMutation(context, activeParsed, command, effect.getEffectId()));
       }
       case COMMUNICATION ->
           Optional.of(
@@ -118,7 +162,8 @@ public final class DefaultDurableGameplayCommandExecutionService
                   effect.getEffectId(),
                   () -> {
                     var result =
-                        communicationCommandHandler.handle(context, parsed, effect.getEffectId());
+                        communicationCommandHandler.handle(
+                            context, activeParsed, effect.getEffectId());
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AFK ->
@@ -128,7 +173,7 @@ public final class DefaultDurableGameplayCommandExecutionService
                   command,
                   effect.getEffectId(),
                   () -> {
-                    var result = afkCommandHandler.handle(context, parsed);
+                    var result = afkCommandHandler.handle(context, activeParsed);
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case ACTION_STATE ->
@@ -139,22 +184,23 @@ public final class DefaultDurableGameplayCommandExecutionService
                   effect.getEffectId(),
                   () -> {
                     var result =
-                        actionStateCommandHandler.handle(context, parsed, effect.getEffectId());
+                        actionStateCommandHandler.handle(
+                            context, activeParsed, effect.getEffectId());
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AUTHORED ->
           Optional.of(
-              executeReplayBackedLocalMutation(
-                  context,
+              recordResult(
                   command,
-                  effect.getEffectId(),
-                  () -> {
-                    var result = authoredActionCommandHandler.handle(parsed);
-                    return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
-                  }));
+                  new DurableGameplayCommandExecutionResult(
+                      "REJECTED",
+                      "COMPLETED",
+                      "NOT_APPLIED",
+                      AuthoredActionExecutionOutcome.CODE,
+                      AuthoredActionExecutionOutcome.MESSAGE)));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
-        PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, parsed);
+        PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);
         if (!prepared.commandResult().accepted()) {
           if (prepared.responseOutput() != null) {
             playerOutputDeliveryService.deliver(context, List.of(prepared.responseOutput()), true);
@@ -337,14 +383,19 @@ public final class DefaultDurableGameplayCommandExecutionService
   private record ReplayBackedMutationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
 
-  private CommandExecutionRoute resolveRoute(GameplayCommand command, TextCommand parsed) {
-    return resolveMetadata(command, parsed)
-        .map(this::routeForMetadata)
+  private CommandExecutionRoute resolveRoute(
+      GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {
+    return resolveMetadata(command, parsed, activeRegistry)
+        .map(metadata -> routeForMetadata(metadata, parsed))
         .orElseGet(() -> fallbackRoute(parsed.type()));
   }
 
   private Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> resolveMetadata(
-      GameplayCommand command, TextCommand parsed) {
+      GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {
+    if (activeRegistry != null) {
+      return admittedRegistryResolver.resolveMetadata(
+          activeRegistry, parsed.commandId(), command.getCommandName(), parsed.aliasUsed());
+    }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())
         .or(() -> textCommandMetadataResolver.resolve(parsed.commandId()))
@@ -352,16 +403,18 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private CommandExecutionRoute routeForMetadata(
-      TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata) {
+      TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata, TextCommand parsed) {
     return switch (metadata.dispatchGroup()) {
       case ITEM -> CommandExecutionRoute.ITEM_MUTATION;
       case COMMUNICATION -> CommandExecutionRoute.COMMUNICATION;
       case MOVE -> CommandExecutionRoute.MOVE;
       case AUTHORED -> CommandExecutionRoute.AUTHORED;
       case ACTIVITY ->
-          metadata.actionTags().contains(TextCommandActionTag.COMBAT)
-              ? CommandExecutionRoute.ACTION_STATE
-              : CommandExecutionRoute.AFK;
+          switch (parsed.type()) {
+            case AFK -> CommandExecutionRoute.AFK;
+            case BLOCK -> CommandExecutionRoute.ACTION_STATE;
+            default -> CommandExecutionRoute.IGNORE;
+          };
       default -> CommandExecutionRoute.IGNORE;
     };
   }

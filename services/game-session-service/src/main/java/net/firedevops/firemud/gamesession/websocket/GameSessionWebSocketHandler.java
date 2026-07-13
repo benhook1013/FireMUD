@@ -193,6 +193,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ensureBootstrapSessionContextIfMissing(session, sessionId);
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
+      TextCommand resolvedCommand =
+          interpretation.resolvedCommand() == null ? command : interpretation.resolvedCommand();
       recordGameplayActivity(sessionId, interpretation);
       Optional<SessionContext> maybeContext = resolveNormalizedSessionContext(session, sessionId);
       PresentationProperties effectivePresentation =
@@ -202,10 +204,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               sessionId,
               maybeContext.orElse(null),
               interpretation.outputs(),
-              shouldForcePromptEmission(command, interpretation));
+              shouldForcePromptEmission(resolvedCommand, interpretation));
       maybePersistLocaleTag(maybeContext, resolveLocaleTag(session));
       String response =
-          formatResponse(command, interpretation, session, outputs, effectivePresentation);
+          formatResponse(
+              resolvedCommand,
+              interpretation,
+              session,
+              outputs,
+              effectivePresentation,
+              maybeContext.orElse(null));
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(
@@ -330,14 +338,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation,
       WebSocketSession session,
       java.util.List<PlayerOutput> outputs,
-      PresentationProperties effectivePresentation) {
+      PresentationProperties effectivePresentation,
+      SessionContext context) {
     return outputProjector.projectCommandResponse(
         session,
         command,
         interpretation,
         outputs,
         resolveLocaleTag(session, resolveTransportSessionId(session)),
-        effectivePresentation);
+        effectivePresentation,
+        context);
   }
 
   private boolean shouldForcePromptEmission(
@@ -345,31 +355,24 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted()) {
       return false;
     }
-    if (isUiTaggedCommand(command)) {
+    TextCommandMetadataResolver.ResolvedTextCommandMetadata metadata =
+        interpretation.resolvedMetadata() != null
+            ? interpretation.resolvedMetadata()
+            : textCommandMetadataResolver.resolve(command.commandId()).orElse(null);
+    if (metadata == null) {
+      return interpretation.outputs().stream()
+          .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
+    }
+    if (metadata.actionTags().contains(TextCommandActionTag.UI)) {
       return true;
     }
-    if (isGameplayEntryPromptCommand(command) && !interpretation.reconnectRedrawRecommended()) {
+    if (metadata.dispatchGroup() == TextCommandDispatchGroup.SESSION
+        && metadata.promptPolicy() == TextCommandPromptPolicy.WHEN_GAMEPLAY
+        && !interpretation.reconnectRedrawRecommended()) {
       return true;
     }
     return interpretation.outputs().stream()
         .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
-  }
-
-  private boolean isUiTaggedCommand(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
-        .map(metadata -> metadata.actionTags().contains(TextCommandActionTag.UI))
-        .orElse(false);
-  }
-
-  private boolean isGameplayEntryPromptCommand(TextCommand command) {
-    return textCommandMetadataResolver
-        .resolve(command.commandId())
-        .map(
-            metadata ->
-                metadata.dispatchGroup() == TextCommandDispatchGroup.SESSION
-                    && metadata.promptPolicy() == TextCommandPromptPolicy.WHEN_GAMEPLAY)
-        .orElse(false);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {

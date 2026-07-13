@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -22,19 +21,28 @@ import org.springframework.util.StringUtils;
 public class HelpCommandHandler {
   private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
   private final GameAuthoredHelpReader authoredHelpReader;
+  private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
 
-  @Autowired
   HelpCommandHandler(
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader) {
+    this(authoredActionCatalog, authoredHelpReader, null);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  HelpCommandHandler(
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      GameAuthoredHelpReader authoredHelpReader,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver) {
     this.authoredActionCatalog =
         Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
     this.authoredHelpReader =
         Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
+    this.admittedRegistryResolver = admittedRegistryResolver;
   }
 
   HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
-    this(authoredActionCatalog, (context, topic) -> Optional.empty());
+    this(authoredActionCatalog, (context, topic) -> Optional.empty(), null);
   }
 
   HelpCommandHandler() {
@@ -56,7 +64,7 @@ public class HelpCommandHandler {
 
     List<String> args = command.args();
     if (args.isEmpty()) {
-      return success(topicIndex());
+      return success(topicIndex(maybeContext));
     }
     if (args.size() > 1) {
       return unknownTopic(args.get(0));
@@ -68,16 +76,19 @@ public class HelpCommandHandler {
       return success(authoredTopic.orElseThrow());
     }
 
-    String resolvedTopic = canonicalTopic(args.get(0));
-    if (resolvedTopic.startsWith("AUTHORED:")) {
+    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext);
+    if (resolvedTopic.admittedDefinition() != null) {
+      return success(resolvedTopic.admittedDefinition());
+    }
+    if (resolvedTopic.canonicalTopic().startsWith("AUTHORED:")) {
       return authoredActionCatalog
-          .find(resolvedTopic.substring("AUTHORED:".length()))
+          .find(resolvedTopic.canonicalTopic().substring("AUTHORED:".length()))
           .map(this::success)
           .orElseGet(() -> unknownTopic(args.get(0)));
     }
 
-    return switch (resolvedTopic) {
-      case "HELP" -> success(topicIndex());
+    return switch (resolvedTopic.canonicalTopic()) {
+      case "HELP" -> success(topicIndex(maybeContext));
       case "LOGIN" ->
           success(
               "LOGIN <email> [secret]\n"
@@ -218,9 +229,9 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private String canonicalTopic(String topic) {
+  private ResolvedHelpTopic canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
     if (!StringUtils.hasText(topic)) {
-      return "";
+      return new ResolvedHelpTopic("", null);
     }
     String canonical =
         switch (topic.trim().toUpperCase(Locale.ROOT)) {
@@ -248,15 +259,26 @@ public class HelpCommandHandler {
           default -> "";
         };
     if (!canonical.isEmpty()) {
-      return canonical;
+      return new ResolvedHelpTopic(canonical, null);
+    }
+    if (admittedRegistryResolver != null) {
+      return maybeContext
+          .flatMap(context -> admittedRegistryResolver.resolveDefinition(context, topic))
+          .filter(definition -> definition.type() == TextCommandType.AUTHORED)
+          .map(
+              definition -> new ResolvedHelpTopic("AUTHORED:" + definition.commandId(), definition))
+          .orElse(new ResolvedHelpTopic("", null));
     }
     return authoredActionCatalog
         .findByAlias(topic)
-        .map(action -> "AUTHORED:" + action.commandId())
-        .orElse("");
+        .map(action -> new ResolvedHelpTopic("AUTHORED:" + action.commandId(), null))
+        .orElse(new ResolvedHelpTopic("", null));
   }
 
-  private String topicIndex() {
+  private record ResolvedHelpTopic(
+      String canonicalTopic, TextCommandDefinition admittedDefinition) {}
+
+  private String topicIndex(Optional<SessionContext> maybeContext) {
     ArrayList<String> lines =
         new ArrayList<>(
             List.of(
@@ -281,7 +303,20 @@ public class HelpCommandHandler {
                 "- HELP SAY",
                 "- HELP WHISPER",
                 "- HELP TELL"));
-    if (!authoredActionCatalog.all().isEmpty()) {
+    List<TextCommandDefinition> admittedDefinitions =
+        admittedRegistryResolver == null
+            ? List.of()
+            : maybeContext.map(admittedRegistryResolver::authoredDefinitions).orElse(List.of());
+    if (!admittedDefinitions.isEmpty()) {
+      lines.add("Authored topics:");
+      for (TextCommandDefinition definition : admittedDefinitions) {
+        String topic =
+            definition.aliases().isEmpty()
+                ? definition.commandId()
+                : definition.aliases().getFirst();
+        lines.add("- HELP " + topic.toUpperCase(Locale.ROOT));
+      }
+    } else if (admittedRegistryResolver == null && !authoredActionCatalog.all().isEmpty()) {
       lines.add("Authored topics:");
       for (ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action :
           authoredActionCatalog.all()) {
@@ -302,6 +337,14 @@ public class HelpCommandHandler {
             + (StringUtils.hasText(action.helpDetails()) ? "\n" + action.helpDetails().trim() : "")
             + authoredAliasSuffix(action);
     return success(body);
+  }
+
+  private TextCommandInterpretationResult success(TextCommandDefinition definition) {
+    String topic =
+        definition.aliases().isEmpty()
+            ? definition.commandId().toUpperCase(Locale.ROOT)
+            : definition.aliases().getFirst().toUpperCase(Locale.ROOT);
+    return success(topic + "\nGame-authored action.");
   }
 
   private TextCommandInterpretationResult success(GameAuthoredHelpReader.ResolvedTopic topic) {
