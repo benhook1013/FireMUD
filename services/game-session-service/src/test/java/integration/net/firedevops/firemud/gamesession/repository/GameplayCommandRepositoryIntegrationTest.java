@@ -99,6 +99,7 @@ class GameplayCommandRepositoryIntegrationTest {
     command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
     command.setAttemptCount(1);
     command.setSourceType("PLAYER");
+    command.setPlayableStateScope("");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
     command.setDeclaredEffectsJson("[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
