@@ -331,7 +331,8 @@ public class HelpCommandHandler {
       }
     }
     if (historyEnabled) {
-      lines.add(2, "- HELP HISTORY");
+      int loginIndex = lines.indexOf("- HELP LOGIN");
+      lines.add(loginIndex + 1, "- HELP HISTORY");
     }
     if (admittedDefinitions.isEmpty()
         && admittedRegistryResolver == null

@@ -8,11 +8,15 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 final class HistoryCommandHandler {
+  private static final Logger LOG = LoggerFactory.getLogger(HistoryCommandHandler.class);
   private static final String FEATURE_UNAVAILABLE_CODE = "FEATURE_UNAVAILABLE";
+  private static final String FEATURE_UNAVAILABLE_MESSAGE = "Command history is unavailable.";
 
   private final PlayerCommandHistoryStorageService historyStorageService;
   private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
@@ -26,17 +30,14 @@ final class HistoryCommandHandler {
 
   @Timed(value = "gamesession.command.history")
   TextCommandInterpretationResult handle(TextCommand command, SessionContext context) {
-    FiremudCommandHistoryProperties settings =
-        commandHistorySettingsResolver.commandHistory(context);
+    FiremudCommandHistoryProperties settings;
+    try {
+      settings = commandHistorySettingsResolver.commandHistory(context);
+    } catch (RuntimeException ex) {
+      return unavailable(context, "settings resolution", ex);
+    }
     if (!settings.enabled()) {
-      return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure(FEATURE_UNAVAILABLE_CODE, "Command history is unavailable."),
-          List.of(
-              PlayerOutput.error(
-                  FEATURE_UNAVAILABLE_CODE,
-                  "Command history is unavailable.",
-                  "error.command-history.unavailable",
-                  java.util.Map.of())));
+      return unavailable();
     }
 
     java.util.Optional<TextCommandPayload.HistoryRequest> historyRequest = command.historyPayload();
@@ -51,9 +52,14 @@ final class HistoryCommandHandler {
       return invalidCount();
     }
     int limit = requestedCount == null ? settings.maxEntries() : requestedCount;
-    List<String> entries =
-        historyStorageService.findRecent(
-            context.tenantId(), context.gameInstanceId(), context.characterId(), limit);
+    List<String> entries;
+    try {
+      entries =
+          historyStorageService.findRecent(
+              context.tenantId(), context.gameInstanceId(), context.characterId(), limit);
+    } catch (RuntimeException ex) {
+      return unavailable(context, "storage read", ex);
+    }
 
     if (entries.isEmpty()) {
       return success("No recent commands.");
@@ -72,6 +78,29 @@ final class HistoryCommandHandler {
                 message,
                 "error.command-history.invalid-count",
                 java.util.Map.of())));
+  }
+
+  private TextCommandInterpretationResult unavailable() {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(FEATURE_UNAVAILABLE_CODE, FEATURE_UNAVAILABLE_MESSAGE),
+        List.of(
+            PlayerOutput.error(
+                FEATURE_UNAVAILABLE_CODE,
+                FEATURE_UNAVAILABLE_MESSAGE,
+                "error.command-history.unavailable",
+                java.util.Map.of())));
+  }
+
+  private TextCommandInterpretationResult unavailable(
+      SessionContext context, String operation, RuntimeException ex) {
+    LOG.warn(
+        "Command history {} failed tenantId={} gameInstanceId={} characterId={}",
+        operation,
+        context.tenantId(),
+        context.gameInstanceId(),
+        context.characterId(),
+        ex);
+    return unavailable();
   }
 
   private TextCommandInterpretationResult success(String body) {

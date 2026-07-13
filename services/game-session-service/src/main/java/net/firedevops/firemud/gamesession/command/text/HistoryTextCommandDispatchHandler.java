@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -18,8 +17,9 @@ final class HistoryTextCommandDispatchHandler implements TextCommandDispatchHand
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    return Optional.ofNullable(request)
-        .map(r -> historyHandler.handle(request.command(), request.sessionContext().orElseThrow()))
-        .orElseThrow(() -> new IllegalArgumentException("request must not be null"));
+    if (request == null) {
+      throw new IllegalArgumentException("request must not be null");
+    }
+    return historyHandler.handle(request.command(), request.sessionContext().orElseThrow());
   }
 }
