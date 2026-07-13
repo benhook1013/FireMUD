@@ -82,7 +82,7 @@ class AccountPresenceQueryServiceImplTest {
                         150L,
                         180L,
                         120L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
+    when(visibilityPolicyResolver.resolve(1L, 3L))
         .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
@@ -409,7 +409,7 @@ class AccountPresenceQueryServiceImplTest {
                         null,
                         80L,
                         80L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
+    when(visibilityPolicyResolver.resolve(1L, 3L))
         .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
@@ -637,7 +637,7 @@ class AccountPresenceQueryServiceImplTest {
                         150L,
                         180L,
                         120L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
+    when(visibilityPolicyResolver.resolve(1L, 3L))
         .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(

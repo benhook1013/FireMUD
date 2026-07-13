@@ -12,13 +12,6 @@ public class AccountPresenceVisibilityPolicyResolver {
     this.accountClient = accountClient;
   }
 
-  public AccountPresenceVisibilityPolicy resolve(
-      long tenantId, long accountId, GameplayPresenceRole role) {
-    // Elevated runtime role does not itself select a staff visibility mode. The later staff-policy
-    // owner may use this normalized role input, but hidden status must remain explicit.
-    return resolve(tenantId, accountId);
-  }
-
   public AccountPresenceVisibilityPolicy resolve(long tenantId, long accountId) {
     return accountClient.getPresenceVisibilityPolicy(tenantId, accountId);
   }

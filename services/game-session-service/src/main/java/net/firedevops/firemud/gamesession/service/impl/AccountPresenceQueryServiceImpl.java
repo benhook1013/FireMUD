@@ -128,7 +128,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
               recentState == null ? null : recentState.disposition(),
               recentState == null
-                  ? visibilityPolicyResolver.resolve(tenantId, accountId, presence.role())
+                  ? visibilityPolicyResolver.resolve(tenantId, accountId)
                   : recentState.visibilityPolicy()));
     }
     return List.copyOf(new ArrayList<>(results.values()));
