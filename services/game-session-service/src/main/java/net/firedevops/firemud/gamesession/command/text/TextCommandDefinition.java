@@ -69,7 +69,7 @@ record TextCommandDefinition(
         source,
         targetingMode,
         cooldownKey,
-        cooldownMs,
+        cooldownTicks,
         costKey,
         costAmount,
         executionHook,
@@ -89,7 +89,7 @@ record TextCommandDefinition(
       TextCommandSource source,
       String targetingMode,
       String cooldownKey,
-      long cooldownMs,
+      long cooldownTicks,
       String costKey,
       long costAmount,
       String executionHook) {
