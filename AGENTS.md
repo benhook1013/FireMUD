@@ -15,13 +15,15 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
-- Repository-local CodeRabbit config disables automatic reviews. Request a review explicitly with `@coderabbitai review` only after all current and outdated findings are resolved and the PR is at a meaningful checkpoint.
+- Repository-local CodeRabbit reviews automatically, then pauses after one reviewed commit. Request another review explicitly with `@coderabbitai review` only after all current and outdated findings are resolved and the PR is at a meaningful checkpoint.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
 - When reporting PR or review status, always report both unresolved non-outdated threads and unresolved outdated threads. Treat non-outdated threads as the actionable truth, but call out outdated unresolved threads separately because they can still appear in GitHub or CodeRabbit UI and confuse merge status.
 - Before calling a PR review-complete or merge-ready, run `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>` and use its live unresolved-thread counts plus explicit-review verdict as the source of truth.
-- When explicitly authorized to merge, merge a PR only after the CodeRabbit validation script confirms zero unresolved current or outdated threads and a substantive review after the latest commit, with required CI green. Any later commit requires a fresh review.
+- When explicitly authorized to merge, merge a PR only after the CodeRabbit validation script confirms zero unresolved current or outdated threads and required CI is green. A substantive CodeRabbit review must cover the feature-bearing commits; direct fixes to its existing findings may merge without rereview when they add no functionality or independently reviewable behavior. Request a fresh review when a follow-up introduces new functionality or materially broadens behavioral risk.
+- Manually resolve a CodeRabbit thread only after verifying it against `HEAD`; fix every live issue first and never resolve a thread to suppress a concern. Unresolved current or outdated threads block merge. Do not request another review while a review is active or CodeRabbit is rate limited.
 - Keep open PRs meaningful: after that authorized merge threshold, merge rather than leaving completed PRs parked.
+- Prefer one coherent medium-sized slice per PR, normally about 800-2,000 changed lines including required adjacent convergence; use smaller PRs only for isolated fixes and split only independent or genuinely hard-to-review work.
 - Treat a failing Renovate PR as actionable maintenance work. Inspect its CI failure and push the smallest compatible fix to the Renovate branch when possible so Renovate can rebase and complete its own update; otherwise perform the dependency upgrade directly on a replacement branch with the required compatibility changes.
 - After a PR merges, proactively remove its now-defunct local worktree and merged local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
@@ -57,6 +59,7 @@ Subagents share the main weekly allowance. Use them only for bounded parallel wo
 - `gpt-5.6-luna`: Default for repository searches, focused investigation, narrow test work, and mechanical local fixes. Do not use Luna as independent review evidence.
 - `gpt-5.6-terra`: Use for bounded implementation that Luna cannot handle reliably, and for every independent review that substitutes for CodeRabbit on a tiny PR.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
+- Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
 
 ## Execution Style
 
