@@ -237,6 +237,7 @@ class HelpCommandHandlerTest {
         new HelpCommandHandler(
             new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
+            null,
             historyResolver(false));
     SessionContext context =
         new SessionContext(
@@ -256,6 +257,7 @@ class HelpCommandHandlerTest {
         new HelpCommandHandler(
             new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
+            null,
             historyResolver(false));
     SessionContext context =
         new SessionContext(
@@ -276,6 +278,7 @@ class HelpCommandHandlerTest {
         new HelpCommandHandler(
             new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
+            null,
             historyResolver(true));
     SessionContext context =
         new SessionContext(
