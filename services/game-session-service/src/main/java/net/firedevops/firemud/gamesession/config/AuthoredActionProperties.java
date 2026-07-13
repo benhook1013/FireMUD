@@ -28,7 +28,7 @@ public class AuthoredActionProperties {
         new ArrayList<>();
     private String targetingMode = "NONE";
     private String cooldownKey;
-    private long cooldownMs;
+    private long cooldownTicks;
     private String costKey;
     private long costAmount;
     private String executionHook;

@@ -27,7 +27,7 @@ final class ConfiguredAuthoredActionDefinitionProvider implements TextCommandDef
                     TextCommandSource.GAME_AUTHORED,
                     action.targetingMode(),
                     action.cooldownKey(),
-                    action.cooldownMs(),
+                    action.cooldownTicks(),
                     action.costKey(),
                     action.costAmount(),
                     action.executionHook()))

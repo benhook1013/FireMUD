@@ -33,7 +33,7 @@ final class ConfiguredAuthoredActionCatalog {
               action.getActionTags(),
               action.getTargetingMode(),
               action.getCooldownKey(),
-              action.getCooldownMs(),
+              action.getCooldownTicks(),
               action.getCostKey(),
               action.getCostAmount(),
               action.getExecutionHook(),
@@ -93,7 +93,7 @@ final class ConfiguredAuthoredActionCatalog {
       java.util.List<TextCommandActionTag> actionTags,
       String targetingMode,
       String cooldownKey,
-      long cooldownMs,
+      long cooldownTicks,
       String costKey,
       long costAmount,
       String executionHook,
@@ -114,19 +114,19 @@ final class ConfiguredAuthoredActionCatalog {
 
   private static void validateSupportedFirstPass(AuthoredActionProperties.Action action) {
     String commandId = action.getCommandId().trim();
-    if (action.getCooldownMs() < 0) {
-      throw new IllegalStateException("Invalid authored action cooldownMs for " + commandId);
+    if (action.getCooldownTicks() < 0) {
+      throw new IllegalStateException("Invalid authored action cooldownTicks for " + commandId);
     }
     if (action.getCostAmount() < 0) {
       throw new IllegalStateException("Invalid authored action costAmount for " + commandId);
     }
-    if (action.getCooldownMs() > 0 && !StringUtils.hasText(action.getCooldownKey())) {
+    if (action.getCooldownTicks() > 0 && !StringUtils.hasText(action.getCooldownKey())) {
       throw new IllegalStateException(
           "authored action cooldown metadata requires cooldownKey for " + commandId);
     }
-    if (action.getCooldownMs() == 0 && StringUtils.hasText(action.getCooldownKey())) {
+    if (action.getCooldownTicks() == 0 && StringUtils.hasText(action.getCooldownKey())) {
       throw new IllegalStateException(
-          "authored action cooldownKey requires positive cooldownMs for " + commandId);
+          "authored action cooldownKey requires positive cooldownTicks for " + commandId);
     }
     if (action.getCostAmount() > 0 && !StringUtils.hasText(action.getCostKey())) {
       throw new IllegalStateException(

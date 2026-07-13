@@ -23,7 +23,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
         List.of(TextCommandActionTag.AUTHORING, TextCommandActionTag.COMMUNICATION));
     action.setTargetingMode("TARGET_CHARACTER");
     action.setCooldownKey("wave-cooldown");
-    action.setCooldownMs(10_000L);
+    action.setCooldownTicks(10L);
     action.setCostKey("stamina");
     action.setCostAmount(3L);
     action.setExecutionHook("action:wave");
@@ -46,7 +46,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     assertEquals(TextCommandSource.GAME_AUTHORED, definition.source());
     assertEquals("TARGET_CHARACTER", definition.targetingMode());
     assertEquals("wave-cooldown", definition.cooldownKey());
-    assertEquals(10_000L, definition.cooldownMs());
+    assertEquals(10L, definition.cooldownTicks());
     assertEquals("stamina", definition.costKey());
     assertEquals(3L, definition.costAmount());
     assertEquals("action:wave", definition.executionHook());
@@ -85,7 +85,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
-    action.setCooldownMs(5000);
+    action.setCooldownTicks(5);
     properties.setActions(List.of(action));
 
     assertThrows(
@@ -122,11 +122,11 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
   }
 
   @Test
-  void catalogRejectsNegativeCooldownMs() {
+  void catalogRejectsNegativeCooldownTicks() {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
-    action.setCooldownMs(-1);
+    action.setCooldownTicks(-1);
     properties.setActions(List.of(action));
 
     assertThrows(
@@ -138,7 +138,7 @@ class ConfiguredAuthoredActionDefinitionProviderTest {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
     action.setCommandId("wave-salute");
-    action.setCooldownMs(0);
+    action.setCooldownTicks(0);
     action.setCooldownKey("wave-cooldown");
     properties.setActions(List.of(action));
 
