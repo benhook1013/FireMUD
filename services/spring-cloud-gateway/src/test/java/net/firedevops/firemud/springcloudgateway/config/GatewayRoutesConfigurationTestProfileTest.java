@@ -145,7 +145,7 @@ class GatewayRoutesConfigurationTestProfileTest {
 
   private Map<String, String> pathArgs(String routeId) {
     return route(routeId).getPredicates().stream()
-        .filter(predicate -> predicate.getName().equalsIgnoreCase("path"))
+        .filter(predicate -> "path".equalsIgnoreCase(predicate.getName()))
         .findFirst()
         .map(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition::getArgs)
         .orElseThrow(() -> new AssertionError("Expected Path predicate for route " + routeId));

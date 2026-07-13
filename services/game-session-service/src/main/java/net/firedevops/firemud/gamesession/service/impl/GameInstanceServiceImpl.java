@@ -325,7 +325,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           "restore replaced session state",
           () -> sessionStateService.saveState(stage.existingRunningState()));
     }
-    if (stage.existingRunningState() != null) {
+    GameInstanceDto existingRunningState = stage.existingRunningState();
+    if (existingRunningState != null) {
       runRollbackSafely(
           "restore replaced session row",
           () ->
@@ -333,9 +334,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   () -> {
                     GameInstance existingRunning =
                         repository
-                            .findById(stage.existingRunningState().id())
+                            .findById(existingRunningState.id())
                             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-                    restoreSessionSnapshot(existingRunning, stage.existingRunningState());
+                    restoreSessionSnapshot(existingRunning, existingRunningState);
                     return null;
                   },
                   "restore replaced session row"));
