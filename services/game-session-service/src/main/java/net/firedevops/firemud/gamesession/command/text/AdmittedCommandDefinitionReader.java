@@ -95,6 +95,12 @@ final class AdmittedCommandDefinitionReader {
                 return Optional.empty();
               });
     } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to resolve admitted command declaration tenantId={} gameInstanceId={} commandId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          commandId,
+          ex);
       return Optional.empty();
     }
   }
