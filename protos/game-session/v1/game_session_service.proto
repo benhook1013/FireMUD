@@ -149,14 +149,6 @@ enum AccountPresenceActivityState {
   ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK = 3;
 }
 
-enum AccountPresenceVisibilityPolicy {
-  ACCOUNT_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED = 0;
-  ACCOUNT_PRESENCE_VISIBILITY_POLICY_PUBLIC = 1;
-  ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY = 2;
-  ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE = 3;
-  ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
-}
-
 enum AccountRecentPresenceDisposition {
   ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED = 0;
   ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
@@ -172,7 +164,6 @@ message AccountPresenceEntry {
   string character_name = 5;
   AccountPresenceActivityState activity_state = 6;
   int64 last_seen_at_ms = 7;
-  AccountPresenceVisibilityPolicy visibility_policy = 8;
   string world_slug = 9;
   string world_display_name = 10;
   string realm_slug = 11;

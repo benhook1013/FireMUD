@@ -21,6 +21,7 @@ import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 
 public interface AccountService {
   AccountDto createAccount(CreateAccountRequest request);
@@ -60,6 +61,9 @@ public interface AccountService {
   RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId);
 
   ProfileDto getProfile(Long tenantId, Long accountId);
+
+  java.util.Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, java.util.List<Long> accountIds);
 
   ProfileDto updateProfile(UpdateProfileRequest request);
 

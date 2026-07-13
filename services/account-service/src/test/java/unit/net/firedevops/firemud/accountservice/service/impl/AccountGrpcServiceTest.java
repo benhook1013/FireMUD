@@ -30,6 +30,8 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesRequest;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
@@ -417,6 +419,65 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesMapsPersistedPolicies() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L, 3L)))
+        .thenReturn(
+            Map.of(
+                2L, ProfilePresenceVisibilityPolicy.PRIVATE,
+                3L, ProfilePresenceVisibilityPolicy.HIDDEN_STAFF));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
+
+    service.listPresenceVisibilityPolicies(
+        ListPresenceVisibilityPoliciesRequest.newBuilder()
+            .setTenantId("1")
+            .addAccountIds("2")
+            .addAccountIds("3")
+            .addAccountIds("2")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals(2, observer.response().getPoliciesCount());
+    assertTrue(
+        observer.response().getPoliciesList().stream()
+            .anyMatch(
+                entry -> entry.getAccountId().equals("2") && entry.getPolicy().equals("PRIVATE")));
+    assertTrue(
+        observer.response().getPoliciesList().stream()
+            .anyMatch(
+                entry ->
+                    entry.getAccountId().equals("3") && entry.getPolicy().equals("HIDDEN_STAFF")));
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).listPresenceVisibilityPolicies(1L, List.of(2L, 3L));
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesRejectsNonPositiveAccountId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
+
+    service.listPresenceVisibilityPolicies(
+        ListPresenceVisibilityPoliciesRequest.newBuilder()
+            .setTenantId("1")
+            .addAccountIds("0")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertEquals("accountId must be positive", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
     Mockito.verifyNoInteractions(accountService);
   }
 

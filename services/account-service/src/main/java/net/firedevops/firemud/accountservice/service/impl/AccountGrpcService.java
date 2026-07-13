@@ -415,6 +415,45 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.listPresenceVisibilityPolicies")
+  public void listPresenceVisibilityPolicies(
+      net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse>
+          responseObserver) {
+    try {
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      if (request.getAccountIdsCount() > 100) {
+        throw new InvalidRequestException("accountIds must contain at most 100 entries", null);
+      }
+      java.util.List<Long> accountIds =
+          request.getAccountIdsList().stream()
+              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .distinct()
+              .toList();
+      var builder =
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
+      accountService
+          .listPresenceVisibilityPolicies(tenantId, accountIds)
+          .forEach(
+              (accountId, policy) ->
+                  builder.addPolicies(
+                      net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
+                          .setAccountId(Long.toString(accountId))
+                          .setPolicy(policy.name())
+                          .build()));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (InvalidRequestException ex) {
+      responseObserver.onNext(
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(
+                  appError("ListPresenceVisibilityPolicies", "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "accountGrpc.updateProfile")
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {

@@ -1,12 +1,18 @@
 package net.firedevops.firemud.socialgroups.client;
 
 import jakarta.annotation.PostConstruct;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesRequest;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.account.AccountProfileJson;
@@ -25,6 +31,7 @@ public final class AccountClient
     extends AbstractBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private static final Logger logger = LoggerFactory.getLogger(AccountClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final int PRESENCE_VISIBILITY_POLICY_BATCH_SIZE = 100;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
@@ -43,6 +50,66 @@ public final class AccountClient
       long tenantId, long accountId) {
     return getProfileSnapshot(tenantId, accountId)
         .map(AccountProfileSnapshot::presenceVisibilityPolicy);
+  }
+
+  /** Returns only current persisted policies; callers must fail closed for absent entries. */
+  public Map<Long, FriendPresenceVisibilityPolicyValue> getPresenceVisibilityPolicies(
+      long tenantId, Collection<Long> accountIds) {
+    if (stub() == null || accountIds == null || accountIds.isEmpty()) {
+      return Map.of();
+    }
+    List<Long> requestedAccountIds =
+        accountIds.stream()
+            .filter(accountId -> accountId != null && accountId > 0)
+            .distinct()
+            .toList();
+    if (requestedAccountIds.isEmpty()) {
+      return Map.of();
+    }
+    try {
+      Map<Long, FriendPresenceVisibilityPolicyValue> policies = new LinkedHashMap<>();
+      for (int offset = 0;
+          offset < requestedAccountIds.size();
+          offset += PRESENCE_VISIBILITY_POLICY_BATCH_SIZE) {
+        List<Long> batch =
+            requestedAccountIds.subList(
+                offset,
+                Math.min(
+                    offset + PRESENCE_VISIBILITY_POLICY_BATCH_SIZE, requestedAccountIds.size()));
+        ListPresenceVisibilityPoliciesRequest.Builder request =
+            ListPresenceVisibilityPoliciesRequest.newBuilder().setTenantId(Long.toString(tenantId));
+        batch.forEach(accountId -> request.addAccountIds(Long.toString(accountId)));
+
+        ListPresenceVisibilityPoliciesResponse response =
+            callStub().listPresenceVisibilityPolicies(request.build());
+        if (response.hasError()) {
+          return Map.of();
+        }
+        response
+            .getPoliciesList()
+            .forEach(
+                entry -> {
+                  try {
+                    long accountId = Long.parseLong(entry.getAccountId());
+                    if (accountId > 0 && batch.contains(accountId)) {
+                      policies.put(
+                          accountId,
+                          FriendPresenceVisibilityPolicyValue.valueOf(entry.getPolicy()));
+                    }
+                  } catch (IllegalArgumentException ignored) {
+                    // Missing or malformed policy entries remain fail-closed at the caller.
+                  }
+                });
+      }
+      return Map.copyOf(policies);
+    } catch (Exception ex) {
+      logger.warn(
+          "Failed to resolve account presence visibility policies tenantId={} accountCount={}",
+          tenantId,
+          requestedAccountIds.size(),
+          ex);
+      return Map.of();
+    }
   }
 
   public boolean updatePresenceVisibilityPolicy(

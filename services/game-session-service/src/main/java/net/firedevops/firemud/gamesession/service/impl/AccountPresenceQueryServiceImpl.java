@@ -13,7 +13,6 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -40,7 +39,6 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final GameplayPresenceService gameplayPresenceService;
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
   private final AccountRecentPresenceService accountRecentPresenceService;
-  private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
 
   @SuppressFBWarnings(
@@ -50,12 +48,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       GameplayPresenceService gameplayPresenceService,
       GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
       AccountRecentPresenceService accountRecentPresenceService,
-      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
     this.accountRecentPresenceService = accountRecentPresenceService;
-    this.visibilityPolicyResolver = visibilityPolicyResolver;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
   }
 
@@ -126,10 +122,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               presence.characterName(),
               activityState,
               recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
-              recentState == null ? null : recentState.disposition(),
-              recentState == null
-                  ? visibilityPolicyResolver.resolve(tenantId, accountId)
-                  : recentState.visibilityPolicy()));
+              recentState == null ? null : recentState.disposition()));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }
@@ -196,10 +189,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
         null,
         null,
         recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
-        recentState == null ? null : recentState.disposition(),
-        recentState == null
-            ? visibilityPolicyResolver.resolve(tenantId, accountId)
-            : recentState.visibilityPolicy());
+        recentState == null ? null : recentState.disposition());
   }
 
   private Optional<GameplayAdmissionPointerSnapshot> currentRuntimePointer(

@@ -1220,6 +1220,23 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.list_presence_visibility_policies")
+  public Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, List<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return Map.of();
+    }
+    return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
+        .filter(profile -> profile.getAccount() != null && profile.getAccount().getId() != null)
+        .collect(
+            java.util.stream.Collectors.toUnmodifiableMap(
+                profile -> profile.getAccount().getId(),
+                profile -> profile.getPresenceVisibilityPolicy(),
+                (left, right) -> left));
+  }
+
+  @Override
   @Transactional
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {

@@ -37,6 +37,16 @@ public class ProfileRepository {
         .fetch(this::toEntity);
   }
 
+  public List<Profile> findByTenantIdAndAccountIds(Long tenantId, List<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return List.of();
+    }
+    return baseSelect()
+        .where(PROFILES.TENANT_ID.eq(tenantId).and(PROFILES.ACCOUNT_ID.in(accountIds)))
+        .orderBy(PROFILES.ACCOUNT_ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public Profile save(Profile entity) {
     Long accountId = entity.getAccount() == null ? null : entity.getAccount().getId();
     String policy =

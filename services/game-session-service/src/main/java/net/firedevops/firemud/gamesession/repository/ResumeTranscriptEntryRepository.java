@@ -93,6 +93,20 @@ public class ResumeTranscriptEntryRepository {
         .execute();
   }
 
+  /** Refreshes the one inactivity expiry shared by every retained entry in a transcript scope. */
+  public int updateExpiryByScope(
+      long tenantId, long gameInstanceId, long characterId, Instant expiresAt) {
+    return dsl.update(RESUME_TRANSCRIPT_ENTRY)
+        .set(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT, toOffsetDateTime(expiresAt))
+        .where(
+            RESUME_TRANSCRIPT_ENTRY
+                .TENANT_ID
+                .eq(tenantId)
+                .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId)))
+        .execute();
+  }
+
   /** Deletes one bounded batch of globally expired transcripts, independent of later reconnects. */
   public int deleteExpiredBefore(Instant cutoff, int batchSize) {
     if (batchSize <= 0) {

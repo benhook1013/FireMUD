@@ -221,7 +221,7 @@ These remain implementation-level operator/file-env defaults today. They will co
 Every admitted `{tenantId, gameInstanceId, characterId}` scope retains one durable, bounded resume transcript. This is a short rolling player context, not an archive and not a player-selected setting. The effective policy resolves from platform defaults with an optional tenant/game override:
 
 - soft and hard retained-byte ceilings, with message and line floors for the soft ceiling;
-- optional expiry after configured character inactivity, or `never`.
+- optional expiry after configured replayable transcript activity inactivity, or `never`.
 
 New entries evict complete oldest retained entries when a byte bound is exceeded. The soft ceiling preserves the configured message and line floors where possible, then the hard ceiling bounds every multi-entry window. Byte accounting uses the deterministic canonical structured-entry envelope defined in [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#resume-transcript-bounds), including structured replay metadata and rendered compatibility text exactly once. If a single complete entry exceeds the hard byte bound, FireMUD retains that complete entry as the valid current window and later appends evict older entries first. Inactivity expiry removes the whole context. After `LOGIN` + `PLAY`, FireMUD replays complete retained structured entries in ordering-token order before sending fresh state reconstruction. A persistent RPG may use no inactivity expiry while still retaining only its configured recent screen window.
 

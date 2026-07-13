@@ -27,7 +27,6 @@ import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
-import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
@@ -463,7 +462,6 @@ public final class GameSessionGrpcService
         if (snapshot.recentDisposition() != null) {
           entry.setRecentDisposition(mapRecentDisposition(snapshot.recentDisposition().name()));
         }
-        entry.setVisibilityPolicy(mapVisibilityPolicy(snapshot.visibilityPolicy()));
         builder.addPresences(entry.build());
       }
       responseObserver.onNext(builder.build());
@@ -772,18 +770,6 @@ public final class GameSessionGrpcService
       case "EXPLICIT_AFK" ->
           AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK;
       default -> AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_UNSPECIFIED;
-    };
-  }
-
-  private AccountPresenceVisibilityPolicy mapVisibilityPolicy(
-      net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy visibilityPolicy) {
-    return switch (visibilityPolicy) {
-      case PUBLIC -> AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_PUBLIC;
-      case FRIENDS_ONLY ->
-          AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY;
-      case PRIVATE -> AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE;
-      case HIDDEN_STAFF ->
-          AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
     };
   }
 

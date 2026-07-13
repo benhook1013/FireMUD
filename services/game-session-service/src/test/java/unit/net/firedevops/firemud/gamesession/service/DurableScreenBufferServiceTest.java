@@ -65,6 +65,7 @@ class DurableScreenBufferServiceTest {
         .isGreaterThan(entry.byteSize());
     assertThat(persisted.getExpiresAt()).isNull();
     verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
+    verify(repository).updateExpiryByScope(22L, 7L, 13L, null);
     verify(hotCache).append(22L, 7L, 13L, List.of(entry.withCanonicalByteSize(22L, 7L, 13L)));
   }
 
@@ -131,6 +132,30 @@ class DurableScreenBufferServiceTest {
     verify(repository).saveAll(entries.capture());
     assertThat(entries.getValue().getFirst().getExpiresAt())
         .isEqualTo(Instant.ofEpochMilli(2_000L));
+  }
+
+  @Test
+  void appendRefreshesTheExpiryForEveryRetainedEntryInTheScope() {
+    when(settingsResolver.resolve(22L, 7L))
+        .thenReturn(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(1_000L, 1, 1, 100, 200)));
+    ResumeTranscriptEntry retained = entry(1L, "Earlier line\n", Instant.ofEpochMilli(1_000L));
+    retained.setExpiresAt(Instant.ofEpochMilli(2_000L));
+    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
+        .thenReturn(List.of(retained));
+    ScreenBufferService.BufferedEntry newEntry =
+        new ScreenBufferService.BufferedEntry(
+            "Current line\n", 1, 13, 3_000L, null, null, null, null, null);
+
+    service.append(22L, 7L, 13L, List.of(newEntry));
+
+    verify(repository).updateExpiryByScope(22L, 7L, 13L, Instant.ofEpochMilli(4_000L));
+    ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
+    verify(repository).saveAll(entries.capture());
+    assertThat(entries.getValue().getFirst().getExpiresAt())
+        .isEqualTo(Instant.ofEpochMilli(4_000L));
   }
 
   private ResumeTranscriptEntry entry(Long id, String text, Instant appendedAt) {

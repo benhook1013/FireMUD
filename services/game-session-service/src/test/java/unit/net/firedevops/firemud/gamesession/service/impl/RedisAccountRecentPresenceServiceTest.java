@@ -10,8 +10,6 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
@@ -38,8 +36,6 @@ class RedisAccountRecentPresenceServiceTest {
     SessionRoutingNormalizationService sessionRoutingNormalizationService =
         Mockito.mock(SessionRoutingNormalizationService.class);
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     PresenceProperties presenceProperties = new PresenceProperties();
     presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
 
@@ -81,15 +77,12 @@ class RedisAccountRecentPresenceServiceTest {
     when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
         .thenReturn(Optional.of(context));
     when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.of(presence));
-    when(visibilityPolicyResolver.resolve(22L, 123L))
-        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     RedisAccountRecentPresenceService service =
         new RedisAccountRecentPresenceService(
             redisTemplate,
             sessionRoutingNormalizationService,
             gameplayPresenceService,
-            visibilityPolicyResolver,
             presenceProperties,
             () -> 1_700_000_000_000L);
 
@@ -109,7 +102,6 @@ class RedisAccountRecentPresenceServiceTest {
     assertEquals(17L, state.pointerVersion());
     assertEquals(1_700_000_000_000L, state.lastSeenAtEpochMs());
     assertEquals(AccountRecentPresenceDisposition.TRANSPORT_LOSS, state.disposition());
-    assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, state.visibilityPolicy());
   }
 
   @Test
@@ -123,8 +115,6 @@ class RedisAccountRecentPresenceServiceTest {
     SessionRoutingNormalizationService sessionRoutingNormalizationService =
         Mockito.mock(SessionRoutingNormalizationService.class);
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     PresenceProperties presenceProperties = new PresenceProperties();
     presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
 
@@ -167,15 +157,12 @@ class RedisAccountRecentPresenceServiceTest {
         .thenReturn(Optional.of(cleared));
     when(gameplayPresenceService.findConnectedBySessionId(41L))
         .thenReturn(Optional.of(stalePresence));
-    when(visibilityPolicyResolver.resolve(22L, 123L))
-        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     RedisAccountRecentPresenceService service =
         new RedisAccountRecentPresenceService(
             redisTemplate,
             sessionRoutingNormalizationService,
             gameplayPresenceService,
-            visibilityPolicyResolver,
             presenceProperties,
             () -> 1_700_000_000_000L);
 
@@ -184,7 +171,6 @@ class RedisAccountRecentPresenceServiceTest {
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
         .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
-    verify(visibilityPolicyResolver).resolve(22L, 123L);
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -205,8 +191,6 @@ class RedisAccountRecentPresenceServiceTest {
     SessionRoutingNormalizationService sessionRoutingNormalizationService =
         Mockito.mock(SessionRoutingNormalizationService.class);
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     PresenceProperties presenceProperties = new PresenceProperties();
     presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
 
@@ -249,15 +233,12 @@ class RedisAccountRecentPresenceServiceTest {
         .thenReturn(Optional.of(partial));
     when(gameplayPresenceService.findConnectedBySessionId(41L))
         .thenReturn(Optional.of(livePresence));
-    when(visibilityPolicyResolver.resolve(22L, 123L))
-        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     RedisAccountRecentPresenceService service =
         new RedisAccountRecentPresenceService(
             redisTemplate,
             sessionRoutingNormalizationService,
             gameplayPresenceService,
-            visibilityPolicyResolver,
             presenceProperties,
             () -> 1_700_000_000_000L);
 
@@ -266,7 +247,6 @@ class RedisAccountRecentPresenceServiceTest {
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
         .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
-    verify(visibilityPolicyResolver).resolve(22L, 123L);
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -287,8 +267,6 @@ class RedisAccountRecentPresenceServiceTest {
     SessionRoutingNormalizationService sessionRoutingNormalizationService =
         Mockito.mock(SessionRoutingNormalizationService.class);
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     PresenceProperties presenceProperties = new PresenceProperties();
     presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
 
@@ -331,15 +309,12 @@ class RedisAccountRecentPresenceServiceTest {
         .thenReturn(Optional.of(context));
     when(gameplayPresenceService.findConnectedBySessionId(41L))
         .thenReturn(Optional.of(livePresence));
-    when(visibilityPolicyResolver.resolve(22L, 123L))
-        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
 
     RedisAccountRecentPresenceService service =
         new RedisAccountRecentPresenceService(
             redisTemplate,
             sessionRoutingNormalizationService,
             gameplayPresenceService,
-            visibilityPolicyResolver,
             presenceProperties,
             () -> 1_700_000_000_000L);
 

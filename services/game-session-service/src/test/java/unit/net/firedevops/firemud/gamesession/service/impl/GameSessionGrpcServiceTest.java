@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -218,8 +217,7 @@ class GameSessionGrpcServiceTest {
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
                         .EXPLICIT_AFK,
                     Instant.parse("2026-04-11T06:15:30Z"),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     GameSessionGrpcService service =
         newService(
             pingService,

@@ -19,8 +19,7 @@ public record AccountPresenceSnapshot(
     String characterName,
     GameplayPresenceActivityState activityState,
     Instant lastSeenAt,
-    AccountRecentPresenceDisposition recentDisposition,
-    AccountPresenceVisibilityPolicy visibilityPolicy) {
+    AccountRecentPresenceDisposition recentDisposition) {
   public AccountPresenceSnapshot(
       long accountId,
       boolean online,
@@ -33,8 +32,7 @@ public record AccountPresenceSnapshot(
       String characterName,
       GameplayPresenceActivityState activityState,
       Instant lastSeenAt,
-      AccountRecentPresenceDisposition recentDisposition,
-      AccountPresenceVisibilityPolicy visibilityPolicy) {
+      AccountRecentPresenceDisposition recentDisposition) {
     this(
         accountId,
         online,
@@ -48,8 +46,7 @@ public record AccountPresenceSnapshot(
         characterName,
         activityState,
         lastSeenAt,
-        recentDisposition,
-        visibilityPolicy);
+        recentDisposition);
   }
 
   public AccountPresenceSnapshot(
@@ -65,8 +62,7 @@ public record AccountPresenceSnapshot(
       String characterName,
       GameplayPresenceActivityState activityState,
       Instant lastSeenAt,
-      AccountRecentPresenceDisposition recentDisposition,
-      AccountPresenceVisibilityPolicy visibilityPolicy) {
+      AccountRecentPresenceDisposition recentDisposition) {
     this(
         accountId,
         online,
@@ -81,7 +77,6 @@ public record AccountPresenceSnapshot(
         characterName,
         activityState,
         lastSeenAt,
-        recentDisposition,
-        visibilityPolicy);
+        recentDisposition);
   }
 }

@@ -59,12 +59,11 @@ public class DurableScreenBufferService implements ScreenBufferService {
     if (buffer.ttlMs() > 0L) {
       expireExpiredEntries(tenantId, gameInstanceId, characterId);
     }
+    Instant scopeExpiresAt = scopeExpiresAt(filtered, buffer);
+    repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     repository.saveAll(
         filtered.stream()
-            .map(
-                entry ->
-                    toEntity(
-                        tenantId, gameInstanceId, characterId, entry, expiresAt(entry, buffer)))
+            .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry, scopeExpiresAt))
             .toList());
     trim(tenantId, gameInstanceId, characterId, buffer);
     appendToHotCache(tenantId, gameInstanceId, characterId, filtered);
@@ -73,8 +72,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
-    // Redis cannot retain each durable entry's immutable expiry after later appends reset its key
-    // TTL.
+    // Redis only caches the durable scope and cannot authoritatively enforce its inactivity expiry.
     List<ResumeTranscriptEntry> entries =
         repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now());
     if (entries.isEmpty()) {
@@ -171,11 +169,14 @@ public class DurableScreenBufferService implements ScreenBufferService {
     return entity;
   }
 
-  private Instant expiresAt(BufferedEntry entry, FiremudReconnectionProperties.Buffer buffer) {
+  private Instant scopeExpiresAt(
+      List<BufferedEntry> entries, FiremudReconnectionProperties.Buffer buffer) {
     if (buffer.ttlMs() == 0L) {
       return null;
     }
-    return Instant.ofEpochMilli(entry.appendedAtMs()).plusMillis(buffer.ttlMs());
+    long latestAppendedAtMs =
+        entries.stream().mapToLong(BufferedEntry::appendedAtMs).max().orElseThrow();
+    return Instant.ofEpochMilli(latestAppendedAtMs).plusMillis(buffer.ttlMs());
   }
 
   private BufferedEntry toBufferedEntry(ResumeTranscriptEntry entry) {
