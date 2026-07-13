@@ -849,12 +849,13 @@ public class EntityManagementGrpcService
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       String conditionKey = requireText(request.getConditionKey(), "conditionKey");
       String sourceType = requireText(request.getSourceType(), "sourceType");
+      String sourceId = requireText(request.getSourceId(), "sourceId");
       Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
       effectPayloadParser.validate(request.getEffectPayloadJson());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
-              request.getSourceId(),
+              sourceId,
               "ApplyActorCondition",
               () -> {
                 ActorConditionStateDto activeCondition =
@@ -866,7 +867,7 @@ public class EntityManagementGrpcService
                         conditionKey,
                         request.getStackCount(),
                         sourceType,
-                        request.getSourceId(),
+                        sourceId,
                         expiresAt,
                         request.getEffectPayloadJson());
                 return ApplyActorConditionResponse.newBuilder()
