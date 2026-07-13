@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
-import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -220,22 +219,9 @@ class HelpCommandHandlerTest {
   }
 
   @Test
-  void helpIndexIncludesConfiguredAuthoredTopics() {
-    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog());
-
-    TextCommandInterpretationResult result =
-        authoredHelpHandler.handle(new TextCommand(TextCommandType.HELP, List.of(), "HELP"));
-
-    assertTrue(result.commandResult().accepted());
-    assertTrue(result.outputs().get(0).text().contains("Authored topics:"));
-    assertTrue(result.outputs().get(0).text().contains("HELP SALUTE"));
-  }
-
-  @Test
   void helpIndexHidesHistoryWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
         new HelpCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
             null,
             historyResolver(false));
@@ -255,7 +241,6 @@ class HelpCommandHandlerTest {
   void helpHistoryTopicUnavailableWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
         new HelpCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
             null,
             historyResolver(false));
@@ -276,7 +261,6 @@ class HelpCommandHandlerTest {
   void helpHistoryTopicAvailableWhenFeatureEnabled() {
     HelpCommandHandler enabledHandler =
         new HelpCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()),
             (context, topic) -> Optional.empty(),
             null,
             historyResolver(true));
@@ -294,22 +278,6 @@ class HelpCommandHandlerTest {
   }
 
   @Test
-  void helpTopicResolvesConfiguredAuthoredAction() {
-    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog());
-
-    TextCommandInterpretationResult result =
-        authoredHelpHandler.handle(
-            new TextCommand(TextCommandType.HELP, List.of("salute"), "HELP salute"));
-
-    assertTrue(result.commandResult().accepted());
-    assertTrue(result.outputs().get(0).text().contains("SALUTE"));
-    assertTrue(result.outputs().get(0).text().contains("Offer a formal greeting."));
-    assertTrue(
-        result.outputs().get(0).text().contains("Use this to greet nearby nobles or officers."));
-    assertTrue(result.outputs().get(0).text().contains("Aliases: HAIL"));
-  }
-
-  @Test
   void publishedGameAuthoredTopicOverridesPlatformTopicForAdmittedSession() {
     GameAuthoredHelpReader reader =
         (context, topic) ->
@@ -318,7 +286,7 @@ class HelpCommandHandlerTest {
                     new GameAuthoredHelpReader.ResolvedTopic(
                         "Temple Etiquette", "Bow before entering the moonlit sanctuary."))
                 : Optional.empty();
-    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(authoredCatalog(), reader);
+    HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(reader, null, null);
     SessionContext context =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
@@ -332,20 +300,6 @@ class HelpCommandHandlerTest {
     assertEquals(
         "Temple Etiquette\nBow before entering the moonlit sanctuary.",
         result.outputs().get(0).text());
-  }
-
-  private ConfiguredAuthoredActionCatalog authoredCatalog() {
-    net.firedevops.firemud.gamesession.config.AuthoredActionProperties properties =
-        new net.firedevops.firemud.gamesession.config.AuthoredActionProperties();
-    net.firedevops.firemud.gamesession.config.AuthoredActionProperties.Action action =
-        new net.firedevops.firemud.gamesession.config.AuthoredActionProperties.Action();
-    action.setActionId("wave-salute");
-    action.setCommandId("wave-salute");
-    action.setAliases(List.of("salute", "hail"));
-    action.setHelpSummary("Offer a formal greeting.");
-    action.setHelpDetails("Use this to greet nearby nobles or officers.");
-    properties.setActions(List.of(action));
-    return new ConfiguredAuthoredActionCatalog(properties);
   }
 
   private static EffectiveCommandHistorySettingsResolver historyResolver(boolean enabled) {

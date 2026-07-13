@@ -21,39 +21,23 @@ import org.springframework.util.StringUtils;
         "Constructor validation only guards injected collaborators before the handler is used.")
 @Component
 public class HelpCommandHandler {
-  private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
   private final GameAuthoredHelpReader authoredHelpReader;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
 
-  HelpCommandHandler(
-      ConfiguredAuthoredActionCatalog authoredActionCatalog,
-      GameAuthoredHelpReader authoredHelpReader) {
-    this(authoredActionCatalog, authoredHelpReader, null, null);
-  }
-
   @org.springframework.beans.factory.annotation.Autowired
   HelpCommandHandler(
-      ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver) {
-    this.authoredActionCatalog =
-        Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
     this.authoredHelpReader =
         Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
     this.admittedRegistryResolver = admittedRegistryResolver;
     this.commandHistorySettingsResolver = commandHistorySettingsResolver;
   }
 
-  HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
-    this(authoredActionCatalog, (context, topic) -> Optional.empty(), null, null);
-  }
-
   HelpCommandHandler() {
-    this(
-        new ConfiguredAuthoredActionCatalog(
-            new net.firedevops.firemud.gamesession.config.AuthoredActionProperties()));
+    this((context, topic) -> Optional.empty(), null, null);
   }
 
   @Timed(value = "gamesession.command.help")
@@ -85,12 +69,6 @@ public class HelpCommandHandler {
     ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext, historyEnabled);
     if (resolvedTopic.admittedDefinition() != null) {
       return success(resolvedTopic.admittedDefinition());
-    }
-    if (resolvedTopic.canonicalTopic().startsWith("AUTHORED:")) {
-      return authoredActionCatalog
-          .find(resolvedTopic.canonicalTopic().substring("AUTHORED:".length()))
-          .map(this::success)
-          .orElseGet(() -> unknownTopic(args.get(0)));
     }
 
     return switch (resolvedTopic.canonicalTopic()) {
@@ -282,10 +260,7 @@ public class HelpCommandHandler {
               definition -> new ResolvedHelpTopic("AUTHORED:" + definition.commandId(), definition))
           .orElse(new ResolvedHelpTopic("", null));
     }
-    return authoredActionCatalog
-        .findByAlias(topic)
-        .map(action -> new ResolvedHelpTopic("AUTHORED:" + action.commandId(), null))
-        .orElse(new ResolvedHelpTopic("", null));
+    return new ResolvedHelpTopic("", null);
   }
 
   private record ResolvedHelpTopic(
@@ -334,15 +309,6 @@ public class HelpCommandHandler {
       int loginIndex = lines.indexOf("- HELP LOGIN");
       lines.add(loginIndex + 1, "- HELP HISTORY");
     }
-    if (admittedDefinitions.isEmpty()
-        && admittedRegistryResolver == null
-        && !authoredActionCatalog.all().isEmpty()) {
-      lines.add("Authored topics:");
-      for (ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action :
-          authoredActionCatalog.all()) {
-        lines.add("- HELP " + action.primaryHelpTopic().toUpperCase(Locale.ROOT));
-      }
-    }
     lines.add("Type HELP <TOPIC> to read one of them.");
     return String.join("\n", lines);
   }
@@ -355,19 +321,6 @@ public class HelpCommandHandler {
         commandHistorySettingsResolver.commandHistory(maybeContext.orElse(null));
     return effective.enabled();
   }
-
-  private TextCommandInterpretationResult success(
-      ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action) {
-    String topic = action.primaryHelpTopic().toUpperCase(Locale.ROOT);
-    String body =
-        topic
-            + "\n"
-            + firstNonBlank(action.helpSummary(), "Game-authored action.")
-            + (StringUtils.hasText(action.helpDetails()) ? "\n" + action.helpDetails().trim() : "")
-            + authoredAliasSuffix(action);
-    return success(body);
-  }
-
   private TextCommandInterpretationResult success(TextCommandDefinition definition) {
     String topic =
         definition.aliases().isEmpty()
@@ -378,19 +331,5 @@ public class HelpCommandHandler {
 
   private TextCommandInterpretationResult success(GameAuthoredHelpReader.ResolvedTopic topic) {
     return success(topic.title().trim() + "\n" + topic.body().trim());
-  }
-
-  private String firstNonBlank(String first, String fallback) {
-    return StringUtils.hasText(first) ? first.trim() : fallback;
-  }
-
-  private String authoredAliasSuffix(
-      ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action) {
-    if (action.aliases().size() <= 1) {
-      return "";
-    }
-    List<String> alternateAliases =
-        action.aliases().stream().skip(1).map(alias -> alias.toUpperCase(Locale.ROOT)).toList();
-    return "\nAliases: " + String.join(", ", alternateAliases);
   }
 }

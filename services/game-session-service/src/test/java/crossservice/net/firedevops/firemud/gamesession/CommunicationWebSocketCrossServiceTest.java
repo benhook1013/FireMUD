@@ -851,25 +851,7 @@ class CommunicationWebSocketCrossServiceTest {
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withGameSessionProps(
-                  Map.of(
-                      "firemud.gateway.connect-context.jwt-secret",
-                      FIRST_PARTY_CONNECT_SECRET,
-                      "game-session.authored-actions.actions[0].action-id",
-                      "wave-salute",
-                      "game-session.authored-actions.actions[0].command-id",
-                      "wave-salute",
-                      "game-session.authored-actions.actions[0].aliases[0]",
-                      "salute",
-                      "game-session.authored-actions.actions[0].stage-requirement",
-                      "GAMEPLAY",
-                      "game-session.authored-actions.actions[0].prompt-policy",
-                      "WHEN_GAMEPLAY",
-                      "game-session.authored-actions.actions[0].action-category",
-                      "SOCIAL",
-                      "game-session.authored-actions.actions[0].action-tags[0]",
-                      "AUTHORING",
-                      "game-session.authored-actions.actions[0].action-tags[1]",
-                      "COMMUNICATION"))
+                  Map.of("firemud.gateway.connect-context.jwt-secret", FIRST_PARTY_CONNECT_SECRET))
               .withInitialFriendPresenceResponse(
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(

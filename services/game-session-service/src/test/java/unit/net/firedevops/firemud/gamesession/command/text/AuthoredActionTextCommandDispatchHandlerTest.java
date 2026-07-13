@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.CommandService;
@@ -21,10 +20,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final AuthoredActionTextCommandDispatchHandler handler =
       new AuthoredActionTextCommandDispatchHandler(
-          new AuthoredActionCommandHandler(
-              new ConfiguredAuthoredActionCatalog(configuredAuthoredActions())),
-          admittedRegistryResolver,
-          commandService);
+          new AuthoredActionCommandHandler(), admittedRegistryResolver, commandService);
 
   @Test
   void enqueuesGameplayScopedAuthoredActionWithItsAdmittedSnapshot() {
@@ -75,7 +71,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void usesFixtureCatalogOnlyWithoutGameplayContext() {
+  void rejectsAuthoredActionsWithoutGameplayContext() {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommandDispatchRequest(
@@ -84,7 +80,8 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                 false,
                 Optional.empty()));
 
-    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("UNKNOWN_AUTHORED_ACTION");
     verifyNoInteractions(admittedRegistryResolver, commandService);
   }
 
@@ -101,15 +98,5 @@ class AuthoredActionTextCommandDispatchHandlerTest {
         rawLine,
         args.isEmpty() ? commandId : args.getFirst(),
         new TextCommandPayload.AuthoredActionInvocation(commandId, args));
-  }
-
-  private static AuthoredActionProperties configuredAuthoredActions() {
-    AuthoredActionProperties properties = new AuthoredActionProperties();
-    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
-    action.setActionId("wave-salute");
-    action.setCommandId("wave-salute");
-    action.setAliases(List.of("salute"));
-    properties.setActions(List.of(action));
-    return properties;
   }
 }

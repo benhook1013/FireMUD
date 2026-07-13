@@ -45,7 +45,6 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
-import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
@@ -146,10 +145,8 @@ class TextCommandInterpreterTest {
           accountRecentPresenceService,
           sessionRoutingNormalizationService(),
           scriptEventPublisher);
-  private final ConfiguredAuthoredActionCatalog authoredActionCatalog =
-      new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties());
   private final AuthoredActionCommandHandler authoredActionHandler =
-      new AuthoredActionCommandHandler(authoredActionCatalog);
+      new AuthoredActionCommandHandler();
   private final TextCommandRegistry registry =
       new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
   private final TextCommandParser parser = new TextCommandParser();
@@ -478,7 +475,6 @@ class TextCommandInterpreterTest {
                 entityManagementClient,
                 scriptEventPublisher),
             authoredActionHandler,
-            authoredActionCatalog,
             inventoryHandler,
             equipmentHandler,
             containerHandler,

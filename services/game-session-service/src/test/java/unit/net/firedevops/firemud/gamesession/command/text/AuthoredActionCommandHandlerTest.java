@@ -2,9 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import net.firedevops.firemud.gamesession.config.AuthoredActionProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -12,37 +10,8 @@ import org.junit.jupiter.api.Test;
 class AuthoredActionCommandHandlerTest {
 
   @Test
-  void authoredActionReturnsSuccessWithoutSyntheticOutput() {
-    AuthoredActionProperties properties = new AuthoredActionProperties();
-    AuthoredActionProperties.Action action = new AuthoredActionProperties.Action();
-    action.setActionId("wave-salute");
-    action.setCommandId("wave-salute");
-    action.setAliases(java.util.List.of("salute"));
-    properties.setActions(java.util.List.of(action));
-
-    AuthoredActionCommandHandler handler =
-        new AuthoredActionCommandHandler(new ConfiguredAuthoredActionCatalog(properties));
-
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                "wave-salute",
-                TextCommandType.AUTHORED,
-                java.util.List.of("captain"),
-                "salute captain",
-                "salute",
-                new TextCommandPayload.AuthoredActionInvocation(
-                    "wave-salute", java.util.List.of("captain"))));
-
-    assertTrue(result.commandResult().accepted());
-    assertEquals(0, result.outputs().size());
-  }
-
-  @Test
   void unknownAuthoredActionFailsClosed() {
-    AuthoredActionCommandHandler handler =
-        new AuthoredActionCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+    AuthoredActionCommandHandler handler = new AuthoredActionCommandHandler();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -61,9 +30,7 @@ class AuthoredActionCommandHandlerTest {
 
   @Test
   void admittedAuthoredActionFailsClosedUntilItsDeclaredEffectHasARuntimeHandler() {
-    AuthoredActionCommandHandler handler =
-        new AuthoredActionCommandHandler(
-            new ConfiguredAuthoredActionCatalog(new AuthoredActionProperties()));
+    AuthoredActionCommandHandler handler = new AuthoredActionCommandHandler();
     TextCommand command =
         new TextCommand(
             "wave-salute",

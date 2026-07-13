@@ -9,31 +9,16 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class AuthoredActionCommandHandler {
-  private final ConfiguredAuthoredActionCatalog catalog;
-
-  AuthoredActionCommandHandler(ConfiguredAuthoredActionCatalog catalog) {
-    this.catalog = catalog;
-  }
-
   @Timed(value = "gamesession.command.authored")
   public TextCommandInterpretationResult handle(TextCommand command) {
     TextCommandPayload.AuthoredActionInvocation invocation =
         command.authoredActionPayload().orElseThrow();
-    return catalog
-        .find(invocation.commandId())
-        .map(
-            action ->
-                new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of()))
-        .orElseGet(
-            () ->
-                new TextCommandInterpretationResult(
-                    CommandEnqueueResult.failure(
-                        "UNKNOWN_AUTHORED_ACTION",
-                        "Unknown authored action: " + invocation.commandId()),
-                    List.of(
-                        PlayerOutput.error(
-                            "UNKNOWN_AUTHORED_ACTION",
-                            "Unknown authored action: " + invocation.commandId()))));
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(
+            "UNKNOWN_AUTHORED_ACTION", "Unknown authored action: " + invocation.commandId()),
+        List.of(
+            PlayerOutput.error(
+                "UNKNOWN_AUTHORED_ACTION", "Unknown authored action: " + invocation.commandId())));
   }
 
   @Timed(value = "gamesession.command.authored")

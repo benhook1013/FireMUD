@@ -8,8 +8,6 @@ import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 /** Builds an instance-scoped command registry from built-ins and the admitted release artifact. */
@@ -18,32 +16,20 @@ public final class AdmittedTextCommandRegistryResolver {
   private static final Logger LOG =
       LoggerFactory.getLogger(AdmittedTextCommandRegistryResolver.class);
   private final AdmittedCommandDefinitionReader admittedCommandDefinitionReader;
-  private final Optional<ConfiguredAuthoredActionDefinitionProvider> testFixtureDefinitionProvider;
-  private final Environment environment;
   private final TextCommandRegistry builtIns =
       new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
   private final ConcurrentMap<List<TextCommandDefinition>, TextCommandRegistry>
       registriesByDefinitionSnapshot = new ConcurrentHashMap<>();
 
   AdmittedTextCommandRegistryResolver(
-      AdmittedCommandDefinitionReader admittedCommandDefinitionReader,
-      Optional<ConfiguredAuthoredActionDefinitionProvider> testFixtureDefinitionProvider,
-      Environment environment) {
+      AdmittedCommandDefinitionReader admittedCommandDefinitionReader) {
     this.admittedCommandDefinitionReader = admittedCommandDefinitionReader;
-    this.testFixtureDefinitionProvider = testFixtureDefinitionProvider;
-    this.environment = environment;
   }
 
   public TextCommandRegistry resolve(SessionContext context) {
     Optional<List<TextCommandDefinition>> admittedDefinitions =
         admittedCommandDefinitionReader.definitionsFor(context);
     List<TextCommandDefinition> resolvedDefinitions = admittedDefinitions.orElse(List.of());
-    if (admittedDefinitions.isEmpty() && environment.acceptsProfiles(Profiles.of("test"))) {
-      resolvedDefinitions =
-          testFixtureDefinitionProvider
-              .map(ConfiguredAuthoredActionDefinitionProvider::definitions)
-              .orElse(List.of());
-    }
     if (resolvedDefinitions.isEmpty()) {
       return builtIns;
     }

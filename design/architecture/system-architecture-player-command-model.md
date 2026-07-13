@@ -52,7 +52,7 @@ At runtime, Game Session resolves only the declaration artifact pinned to the pl
 
 For the first live effect path, accepted authored ingress persists the admitted release-bundle id, version id, canonical command id, immutable declared-effect JSON, and originating `{tenantId, gameInstanceId, characterId}` on the durable gameplay command. Execution selects that snapshot rather than a later live registry read, requires the current resolved session to retain the originating gameplay identity, accepts only one supported `APPLY_ACTION_STATE` v1 declaration, and uses the durable effect replay record before applying the downstream actor condition. A changed, missing, malformed, or unsupported identity or snapshot fails closed before replay lookup or script publication.
 
-The initial migration may adapt existing configuration-backed authored-action fields into this payload shape, but application configuration is not the target source of truth for published gameplay behavior.
+Seeded platform and authored command definitions enter the same version-scoped data lifecycle. Application configuration is not an authored-command source, parser fallback, help fallback, or execution authority.
 
 ## Player Stages
 
