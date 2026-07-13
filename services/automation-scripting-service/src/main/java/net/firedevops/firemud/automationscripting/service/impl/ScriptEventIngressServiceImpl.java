@@ -352,17 +352,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean hasPositiveLongValue(Object value) {
-    if (value instanceof Number number) {
-      return number.longValue() > 0;
+    if (value == null) {
+      return false;
     }
-    if (value instanceof String text && !text.isBlank()) {
-      try {
-        return Long.parseLong(text) > 0;
-      } catch (RuntimeException ex) {
-        return false;
-      }
+    try {
+      RequestIdValidation.requirePositiveLong(value.toString(), "duePoint");
+      return true;
+    } catch (IllegalArgumentException ex) {
+      return false;
     }
-    return false;
   }
 
   private TriggerAdmission validateGameplayRoutingBundle(

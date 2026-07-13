@@ -17,6 +17,7 @@ import net.firedevops.firemud.automationscripting.service.PluginActivationPrefli
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
@@ -227,13 +228,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       throw new IllegalArgumentException(
           "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + runtime.getError().getMessage());
     }
-    long runtimeVersionId;
-    try {
-      runtimeVersionId = Long.parseLong(runtime.getRuntimeState().getRuntimeVersionId());
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException(
-          "GAME_INSTANCE_RUNTIME_UNAVAILABLE: runtime version id is not numeric");
-    }
+    long runtimeVersionId =
+        requireRuntimeVersionId(runtime.getRuntimeState().getRuntimeVersionId());
     if (publication.getPluginVersion().getBaseVersionId() != runtimeVersionId) {
       throw new IllegalArgumentException(
           "PLUGIN_BASE_VERSION_MISMATCH: plugin base version does not match runtime version");
@@ -247,6 +243,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         command.pluginId(),
         command.targetPluginVersionId());
     return runtime;
+  }
+
+  private static long requireRuntimeVersionId(String runtimeVersionId) {
+    try {
+      return RequestIdValidation.requirePositiveLong(runtimeVersionId, "runtimeVersionId");
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(
+          "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + ex.getMessage(), ex);
+    }
   }
 
   private void requireAbilitySchemaMatch(

@@ -1601,6 +1601,32 @@ class ScriptWorkItemServiceImplTest {
         .refreshFromOnLoadWorkItems(Mockito.anyString(), Mockito.anyString());
   }
 
+  @Test
+  void replayRejectsNonPositiveWorkItemIdBeforeRepositoryRead() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    assertThatThrownBy(
+            () ->
+                service.replayDeadLetters(
+                    new ScriptWorkItemService.ReplayDeadLettersCommand(
+                        "1", "", "", List.of("0"), "", 0L, 0L, 10, "", "", "")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("work_item_id must be positive");
+    Mockito.verifyNoInteractions(workItemRepository);
+  }
+
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId("1");

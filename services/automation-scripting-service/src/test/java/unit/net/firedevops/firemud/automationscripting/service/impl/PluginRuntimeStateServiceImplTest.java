@@ -638,6 +638,51 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
+  void rejectsActivationWhenRuntimeVersionIdIsNonPositiveBeforeReleaseBundleLookup() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRuntimeVersionId("0")
+                        .setStatus("RUNNING")
+                        .build())
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleInstanceService);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("GAME_INSTANCE_RUNTIME_UNAVAILABLE: runtimeVersionId must be positive");
+    Mockito.verify(gameDesignClient, Mockito.never())
+        .getPublishedReleaseBundle(Mockito.any(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(eventRepository, scheduleInstanceService);
+  }
+
+  @Test
   void rejectsActivationWhenAbilitySchemaDigestDoesNotMatchRuntimeVersion() {
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);

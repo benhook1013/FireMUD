@@ -26,6 +26,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -306,9 +307,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
+    final long tenantId;
+    try {
+      tenantId = parseTenantId(workItem);
+    } catch (IllegalArgumentException ex) {
+      deadLetter(workItem, STAGE_DSL_EVAL, "definition_invalid", "tenant_id_invalid", now);
+      return false;
+    }
     Optional<ScriptDefinition> definition =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndName(
-            parseTenantId(workItem), workItem.getScriptPatchVersion(), workItem.getScriptId());
+            tenantId, workItem.getScriptPatchVersion(), workItem.getScriptId());
     if (definition.isEmpty()) {
       deadLetter(workItem, STAGE_DSL_EVAL, "definition_missing", "script_definition_missing", now);
       return false;
@@ -709,11 +717,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private static long parseTenantId(ScriptWorkItem workItem) {
-    try {
-      return Long.parseLong(workItem.getTenantId());
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("tenant_id must be numeric for script definition lookup");
-    }
+    return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
   }
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {
