@@ -1223,6 +1223,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {
+    request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(request.accountId(), request.tenantId())

@@ -43,6 +43,7 @@ public class ProfileController {
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
+    request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     ProfileDto dto =
         accountService.updateProfile(

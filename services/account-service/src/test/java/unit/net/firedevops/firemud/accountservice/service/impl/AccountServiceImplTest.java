@@ -1994,6 +1994,20 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void updateProfileRejectsReservedHiddenStaffPolicyBeforePersistence() {
+    var request =
+        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> service.updateProfile(request));
+
+    assertEquals(
+        "Profile presence visibility policy HIDDEN_STAFF is reserved", exception.getMessage());
+    verifyNoInteractions(profileRepository, notificationService);
+  }
+
+  @Test
   void exportAccountDataIncludesProfilesAcrossTenants() {
     Account account = new Account();
     account.setId(2L);

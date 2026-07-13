@@ -15,7 +15,7 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `SendNotification` – deliver account notifications asynchronously.
 - `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
 - `GetProfile` – retrieves profile information for the current account.
-- `UpdateProfile` – modifies profile fields and triggers notification emails.
+- `UpdateProfile` – modifies profile fields and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` is reserved for the staff-visibility owner and cannot be set through profile writes.
 - `ExportAccount` – account-scoped export of portable account-owned data across all tenants visible to the authenticated subject.
 - `ExportTenantData` – tenant-scoped billing-safe export for one tenant, available to `tenantAdmin` while gameplay is billing-blocked and limited to that tenant's exportable game/billing records.
 - `DeleteAccount` – begins or completes global account deletion according to the account lifecycle state machine; it is not a tenant-scoped membership deletion.
