@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
@@ -13,6 +15,8 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -23,12 +27,15 @@ import org.springframework.stereotype.Component;
             + " used.")
 @Component
 public class TextCommandInterpreter {
+  private static final Logger LOG = LoggerFactory.getLogger(TextCommandInterpreter.class);
+
   private final SessionAuthenticationService sessionAuthenticationService;
   private final PromptComposer promptComposer;
   private final TextCommandParser parser;
   private final TextCommandRegistry registry;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final TextCommandDispatcher dispatcher;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
   private final AcceptedCommandHistoryRecorder commandHistoryRecorder;
 
   TextCommandInterpreter(
@@ -83,6 +90,7 @@ public class TextCommandInterpreter {
         parser,
         null,
         meterRegistry,
+        null,
         commandHistoryRecorder);
   }
 
@@ -113,6 +121,7 @@ public class TextCommandInterpreter {
       TextCommandParser parser,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       MeterRegistry meterRegistry,
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver,
       AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this(
         sessionAuthenticationService,
@@ -144,6 +153,7 @@ public class TextCommandInterpreter {
             scriptEventPublisher,
             communicationHandler,
             worldsHandler),
+        commandCapabilitiesSettingsResolver,
         commandHistoryRecorder);
   }
 
@@ -160,6 +170,7 @@ public class TextCommandInterpreter {
         registry,
         null,
         dispatcher,
+        null,
         AcceptedCommandHistoryRecorder.NOOP);
   }
 
@@ -177,6 +188,7 @@ public class TextCommandInterpreter {
         registry,
         null,
         dispatcher,
+        null,
         commandHistoryRecorder);
   }
 
@@ -188,6 +200,26 @@ public class TextCommandInterpreter {
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       TextCommandDispatcher dispatcher,
       AcceptedCommandHistoryRecorder commandHistoryRecorder) {
+    this(
+        sessionAuthenticationService,
+        promptComposer,
+        parser,
+        registry,
+        admittedRegistryResolver,
+        dispatcher,
+        null,
+        commandHistoryRecorder);
+  }
+
+  TextCommandInterpreter(
+      SessionAuthenticationService sessionAuthenticationService,
+      PromptComposer promptComposer,
+      TextCommandParser parser,
+      TextCommandRegistry registry,
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      TextCommandDispatcher dispatcher,
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -196,6 +228,7 @@ public class TextCommandInterpreter {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
     this.admittedRegistryResolver = admittedRegistryResolver;
     this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher must not be null");
+    this.commandCapabilitiesSettingsResolver = commandCapabilitiesSettingsResolver;
     this.commandHistoryRecorder =
         Objects.requireNonNull(commandHistoryRecorder, "commandHistoryRecorder must not be null");
   }
@@ -270,6 +303,9 @@ public class TextCommandInterpreter {
               GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE),
           command,
           definition);
+    }
+    if (!isCapabilityEnabled(definition, maybeContext)) {
+      return withResolvedCommand(featureUnavailable(definition.capability()), command, definition);
     }
 
     TextCommandInterpretationResult dispatchResult =
@@ -362,7 +398,8 @@ public class TextCommandInterpreter {
             definition.dispatchGroup(),
             definition.promptPolicy(),
             definition.actionCategory(),
-            definition.actionTags()));
+            definition.actionTags(),
+            definition.capability()));
   }
 
   private boolean isMeaningfulGameplay(TextCommandDefinition definition) {
@@ -394,6 +431,52 @@ public class TextCommandInterpreter {
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.failure(code, message),
         List.of(PlayerOutput.error(code, message, messageKey, Map.of())));
+  }
+
+  private boolean isCapabilityEnabled(
+      TextCommandDefinition definition, Optional<SessionContext> maybeContext) {
+    if (commandCapabilitiesSettingsResolver == null
+        || definition.capability() == PlayerCommandCapability.MANDATORY) {
+      return true;
+    }
+    try {
+      return maybeContext
+          .map(
+              context ->
+                  commandCapabilitiesSettingsResolver.isEnabled(
+                      definition.capability(), context.tenantId(), context.gameInstanceId()))
+          .orElse(true);
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Command capability resolution failed capability={} tenantId={} gameInstanceId={}",
+          definition.capability(),
+          maybeContext.map(SessionContext::tenantId).orElse(null),
+          maybeContext.map(SessionContext::gameInstanceId).orElse(null),
+          ex);
+      return false;
+    }
+  }
+
+  private TextCommandInterpretationResult featureUnavailable(PlayerCommandCapability capability) {
+    String message = capabilityLabel(capability) + " is unavailable for this game.";
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure("FEATURE_UNAVAILABLE", message),
+        List.of(
+            PlayerOutput.error(
+                "FEATURE_UNAVAILABLE",
+                message,
+                "error.command.feature-unavailable",
+                Map.of("capability", capability.name()))));
+  }
+
+  private String capabilityLabel(PlayerCommandCapability capability) {
+    return switch (capability) {
+      case SOCIAL -> "Social commands";
+      case PRESENCE -> "Presence commands";
+      case INVENTORY -> "Inventory commands";
+      case COMMAND_HISTORY -> "Command history";
+      case MANDATORY -> "This command";
+    };
   }
 
   private List<PlayerOutput> appendPrompt(

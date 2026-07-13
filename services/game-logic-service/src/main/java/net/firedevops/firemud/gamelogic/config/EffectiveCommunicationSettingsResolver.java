@@ -78,25 +78,11 @@ public class EffectiveCommunicationSettingsResolver {
 
   private CommunicationProperties merge(
       CommunicationProperties base, ScopedSettingsOverrides.CommunicationOverride override) {
-    CommunicationProperties.Defaults defaults =
-        override.defaults() == null
-            ? base.defaults()
-            : new CommunicationProperties.Defaults(
-                override.defaults().sayEnabled() != null
-                    ? override.defaults().sayEnabled()
-                    : base.defaults().sayEnabled(),
-                override.defaults().whisperEnabled() != null
-                    ? override.defaults().whisperEnabled()
-                    : base.defaults().whisperEnabled(),
-                override.defaults().tellEnabled() != null
-                    ? override.defaults().tellEnabled()
-                    : base.defaults().tellEnabled(),
-                override.defaults().whisperObserverMetadataEnabled() != null
-                    ? override.defaults().whisperObserverMetadataEnabled()
-                    : base.defaults().whisperObserverMetadataEnabled());
     return new CommunicationProperties(
         override.maxMessageLength() != null ? override.maxMessageLength() : base.maxMessageLength(),
-        defaults);
+        override.whisperObserverMetadataEnabled() != null
+            ? override.whisperObserverMetadataEnabled()
+            : base.whisperObserverMetadataEnabled());
   }
 
   public record ResolvedValue<T>(T effective, List<String> sources) {

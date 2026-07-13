@@ -63,6 +63,18 @@ class SettingsAuthorityServiceIntegrationTest {
         ScopedSettingsOverrides.SettingsDomain.MOVEMENT,
         new ScopedSettingsOverrides(
             null, null, null, new ScopedSettingsOverrides.MovementOverride(false), null));
+    settingsAuthorityService.putDomainOverride(
+        "42",
+        null,
+        ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES,
+        new ScopedSettingsOverrides(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new ScopedSettingsOverrides.CommandCapabilitiesOverride(false, null, null, true)));
 
     ScopedSettingsSnapshot snapshot = settingsAuthorityService.getScopedOverrides("42", 7L);
 
@@ -72,6 +84,9 @@ class SettingsAuthorityServiceIntegrationTest {
     assertThat(snapshot.tenantOverrides().presentation().briefEnabledByDefault()).isTrue();
     assertThat(snapshot.gameInstanceOverrides().movement()).isNotNull();
     assertThat(snapshot.gameInstanceOverrides().movement().postMoveLookEnabled()).isFalse();
+    assertThat(snapshot.tenantOverrides().commandCapabilities()).isNotNull();
+    assertThat(snapshot.tenantOverrides().commandCapabilities().socialEnabled()).isFalse();
+    assertThat(snapshot.tenantOverrides().commandCapabilities().commandHistoryEnabled()).isTrue();
   }
 
   @Test

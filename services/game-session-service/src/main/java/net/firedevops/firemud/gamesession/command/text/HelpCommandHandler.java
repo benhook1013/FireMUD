@@ -8,8 +8,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
-import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
@@ -23,17 +23,17 @@ import org.springframework.util.StringUtils;
 public class HelpCommandHandler {
   private final GameAuthoredHelpReader authoredHelpReader;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
-  private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
 
   @org.springframework.beans.factory.annotation.Autowired
   HelpCommandHandler(
       GameAuthoredHelpReader authoredHelpReader,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
-      EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver) {
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver) {
     this.authoredHelpReader =
         Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
     this.admittedRegistryResolver = admittedRegistryResolver;
-    this.commandHistorySettingsResolver = commandHistorySettingsResolver;
+    this.commandCapabilitiesSettingsResolver = commandCapabilitiesSettingsResolver;
   }
 
   HelpCommandHandler() {
@@ -52,9 +52,8 @@ public class HelpCommandHandler {
     }
 
     List<String> args = command.args();
-    boolean historyEnabled = isHistoryEnabled(maybeContext);
     if (args.isEmpty()) {
-      return success(topicIndex(maybeContext, historyEnabled));
+      return success(topicIndex(maybeContext));
     }
     if (args.size() > 1) {
       return unknownTopic(args.get(0));
@@ -66,13 +65,13 @@ public class HelpCommandHandler {
       return success(authoredTopic.orElseThrow());
     }
 
-    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext, historyEnabled);
+    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext);
     if (resolvedTopic.admittedDefinition() != null) {
       return success(resolvedTopic.admittedDefinition());
     }
 
     return switch (resolvedTopic.canonicalTopic()) {
-      case "HELP" -> success(topicIndex(maybeContext, historyEnabled));
+      case "HELP" -> success(topicIndex(maybeContext));
       case "LOGIN" ->
           success(
               "LOGIN <email> [secret]\n"
@@ -218,8 +217,7 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private ResolvedHelpTopic canonicalTopic(
-      String topic, Optional<SessionContext> maybeContext, boolean historyEnabled) {
+  private ResolvedHelpTopic canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
     if (!StringUtils.hasText(topic)) {
       return new ResolvedHelpTopic("", null);
     }
@@ -243,13 +241,13 @@ public class HelpCommandHandler {
           case "BLOCK", "GUARD" -> "BLOCK";
           case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
           case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
-          case "HISTORY" -> historyEnabled ? "HISTORY" : "";
+          case "HISTORY" -> "HISTORY";
           case "SAY" -> "SAY";
           case "WHISPER" -> "WHISPER";
           case "TELL" -> "TELL";
           default -> "";
         };
-    if (!canonical.isEmpty()) {
+    if (!canonical.isEmpty() && isEnabled(capabilityForTopic(canonical), maybeContext)) {
       return new ResolvedHelpTopic(canonical, null);
     }
     if (admittedRegistryResolver != null) {
@@ -266,7 +264,7 @@ public class HelpCommandHandler {
   private record ResolvedHelpTopic(
       String canonicalTopic, TextCommandDefinition admittedDefinition) {}
 
-  private String topicIndex(Optional<SessionContext> maybeContext, boolean historyEnabled) {
+  private String topicIndex(Optional<SessionContext> maybeContext) {
     ArrayList<String> lines =
         new ArrayList<>(
             List.of(
@@ -291,6 +289,11 @@ public class HelpCommandHandler {
                 "- HELP SAY",
                 "- HELP WHISPER",
                 "- HELP TELL"));
+    lines.removeIf(
+        line ->
+            line.startsWith("- HELP ")
+                && !isEnabled(
+                    capabilityForTopic(line.substring("- HELP ".length())), maybeContext));
     List<TextCommandDefinition> admittedDefinitions =
         admittedRegistryResolver == null
             ? List.of()
@@ -305,7 +308,7 @@ public class HelpCommandHandler {
         lines.add("- HELP " + topic.toUpperCase(Locale.ROOT));
       }
     }
-    if (historyEnabled) {
+    if (isEnabled(PlayerCommandCapability.COMMAND_HISTORY, maybeContext)) {
       int loginIndex = lines.indexOf("- HELP LOGIN");
       lines.add(loginIndex + 1, "- HELP HISTORY");
     }
@@ -313,13 +316,33 @@ public class HelpCommandHandler {
     return String.join("\n", lines);
   }
 
-  private boolean isHistoryEnabled(Optional<SessionContext> maybeContext) {
-    if (commandHistorySettingsResolver == null) {
+  private boolean isEnabled(
+      PlayerCommandCapability capability, Optional<SessionContext> maybeContext) {
+    if (capability == PlayerCommandCapability.MANDATORY
+        || commandCapabilitiesSettingsResolver == null) {
       return true;
     }
-    FiremudCommandHistoryProperties effective =
-        commandHistorySettingsResolver.commandHistory(maybeContext.orElse(null));
-    return effective.enabled();
+    try {
+      return maybeContext
+          .map(
+              context ->
+                  commandCapabilitiesSettingsResolver.isEnabled(
+                      capability, context.tenantId(), context.gameInstanceId()))
+          .orElse(commandCapabilitiesSettingsResolver.isEnabled(capability, 0L, null));
+    } catch (RuntimeException ex) {
+      return false;
+    }
+  }
+
+  private PlayerCommandCapability capabilityForTopic(String topic) {
+    return switch (topic) {
+      case "SAY", "WHISPER", "TELL", "FRIENDS" -> PlayerCommandCapability.SOCIAL;
+      case "WHO" -> PlayerCommandCapability.PRESENCE;
+      case "INVENTORY", "EQUIPMENT", "CONTAINER", "PUT", "TAKE", "WEAR", "REMOVE", "GET", "DROP" ->
+          PlayerCommandCapability.INVENTORY;
+      case "HISTORY" -> PlayerCommandCapability.COMMAND_HISTORY;
+      default -> PlayerCommandCapability.MANDATORY;
+    };
   }
 
   private TextCommandInterpretationResult success(TextCommandDefinition definition) {

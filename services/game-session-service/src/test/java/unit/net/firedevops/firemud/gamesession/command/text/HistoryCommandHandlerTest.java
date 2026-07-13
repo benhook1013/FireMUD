@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
@@ -18,12 +20,7 @@ class HistoryCommandHandlerTest {
   void returnsUnavailableWhenFeatureDisabled() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(false, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, false);
 
     SessionContext context = standardContext();
 
@@ -41,12 +38,7 @@ class HistoryCommandHandlerTest {
   void returnsNoRecentCommandsWhenHistoryIsEmpty() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, true);
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 10)).thenReturn(List.of());
 
     SessionContext context = standardContext();
@@ -62,12 +54,7 @@ class HistoryCommandHandlerTest {
   void defaultsToConfiguredMaxWhenCountIsOmitted() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 2),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 2, true);
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 2)).thenReturn(List.of("LOOK", "SAY hi"));
 
     SessionContext context = standardContext();
@@ -83,12 +70,7 @@ class HistoryCommandHandlerTest {
   void usesExplicitCountAndReturnsChronologicalEntries() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, true);
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 5))
         .thenReturn(List.of("LOOK", "SAY hello", "INVENTORY"));
     SessionContext context = standardContext();
@@ -116,7 +98,8 @@ class HistoryCommandHandlerTest {
         Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
     Mockito.when(resolver.commandHistory(Mockito.any(SessionContext.class)))
         .thenThrow(new IllegalStateException("settings unavailable"));
-    HistoryCommandHandler handler = new HistoryCommandHandler(storage, resolver);
+    HistoryCommandHandler handler =
+        new HistoryCommandHandler(storage, resolver, capabilitiesResolver(true));
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -132,12 +115,7 @@ class HistoryCommandHandlerTest {
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 10))
         .thenThrow(new IllegalStateException("storage unavailable"));
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, true);
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -150,12 +128,7 @@ class HistoryCommandHandlerTest {
   void rejectsRequestedCountAboveConfiguredMax() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 3),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 3, true);
 
     SessionContext context = standardContext();
 
@@ -178,12 +151,7 @@ class HistoryCommandHandlerTest {
   void rejectsMalformedHistoryCountWithoutReadingStorage() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, true);
     SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
@@ -205,12 +173,7 @@ class HistoryCommandHandlerTest {
   void rejectsNonPositiveHistoryCountWithoutReadingStorage() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    HistoryCommandHandler handler =
-        new HistoryCommandHandler(
-            storage,
-            new EffectiveCommandHistorySettingsResolver(
-                new FiremudCommandHistoryProperties(true, 10),
-                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+    HistoryCommandHandler handler = handler(storage, 10, true);
     SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
@@ -231,6 +194,25 @@ class HistoryCommandHandlerTest {
   private SessionContext standardContext() {
     return new SessionContext(
         22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+  }
+
+  private HistoryCommandHandler handler(
+      PlayerCommandHistoryStorageService storage, int maxEntries, boolean historyEnabled) {
+    return new HistoryCommandHandler(
+        storage, historyResolver(maxEntries), capabilitiesResolver(historyEnabled));
+  }
+
+  private EffectiveCommandHistorySettingsResolver historyResolver(int maxEntries) {
+    return new EffectiveCommandHistorySettingsResolver(
+        new FiremudCommandHistoryProperties(maxEntries),
+        (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
+  }
+
+  private EffectiveCommandCapabilitiesSettingsResolver capabilitiesResolver(
+      boolean historyEnabled) {
+    return new EffectiveCommandCapabilitiesSettingsResolver(
+        new FiremudCommandCapabilitiesProperties(true, true, true, historyEnabled),
+        (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   }
 
   private void assertUnavailable(TextCommandInterpretationResult result) {

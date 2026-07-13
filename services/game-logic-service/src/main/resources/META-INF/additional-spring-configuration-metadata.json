@@ -15,32 +15,11 @@
       "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties"
     },
     {
-      "name": "firemud.communication.defaults.say-enabled",
-      "type": "java.lang.Boolean",
-      "defaultValue": true,
-      "description": "Whether the built-in SAY communication mode is enabled in the shared communication pipeline.",
-      "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults"
-    },
-    {
-      "name": "firemud.communication.defaults.whisper-enabled",
-      "type": "java.lang.Boolean",
-      "defaultValue": true,
-      "description": "Whether the built-in WHISPER communication mode is enabled in the shared communication pipeline.",
-      "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults"
-    },
-    {
-      "name": "firemud.communication.defaults.tell-enabled",
-      "type": "java.lang.Boolean",
-      "defaultValue": true,
-      "description": "Whether the built-in TELL communication mode is enabled in the shared communication pipeline.",
-      "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults"
-    },
-    {
-      "name": "firemud.communication.defaults.whisper-observer-metadata-enabled",
+      "name": "firemud.communication.whisper-observer-metadata-enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,
       "description": "Whether flagged whisper observers receive metadata-only bystander views by default.",
-      "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults"
+      "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties"
     }
   ]
 }

@@ -4,6 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
@@ -22,13 +24,19 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
 
   private final PlayerCommandHistoryStorageService storageService;
   private final EffectiveCommandHistorySettingsResolver settingsResolver;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
 
   PlayerCommandHistoryRecorder(
       PlayerCommandHistoryStorageService storageService,
-      EffectiveCommandHistorySettingsResolver settingsResolver) {
+      EffectiveCommandHistorySettingsResolver settingsResolver,
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver) {
     this.storageService = Objects.requireNonNull(storageService, "storageService must not be null");
     this.settingsResolver =
         Objects.requireNonNull(settingsResolver, "settingsResolver must not be null");
+    this.commandCapabilitiesSettingsResolver =
+        Objects.requireNonNull(
+            commandCapabilitiesSettingsResolver,
+            "commandCapabilitiesSettingsResolver must not be null");
   }
 
   @Override
@@ -57,10 +65,11 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
 
   private void persist(SessionContext context, String commandText) {
     try {
-      FiremudCommandHistoryProperties settings = settingsResolver.commandHistory(context);
-      if (!settings.enabled()) {
+      if (!commandCapabilitiesSettingsResolver.isEnabled(
+          PlayerCommandCapability.COMMAND_HISTORY, context.tenantId(), context.gameInstanceId())) {
         return;
       }
+      FiremudCommandHistoryProperties settings = settingsResolver.commandHistory(context);
       storageService.append(
           context.tenantId(),
           context.gameInstanceId(),

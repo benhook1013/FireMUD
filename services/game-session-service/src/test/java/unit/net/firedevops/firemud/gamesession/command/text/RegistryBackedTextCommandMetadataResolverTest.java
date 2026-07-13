@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import org.junit.jupiter.api.Test;
 
 class RegistryBackedTextCommandMetadataResolverTest {
@@ -35,6 +36,7 @@ class RegistryBackedTextCommandMetadataResolverTest {
               assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.NEVER);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.META);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.SESSION);
+              assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
             });
   }
 
@@ -48,6 +50,16 @@ class RegistryBackedTextCommandMetadataResolverTest {
               assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.WHEN_GAMEPLAY);
               assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.SOCIAL);
               assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.COMMUNICATION);
+              assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
             });
+  }
+
+  @Test
+  void resolvesOptionalStandardCommandCapabilityMetadata() {
+    assertThat(resolver.resolve("say"))
+        .get()
+        .satisfies(
+            metadata ->
+                assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.SOCIAL));
   }
 }

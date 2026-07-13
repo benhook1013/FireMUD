@@ -88,8 +88,10 @@ public final class AdmittedTextCommandRegistryResolver {
                   definition ->
                       new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
                           definition.dispatchGroup(),
+                          definition.promptPolicy(),
                           definition.actionCategory(),
-                          definition.actionTags()));
+                          definition.actionTags(),
+                          definition.capability()));
       if (metadata.isPresent()) {
         return metadata;
       }

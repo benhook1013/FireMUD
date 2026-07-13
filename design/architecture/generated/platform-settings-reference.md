@@ -6,20 +6,17 @@ The machine-readable companion schema is [`platform-settings-schema.json`](./pla
 
 ## `firemud.communication`
 
-Built-in communication safety and availability defaults surfaced by Game Logic.
+Built-in communication behavior defaults surfaced by Game Logic; player availability is controlled by standard command capabilities.
 
 - Service owner: `game-logic-service`
-- Current operator-default owner: `game-logic-service operator defaults`
+- Current operator-default owner: `game-logic-service communication behavior defaults`
 - Service configuration notes: [`design/architecture/microservices/game-logic-service/configuration.md`](../microservices/game-logic-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective/communication`
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.communication.max-message-length` | `communication.defaults` | Maximum number of characters accepted for a single communication message before the service rejects it. | `512` | integer >= 1 | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `512` |
-| `firemud.communication.defaults.say-enabled` | `communication.defaults` | Whether the built-in SAY communication mode is enabled in the shared communication pipeline. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
-| `firemud.communication.defaults.whisper-enabled` | `communication.defaults` | Whether the built-in WHISPER communication mode is enabled in the shared communication pipeline. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
-| `firemud.communication.defaults.tell-enabled` | `communication.defaults` | Whether the built-in TELL communication mode is enabled in the shared communication pipeline. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
-| `firemud.communication.defaults.whisper-observer-metadata-enabled` | `communication.defaults` | Whether flagged whisper observers receive metadata-only bystander views by default. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `true` |
+| `firemud.communication.max-message-length` | `communication.behavior` | Maximum number of characters accepted for a single communication message before the service rejects it. | `512` | integer >= 1 | `tenant/game-configurable` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `512` |
+| `firemud.communication.whisper-observer-metadata-enabled` | `communication.behavior` | Whether flagged whisper observers receive metadata-only bystander views by default. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable within operator-enforced caps` | `no` | `yes` | `true` |
 
 ## `firemud.presentation`
 
@@ -69,8 +66,23 @@ Bounded accepted player-command history defaults surfaced by Game Session.
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.command-history.enabled` | `commandHistory.capability` | Whether accepted command history is available to players through the HISTORY command. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `true` |
-| `firemud.command-history.max-entries` | `commandHistory.retention` | Maximum retained and displayable accepted command-history entries per player character; values are capped at 20. | `10` | integer from 1 to 20 | `tenant/game-configurable within the platform maximum` | `tenant/game-configurable within centralized operator-defined caps` | `no` | `no` | `10` |
+| `firemud.command-history.max-entries` | `commandHistory.retention` | Maximum retained and displayable accepted command-history entries per player character; values are capped at 20. | `10` | integer from 1 to 20 | `tenant/game-configurable` | `tenant/game-configurable within platform bounds` | `no` | `no` | `10` |
+
+## `firemud.command-capabilities`
+
+Tenant/game-controlled availability for standard player command families.
+
+- Service owner: `common-platform-core`
+- Current operator-default owner: `common-platform-core shared player-command policy`
+- Service configuration notes: [`design/architecture/system-architecture-player-command-model.md`](../system-architecture-player-command-model.md)
+- Runtime/effective inspection surface: `/actuator/settings/effective`
+
+| Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `firemud.command-capabilities.social-enabled` | `commandCapabilities.availability` | Whether standard social commands such as SAY, WHISPER, TELL, and FRIENDS are available by default. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
+| `firemud.command-capabilities.presence-enabled` | `commandCapabilities.availability` | Whether standard presence commands such as WHO are available by default. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
+| `firemud.command-capabilities.inventory-enabled` | `commandCapabilities.availability` | Whether standard inventory and equipment commands are available by default. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
+| `firemud.command-capabilities.command-history-enabled` | `commandCapabilities.availability` | Whether the player-facing HISTORY command is available by default. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
 
 ## `firemud.movement`
 

@@ -6,16 +6,13 @@
       "name": "communication",
       "keyPrefix": "firemud.communication",
       "service": "game-logic-service",
-      "owner": "game-logic-service operator defaults",
-      "description": "Built-in communication safety and availability defaults surfaced by Game Logic.",
+      "owner": "game-logic-service communication behavior defaults",
+      "description": "Built-in communication behavior defaults surfaced by Game Logic; player availability is controlled by standard command capabilities.",
       "referenceDoc": "design/architecture/microservices/game-logic-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective/communication",
       "properties": [
         "firemud.communication.max-message-length",
-        "firemud.communication.defaults.say-enabled",
-        "firemud.communication.defaults.whisper-enabled",
-        "firemud.communication.defaults.tell-enabled",
-        "firemud.communication.defaults.whisper-observer-metadata-enabled"
+        "firemud.communication.whisper-observer-metadata-enabled"
       ]
     },
     {
@@ -62,8 +59,22 @@
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
       "properties": [
-        "firemud.command-history.enabled",
         "firemud.command-history.max-entries"
+      ]
+    },
+    {
+      "name": "commandCapabilities",
+      "keyPrefix": "firemud.command-capabilities",
+      "service": "common-platform-core",
+      "owner": "common-platform-core shared player-command policy",
+      "description": "Tenant/game-controlled availability for standard player command families.",
+      "referenceDoc": "design/architecture/system-architecture-player-command-model.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        "firemud.command-capabilities.social-enabled",
+        "firemud.command-capabilities.presence-enabled",
+        "firemud.command-capabilities.inventory-enabled",
+        "firemud.command-capabilities.command-history-enabled"
       ]
     },
     {
@@ -94,41 +105,17 @@
   ],
   "properties": {
     "firemud.communication.max-message-length": {
-      "group": "communication.defaults",
-      "scope": "operator-only",
+      "group": "communication.behavior",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable within operator-enforced caps",
       "hotReloadable": false,
       "advanced": false,
       "exampleValue": 512,
       "constraints": "integer >= 1"
     },
-    "firemud.communication.defaults.say-enabled": {
-      "group": "communication.defaults",
-      "scope": "operator-only",
-      "futureScope": "tenant/game-configurable within operator-enforced caps",
-      "hotReloadable": false,
-      "advanced": false,
-      "exampleValue": true
-    },
-    "firemud.communication.defaults.whisper-enabled": {
-      "group": "communication.defaults",
-      "scope": "operator-only",
-      "futureScope": "tenant/game-configurable within operator-enforced caps",
-      "hotReloadable": false,
-      "advanced": false,
-      "exampleValue": true
-    },
-    "firemud.communication.defaults.tell-enabled": {
-      "group": "communication.defaults",
-      "scope": "operator-only",
-      "futureScope": "tenant/game-configurable within operator-enforced caps",
-      "hotReloadable": false,
-      "advanced": false,
-      "exampleValue": true
-    },
-    "firemud.communication.defaults.whisper-observer-metadata-enabled": {
-      "group": "communication.defaults",
-      "scope": "operator-only",
+    "firemud.communication.whisper-observer-metadata-enabled": {
+      "group": "communication.behavior",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable within operator-enforced caps",
       "hotReloadable": false,
       "advanced": true,
@@ -246,22 +233,46 @@
       "exampleValue": 65536,
       "constraints": "integer >= 1 bytes"
     },
-    "firemud.command-history.enabled": {
-      "group": "commandHistory.capability",
-      "scope": "tenant/game-configurable",
-      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
-      "hotReloadable": false,
-      "advanced": false,
-      "exampleValue": true
-    },
     "firemud.command-history.max-entries": {
       "group": "commandHistory.retention",
-      "scope": "tenant/game-configurable within the platform maximum",
-      "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable within platform bounds",
       "hotReloadable": false,
       "advanced": false,
       "exampleValue": 10,
       "constraints": "integer from 1 to 20"
+    },
+    "firemud.command-capabilities.social-enabled": {
+      "group": "commandCapabilities.availability",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": true
+    },
+    "firemud.command-capabilities.presence-enabled": {
+      "group": "commandCapabilities.availability",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": true
+    },
+    "firemud.command-capabilities.inventory-enabled": {
+      "group": "commandCapabilities.availability",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": true
+    },
+    "firemud.command-capabilities.command-history-enabled": {
+      "group": "commandCapabilities.availability",
+      "scope": "tenant/game-configurable",
+      "futureScope": "tenant/game-configurable",
+      "hotReloadable": false,
+      "advanced": false,
+      "exampleValue": true
     },
     "firemud.movement.post-move-look-enabled": {
       "group": "movement.postMoveView",

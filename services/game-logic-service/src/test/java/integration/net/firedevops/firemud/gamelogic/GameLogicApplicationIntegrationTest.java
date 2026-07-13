@@ -48,10 +48,7 @@ class GameLogicApplicationIntegrationTest {
             new ScopedSettingsSnapshot(
                 new ScopedSettingsOverrides(
                     null,
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        640,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            true, true, true, false)),
+                    new ScopedSettingsOverrides.CommunicationOverride(640, false),
                     null,
                     null,
                     null),
@@ -62,7 +59,6 @@ class GameLogicApplicationIntegrationTest {
             "http://localhost:" + port + "/actuator/settings/effective/communication?tenantId=42");
 
     assertThat(body).contains("\"maxMessageLength\":640");
-    assertThat(body).contains("\"whisperEnabled\":true");
     assertThat(body).contains("\"whisperObserverMetadataEnabled\":false");
     assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\"]");
   }
@@ -74,19 +70,13 @@ class GameLogicApplicationIntegrationTest {
             new ScopedSettingsSnapshot(
                 new ScopedSettingsOverrides(
                     null,
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        640,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            true, true, true, true)),
+                    new ScopedSettingsOverrides.CommunicationOverride(640, true),
                     null,
                     null,
                     null),
                 new ScopedSettingsOverrides(
                     null,
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        null,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            false, null, null, null)),
+                    new ScopedSettingsOverrides.CommunicationOverride(null, false),
                     null,
                     null,
                     null)));
@@ -98,7 +88,7 @@ class GameLogicApplicationIntegrationTest {
                 + "/actuator/settings/effective/communication?tenantId=42&gameInstanceId=7");
 
     assertThat(body).contains("\"maxMessageLength\":640");
-    assertThat(body).contains("\"sayEnabled\":false");
+    assertThat(body).contains("\"whisperObserverMetadataEnabled\":false");
     assertThat(body)
         .contains(
             "\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\",\"gameInstancePersistedOverride:7\"]");

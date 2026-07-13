@@ -16,6 +16,11 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
     },
     {
+      "name": "firemud.command-capabilities",
+      "type": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties"
+    },
+    {
       "name": "firemud.movement",
       "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
       "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
@@ -126,13 +131,6 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
-      "name": "firemud.command-history.enabled",
-      "type": "java.lang.Boolean",
-      "defaultValue": true,
-      "description": "Whether accepted command history is available to players through the HISTORY command.",
-      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
-    },
-    {
       "name": "firemud.command-history.max-entries",
       "type": "java.lang.Integer",
       "defaultValue": 10,
@@ -145,6 +143,34 @@
       "defaultValue": 60000,
       "description": "Delay, in milliseconds, between bounded background sweeps that trim inactive player command histories to their current effective maximum.",
       "sourceType": "net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJob"
+    },
+    {
+      "name": "firemud.command-capabilities.social-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether standard social commands such as SAY, WHISPER, TELL, and FRIENDS are available by default.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties"
+    },
+    {
+      "name": "firemud.command-capabilities.presence-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether standard presence commands such as WHO are available by default.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties"
+    },
+    {
+      "name": "firemud.command-capabilities.inventory-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether standard inventory and equipment commands are available by default.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties"
+    },
+    {
+      "name": "firemud.command-capabilities.command-history-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether the player-facing HISTORY command is available by default.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties"
     },
     {
       "name": "firemud.movement.post-move-look-enabled",

@@ -16,8 +16,8 @@
       "name": "communication",
       "keyPrefix": "firemud.communication",
       "service": "game-logic-service",
-      "owner": "game-logic-service operator defaults",
-      "description": "Built-in communication safety and availability defaults surfaced by Game Logic.",
+      "owner": "game-logic-service communication behavior defaults",
+      "description": "Built-in communication behavior defaults surfaced by Game Logic; player availability is controlled by standard command capabilities.",
       "referenceDoc": "design/architecture/microservices/game-logic-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective/communication",
       "properties": [
@@ -28,8 +28,8 @@
           "description": "Maximum number of characters accepted for a single communication message before the service rejects it.",
           "defaultValue": 512,
           "domain": "communication",
-          "group": "communication.defaults",
-          "scope": "operator-only",
+          "group": "communication.behavior",
+          "scope": "tenant/game-configurable",
           "futureScope": "tenant/game-configurable within operator-enforced caps",
           "hotReloadable": false,
           "advanced": false,
@@ -38,80 +38,14 @@
           "constraints": "integer >= 1"
         },
         {
-          "name": "firemud.communication.defaults.say-enabled",
+          "name": "firemud.communication.whisper-observer-metadata-enabled",
           "type": "java.lang.Boolean",
-          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
-          "description": "Whether the built-in SAY communication mode is enabled in the shared communication pipeline.",
-          "defaultValue": true,
-          "domain": "communication",
-          "group": "communication.defaults",
-          "scope": "operator-only",
-          "futureScope": "tenant/game-configurable within operator-enforced caps",
-          "hotReloadable": false,
-          "advanced": false,
-          "exampleValue": true,
-          "allowedValues": [
-            {
-              "value": "true"
-            },
-            {
-              "value": "false"
-            }
-          ]
-        },
-        {
-          "name": "firemud.communication.defaults.whisper-enabled",
-          "type": "java.lang.Boolean",
-          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
-          "description": "Whether the built-in WHISPER communication mode is enabled in the shared communication pipeline.",
-          "defaultValue": true,
-          "domain": "communication",
-          "group": "communication.defaults",
-          "scope": "operator-only",
-          "futureScope": "tenant/game-configurable within operator-enforced caps",
-          "hotReloadable": false,
-          "advanced": false,
-          "exampleValue": true,
-          "allowedValues": [
-            {
-              "value": "true"
-            },
-            {
-              "value": "false"
-            }
-          ]
-        },
-        {
-          "name": "firemud.communication.defaults.tell-enabled",
-          "type": "java.lang.Boolean",
-          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
-          "description": "Whether the built-in TELL communication mode is enabled in the shared communication pipeline.",
-          "defaultValue": true,
-          "domain": "communication",
-          "group": "communication.defaults",
-          "scope": "operator-only",
-          "futureScope": "tenant/game-configurable within operator-enforced caps",
-          "hotReloadable": false,
-          "advanced": false,
-          "exampleValue": true,
-          "allowedValues": [
-            {
-              "value": "true"
-            },
-            {
-              "value": "false"
-            }
-          ]
-        },
-        {
-          "name": "firemud.communication.defaults.whisper-observer-metadata-enabled",
-          "type": "java.lang.Boolean",
-          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties",
           "description": "Whether flagged whisper observers receive metadata-only bystander views by default.",
           "defaultValue": true,
           "domain": "communication",
-          "group": "communication.defaults",
-          "scope": "operator-only",
+          "group": "communication.behavior",
+          "scope": "tenant/game-configurable",
           "futureScope": "tenant/game-configurable within operator-enforced caps",
           "hotReloadable": false,
           "advanced": true,
@@ -403,15 +337,42 @@
       "runtimeSurface": "/actuator/settings/effective",
       "properties": [
         {
-          "name": "firemud.command-history.enabled",
-          "type": "java.lang.Boolean",
+          "name": "firemud.command-history.max-entries",
+          "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties",
-          "description": "Whether accepted command history is available to players through the HISTORY command.",
-          "defaultValue": true,
+          "description": "Maximum retained and displayable accepted command-history entries per player character; values are capped at 20.",
+          "defaultValue": 10,
           "domain": "commandHistory",
-          "group": "commandHistory.capability",
+          "group": "commandHistory.retention",
           "scope": "tenant/game-configurable",
-          "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+          "futureScope": "tenant/game-configurable within platform bounds",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": 10,
+          "allowedValues": [],
+          "constraints": "integer from 1 to 20"
+        }
+      ]
+    },
+    {
+      "name": "commandCapabilities",
+      "keyPrefix": "firemud.command-capabilities",
+      "service": "common-platform-core",
+      "owner": "common-platform-core shared player-command policy",
+      "description": "Tenant/game-controlled availability for standard player command families.",
+      "referenceDoc": "design/architecture/system-architecture-player-command-model.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.command-capabilities.social-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties",
+          "description": "Whether standard social commands such as SAY, WHISPER, TELL, and FRIENDS are available by default.",
+          "defaultValue": true,
+          "domain": "commandCapabilities",
+          "group": "commandCapabilities.availability",
+          "scope": "tenant/game-configurable",
+          "futureScope": "tenant/game-configurable",
           "hotReloadable": false,
           "advanced": false,
           "exampleValue": true,
@@ -425,20 +386,70 @@
           ]
         },
         {
-          "name": "firemud.command-history.max-entries",
-          "type": "java.lang.Integer",
-          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties",
-          "description": "Maximum retained and displayable accepted command-history entries per player character; values are capped at 20.",
-          "defaultValue": 10,
-          "domain": "commandHistory",
-          "group": "commandHistory.retention",
-          "scope": "tenant/game-configurable within the platform maximum",
-          "futureScope": "tenant/game-configurable within centralized operator-defined caps",
+          "name": "firemud.command-capabilities.presence-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties",
+          "description": "Whether standard presence commands such as WHO are available by default.",
+          "defaultValue": true,
+          "domain": "commandCapabilities",
+          "group": "commandCapabilities.availability",
+          "scope": "tenant/game-configurable",
+          "futureScope": "tenant/game-configurable",
           "hotReloadable": false,
           "advanced": false,
-          "exampleValue": 10,
-          "allowedValues": [],
-          "constraints": "integer from 1 to 20"
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.command-capabilities.inventory-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties",
+          "description": "Whether standard inventory and equipment commands are available by default.",
+          "defaultValue": true,
+          "domain": "commandCapabilities",
+          "group": "commandCapabilities.availability",
+          "scope": "tenant/game-configurable",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.command-capabilities.command-history-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties",
+          "description": "Whether the player-facing HISTORY command is available by default.",
+          "defaultValue": true,
+          "domain": "commandCapabilities",
+          "group": "commandCapabilities.availability",
+          "scope": "tenant/game-configurable",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
         }
       ]
     },

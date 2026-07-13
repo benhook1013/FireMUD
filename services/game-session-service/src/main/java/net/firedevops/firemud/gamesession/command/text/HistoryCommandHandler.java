@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
@@ -20,24 +22,27 @@ final class HistoryCommandHandler {
 
   private final PlayerCommandHistoryStorageService historyStorageService;
   private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
 
   HistoryCommandHandler(
       PlayerCommandHistoryStorageService historyStorageService,
-      EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver) {
+      EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver,
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver) {
     this.historyStorageService = historyStorageService;
     this.commandHistorySettingsResolver = commandHistorySettingsResolver;
+    this.commandCapabilitiesSettingsResolver = commandCapabilitiesSettingsResolver;
   }
 
   @Timed(value = "gamesession.command.history")
   TextCommandInterpretationResult handle(TextCommand command, SessionContext context) {
+    if (!isEnabled(context)) {
+      return unavailable();
+    }
     FiremudCommandHistoryProperties settings;
     try {
       settings = commandHistorySettingsResolver.commandHistory(context);
     } catch (RuntimeException ex) {
       return unavailable(context, "settings resolution", ex);
-    }
-    if (!settings.enabled()) {
-      return unavailable();
     }
 
     java.util.Optional<TextCommandPayload.HistoryRequest> historyRequest = command.historyPayload();
@@ -66,6 +71,21 @@ final class HistoryCommandHandler {
     }
 
     return success(String.join("\n", entries));
+  }
+
+  private boolean isEnabled(SessionContext context) {
+    try {
+      return commandCapabilitiesSettingsResolver.isEnabled(
+          PlayerCommandCapability.COMMAND_HISTORY, context.tenantId(), context.gameInstanceId());
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Command history capability resolution failed tenantId={} gameInstanceId={} characterId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          ex);
+      return false;
+    }
   }
 
   private TextCommandInterpretationResult invalidCount() {

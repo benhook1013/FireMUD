@@ -244,16 +244,16 @@ class GameSessionApplicationIntegrationTest {
                         new ScopedSettingsOverrides.ReconnectionOverride.PolicyOverride(
                             240_000L, null),
                         null),
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        640,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            true, true, true, false)),
+                    new ScopedSettingsOverrides.CommunicationOverride(640, false),
                     new ScopedSettingsOverrides.PresentationOverride(null, null, true, null),
                     null,
                     new ScopedSettingsOverrides.WorldTopologyOverride(
                         ScopedSettingsOverrides.WorldTopologyOverride.ScopeModel
                             .REGION_AREA_AND_MAP,
-                        null)),
+                        null),
+                    null,
+                    new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+                        false, null, null, true)),
                 new ScopedSettingsOverrides(
                     null,
                     null,
@@ -306,6 +306,9 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"communicationOverrides\":");
     assertThat(body).contains("\"maxMessageLength\":640");
     assertThat(body).contains("\"whisperObserverMetadataEnabled\":false");
+    assertThat(body).contains("\"commandCapabilities\":");
+    assertThat(body).contains("\"socialEnabled\":false");
+    assertThat(body).contains("\"commandHistoryEnabled\":true");
     assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\"");
     assertThat(body)
         .contains("\"sources\":[\"operatorDefaults\",\"gameInstancePersistedOverride:7\"]");

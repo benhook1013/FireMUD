@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentityController;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityInfoContributor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityStartupLogger;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.GameDesignSettingsAuthorityClient;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
@@ -42,7 +43,8 @@ import org.springframework.core.env.Environment;
 @EnableConfigurationProperties({
   ServiceEndpointsProperties.class,
   CommonGrpcClientProperties.class,
-  GameplayCatalogProperties.class
+  GameplayCatalogProperties.class,
+  FiremudCommandCapabilitiesProperties.class
 })
 @Import({TracingConfig.class, CommonGrpcServerConfiguration.class, GrpcServerTlsReloader.class})
 public class CommonCoreAutoConfiguration {
@@ -129,6 +131,15 @@ public class CommonCoreAutoConfiguration {
   public SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver(
       SharedSettingsAuthorityReader sharedSettingsAuthorityReader) {
     return new SharedEffectiveSettingsResolver(sharedSettingsAuthorityReader);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver(
+      FiremudCommandCapabilitiesProperties defaults,
+      SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver) {
+    return new EffectiveCommandCapabilitiesSettingsResolver(
+        defaults, sharedEffectiveSettingsResolver);
   }
 
   @Bean

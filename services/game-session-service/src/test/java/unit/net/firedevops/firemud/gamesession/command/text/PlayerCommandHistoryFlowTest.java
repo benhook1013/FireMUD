@@ -42,9 +42,11 @@ class PlayerCommandHistoryFlowTest {
 
     EffectiveCommandHistorySettingsResolver settingsResolver =
         new EffectiveCommandHistorySettingsResolver(
-            new FiremudCommandHistoryProperties(true, 10),
+            new FiremudCommandHistoryProperties(10),
             (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
-    HistoryCommandHandler historyHandler = new HistoryCommandHandler(storage, settingsResolver);
+    HistoryCommandHandler historyHandler =
+        new HistoryCommandHandler(
+            storage, settingsResolver, CommandCapabilitiesTestSupport.allEnabled());
     TextCommandInterpreter interpreter =
         new TextCommandInterpreter(
             sessionAuthenticationService,
@@ -53,7 +55,8 @@ class PlayerCommandHistoryFlowTest {
             new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
             new TextCommandDispatcher(
                 List.of(new HistoryTextCommandDispatchHandler(historyHandler))),
-            new PlayerCommandHistoryRecorder(storage, settingsResolver));
+            new PlayerCommandHistoryRecorder(
+                storage, settingsResolver, CommandCapabilitiesTestSupport.allEnabled()));
     TextCommand history = new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY");
 
     TextCommandInterpretationResult first = interpreter.interpret("41", history, false);

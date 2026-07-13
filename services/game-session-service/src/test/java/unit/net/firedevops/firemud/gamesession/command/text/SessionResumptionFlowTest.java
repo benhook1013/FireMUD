@@ -114,8 +114,9 @@ class SessionResumptionFlowTest {
       new HistoryCommandHandler(
           Mockito.mock(PlayerCommandHistoryStorageService.class),
           new EffectiveCommandHistorySettingsResolver(
-              new FiremudCommandHistoryProperties(true, 10),
-              (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+              new FiremudCommandHistoryProperties(10),
+              (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
+          CommandCapabilitiesTestSupport.allEnabled());
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 
 record TextCommandDefinition(
     String commandId,
@@ -20,7 +21,8 @@ record TextCommandDefinition(
     String costKey,
     long costAmount,
     String executionHook,
-    List<TextCommandEffectDeclaration> effects) {
+    List<TextCommandEffectDeclaration> effects,
+    PlayerCommandCapability capability) {
   TextCommandDefinition {
     Objects.requireNonNull(commandId, "commandId must not be null");
     Objects.requireNonNull(type, "type must not be null");
@@ -34,10 +36,48 @@ record TextCommandDefinition(
     aliases = List.copyOf(aliases);
     actionTags = List.copyOf(actionTags);
     effects = List.copyOf(effects == null ? List.of() : effects);
+    capability = capability == null ? capabilityFor(type) : capability;
     targetingMode = targetingMode == null || targetingMode.isBlank() ? "NONE" : targetingMode;
     if (executionHook != null && executionHook.isBlank()) {
       executionHook = null;
     }
+  }
+
+  TextCommandDefinition(
+      String commandId,
+      TextCommandType type,
+      List<String> aliases,
+      TextCommandDispatchGroup dispatchGroup,
+      TextCommandStageRequirement stageRequirement,
+      TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory,
+      List<TextCommandActionTag> actionTags,
+      TextCommandSource source,
+      String targetingMode,
+      String cooldownKey,
+      long cooldownTicks,
+      String costKey,
+      long costAmount,
+      String executionHook,
+      List<TextCommandEffectDeclaration> effects) {
+    this(
+        commandId,
+        type,
+        aliases,
+        dispatchGroup,
+        stageRequirement,
+        promptPolicy,
+        actionCategory,
+        actionTags,
+        source,
+        targetingMode,
+        cooldownKey,
+        cooldownTicks,
+        costKey,
+        costAmount,
+        executionHook,
+        effects,
+        null);
   }
 
   TextCommandDefinition(
@@ -273,5 +313,16 @@ record TextCommandDefinition(
         null,
         0L,
         null);
+  }
+
+  private static PlayerCommandCapability capabilityFor(TextCommandType type) {
+    return switch (type) {
+      case SAY, WHISPER, TELL, FRIENDS -> PlayerCommandCapability.SOCIAL;
+      case WHO -> PlayerCommandCapability.PRESENCE;
+      case INVENTORY, EQUIPMENT, CONTAINER, GET, DROP, PUT, TAKE, WEAR, REMOVE ->
+          PlayerCommandCapability.INVENTORY;
+      case HISTORY -> PlayerCommandCapability.COMMAND_HISTORY;
+      default -> PlayerCommandCapability.MANDATORY;
+    };
   }
 }

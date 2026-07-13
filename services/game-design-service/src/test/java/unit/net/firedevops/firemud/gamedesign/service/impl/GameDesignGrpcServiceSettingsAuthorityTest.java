@@ -87,7 +87,9 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
                         null),
                     null,
                     null,
-                    null),
+                    null,
+                    new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+                        false, null, true, null)),
                 ScopedSettingsOverrides.empty()));
     CapturingObserver<GetScopedSettingsOverridesResponse> observer = new CapturingObserver<>();
 
@@ -102,6 +104,12 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
     assertThat(observer.value.hasTenantOverrides()).isTrue();
     assertThat(observer.value.getTenantOverrides().getPresentation().getDefaultColorMode().name())
         .isEqualTo("PRESENTATION_COLOR_MODE_BASIC");
+    assertThat(observer.value.getTenantOverrides().getCommandCapabilities().getSocialEnabled())
+        .isFalse();
+    assertThat(observer.value.getTenantOverrides().getCommandCapabilities().hasPresenceEnabled())
+        .isFalse();
+    assertThat(observer.value.getTenantOverrides().getCommandCapabilities().getInventoryEnabled())
+        .isTrue();
   }
 
   @Test
@@ -164,6 +172,44 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
     verify(settingsAuthorityService)
         .deleteDomainOverride("42", 7L, ScopedSettingsOverrides.SettingsDomain.MOVEMENT);
     assertThat(deleteObserver.value.hasError()).isFalse();
+  }
+
+  @Test
+  void putCommandCapabilitiesOverrideMapsThePersistedPolicyDomain() {
+    CapturingObserver<PutSettingsDomainOverrideResponse> observer = new CapturingObserver<>();
+    SettingsOverrides overrides =
+        SettingsOverrides.newBuilder()
+            .setCommandCapabilities(
+                net.firedevops.firemud.gamedesign.v1.CommandCapabilitiesSettingsOverride
+                    .newBuilder()
+                    .setSocialEnabled(false)
+                    .setCommandHistoryEnabled(true)
+                    .build())
+            .build();
+
+    grpcService.putSettingsDomainOverride(
+        PutSettingsDomainOverrideRequest.newBuilder()
+            .setTenantId("42")
+            .setGameInstanceId(7L)
+            .setDomain(SettingsDomain.SETTINGS_DOMAIN_COMMAND_CAPABILITIES)
+            .setOverrides(overrides)
+            .build(),
+        observer);
+
+    verify(settingsAuthorityService)
+        .putDomainOverride(
+            "42",
+            7L,
+            ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES,
+            new ScopedSettingsOverrides(
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new ScopedSettingsOverrides.CommandCapabilitiesOverride(false, null, null, true)));
+    assertThat(observer.value.hasError()).isFalse();
   }
 
   private static final class CapturingObserver<T> implements StreamObserver<T> {

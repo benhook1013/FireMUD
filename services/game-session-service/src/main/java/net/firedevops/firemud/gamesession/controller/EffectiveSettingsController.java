@@ -2,8 +2,10 @@ package net.firedevops.firemud.gamesession.controller;
 
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
@@ -31,6 +33,7 @@ public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;
   private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
   private final SessionAuthenticationService sessionAuthenticationService;
 
@@ -38,11 +41,13 @@ public class EffectiveSettingsController {
       EffectiveSettingsResolver settingsResolver,
       EffectiveReconnectionSettingsResolver reconnectionSettingsResolver,
       EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver,
+      EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver,
       SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver,
       SessionAuthenticationService sessionAuthenticationService) {
     this.settingsResolver = settingsResolver;
     this.reconnectionSettingsResolver = reconnectionSettingsResolver;
     this.commandHistorySettingsResolver = commandHistorySettingsResolver;
+    this.commandCapabilitiesSettingsResolver = commandCapabilitiesSettingsResolver;
     this.sharedEffectiveSettingsResolver = sharedEffectiveSettingsResolver;
     this.sessionAuthenticationService = sessionAuthenticationService;
   }
@@ -67,6 +72,10 @@ public class EffectiveSettingsController {
         commandHistory =
             commandHistorySettingsResolver.resolvedCommandHistory(resolution.context());
     Long effectiveGameInstanceId = effectiveGameInstanceId(resolution.context());
+    EffectiveCommandCapabilitiesSettingsResolver.ResolvedValue<FiremudCommandCapabilitiesProperties>
+        commandCapabilities =
+            commandCapabilitiesSettingsResolver.resolvedCapabilities(
+                resolution.context().tenantId(), effectiveGameInstanceId);
     SharedEffectiveSettingsResolver.ResolvedScopedSettings sharedOverrides =
         resolution.context().tenantId() > 0L
             ? sharedEffectiveSettingsResolver.resolve(
@@ -93,6 +102,7 @@ public class EffectiveSettingsController {
             new DomainSettings<>(reconnection.effective().policy(), reconnection.sources()),
             new DomainSettings<>(reconnection.effective().buffer(), reconnection.sources()),
             new DomainSettings<>(commandHistory.effective(), commandHistory.sources()),
+            new DomainSettings<>(commandCapabilities.effective(), commandCapabilities.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
             new DomainSettings<>(
                 MovementPostMoveViewSettings.from(movement.effective()), movement.sources()),
@@ -161,6 +171,7 @@ public class EffectiveSettingsController {
       DomainSettings<FiremudReconnectionProperties.Policy> reconnectionPolicy,
       DomainSettings<FiremudReconnectionProperties.Buffer> reconnectBuffer,
       DomainSettings<FiremudCommandHistoryProperties> commandHistory,
+      DomainSettings<FiremudCommandCapabilitiesProperties> commandCapabilities,
       DomainSettings<MovementProperties> movement,
       DomainSettings<MovementPostMoveViewSettings> movementPostMoveView,
       DomainSettings<WorldTopologyProperties> worldTopology,
