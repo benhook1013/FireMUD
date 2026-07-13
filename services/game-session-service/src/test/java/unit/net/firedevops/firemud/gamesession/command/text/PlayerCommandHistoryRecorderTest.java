@@ -31,6 +31,7 @@ class PlayerCommandHistoryRecorderTest {
 
     recorder.record(
         new TextCommand(TextCommandType.LOOK, List.of(), "  LOOK  "),
+        true,
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
@@ -48,6 +49,7 @@ class PlayerCommandHistoryRecorderTest {
     recorder.record(
         new TextCommand(
             TextCommandType.PLAY, List.of("demo", "realm", "next"), "PLAY demo realm next"),
+        true,
         CommandEnqueueResult.success(),
         Optional.of(before),
         Optional.of(after));
@@ -63,6 +65,7 @@ class PlayerCommandHistoryRecorderTest {
 
     recorder.record(
         new TextCommand(TextCommandType.LOGOUT, List.of(), "LOGOUT"),
+        true,
         CommandEnqueueResult.success(),
         Optional.of(before),
         Optional.empty());
@@ -76,6 +79,7 @@ class PlayerCommandHistoryRecorderTest {
 
     recorder.record(
         new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+        true,
         CommandEnqueueResult.failure("FAILED", "no"),
         Optional.of(context),
         Optional.of(context));
@@ -84,6 +88,7 @@ class PlayerCommandHistoryRecorderTest {
             TextCommandType.LOGIN,
             List.of("player@example.com", "secret", "123456"),
             "LOGIN player@example.com secret 123456"),
+        false,
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
@@ -111,6 +116,7 @@ class PlayerCommandHistoryRecorderTest {
 
     recorder.record(
         new TextCommand(TextCommandType.HELP, List.of(), "HELP"),
+        true,
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
@@ -137,6 +143,7 @@ class PlayerCommandHistoryRecorderTest {
         () ->
             recorder.record(
                 new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                true,
                 CommandEnqueueResult.success(),
                 Optional.of(context),
                 Optional.of(context)));
@@ -153,6 +160,7 @@ class PlayerCommandHistoryRecorderTest {
         () ->
             recorder.record(
                 new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                true,
                 CommandEnqueueResult.success(),
                 Optional.of(context),
                 Optional.of(context)));
@@ -164,6 +172,27 @@ class PlayerCommandHistoryRecorderTest {
             Mockito.anyLong(),
             Mockito.anyString(),
             Mockito.anyInt());
+  }
+
+  @Test
+  void doesNotRecordAcceptedCommandWhenDefinitionOptsOut() {
+    SessionContext context = gameplayContext(17L);
+
+    recorder.record(
+        new TextCommand(TextCommandType.HELP, List.of("history"), "HISTORY"),
+        false,
+        CommandEnqueueResult.success(),
+        Optional.of(context),
+        Optional.of(context));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+    verify(settingsResolver, never()).commandHistory(Mockito.any());
   }
 
   private SessionContext gameplayContext(long characterId) {

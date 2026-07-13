@@ -150,6 +150,33 @@ class RevisionServiceImplTest {
   }
 
   @Test
+  void saveRevisionRejectsCommandDefinitionWithoutExplicitHistoryPolicy() {
+    setupGameAndVersion();
+    String invalidDefinition = validCommandDefinition().replace("\"historyRecordable\":true,", "");
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        invalidDefinition,
+                        "COMMAND_DEFINITION",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals(
+        "INVALID_ARGUMENT: commandDefinition historyRecordable must be a boolean", ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
   void saveRevisionRejectsUnsupportedCommandEffectKindBeforePersisting() {
     setupGameAndVersion();
     String invalidDefinition =

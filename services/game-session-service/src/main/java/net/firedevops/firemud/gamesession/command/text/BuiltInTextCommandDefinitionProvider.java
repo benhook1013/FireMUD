@@ -316,6 +316,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
             promptPolicy,
             actionCategory,
             actionTags,
+            type != TextCommandType.LOGIN && type != TextCommandType.HISTORY,
             TextCommandSource.PLATFORM_BUILT_IN));
   }
 }

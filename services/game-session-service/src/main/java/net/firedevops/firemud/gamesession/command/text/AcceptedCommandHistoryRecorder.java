@@ -8,12 +8,13 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 @FunctionalInterface
 public interface AcceptedCommandHistoryRecorder {
   AcceptedCommandHistoryRecorder NOOP =
-      (command, commandResult, contextBefore, contextAfter) -> {
+      (command, historyRecordable, commandResult, contextBefore, contextAfter) -> {
         // Used by focused interpreter seams that do not exercise durable history.
       };
 
   void record(
       TextCommand command,
+      boolean historyRecordable,
       CommandEnqueueResult commandResult,
       Optional<SessionContext> contextBefore,
       Optional<SessionContext> contextAfter);

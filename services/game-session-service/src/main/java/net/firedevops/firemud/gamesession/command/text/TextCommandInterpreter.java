@@ -279,7 +279,11 @@ public class TextCommandInterpreter {
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> promptContext =
         promptContextAfterDispatch(sessionId, definition, dispatchResult, maybeContext);
     commandHistoryRecorder.record(
-        command, dispatchResult.commandResult(), maybeContext, promptContext);
+        command,
+        definition.historyRecordable(),
+        dispatchResult.commandResult(),
+        maybeContext,
+        promptContext);
     TextCommandInterpretationResult promptApplied =
         applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
     return withResolvedCommand(

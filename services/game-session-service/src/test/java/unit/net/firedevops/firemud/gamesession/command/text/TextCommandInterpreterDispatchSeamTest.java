@@ -94,6 +94,7 @@ class TextCommandInterpreterDispatchSeamTest {
     verify(commandHistoryRecorder)
         .record(
             recordedCommand.capture(),
+            Mockito.eq(true),
             Mockito.eq(expectedDispatchResult.commandResult()),
             Mockito.eq(Optional.of(gameplayContext)),
             Mockito.eq(Optional.of(gameplayContext)));

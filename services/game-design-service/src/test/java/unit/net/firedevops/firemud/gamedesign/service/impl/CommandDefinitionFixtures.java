@@ -15,7 +15,7 @@ final class CommandDefinitionFixtures {
         Arrays.stream(aliases).map(alias -> "\"" + alias + "\"").collect(Collectors.joining(","));
     return ("{\"schemaVersion\":1,\"commandId\":\"%s\",\"semanticOwner\":\"GAME_LOGIC\","
             + "\"executionDiscipline\":\"DURABLE_GAMEPLAY\",\"stageRequirement\":\"GAMEPLAY\","
-            + "\"promptPolicy\":\"WHEN_GAMEPLAY\",\"actionCategory\":\"GAMEPLAY\",\"aliases\":[%s],"
+            + "\"promptPolicy\":\"WHEN_GAMEPLAY\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,\"aliases\":[%s],"
             + "\"actionTags\":[\"COMBAT\"],\"effects\":[{\"effectKind\":\"APPLY_ACTION_STATE\","
             + "\"schemaVersion\":1,\"targeting\":\"SELF\",\"replayPolicy\":\"EFFECT_IDEMPOTENT\","
             + "\"payload\":{\"conditionKey\":\"blocking\",\"durationSeconds\":5,\"effectPayload\":{\"modifiers\":[{"
