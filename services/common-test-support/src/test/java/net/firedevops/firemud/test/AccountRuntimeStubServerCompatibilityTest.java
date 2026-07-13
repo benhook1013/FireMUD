@@ -11,6 +11,7 @@ class AccountRuntimeStubServerCompatibilityTest {
       Set.of(
           "CreateAccount",
           "GetProfile",
+          "ListPresenceVisibilityPolicies",
           "UpdateProfile",
           "ExportAccount",
           "ExportTenantData",
@@ -18,8 +19,10 @@ class AccountRuntimeStubServerCompatibilityTest {
           "RequestPasswordReset",
           "CompletePasswordReset",
           "LinkExternalAccount",
+          "RequestEmailLoginOtp",
           "RequestEmailVerification",
-          "VerifyEmail");
+          "VerifyEmail",
+          "VerifyEmailLoginOtp");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
