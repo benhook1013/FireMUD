@@ -83,7 +83,10 @@ final class AdmittedCommandDefinitionReader {
                 for (String json : response.getBundle().getCommandDefinitionsList()) {
                   JsonNode definition = objectMapper.readTree(json);
                   if (commandId.equals(definition.path("commandId").asText())) {
-                    parseDefinition(json);
+                    TextCommandDefinition parsed = parseDefinition(json);
+                    if (parsed.effects().size() != 1) {
+                      return Optional.empty();
+                    }
                     return Optional.of(
                         new AuthoredCommandAdmission(
                             instance.getReleaseBundleId(),

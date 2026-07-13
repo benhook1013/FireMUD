@@ -161,6 +161,24 @@ class AdmittedCommandDefinitionReaderTest {
   }
 
   @Test
+  void doesNotAdmitDefinitionsWithoutTheSingleSupportedExecutionEffect() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validDefinition())
+                        .build())
+                .build());
+
+    assertTrue(reader.admissionFor(context(), "salute").isEmpty());
+  }
+
+  @Test
   void preservesOmittedActionStateModifierScopesAsAbsent() {
     GameInstance instance = admittedInstance();
     when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
