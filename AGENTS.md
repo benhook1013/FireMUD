@@ -69,6 +69,7 @@ Subagents share the main weekly allowance. Use them only for bounded parallel wo
 - Use subagents only for bounded parallelizable work that preserves main-thread context or clearly improves turnaround.
 - When delegating, prefer `gpt-5.6-luna` for bounded work and `gpt-5.6-terra` for bounded implementation or independent tiny-PR review; give each subagent a narrowly scoped task with explicit success conditions.
 - Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
+- For slice or branch reconciliation, read the owning vertical-slice doc first and use its declared scope, proof, and status before interpreting branch names, commit messages, or raw diffs.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.
 - When rolling out or repairing a shared pattern, update the remaining in-scope adopters in the same pass when practical.
 
