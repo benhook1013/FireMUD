@@ -18,6 +18,7 @@ import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -94,6 +95,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.ObjectMapper;
 
 /** Simple gRPC service exposing the Ping RPC. */
 @GrpcService
@@ -121,6 +123,8 @@ public class EntityManagementGrpcService
   private final EntityMutationEffectReplayService entityMutationEffectReplayService;
   private final EntityUpgradeValidationService entityUpgradeValidationService;
   private final EntityTemplateReferenceService entityTemplateReferenceService;
+  private final EffectPayloadParser effectPayloadParser =
+      new EffectPayloadParser(new ObjectMapper());
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -183,7 +187,6 @@ public class EntityManagementGrpcService
         meterRegistry);
   }
 
-  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -213,6 +216,7 @@ public class EntityManagementGrpcService
         meterRegistry);
   }
 
+  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -846,6 +850,7 @@ public class EntityManagementGrpcService
       String conditionKey = requireText(request.getConditionKey(), "conditionKey");
       String sourceType = requireText(request.getSourceType(), "sourceType");
       Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
+      effectPayloadParser.validate(request.getEffectPayloadJson());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),

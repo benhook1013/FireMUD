@@ -2531,6 +2531,65 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void applyActorConditionRejectsMalformedEffectPayloadBeforeReplayExecution() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ActorStateService actorStateService = Mockito.mock(ActorStateService.class);
+    ActorConditionMutationService conditionMutationService =
+        Mockito.mock(ActorConditionMutationService.class);
+    EntityMutationEffectReplayService effectReplayService =
+        Mockito.mock(EntityMutationEffectReplayService.class);
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            actorStateService,
+            conditionMutationService,
+            Mockito.mock(EntityDraftDesignDigestService.class),
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyActorConditionResponse> ref = new AtomicReference<>();
+    service.applyActorCondition(
+        ApplyActorConditionRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("99")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_ISOLATED)
+            .setSessionAttestation("attestation")
+            .setConditionKey("blocking")
+            .setSourceType("ACTION_STATE")
+            .setSourceId("effect-1")
+            .setEffectPayloadJson("{\"effects\":[]}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyActorConditionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    verifyNoInteractions(conditionMutationService, effectReplayService);
+  }
+
+  @Test
   void applyActorConditionRejectsZeroTenantIdBeforeReplayExecution() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);

@@ -46,6 +46,14 @@ class EffectPayloadParserTest {
         "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"not-valid\",\"value\":1}]}");
   }
 
+  @Test
+  void validatesCanonicalPayloadWithoutAnActorSource() {
+    parser.validate(
+        "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"armour\",\"value\":2}]}");
+
+    assertThrows(IllegalArgumentException.class, () -> parser.validate("{\"effects\":[]}"));
+  }
+
   private void assertInvalid(String payload) {
     assertThrows(
         IllegalArgumentException.class, () -> parser.parseModifiers(payload, invalidPayloadSource));

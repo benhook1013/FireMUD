@@ -11,6 +11,9 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class EffectPayloadParser {
+  private static final EffectSource VALIDATION_SOURCE =
+      new EffectSource("VALIDATION", "effect-payload", "");
+
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Spring injects ObjectMapper; storing the shared mapper reference is safe")
@@ -47,6 +50,11 @@ public class EffectPayloadParser {
     } catch (RuntimeException ex) {
       throw new IllegalArgumentException("effect_payload_json is not a valid effect payload", ex);
     }
+  }
+
+  /** Validates the persisted effect payload shape without attaching it to an actor source. */
+  public void validate(String effectPayloadJson) {
+    parseModifiers(effectPayloadJson, VALIDATION_SOURCE);
   }
 
   private EffectModifier toModifier(JsonNode modifier, EffectSource source) {
