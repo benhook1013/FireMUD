@@ -681,6 +681,15 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesHistoryCountSeparatedByTab() {
+    TextCommand command = parser.parse("HISTORY\t5");
+
+    assertEquals(TextCommandType.HISTORY, command.type());
+    assertEquals(List.of("5"), command.args());
+    assertEquals(5, command.historyPayload().orElseThrow().count());
+  }
+
+  @Test
   void preservesNonPositiveHistoryCountForHandlerValidation() {
     TextCommand command = parser.parse("HISTORY 0");
 

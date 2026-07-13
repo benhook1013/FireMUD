@@ -7,7 +7,6 @@ import java.util.Locale;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /** Parses player-provided text lines into {@link TextCommand} objects. */
 @SuppressFBWarnings(
@@ -113,7 +112,7 @@ public class TextCommandParser {
           case SAY -> parseSay(trimmed);
           case WHISPER, TELL -> parseTargetedCommunication(trimmed);
           case MOVE -> parseMove(aliasUsed, tokens);
-          case HISTORY -> parseHistory(trimmed, tokens);
+          case HISTORY -> parseHistory(tokens);
           case UNKNOWN -> parseUnknown(tokens);
         };
     return new TextCommand(commandId, type, parsed.args(), source, aliasUsed, parsed.payload());
@@ -292,28 +291,10 @@ public class TextCommandParser {
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
 
-  private ParsedCommandData parseHistory(String trimmed, String[] tokens) {
+  private ParsedCommandData parseHistory(String[] tokens) {
     List<String> args = parseRemainingTokens(tokens);
-    if (args.isEmpty()) {
-      return new ParsedCommandData(args, new TextCommandPayload.HistoryRequest(null));
-    }
-    if (args.size() != 1) {
-      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
-    }
-    int firstSpace = trimmed.indexOf(' ');
-    if (firstSpace < 0 || firstSpace == trimmed.length() - 1) {
-      return new ParsedCommandData(args, new TextCommandPayload.HistoryRequest(null));
-    }
-    String countText = trimmed.substring(firstSpace + 1).trim();
-    if (!StringUtils.hasText(countText)) {
-      return new ParsedCommandData(args, new TextCommandPayload.HistoryRequest(null));
-    }
-    try {
-      return new ParsedCommandData(
-          args, new TextCommandPayload.HistoryRequest(Integer.parseInt(countText)));
-    } catch (NumberFormatException ex) {
-      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
-    }
+    return new ParsedCommandData(
+        args, TextCommandPayload.fromLegacy(TextCommandType.HISTORY, args));
   }
 
   private ParsedCommandData parseUnknown(String[] tokens) {

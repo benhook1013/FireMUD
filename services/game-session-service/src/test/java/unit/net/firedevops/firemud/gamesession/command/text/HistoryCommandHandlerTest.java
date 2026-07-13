@@ -25,8 +25,7 @@ class HistoryCommandHandlerTest {
                 new FiremudCommandHistoryProperties(false, 10),
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
 
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY"), context);
@@ -50,8 +49,7 @@ class HistoryCommandHandlerTest {
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 10)).thenReturn(List.of());
 
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY"), context);
@@ -72,8 +70,7 @@ class HistoryCommandHandlerTest {
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 2)).thenReturn(List.of("LOOK", "SAY hi"));
 
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY"), context);
@@ -94,8 +91,7 @@ class HistoryCommandHandlerTest {
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
     Mockito.when(storage.findRecent(7L, 9L, 7001L, 5))
         .thenReturn(List.of("LOOK", "SAY hello", "INVENTORY"));
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -161,8 +157,7 @@ class HistoryCommandHandlerTest {
                 new FiremudCommandHistoryProperties(true, 3),
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
 
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -189,8 +184,7 @@ class HistoryCommandHandlerTest {
             new EffectiveCommandHistorySettingsResolver(
                 new FiremudCommandHistoryProperties(true, 10),
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -217,8 +211,7 @@ class HistoryCommandHandlerTest {
             new EffectiveCommandHistorySettingsResolver(
                 new FiremudCommandHistoryProperties(true, 10),
                 (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
-    SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = standardContext();
 
     TextCommandInterpretationResult result =
         handler.handle(
