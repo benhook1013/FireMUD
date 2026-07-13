@@ -33,7 +33,7 @@ These are already partly real in code and should continue after the immediate ru
 3. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: built-in and first-pass authored actions now carry bounded optional tags/facets too; the next follow-through is real scripting/policy consumers of those tags rather than metadata-only attachment.
 4. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, authored `HELP` discovery, and fail-fast unsupported-metadata validation by adding richer targeting/cost/cooldown/effect semantics.
+   Remaining: build on the now-live release-admitted typed command-definition registry, authored `HELP` discovery, immutable durable effect snapshots, and first replay-guarded `APPLY_ACTION_STATE` execution by adding richer targeting, cost, cooldown, and effect semantics.
 5. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: the bounded gameplay-presence, AFK/activity, recent-presence disposition, and first current-game-instance `WHO` substrate are now live; only later activity consumers and richer visibility-policy follow-through remain when that work becomes active.
 6. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
