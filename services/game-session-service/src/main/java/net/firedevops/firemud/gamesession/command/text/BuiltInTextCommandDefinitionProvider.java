@@ -68,6 +68,15 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         List.of(TextCommandActionTag.UI));
     register(
         definitions,
+        TextCommandType.HISTORY,
+        List.of("history"),
+        TextCommandDispatchGroup.HISTORY,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META,
+        List.of(TextCommandActionTag.UI));
+    register(
+        definitions,
         TextCommandType.AFK,
         List.of("afk", "brb"),
         TextCommandDispatchGroup.ACTIVITY,

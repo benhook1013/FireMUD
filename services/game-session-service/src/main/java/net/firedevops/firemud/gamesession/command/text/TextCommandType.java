@@ -30,6 +30,7 @@ public enum TextCommandType {
   SAY,
   WHISPER,
   TELL,
+  HISTORY,
   AUTHORED,
   MOVE,
   NOOP,
@@ -68,6 +69,7 @@ public enum TextCommandType {
       case "SAY" -> SAY;
       case "WHISPER" -> WHISPER;
       case "TELL" -> TELL;
+      case "HISTORY" -> HISTORY;
       case "AUTHORED" -> AUTHORED;
       case "MOVE",
           "GO",

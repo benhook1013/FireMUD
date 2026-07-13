@@ -8,6 +8,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
@@ -22,27 +24,30 @@ public class HelpCommandHandler {
   private final ConfiguredAuthoredActionCatalog authoredActionCatalog;
   private final GameAuthoredHelpReader authoredHelpReader;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
+  private final EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver;
 
   HelpCommandHandler(
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader) {
-    this(authoredActionCatalog, authoredHelpReader, null);
+    this(authoredActionCatalog, authoredHelpReader, null, null);
   }
 
   @org.springframework.beans.factory.annotation.Autowired
   HelpCommandHandler(
       ConfiguredAuthoredActionCatalog authoredActionCatalog,
       GameAuthoredHelpReader authoredHelpReader,
-      AdmittedTextCommandRegistryResolver admittedRegistryResolver) {
+      AdmittedTextCommandRegistryResolver admittedRegistryResolver,
+      EffectiveCommandHistorySettingsResolver commandHistorySettingsResolver) {
     this.authoredActionCatalog =
         Objects.requireNonNull(authoredActionCatalog, "authoredActionCatalog must not be null");
     this.authoredHelpReader =
         Objects.requireNonNull(authoredHelpReader, "authoredHelpReader must not be null");
     this.admittedRegistryResolver = admittedRegistryResolver;
+    this.commandHistorySettingsResolver = commandHistorySettingsResolver;
   }
 
   HelpCommandHandler(ConfiguredAuthoredActionCatalog authoredActionCatalog) {
-    this(authoredActionCatalog, (context, topic) -> Optional.empty(), null);
+    this(authoredActionCatalog, (context, topic) -> Optional.empty(), null, null);
   }
 
   HelpCommandHandler() {
@@ -63,8 +68,9 @@ public class HelpCommandHandler {
     }
 
     List<String> args = command.args();
+    boolean historyEnabled = isHistoryEnabled(maybeContext);
     if (args.isEmpty()) {
-      return success(topicIndex(maybeContext));
+      return success(topicIndex(maybeContext, historyEnabled));
     }
     if (args.size() > 1) {
       return unknownTopic(args.get(0));
@@ -76,7 +82,7 @@ public class HelpCommandHandler {
       return success(authoredTopic.orElseThrow());
     }
 
-    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext);
+    ResolvedHelpTopic resolvedTopic = canonicalTopic(args.get(0), maybeContext, historyEnabled);
     if (resolvedTopic.admittedDefinition() != null) {
       return success(resolvedTopic.admittedDefinition());
     }
@@ -88,7 +94,7 @@ public class HelpCommandHandler {
     }
 
     return switch (resolvedTopic.canonicalTopic()) {
-      case "HELP" -> success(topicIndex(maybeContext));
+      case "HELP" -> success(topicIndex(maybeContext, historyEnabled));
       case "LOGIN" ->
           success(
               "LOGIN <email> [secret]\n"
@@ -201,6 +207,11 @@ public class HelpCommandHandler {
                   + "L is a short alias for LOOK.\n"
                   + "When available, LOOK shows lightweight item affordances like container and wearable tags.\n"
                   + "QUICKLOOK is the shorter room refresh.");
+      case "HISTORY" ->
+          success(
+              "HISTORY [count]\n"
+                  + "Show your recent accepted commands in chronological order.\n"
+                  + "Count is optional and falls back to the configured command-history maximum.");
       case "SAY" -> success("SAY <message>\nSpeak to everyone in the room.");
       case "WHISPER" ->
           success("WHISPER <target> <message>\nSpeak privately to one nearby character.");
@@ -229,7 +240,8 @@ public class HelpCommandHandler {
                 Map.of("topic", normalized))));
   }
 
-  private ResolvedHelpTopic canonicalTopic(String topic, Optional<SessionContext> maybeContext) {
+  private ResolvedHelpTopic canonicalTopic(
+      String topic, Optional<SessionContext> maybeContext, boolean historyEnabled) {
     if (!StringUtils.hasText(topic)) {
       return new ResolvedHelpTopic("", null);
     }
@@ -253,6 +265,7 @@ public class HelpCommandHandler {
           case "BLOCK", "GUARD" -> "BLOCK";
           case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
           case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
+          case "HISTORY" -> historyEnabled ? "HISTORY" : "";
           case "SAY" -> "SAY";
           case "WHISPER" -> "WHISPER";
           case "TELL" -> "TELL";
@@ -278,7 +291,7 @@ public class HelpCommandHandler {
   private record ResolvedHelpTopic(
       String canonicalTopic, TextCommandDefinition admittedDefinition) {}
 
-  private String topicIndex(Optional<SessionContext> maybeContext) {
+  private String topicIndex(Optional<SessionContext> maybeContext, boolean historyEnabled) {
     ArrayList<String> lines =
         new ArrayList<>(
             List.of(
@@ -316,7 +329,14 @@ public class HelpCommandHandler {
                 : definition.aliases().getFirst();
         lines.add("- HELP " + topic.toUpperCase(Locale.ROOT));
       }
-    } else if (admittedRegistryResolver == null && !authoredActionCatalog.all().isEmpty()) {
+    }
+    if (historyEnabled) {
+      int loginIndex = lines.indexOf("- HELP LOGIN");
+      lines.add(loginIndex + 1, "- HELP HISTORY");
+    }
+    if (admittedDefinitions.isEmpty()
+        && admittedRegistryResolver == null
+        && !authoredActionCatalog.all().isEmpty()) {
       lines.add("Authored topics:");
       for (ConfiguredAuthoredActionCatalog.ConfiguredAuthoredAction action :
           authoredActionCatalog.all()) {
@@ -325,6 +345,15 @@ public class HelpCommandHandler {
     }
     lines.add("Type HELP <TOPIC> to read one of them.");
     return String.join("\n", lines);
+  }
+
+  private boolean isHistoryEnabled(Optional<SessionContext> maybeContext) {
+    if (commandHistorySettingsResolver == null) {
+      return true;
+    }
+    FiremudCommandHistoryProperties effective =
+        commandHistorySettingsResolver.commandHistory(maybeContext.orElse(null));
+    return effective.enabled();
   }
 
   private TextCommandInterpretationResult success(

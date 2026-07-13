@@ -58,6 +58,11 @@ class AggregatingTextCommandRegistryTest {
         TextCommandDispatchGroup.ITEM,
         TextCommandActionCategory.GAMEPLAY,
         TextCommandSource.PLATFORM_BUILT_IN);
+    assertDefinition(
+        TextCommandType.HISTORY,
+        TextCommandDispatchGroup.HISTORY,
+        TextCommandActionCategory.META,
+        TextCommandSource.PLATFORM_BUILT_IN);
 
     assertEquals(
         List.of(TextCommandActionTag.MOVEMENT),
@@ -65,6 +70,9 @@ class AggregatingTextCommandRegistryTest {
     assertEquals(
         List.of(TextCommandActionTag.COMMUNICATION),
         registry.findDefinition(TextCommandType.SAY).orElseThrow().actionTags());
+    assertEquals(
+        List.of(TextCommandActionTag.UI),
+        registry.findDefinition(TextCommandType.HISTORY).orElseThrow().actionTags());
     assertEquals(
         List.of(TextCommandActionTag.INVENTORY),
         registry.findDefinition(TextCommandType.INVENTORY).orElseThrow().actionTags());

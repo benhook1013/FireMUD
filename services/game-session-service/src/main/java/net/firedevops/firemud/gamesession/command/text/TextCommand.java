@@ -113,6 +113,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.HistoryRequest> historyPayload() {
+    return payload instanceof TextCommandPayload.HistoryRequest historyRequest
+        ? Optional.of(historyRequest)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.AuthoredActionInvocation> authoredActionPayload() {
     return payload instanceof TextCommandPayload.AuthoredActionInvocation invocation
         ? Optional.of(invocation)

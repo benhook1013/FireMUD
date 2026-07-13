@@ -112,6 +112,7 @@ public class TextCommandParser {
           case SAY -> parseSay(trimmed);
           case WHISPER, TELL -> parseTargetedCommunication(trimmed);
           case MOVE -> parseMove(aliasUsed, tokens);
+          case HISTORY -> parseHistory(tokens);
           case UNKNOWN -> parseUnknown(tokens);
         };
     return new TextCommand(commandId, type, parsed.args(), source, aliasUsed, parsed.payload());
@@ -288,6 +289,12 @@ public class TextCommandParser {
       }
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseHistory(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    return new ParsedCommandData(
+        args, TextCommandPayload.fromLegacy(TextCommandType.HISTORY, args));
   }
 
   private ParsedCommandData parseUnknown(String[] tokens) {
