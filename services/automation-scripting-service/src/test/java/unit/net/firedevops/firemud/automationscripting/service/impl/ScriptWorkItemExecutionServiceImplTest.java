@@ -719,6 +719,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getCancelReason()).isEqualTo("tenant_id_invalid");
     assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
     assertThat(audit.getFinalOutcome()).isEqualTo("definition_invalid");
+    assertThat(audit.getFinalReason()).isEqualTo("tenant_id_invalid");
     Mockito.verifyNoInteractions(definitionRepository, handoffService);
   }
 
