@@ -97,7 +97,7 @@ class GameSessionLoginIntegrationTest {
             })
         .when(redisTemplate)
         .delete(anyString());
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+    when(accountClient.authenticate(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
     when(sharedSettingsAuthorityReader.readOverrides(anyLong(), org.mockito.ArgumentMatchers.any()))
@@ -144,7 +144,7 @@ class GameSessionLoginIntegrationTest {
 
     ArgumentCaptor<String> tenantCaptor = ArgumentCaptor.forClass(String.class);
     verify(accountClient)
-        .authenticate(tenantCaptor.capture(), eq("demo@example.com"), eq("swordfish"), eq(""));
+        .authenticate(tenantCaptor.capture(), eq("demo@example.com"), eq("swordfish"));
     assertThat(tenantCaptor.getValue()).isEqualTo("42");
   }
 }

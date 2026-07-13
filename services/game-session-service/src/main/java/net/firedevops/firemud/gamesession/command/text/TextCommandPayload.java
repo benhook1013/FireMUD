@@ -31,7 +31,7 @@ public sealed interface TextCommandPayload
     }
   }
 
-  record Credentials(String loginName, String password, String otp) implements TextCommandPayload {}
+  record Credentials(String loginName, String password) implements TextCommandPayload {}
 
   record EmailLoginChallengeRequest(String email) implements TextCommandPayload {}
 
@@ -108,9 +108,8 @@ public sealed interface TextCommandPayload
         if (safeArgs.size() == 1) {
           yield new EmailLoginChallengeRequest(safeArgs.getFirst());
         }
-        yield safeArgs.size() >= 2
-            ? new Credentials(
-                safeArgs.get(0), safeArgs.get(1), safeArgs.size() > 2 ? safeArgs.get(2) : "")
+        yield safeArgs.size() == 2
+            ? new Credentials(safeArgs.get(0), safeArgs.get(1))
             : new Tokens(safeArgs);
       }
       case PLAY ->

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
-import com.bastiaanjansen.otp.TOTPGenerator;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -228,9 +227,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
-      Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication =
-        authenticateAccountIdentity(username, password, otp, true);
+      Long tenantId, String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
@@ -320,9 +318,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(
-      Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication =
-        authenticateAccountIdentity(username, password, otp, false);
+      Long tenantId, String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, false);
     Account account = authentication.account();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
@@ -1040,7 +1037,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
-      String username, String password, String otp, boolean allowEmailLoginOtp) {
+      String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
         accountOpt.orElseThrow(
@@ -1062,16 +1059,6 @@ public class AccountServiceImpl implements AccountService {
           challenge -> recordFailedEmailLoginAttempt(challenge, LocalDateTime.now()));
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
-    }
-    if (account.getTwoFactorSecret() != null
-        && ("platformAdmin".equals(account.getRole())
-            || "tenantAdmin".equals(account.getRole())
-            || "moderator".equals(account.getRole()))) {
-      TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
-      if (otp == null || !generator.verify(otp)) {
-        throw new AuthenticationException(
-            AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
-      }
     }
     return new PrimaryAuthentication(account, Optional.empty());
   }

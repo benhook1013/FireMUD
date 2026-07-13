@@ -86,8 +86,8 @@ class PlayerCommandHistoryRecorderTest {
     recorder.record(
         new TextCommand(
             TextCommandType.LOGIN,
-            List.of("player@example.com", "secret", "123456"),
-            "LOGIN player@example.com secret 123456"),
+            List.of("player@example.com", "secret"),
+            "LOGIN player@example.com secret"),
         false,
         CommandEnqueueResult.success(),
         Optional.of(context),

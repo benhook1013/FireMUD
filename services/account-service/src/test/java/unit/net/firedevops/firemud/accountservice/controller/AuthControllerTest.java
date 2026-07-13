@@ -43,8 +43,8 @@ class AuthControllerTest {
 
   @Test
   void loginReturnsTokenAndAccountId() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password", null);
-    when(accountService.authenticate(1L, "demo", "password", null))
+    LoginRequest request = new LoginRequest(1L, "demo", "password");
+    when(accountService.authenticate(1L, "demo", "password"))
         .thenReturn(new AuthenticationResult(1L, "tok123"));
 
     mockMvc
@@ -60,7 +60,7 @@ class AuthControllerTest {
 
   @Test
   void loginRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    LoginRequest request = new LoginRequest(0L, "demo", "password", null);
+    LoginRequest request = new LoginRequest(0L, "demo", "password");
 
     mockMvc
         .perform(
@@ -76,8 +76,8 @@ class AuthControllerTest {
 
   @Test
   void playerBootstrapReturnsShortLivedToken() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password", null);
-    when(accountService.issuePlayerBootstrap(1L, "demo", "password", null))
+    LoginRequest request = new LoginRequest(1L, "demo", "password");
+    when(accountService.issuePlayerBootstrap(1L, "demo", "password"))
         .thenReturn(
             new PlayerBootstrapResult(
                 1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));

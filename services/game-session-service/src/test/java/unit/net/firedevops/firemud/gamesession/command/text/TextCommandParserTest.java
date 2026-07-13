@@ -47,6 +47,15 @@ class TextCommandParserTest {
   }
 
   @Test
+  void rejectsLegacyThreeArgumentLoginShape() {
+    TextCommand command = parser.parse("LOGIN demo@example.com swordfish 123456");
+
+    assertEquals(TextCommandType.LOGIN, command.type());
+    assertEquals(List.of("demo@example.com", "swordfish", "123456"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.Tokens);
+  }
+
+  @Test
   void parserResolvesAliasesThroughRegistryMetadata() {
     TextCommandParser parser =
         new TextCommandParser(

@@ -218,34 +218,19 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 - Cross-tenant billing-safe variants (`cross_tenant_billing_safe`) are separate methods/routes restricted to `billingAdmin`/`platformAdmin` and may include billing-reporting fields.
 - Shared response-profile identifiers (`high_level_only`, `billing_reporting`, `membership_self_only`, `membership_reporting`) must be declared in the auth route matrix YAML entry for each variant so CI can enforce redaction tests by class.
 
-## Two-Factor Authentication
+## Login Modes
 
-Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
-
-When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over plaintext Telnet are additionally constrained:
-
-- Only accounts that have a `two_factor_secret` configured and
-- Have explicitly opted in to allow plaintext Telnet login in their account settings
-
-may authenticate via the raw TCP Telnet port. The account model includes a boolean flag (for example `allowPlaintextTelnetLogin`) that is exposed both:
-
-- As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
-- As an option in the Telnet account setup flow (default: off, with matching wording).
-
-Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `Authenticate` gRPC response returns a dedicated error code so the Game Session Service can present a clear message to the player. `/auth/login` remains a browser/control-plane endpoint.
+Account Service currently supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected login modes. Both `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not current contracts.
 
 ## Login Error Codes
 
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
 
-- `AUTH_INVALID_CREDENTIALS` - wrong username or password
-- `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
+- `AUTH_INVALID_CREDENTIALS` - wrong username or unsupported/invalid login secret
 - `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
-- `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP` - account attempted to log in over plaintext Telnet but does not yet have two-factor authentication enabled while `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is true
-- `AUTH_PLAINTEXT_TCP_NOT_PERMITTED` - account attempted to log in over plaintext Telnet without having opted in to allow this transport (for example `allowPlaintextTelnetLogin=false`)
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
-The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+The Game Session Service translates these codes into text-protocol `ERROR <CODE>` responses so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
 
 Canonical non-login authorization/entitlement errors:
 
@@ -266,12 +251,10 @@ curl -X POST http://localhost:8080/accounts \
 
 Example login request:
 
-`otp` is only required when two-factor authentication is enabled for the account.
-
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"demo","password":"secret","otp":"123456"}'
+  -d '{"tenantId":1,"username":"demo","password":"secret"}'
 ```
 
 Call the gRPC method with:

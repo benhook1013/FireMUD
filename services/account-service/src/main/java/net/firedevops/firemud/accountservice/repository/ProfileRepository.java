@@ -96,7 +96,6 @@ public class ProfileRepository {
             ACCOUNTS.EMAIL,
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
-            ACCOUNTS.TWO_FACTOR_SECRET,
             ACCOUNTS.EMAIL_VERIFIED,
             ACCOUNTS.LOGIN_AUTH_MODES)
         .from(PROFILES)
@@ -114,7 +113,6 @@ public class ProfileRepository {
             record.get(ACCOUNTS.EMAIL),
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
-            record.get(ACCOUNTS.TWO_FACTOR_SECRET),
             record.get(ACCOUNTS.EMAIL_VERIFIED),
             record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     profile.setTenantId(record.get(PROFILES.TENANT_ID));

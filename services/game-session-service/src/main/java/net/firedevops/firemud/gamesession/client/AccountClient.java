@@ -58,8 +58,7 @@ public final class AccountClient
   }
 
   /** Authenticates a player via the Account Service. */
-  public AuthenticateResponse authenticate(
-      String tenantId, String username, String password, String otp) {
+  public AuthenticateResponse authenticate(String tenantId, String username, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -73,7 +72,6 @@ public final class AccountClient
             .setTenantId(tenantId)
             .setUsername(username)
             .setPassword(password)
-            .setOtp(otp == null ? "" : otp)
             .build();
     try {
       return callStub().authenticate(request);
@@ -133,7 +131,7 @@ public final class AccountClient
   }
 
   public AuthenticateResponse authenticateForReadiness(
-      String tenantId, String username, String password, String otp) {
+      String tenantId, String username, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -147,7 +145,6 @@ public final class AccountClient
             .setTenantId(tenantId)
             .setUsername(username)
             .setPassword(password)
-            .setOtp(otp == null ? "" : otp)
             .build();
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)

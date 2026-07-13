@@ -83,9 +83,7 @@ class AccountGrpcServiceTest {
   void authenticateFailureReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(
-            accountService.authenticate(
-                Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad"), Mockito.any()))
+    Mockito.when(accountService.authenticate(Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad")))
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
@@ -97,7 +95,6 @@ class AccountGrpcServiceTest {
             .setTenantId("1")
             .setUsername("demo")
             .setPassword("bad")
-            .setOtp("")
             .build(),
         new StreamObserver<AuthenticateResponse>() {
           @Override
@@ -682,7 +679,6 @@ class AccountGrpcServiceTest {
             .setTenantId("0")
             .setUsername("demo")
             .setPassword("bad")
-            .setOtp("")
             .build(),
         new StreamObserver<AuthenticateResponse>() {
           @Override

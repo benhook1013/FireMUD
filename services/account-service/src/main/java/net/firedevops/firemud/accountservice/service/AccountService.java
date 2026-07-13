@@ -26,15 +26,14 @@ public interface AccountService {
   AccountDto createAccount(CreateAccountRequest request);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
-      Long tenantId, String username, String password, String otp);
+      Long tenantId, String username, String password);
 
   void requestEmailLoginOtp(Long tenantId, String email);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       Long tenantId, String email, String code);
 
-  PlayerBootstrapResult issuePlayerBootstrap(
-      Long tenantId, String username, String password, String otp);
+  PlayerBootstrapResult issuePlayerBootstrap(Long tenantId, String username, String password);
 
   java.util.List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken);
 

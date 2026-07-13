@@ -27,7 +27,7 @@ class GameplayPathReadinessHealthIndicatorTest {
   @Test
   void healthReturnsUpWhenAccountAndGameLogicOperationsAreReachable() {
     AccountClient accountClient = mock(AccountClient.class);
-    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString(), anyString()))
+    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setError(
@@ -67,7 +67,7 @@ class GameplayPathReadinessHealthIndicatorTest {
     AccountClient accountClient = mock(AccountClient.class);
     doThrow(new IllegalStateException("account down"))
         .when(accountClient)
-        .authenticateForReadiness(anyString(), anyString(), anyString(), anyString());
+        .authenticateForReadiness(anyString(), anyString(), anyString());
     GameplayPathReadinessHealthIndicator indicator =
         new GameplayPathReadinessHealthIndicator(
             accountClient,
@@ -91,7 +91,7 @@ class GameplayPathReadinessHealthIndicatorTest {
   @Test
   void healthReturnsOutOfServiceWhenGameLogicDependencyFails() {
     AccountClient accountClient = mock(AccountClient.class);
-    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString(), anyString()))
+    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setError(
@@ -128,7 +128,7 @@ class GameplayPathReadinessHealthIndicatorTest {
   @Test
   void healthReturnsOutOfServiceWhenLocalSessionContextProbeFails() {
     AccountClient accountClient = mock(AccountClient.class);
-    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString(), anyString()))
+    when(accountClient.authenticateForReadiness(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setError(

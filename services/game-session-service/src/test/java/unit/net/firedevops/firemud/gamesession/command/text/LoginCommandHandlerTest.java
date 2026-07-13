@@ -67,8 +67,7 @@ class LoginCommandHandlerTest {
   void setUp() {
     meterRegistry.clear();
     stubSessionContext(bootstrapShell(1L, 1L));
-    when(accountClient.authenticate(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
@@ -115,8 +114,28 @@ class LoginCommandHandlerTest {
     assertEquals(
         List.of(PlayerOutputKind.MESSAGE),
         result.outputs().stream().map(output -> output.kind()).toList());
-    verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
+    verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"));
     verify(commandService).enqueue("1", command.rawLine(), false);
+  }
+
+  @Test
+  void rejectsLegacyThreeArgumentLoginWithoutFallbackAuthentication() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish", "123456"),
+            "LOGIN demo@example.com swordfish 123456");
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals(LoginCommandConstants.INVALID_ARGUMENTS_CODE, result.commandResult().errorCode());
+    assertEquals(
+        "ERROR LOGIN_ARGUMENTS_INVALID Use LOGIN <email> [secret].",
+        joinedOutputText(result.outputs()));
+    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    verify(firstPartyConnectContextRegistry, never()).find(anyLong());
   }
 
   @Test
@@ -135,7 +154,7 @@ class LoginCommandHandlerTest {
     assertEquals(
         LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, joinedOutputText(result.outputs()));
     verify(accountClient).requestEmailLoginOtp("22", "demo@example.com");
-    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -239,8 +258,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("0").build());
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -266,8 +284,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("-1").build());
     GameInstance instance = buildInstance(1L, 22L, 77L);
@@ -293,8 +310,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(accountClient.authenticate(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken(AUTH_TOKEN)
@@ -383,7 +399,7 @@ class LoginCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
-    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
     verify(commandService).enqueue("1", "LOGIN", false);
   }
 
@@ -809,8 +825,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     stubSessionContext(staleGameplayContext(3L));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -859,8 +874,7 @@ class LoginCommandHandlerTest {
             "scope-stale",
             "req-stale");
     stubSessionContext(partialRoutingProjection);
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -882,7 +896,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     stubSessionContext(staleGameplayContext(4L));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+    when(accountClient.authenticate(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
 
@@ -917,8 +931,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -945,8 +958,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -972,8 +984,7 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -984,10 +995,11 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void accountErrorFallbacksToMessageHeuristic() {
+  void unrecognizedAccountErrorUsesUpstreamFailure() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
-            .setError(ErrorDetail.newBuilder().setCode("").setMessage("Invalid 2FA code").build())
+            .setError(
+                ErrorDetail.newBuilder().setCode("").setMessage("Unrecognized failure").build())
             .build();
     TextCommand command =
         new TextCommand(
@@ -996,14 +1008,13 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(authError);
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("OTP_REQUIRED", result.commandResult().errorCode());
-    assertEquals("ERROR OTP_REQUIRED Invalid 2FA code", joinedOutputText(result.outputs()));
+    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
+    assertEquals("ERROR UPSTREAM_FAILURE Unrecognized failure", joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -1025,8 +1036,7 @@ class LoginCommandHandlerTest {
 
     verify(sessionContextService, times(2))
         .save(any(net.firedevops.firemud.gamesession.service.SessionContext.class));
-    verify(accountClient, times(2))
-        .authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(accountClient, times(2)).authenticate(anyString(), anyString(), anyString());
   }
 
   @Test

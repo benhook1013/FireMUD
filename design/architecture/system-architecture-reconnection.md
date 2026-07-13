@@ -68,7 +68,6 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 
 - TCP loss (Telnet clients)
 - WebSocket loss (Web clients)
-- If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
 After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world, optional realm, and character via the lobby commands (`WORLDS`, `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; first-party WebSocket reconnects must also acquire a fresh connect token before the `/ws/game/**` handshake. Gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. If Telnet smart-client attach hints return later, they should ride hidden MCP metadata on the new TCP connection and remain advisory only.
 

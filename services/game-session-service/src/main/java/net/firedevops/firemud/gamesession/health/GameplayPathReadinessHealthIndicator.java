@@ -55,8 +55,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
     try {
       AuthenticateResponse response =
-          accountClient.authenticateForReadiness(
-              PROBE_TENANT_ID, PROBE_USERNAME, PROBE_PASSWORD, "");
+          accountClient.authenticateForReadiness(PROBE_TENANT_ID, PROBE_USERNAME, PROBE_PASSWORD);
       String outcome = response.hasError() ? response.getError().getCode() : "AUTHENTICATED";
       if (AuthenticationErrorCodes.UPSTREAM_FAILURE.equals(outcome)) {
         dependencies.put(

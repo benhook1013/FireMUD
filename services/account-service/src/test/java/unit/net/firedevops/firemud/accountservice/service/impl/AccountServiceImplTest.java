@@ -329,7 +329,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
         .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "123456", null);
+    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
@@ -356,7 +356,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
         .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "password", null);
+    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "password");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
@@ -385,7 +385,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticate(7L, "demo@example.com", "wrong", null));
+            () -> service.authenticate(7L, "demo@example.com", "wrong"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals(1, challenge.getInvalidAttemptCount());
@@ -480,7 +480,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
 
-    AuthenticationResult result = service.authenticate(1L, "demo", "password", null);
+    AuthenticationResult result = service.authenticate(1L, "demo", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -495,7 +495,7 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
 
-    PlayerBootstrapResult result = service.issuePlayerBootstrap(1L, "demo", "password", null);
+    PlayerBootstrapResult result = service.issuePlayerBootstrap(1L, "demo", "password");
 
     assertEquals(7L, result.accountId());
     assertNotNull(result.bootstrapToken());
@@ -668,7 +668,7 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     assertThrows(
@@ -692,7 +692,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     AuthenticationException ex =
@@ -721,7 +721,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     AuthenticationException ex =
@@ -750,7 +750,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
@@ -803,7 +803,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
@@ -856,7 +856,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
@@ -909,7 +909,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
@@ -962,7 +962,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
@@ -1011,7 +1011,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
 
-    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password", null);
+    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -1023,8 +1023,7 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.empty());
     when(accountRepository.findByEmail("demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
+        assertThrows(AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad"));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
@@ -1036,7 +1035,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticate(1L, "demo@example.com", "password", null));
+            () -> service.authenticate(1L, "demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
@@ -1053,8 +1052,7 @@ class AccountServiceImplTest {
 
     IllegalArgumentException exception =
         assertThrows(
-            IllegalArgumentException.class,
-            () -> service.authenticate(1L, "demo", "password", null));
+            IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "password"));
 
     assertEquals("Invalid credentials", exception.getMessage());
   }
@@ -1137,7 +1135,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1186,7 +1184,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1236,7 +1234,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1284,7 +1282,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1428,7 +1426,7 @@ class AccountServiceImplTest {
               return membership;
             });
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1461,7 +1459,7 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
@@ -1553,7 +1551,7 @@ class AccountServiceImplTest {
             7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     var characters =
@@ -1577,7 +1575,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(membership(account, 7L)));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
@@ -1627,7 +1625,7 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     assertThrows(
@@ -1688,7 +1686,7 @@ class AccountServiceImplTest {
             7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     var characters =
@@ -1728,7 +1726,7 @@ class AccountServiceImplTest {
                 .setCharacterCreationPolicy("ALLOW_NEW")
                 .build());
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     AuthenticationException ex =
@@ -1794,7 +1792,7 @@ class AccountServiceImplTest {
             7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     var characters =
@@ -1838,7 +1836,7 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
 
     var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
@@ -1895,7 +1893,7 @@ class AccountServiceImplTest {
             11L, 7L, "demo", "preview"))
         .thenReturn(true);
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
     when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();

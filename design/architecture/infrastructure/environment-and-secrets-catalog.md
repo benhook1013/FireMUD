@@ -146,7 +146,6 @@ Implementation note: the file-mounted JWT contract below is the player-facing ta
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material; enables hot reload. In staging and production this file is typically sourced from the `jwt-signing-keys` Secret. | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
-| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | When `true`, logins over **plaintext Telnet** (raw TCP via the TCP Proxy) are allowed only for accounts that have 2FA enabled and explicitly opt in to plaintext Telnet login; other accounts must use TLS or the web client | `true` |
 
 Server-side gameplay sessions use a **derived lifetime** instead of a separately tuned TTL knob:
 
@@ -163,8 +162,6 @@ In non-player-facing environments (`local-dev`, `pr-preview`, `dev-demo-cluster`
 Hosted `pr-preview` environments use this as the canonical default: a preview-unique signing-key `Secret` plus a preview-unique JWKS `ConfigMap` in the preview namespace. Shared preview JWT material across namespaces is not allowed.
 Preview namespaces still participate in expected-bindings and preflight checks, but with a preview-scoped contract: preview-unique JWT/JWKS material, isolated internal service bindings, and the normal Redis role split are mandatory, while player-facing backup/admission binding proofs remain reserved for staging/production and other explicitly player-facing environments.
 In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` is required and startup should fail if the service is configured with only `FIREMUD_AUTH_JWT_SECRET`.
-
-For local development and explicitly ephemeral test setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any player-facing environment (`hobby-self-hosted`, staging, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
 
 ---
 

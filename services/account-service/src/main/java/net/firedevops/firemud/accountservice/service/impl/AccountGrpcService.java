@@ -122,8 +122,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           accountService.authenticate(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getUsername(),
-              request.getPassword(),
-              request.getOtp());
+              request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())

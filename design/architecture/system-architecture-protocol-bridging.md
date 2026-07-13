@@ -207,7 +207,7 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 - Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design).
-- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. The detailed plaintext Telnet security rules (2FA requirements, per-account opt-in, and landing-menu warnings) are defined in the **Telnet Command Handling and Controls** section of [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls); this document summarizes only the high-level flow.
+- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is a legacy compatibility transport; player-facing deployments should prefer TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway); they may reuse the same files in small deployments, but they are different trust surfaces.
 
 ### Bridging to the backend
@@ -293,11 +293,11 @@ The exact Telnet configuration varies by environment, but recommended defaults a
 
 | Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
 | --- | --- | --- | --- |
-| Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` may be `false` while iterating; per-account “allow plaintext Telnet login” flags are still required. |
-| Hobby / self‑hosted (single operator) | Prefer Telnet‑over‑TLS; plaintext permitted for legacy clients | Recommended but not strictly required; can front the TCP Proxy directly if PROXY protocol and per-IP limits are not needed | Keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true` and require both the per-account flag and 2FA for plaintext logins where possible. |
-| Player‑facing staging / production | Prefer Telnet‑over‑TLS via edge proxy; plaintext supported only as a hardened legacy channel | Required: Telnet edge proxy terminates public Telnet and forwards via PROXY protocol to the TCP Proxy Service | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` **must remain `true`**; plaintext Telnet is allowed only for accounts that have explicitly opted in and enabled 2FA, with all other players using TLS Telnet or the web client. |
+| Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | Allowed for protocol iteration; do not represent it as an account-factor-protected path. |
+| Hobby / self‑hosted (single operator) | Prefer Telnet-over-TLS; plaintext permitted only for controlled legacy clients | Recommended but not strictly required; can front the TCP Proxy directly if PROXY protocol and per-IP limits are not needed | Prefer TLS Telnet or the web client. |
+| Player-facing staging / production | Telnet-over-TLS via edge proxy or web client | Required for public Telnet ingress | Do not expose public plaintext Telnet until a complete admission policy is implemented and verified. |
 
-These recommendations complement the detailed Telnet controls and 2FA rules in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
+These recommendations complement the detailed Telnet controls in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 
 ---
 
