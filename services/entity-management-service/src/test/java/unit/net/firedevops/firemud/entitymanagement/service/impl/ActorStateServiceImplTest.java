@@ -169,7 +169,7 @@ class ActorStateServiceImplTest {
         """
         {"modifiers":[
           {"operation":"ADD","target_key":"strength","value":2},
-          {"operation":"MULTIPLY","target_key":"strength","value":"1.5"},
+          {"operation":"MULTIPLY","target_key":"strength","value":1.5},
           {"operation":"CLAMP_MAX","target_key":"strength","value":20}
         ]}
         """);

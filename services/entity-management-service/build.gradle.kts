@@ -11,6 +11,7 @@ firemudJooq {
 }
 
 dependencies {
+    implementation(project(":common-platform-core"))
     implementation(project(":common-security"))
     implementation(libs.spring.boot.starter.cache)
 }
