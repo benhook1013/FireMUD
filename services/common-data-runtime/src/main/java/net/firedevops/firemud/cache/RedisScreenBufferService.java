@@ -131,6 +131,10 @@ public class RedisScreenBufferService implements ScreenBufferService {
   }
 
   private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
+    payload.entries.removeIf(entry -> entry.byteSize > buffer.hardMaxBytes());
+    while (payload.entries.size() > buffer.maxEntries()) {
+      payload.entries.removeFirst();
+    }
     Map<EntryPayload, Integer> entryByteSizes = new IdentityHashMap<>();
     int currentBytes = 0;
     int currentLines = 0;
@@ -173,6 +177,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
     public String briefRenderPolicy;
     public String payloadType;
     public String payloadJson;
+    public long orderingToken;
 
     static EntryPayload from(BufferedEntry entry) {
       EntryPayload payload = new EntryPayload();
@@ -185,6 +190,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
       payload.briefRenderPolicy = entry.briefRenderPolicy();
       payload.payloadType = entry.payloadType();
       payload.payloadJson = entry.payloadJson();
+      payload.orderingToken = entry.orderingToken();
       return payload;
     }
 
@@ -198,7 +204,8 @@ public class RedisScreenBufferService implements ScreenBufferService {
           replayPolicy,
           briefRenderPolicy,
           payloadType,
-          payloadJson);
+          payloadJson,
+          orderingToken);
     }
   }
 }

@@ -261,6 +261,7 @@ The canonical resume-transcript unit is one entry carrying:
 For the current architecture, that means:
 
 - the durable resume transcript is keyed by the admitted tenant/game, game instance, and character identity;
+- the sequence-backed durable `resume_transcript_entry.id` is the ordering token, so replay order does not depend on wall-clock timestamp ties;
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
 - a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
 - Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;

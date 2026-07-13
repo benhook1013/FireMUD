@@ -158,6 +158,8 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
   private void validateDomainPayload(
       ScopedSettingsOverrides.SettingsDomain domain, Object payload) {
     switch (domain) {
+      case RECONNECTION ->
+          validateReconnection((ScopedSettingsOverrides.ReconnectionOverride) payload);
       case COMMAND_HISTORY ->
           validateCommandHistory((ScopedSettingsOverrides.CommandHistoryOverride) payload);
       case COMMAND_CAPABILITIES ->
@@ -166,6 +168,45 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
       default -> {
         return;
       }
+    }
+  }
+
+  private void validateReconnection(ScopedSettingsOverrides.ReconnectionOverride reconnection) {
+    if (reconnection.isEmpty()) {
+      throw new IllegalArgumentException("Reconnection override must set policy or buffer values");
+    }
+    if (reconnection.policy() != null
+        && reconnection.policy().resumeWindowMs() != null
+        && reconnection.policy().resumeWindowMs() <= 0L) {
+      throw new IllegalArgumentException("Reconnection resumeWindowMs must be positive");
+    }
+    ScopedSettingsOverrides.ReconnectionOverride.BufferOverride buffer = reconnection.buffer();
+    if (buffer == null) {
+      return;
+    }
+    if (buffer.ttlMs() != null && buffer.ttlMs() < 0L) {
+      throw new IllegalArgumentException("Reconnection buffer ttlMs must be non-negative");
+    }
+    if (buffer.maxEntries() != null && buffer.maxEntries() < 1) {
+      throw new IllegalArgumentException("Reconnection buffer maxEntries must be positive");
+    }
+    if (buffer.minMessages() != null && buffer.minMessages() < 1) {
+      throw new IllegalArgumentException("Reconnection buffer minMessages must be positive");
+    }
+    if (buffer.minLines() != null && buffer.minLines() < 1) {
+      throw new IllegalArgumentException("Reconnection buffer minLines must be positive");
+    }
+    if (buffer.softMaxBytes() != null && buffer.softMaxBytes() < 1) {
+      throw new IllegalArgumentException("Reconnection buffer softMaxBytes must be positive");
+    }
+    if (buffer.hardMaxBytes() != null && buffer.hardMaxBytes() < 1) {
+      throw new IllegalArgumentException("Reconnection buffer hardMaxBytes must be positive");
+    }
+    if (buffer.softMaxBytes() != null
+        && buffer.hardMaxBytes() != null
+        && buffer.hardMaxBytes() < buffer.softMaxBytes()) {
+      throw new IllegalArgumentException(
+          "Reconnection buffer hardMaxBytes must be at least softMaxBytes");
     }
   }
 

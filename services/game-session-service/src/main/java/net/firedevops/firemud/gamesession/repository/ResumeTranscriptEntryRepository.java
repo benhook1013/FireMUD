@@ -12,7 +12,10 @@ import java.util.List;
 import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
 import net.firedevops.firemud.gamesession.jooq.tables.records.ResumeTranscriptEntryRecord;
 import org.jooq.DSLContext;
+import org.jooq.Query;
 import org.jooq.SQLDialect;
+import org.jooq.Sequence;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 /** Persists the source-of-truth bounded reconnect transcript. */
@@ -21,6 +24,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ResumeTranscriptEntryRepository {
+  private static final Sequence<Long> TRANSCRIPT_ID_SEQUENCE =
+      DSL.sequence(DSL.name("resume_transcript_entry_id_seq"), Long.class);
   private final DSLContext dsl;
 
   public ResumeTranscriptEntryRepository(DSLContext dsl) {
@@ -38,6 +43,22 @@ public class ResumeTranscriptEntryRepository {
       records.add(record);
     }
     dsl.batchInsert(records).execute();
+  }
+
+  /** Assigns the sequence-backed token used for durable transcript ordering before batch insert. */
+  public void assignOrderingTokens(Collection<ResumeTranscriptEntry> entries) {
+    if (entries == null || entries.isEmpty()) {
+      return;
+    }
+    List<ResumeTranscriptEntry> unassigned =
+        entries.stream().filter(entry -> entry.getId() == null).toList();
+    if (unassigned.isEmpty()) {
+      return;
+    }
+    List<Long> ids = dsl.nextvals(TRANSCRIPT_ID_SEQUENCE, unassigned.size());
+    for (int index = 0; index < unassigned.size(); index++) {
+      unassigned.get(index).setId(ids.get(index));
+    }
   }
 
   /** Serializes transcript mutations for one scope without retaining a lock-row permanently. */
@@ -58,7 +79,7 @@ public class ResumeTranscriptEntryRepository {
                 .eq(tenantId)
                 .and(RESUME_TRANSCRIPT_ENTRY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(RESUME_TRANSCRIPT_ENTRY.CHARACTER_ID.eq(characterId)))
-        .orderBy(RESUME_TRANSCRIPT_ENTRY.APPENDED_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
+        .orderBy(RESUME_TRANSCRIPT_ENTRY.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -77,7 +98,7 @@ public class ResumeTranscriptEntryRepository {
                         .EXPIRES_AT
                         .isNull()
                         .or(RESUME_TRANSCRIPT_ENTRY.EXPIRES_AT.gt(toOffsetDateTime(cutoff)))))
-        .orderBy(RESUME_TRANSCRIPT_ENTRY.APPENDED_AT.asc(), RESUME_TRANSCRIPT_ENTRY.ID.asc())
+        .orderBy(RESUME_TRANSCRIPT_ENTRY.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -131,6 +152,25 @@ public class ResumeTranscriptEntryRepository {
     dsl.deleteFrom(RESUME_TRANSCRIPT_ENTRY).where(RESUME_TRANSCRIPT_ENTRY.ID.in(ids)).execute();
   }
 
+  /** Persists canonical byte reaccounting for entries written before the current bound model. */
+  public void updateByteSizes(Collection<ResumeTranscriptEntry> entries) {
+    if (entries == null || entries.isEmpty()) {
+      return;
+    }
+    List<Query> updates =
+        entries.stream()
+            .filter(entry -> entry.getId() != null)
+            .<Query>map(
+                entry ->
+                    dsl.update(RESUME_TRANSCRIPT_ENTRY)
+                        .set(RESUME_TRANSCRIPT_ENTRY.BYTE_SIZE, entry.getByteSize())
+                        .where(RESUME_TRANSCRIPT_ENTRY.ID.eq(entry.getId())))
+            .toList();
+    if (!updates.isEmpty()) {
+      dsl.batch(updates).execute();
+    }
+  }
+
   public void deleteByScope(long tenantId, long gameInstanceId, long characterId) {
     dsl.deleteFrom(RESUME_TRANSCRIPT_ENTRY)
         .where(
@@ -143,6 +183,9 @@ public class ResumeTranscriptEntryRepository {
   }
 
   private void populate(ResumeTranscriptEntryRecord record, ResumeTranscriptEntry entry) {
+    if (entry.getId() != null) {
+      record.setId(entry.getId());
+    }
     record.setTenantId(entry.getTenantId());
     record.setGameInstanceId(entry.getGameInstanceId());
     record.setCharacterId(entry.getCharacterId());

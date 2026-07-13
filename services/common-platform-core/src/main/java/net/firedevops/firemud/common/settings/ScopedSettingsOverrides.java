@@ -63,6 +63,7 @@ public record ScopedSettingsOverrides(
 
     public record BufferOverride(
         Long ttlMs,
+        Integer maxEntries,
         Integer minMessages,
         Integer minLines,
         Integer softMaxBytes,

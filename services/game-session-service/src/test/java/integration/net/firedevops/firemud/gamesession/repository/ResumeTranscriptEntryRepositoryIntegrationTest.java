@@ -65,7 +65,7 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     ResumeTranscriptEntry otherCharacter = entry("Other\n", Instant.parse("2026-07-12T01:02:00Z"));
     otherCharacter.setCharacterId(14L);
 
-    repository.saveAll(List.of(later, earlier, otherCharacter));
+    repository.saveAll(List.of(earlier, later, otherCharacter));
     List<ResumeTranscriptEntry> entries = repository.findByScope(22L, 7L, 13L);
 
     assertThat(entries)
@@ -84,12 +84,29 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
+  void assignedOrderingTokensPreserveAppendOrderWhenEntriesShareTheSameMillisecond() {
+    Instant occurredAt = Instant.parse("2026-07-12T01:00:00.123Z");
+    ResumeTranscriptEntry first = entry("First\n", occurredAt);
+    ResumeTranscriptEntry second = entry("Second\n", occurredAt);
+    List<ResumeTranscriptEntry> entries = List.of(first, second);
+
+    repository.assignOrderingTokens(entries);
+    repository.saveAll(entries);
+
+    assertThat(first.getId()).isPositive();
+    assertThat(second.getId()).isGreaterThan(first.getId());
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("First\n", "Second\n");
+  }
+
+  @Test
   void rehydratesATranscriptAfterTheDurableServiceIsRecreated() {
     ReconnectionSettingsResolver settingsResolver =
         (tenantId, gameInstanceId) ->
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(60_000L, 1, 1, 100, 200));
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
         new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
     initial.append(
@@ -180,7 +197,7 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
         (tenantId, gameInstanceId) ->
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(1L, 1, 1, 100, 200));
+                new FiremudReconnectionProperties.Buffer(1L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
         new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
     initial.append(

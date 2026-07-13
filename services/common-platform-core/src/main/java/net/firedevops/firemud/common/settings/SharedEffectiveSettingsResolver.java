@@ -110,6 +110,7 @@ public class SharedEffectiveSettingsResolver {
     }
     return new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
         override.ttlMs() != null ? override.ttlMs() : base.ttlMs(),
+        override.maxEntries() != null ? override.maxEntries() : base.maxEntries(),
         override.minMessages() != null ? override.minMessages() : base.minMessages(),
         override.minLines() != null ? override.minLines() : base.minLines(),
         override.softMaxBytes() != null ? override.softMaxBytes() : base.softMaxBytes(),

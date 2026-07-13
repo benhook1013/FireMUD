@@ -63,4 +63,28 @@ class SettingsAuthorityServiceImplTest {
 
     verifyNoInteractions(repository);
   }
+
+  @ParameterizedTest
+  @ValueSource(ints = {-1, 0})
+  void rejectsNonPositiveReconnectTranscriptEntryLimitsBeforePersistence(int maxEntries) {
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, maxEntries, null, null, null, null)),
+            null,
+            null,
+            null,
+            null);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.putDomainOverride(
+                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .withMessage("Reconnection buffer maxEntries must be positive");
+
+    verifyNoInteractions(repository);
+  }
 }

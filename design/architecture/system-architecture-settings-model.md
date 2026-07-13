@@ -125,11 +125,11 @@ Internal transport/framework constants should not be promoted into this model un
 Today, operator defaults still come from service-local typed properties, while tenant/game overrides for the surfaced pre-`06` domains are persisted in the shared Game Design authority. The agreed target scope for the current domains is:
 
 - `reconnection.policy`
-  - operator-only today
-  - later tenant/game-configurable within operator caps for resume windows and stale-resume fallback
+  - operator defaults seed the resume window and stale-resume fallback
+  - tenant/game overrides currently select the effective reconnect-admission policy
 - `reconnection.buffer`
-  - operator-only today
-  - later tenant/game-configurable within operator caps for transcript retention bounds
+  - operator defaults seed bounded reconnect-transcript retention defaults
+  - tenant/game overrides currently control inactivity expiry, maximum retained entries, minimum retained message/line floors, and byte bounds
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
   - standard communication availability is owned by `commandCapabilities.availability`, not mode-specific communication settings

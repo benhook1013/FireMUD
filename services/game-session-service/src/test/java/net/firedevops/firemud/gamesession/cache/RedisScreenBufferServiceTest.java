@@ -94,7 +94,8 @@ class RedisScreenBufferServiceTest {
             (tenantId, gameInstanceId) ->
                 new FiremudReconnectionProperties(
                     null,
-                    new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
+                    new FiremudReconnectionProperties.Buffer(
+                        1_800_000L, 256, 8, 24, 16_384, 65_536)));
   }
 
   @Test
@@ -150,11 +151,50 @@ class RedisScreenBufferServiceTest {
             new ObjectMapper(),
             (tenantId, gameInstanceId) ->
                 new FiremudReconnectionProperties(
-                    null, new FiremudReconnectionProperties.Buffer(0L, 8, 24, 16_384, 65_536)));
+                    null,
+                    new FiremudReconnectionProperties.Buffer(0L, 256, 8, 24, 16_384, 65_536)));
 
     noExpiryCache.append(
         22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("ONE\n")));
 
     verify(valueOperations, times(2)).set(eq(REDIS_KEY), anyString());
+  }
+
+  @Test
+  void dropsSingleEntryWhoseSuppliedCanonicalSizeExceedsHardLimit() {
+    cacheService.append(
+        22L,
+        1L,
+        123L,
+        List.of(
+            new ScreenBufferService.BufferedEntry(
+                "short\n", 1, 65_537, 1_000L, "VIEW", "REPLAY", "FULL", "look-view", "{}", 1L)));
+
+    assertThat(cacheService.get(22L, 1L, 123L)).isEmpty();
+  }
+
+  @Test
+  void trimsOldestEntryWhenConfiguredEntryLimitIsExceeded() {
+    RedisScreenBufferService limitedCache =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 1, 1, 1, 16_384, 65_536)));
+
+    limitedCache.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("FIRST\n")));
+    limitedCache.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("SECOND\n")));
+
+    assertThat(limitedCache.get(22L, 1L, 123L))
+        .map(ScreenBufferService.BufferedScreen::protocolText)
+        .hasValueSatisfying(
+            transcript -> {
+              assertThat(transcript).contains("SECOND\n");
+              assertThat(transcript).doesNotContain("FIRST\n");
+            });
   }
 }

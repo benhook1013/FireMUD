@@ -204,17 +204,18 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
-The current hot-cache reconnect settings are exposed through:
+The current durable reconnect settings are exposed through:
 
 - `firemud.reconnection.policy.resume-window-ms`
 - `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
 - `firemud.reconnection.buffer.ttl-ms`
+- `firemud.reconnection.buffer.max-entries`
 - `firemud.reconnection.buffer.min-messages`
 - `firemud.reconnection.buffer.min-lines`
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-These remain implementation-level operator/file-env defaults today. They will converge on the durable resume-transcript policy below; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+The `firemud.*` values provide platform defaults. Tenant/game overrides from the shared Game Design settings authority already select the effective reconnect policy and transcript retention bounds; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Canonical durable resume-transcript policy
 

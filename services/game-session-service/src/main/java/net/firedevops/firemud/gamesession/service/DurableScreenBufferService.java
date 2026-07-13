@@ -66,15 +66,28 @@ public class DurableScreenBufferService implements ScreenBufferService {
     }
     Instant scopeExpiresAt =
         buffer.ttlMs() > NO_TTL_MILLIS ? scopeExpiresAt(filtered, buffer) : null;
+    List<ResumeTranscriptEntry> retainedEntries =
+        filtered.stream()
+            .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry, scopeExpiresAt))
+            .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+    repository.assignOrderingTokens(retainedEntries);
+    retainedEntries.forEach(
+        entry -> entry.setByteSize(ResumeTranscriptEntryCanonicalizer.byteSize(entry)));
+    retainedEntries.removeIf(entry -> entry.getByteSize() > buffer.hardMaxBytes());
+    if (retainedEntries.isEmpty()) {
+      return;
+    }
     if (scopeExpiresAt != null) {
       repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
-    repository.saveAll(
-        filtered.stream()
-            .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry, scopeExpiresAt))
-            .toList());
-    trim(tenantId, gameInstanceId, characterId, buffer);
-    appendToHotCache(tenantId, gameInstanceId, characterId, filtered);
+    repository.saveAll(retainedEntries);
+    List<ResumeTranscriptEntry> effectiveEntries =
+        trim(tenantId, gameInstanceId, characterId, buffer);
+    replaceHotCache(
+        tenantId,
+        gameInstanceId,
+        characterId,
+        effectiveEntries.stream().map(this::toBufferedEntry).toList());
   }
 
   @Override
@@ -88,7 +101,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
       return Optional.empty();
     }
     List<BufferedEntry> bufferedEntries = entries.stream().map(this::toBufferedEntry).toList();
-    appendToHotCache(tenantId, gameInstanceId, characterId, bufferedEntries);
+    replaceHotCache(tenantId, gameInstanceId, characterId, bufferedEntries);
     return Optional.of(
         new BufferedScreen(
             bufferedEntries,
@@ -109,7 +122,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
     return repository.deleteExpired(tenantId, gameInstanceId, characterId, Instant.now()) > 0;
   }
 
-  private void trim(
+  private List<ResumeTranscriptEntry> trim(
       long tenantId,
       long gameInstanceId,
       long characterId,
@@ -117,7 +130,27 @@ public class DurableScreenBufferService implements ScreenBufferService {
     Deque<ResumeTranscriptEntry> retained =
         new ArrayDeque<>(
             repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
+    List<ResumeTranscriptEntry> reaccounted = new ArrayList<>();
+    for (ResumeTranscriptEntry entry : retained) {
+      int canonicalByteSize = ResumeTranscriptEntryCanonicalizer.byteSize(entry);
+      if (entry.getByteSize() != canonicalByteSize) {
+        entry.setByteSize(canonicalByteSize);
+        reaccounted.add(entry);
+      }
+    }
+    repository.updateByteSizes(reaccounted);
     List<Long> discardedIds = new ArrayList<>();
+    retained.removeIf(
+        entry -> {
+          if (entry.getByteSize() <= buffer.hardMaxBytes()) {
+            return false;
+          }
+          discardedIds.add(entry.getId());
+          return true;
+        });
+    while (retained.size() > buffer.maxEntries()) {
+      discardedIds.add(retained.removeFirst().getId());
+    }
     Map<ResumeTranscriptEntry, Integer> entryByteSizes = new IdentityHashMap<>();
     int currentBytes = 0;
     int currentLines = 0;
@@ -144,6 +177,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
     if (!discardedIds.isEmpty()) {
       repository.deleteByIds(discardedIds);
     }
+    return List.copyOf(retained);
   }
 
   private ResumeTranscriptEntry toEntity(
@@ -186,15 +220,19 @@ public class DurableScreenBufferService implements ScreenBufferService {
         entry.getReplayPolicy(),
         entry.getBriefRenderPolicy(),
         entry.getPayloadType(),
-        entry.getPayloadJson());
+        entry.getPayloadJson(),
+        entry.getId() == null ? 0L : entry.getId());
   }
 
-  private void appendToHotCache(
+  private void replaceHotCache(
       long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
     try {
-      hotCache.append(tenantId, gameInstanceId, characterId, entries);
+      hotCache.clear(tenantId, gameInstanceId, characterId);
+      if (!entries.isEmpty()) {
+        hotCache.append(tenantId, gameInstanceId, characterId, entries);
+      }
     } catch (RuntimeException ex) {
-      log.warn("Failed to update reconnect transcript cache", ex);
+      log.warn("Failed to replace reconnect transcript cache", ex);
     }
   }
 

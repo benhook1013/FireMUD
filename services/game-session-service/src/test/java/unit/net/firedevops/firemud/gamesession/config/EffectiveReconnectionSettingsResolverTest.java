@@ -30,7 +30,7 @@ class EffectiveReconnectionSettingsResolverTest {
         new EffectiveReconnectionSettingsResolver(
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(45_000L, true),
-                new FiremudReconnectionProperties.Buffer(60_000L, 8, 24, 16_384, 65_536)),
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)),
             authorityReader);
 
     FiremudReconnectionProperties effective =
@@ -41,5 +41,32 @@ class EffectiveReconnectionSettingsResolverTest {
     assertThat(effective.policy().staleResumeFallsThroughToFreshEntry()).isTrue();
     assertThat(effective.buffer().ttlMs()).isEqualTo(60_000L);
     assertThat(effective.buffer().minMessages()).isEqualTo(8);
+  }
+
+  @Test
+  void persistedReconnectEntryLimitOverridesOperatorDefault() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+    when(authorityReader.readOverrides(22L, 7L))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                ScopedSettingsOverrides.empty(),
+                new ScopedSettingsOverrides(
+                    new ScopedSettingsOverrides.ReconnectionOverride(
+                        null,
+                        new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                            null, 12, null, null, null, null)),
+                    null,
+                    null,
+                    null,
+                    null)));
+    EffectiveReconnectionSettingsResolver resolver =
+        new EffectiveReconnectionSettingsResolver(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(45_000L, true),
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)),
+            authorityReader);
+
+    assertThat(resolver.resolve(22L, 7L).buffer().maxEntries()).isEqualTo(12);
   }
 }

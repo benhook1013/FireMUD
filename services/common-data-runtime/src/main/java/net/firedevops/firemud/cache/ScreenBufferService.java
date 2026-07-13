@@ -25,7 +25,8 @@ public interface ScreenBufferService {
       String replayPolicy,
       String briefRenderPolicy,
       String payloadType,
-      String payloadJson) {
+      String payloadJson,
+      long orderingToken) {
     private static final DateTimeFormatter MILLIS_INSTANT_FORMATTER =
         new DateTimeFormatterBuilder().appendInstant(3).toFormatter();
     private static final int JSON_CONTROL_CHARACTER_MAX = 0x1F;
@@ -34,8 +35,31 @@ public interface ScreenBufferService {
       text = text == null ? "" : text;
     }
 
+    public BufferedEntry(
+        String text,
+        int lineCount,
+        int byteSize,
+        long appendedAtMs,
+        String outputKind,
+        String replayPolicy,
+        String briefRenderPolicy,
+        String payloadType,
+        String payloadJson) {
+      this(
+          text,
+          lineCount,
+          byteSize,
+          appendedAtMs,
+          outputKind,
+          replayPolicy,
+          briefRenderPolicy,
+          payloadType,
+          payloadJson,
+          0L);
+    }
+
     public BufferedEntry(String text, int lineCount, int byteSize, long appendedAtMs) {
-      this(text, lineCount, byteSize, appendedAtMs, null, null, null, null, null);
+      this(text, lineCount, byteSize, appendedAtMs, null, null, null, null, null, 0L);
     }
 
     public static BufferedEntry fromText(String text) {
@@ -59,7 +83,8 @@ public interface ScreenBufferService {
           replayPolicy,
           briefRenderPolicy,
           payloadType,
-          payloadJson);
+          payloadJson,
+          0L);
     }
 
     /**
@@ -79,7 +104,8 @@ public interface ScreenBufferService {
           replayPolicy,
           briefRenderPolicy,
           payloadType,
-          payloadJson);
+          payloadJson,
+          orderingToken);
     }
 
     public int canonicalByteSize(long tenantId, long gameInstanceId, long characterId) {
@@ -102,7 +128,7 @@ public interface ScreenBufferService {
           "occurredAt",
           MILLIS_INSTANT_FORMATTER.format(Instant.ofEpochMilli(appendedAtMs)));
       envelope.append(',');
-      appendNumberMember(envelope, "orderingToken", appendedAtMs);
+      appendNumberMember(envelope, "orderingToken", orderingToken);
       envelope.append(',');
       appendMember(envelope, "outputKind", outputKind);
       envelope.append(',');
