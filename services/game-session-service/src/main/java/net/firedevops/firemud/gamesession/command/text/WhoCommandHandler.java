@@ -9,7 +9,6 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
-import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -69,10 +68,10 @@ public class WhoCommandHandler {
     for (GameplayPresence presence : presences) {
       WhoViewOutput.Entry entry =
           new WhoViewOutput.Entry(
-              presence.role() == GameplayPresenceRole.GOD ? godOrdinal++ : playerOrdinal++,
+              presence.role().isElevated() ? godOrdinal++ : playerOrdinal++,
               presence.characterName(),
               gameplayPresenceActivityResolver.resolve(presence).name());
-      if (presence.role() == GameplayPresenceRole.GOD) {
+      if (presence.role().isElevated()) {
         gods.add(entry);
       } else {
         players.add(entry);

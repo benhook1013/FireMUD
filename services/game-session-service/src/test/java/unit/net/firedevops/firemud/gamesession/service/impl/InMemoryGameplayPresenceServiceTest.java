@@ -17,7 +17,7 @@ class InMemoryGameplayPresenceServiceTest {
   private final JwtUtil jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
 
   @Test
-  void classifiesGodsFromJwtAndSortsGodsFirst() {
+  void classifiesAdminsFromJwtAndSortsElevatedPresenceFirst() {
     InMemoryGameplayPresenceService service = new InMemoryGameplayPresenceService(jwtUtil);
     String godJwt =
         jwtUtil.generateToken(
@@ -41,7 +41,7 @@ class InMemoryGameplayPresenceServiceTest {
     var result = service.listConnectedByGameInstance(22L, 7L);
 
     assertEquals(2, result.size());
-    assertEquals(GameplayPresenceRole.GOD, result.get(0).role());
+    assertEquals(GameplayPresenceRole.ADMIN, result.get(0).role());
     assertEquals("Aster", result.get(0).characterName());
     assertEquals(GameplayPresenceRole.PLAYER, result.get(1).role());
     assertEquals("Ben", result.get(1).characterName());

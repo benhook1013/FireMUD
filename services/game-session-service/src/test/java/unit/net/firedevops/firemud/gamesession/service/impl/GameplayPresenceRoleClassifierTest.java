@@ -30,7 +30,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleReturnsGodForScopedModeratorRole() {
+  void classifyRoleReturnsModeratorForScopedModeratorRole() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
@@ -47,7 +47,7 @@ class GameplayPresenceRoleClassifierTest {
             JWT_UTIL,
             logger);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.MODERATOR, role);
   }
 
   @Test
@@ -56,6 +56,50 @@ class GameplayPresenceRoleClassifierTest {
     String jwt =
         JWT_UTIL.generateToken(
             "202", java.util.Map.of("accountId", "202", "globalRoles", java.util.List.of("god")));
+
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            logger);
+
+    assertEquals(GameplayPresenceRole.GOD, role);
+  }
+
+  @Test
+  void classifyRoleReturnsAdminForTenantAdminRole() {
+    Logger logger = mock(Logger.class);
+    String jwt =
+        JWT_UTIL.generateToken(
+            "202",
+            java.util.Map.of(
+                "accountId",
+                "202",
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("tenantAdmin"))));
+
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            logger);
+
+    assertEquals(GameplayPresenceRole.ADMIN, role);
+  }
+
+  @Test
+  void classifyRoleUsesTheHighestAvailableGameplayRole() {
+    Logger logger = mock(Logger.class);
+    String jwt =
+        JWT_UTIL.generateToken(
+            "202",
+            java.util.Map.of(
+                "accountId",
+                "202",
+                "globalRoles",
+                java.util.List.of("moderator", "god"),
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("tenantAdmin"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(

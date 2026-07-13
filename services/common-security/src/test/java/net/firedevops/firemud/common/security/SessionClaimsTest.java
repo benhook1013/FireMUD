@@ -27,4 +27,20 @@ class SessionClaimsTest {
 
     assertFalse(claims.hasGameplayElevatedRole("7"));
   }
+
+  @Test
+  void hasGameplayRoleChecksGlobalAndRequestedTenantScopeOnly() {
+    SessionClaims claims =
+        new SessionClaims(
+            "11",
+            List.of("platformAdmin"),
+            Map.of("7", List.of("moderator"), "8", List.of("god")),
+            false,
+            null,
+            null);
+
+    assertTrue(claims.hasGameplayRole("7", "platformAdmin"));
+    assertTrue(claims.hasGameplayRole("7", "moderator"));
+    assertFalse(claims.hasGameplayRole("7", "god"));
+  }
 }
