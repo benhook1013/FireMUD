@@ -3,12 +3,14 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlingResult;
+import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
@@ -113,6 +115,37 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
     assertThat(result).isEmpty();
     verify(moveCommandHandler, never()).prepare(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void executeIgnoresNonDurableCommandsBeforeResolvingAnAdmittedRegistry() {
+    AdmittedTextCommandRegistryResolver admittedRegistryResolver =
+        Mockito.mock(AdmittedTextCommandRegistryResolver.class);
+    DefaultDurableGameplayCommandExecutionService admittedRegistryService =
+        new DefaultDurableGameplayCommandExecutionService(
+            meterRegistry,
+            parser,
+            admittedRegistryResolver,
+            sessionAuthenticationService,
+            moveCommandHandler,
+            itemCommandHandler,
+            communicationCommandHandler,
+            afkCommandHandler,
+            actionStateCommandHandler,
+            builtInMetadataResolver,
+            durableGameplayReplayService,
+            movementEffectIdempotencyService,
+            playerOutputDeliveryService,
+            scriptEventPublisher);
+    GameplayCommand command = gameplayCommand("LOOK", "LOOK");
+    when(parser.parse("LOOK"))
+        .thenReturn(new TextCommand(TextCommandType.LOOK, java.util.List.of(), "LOOK"));
+
+    Optional<DurableGameplayCommandExecutionResult> result =
+        admittedRegistryService.execute(tickEffect("tfx-ignore", "cmd-ignore"), command);
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(admittedRegistryResolver, sessionAuthenticationService);
   }
 
   @Test

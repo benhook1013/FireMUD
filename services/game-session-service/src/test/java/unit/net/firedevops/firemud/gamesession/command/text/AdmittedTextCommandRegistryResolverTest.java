@@ -65,6 +65,19 @@ class AdmittedTextCommandRegistryResolverTest {
     assertThat(registry.findDefinitionByAlias("salute")).isEmpty();
   }
 
+  @Test
+  void fallsBackToBuiltInsWhenAnAdmittedDefinitionCollidesWithABuiltIn() {
+    TextCommandDefinition collidingDefinition =
+        new BuiltInTextCommandDefinitionProvider().definitions().getFirst();
+    when(admittedCommandDefinitionReader.definitionsFor(null))
+        .thenReturn(Optional.of(List.of(collidingDefinition)));
+
+    TextCommandRegistry registry = resolver(new MockEnvironment()).resolve(null);
+
+    assertThat(registry.findDefinitionByAlias("look")).isPresent();
+    assertThat(registry.findDefinitionByAlias("salute")).isEmpty();
+  }
+
   private AdmittedTextCommandRegistryResolver resolver(MockEnvironment environment) {
     AuthoredActionProperties properties = new AuthoredActionProperties();
     AuthoredActionProperties.Action salute = new AuthoredActionProperties.Action();

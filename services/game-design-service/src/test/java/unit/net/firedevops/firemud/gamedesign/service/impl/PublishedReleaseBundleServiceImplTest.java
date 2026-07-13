@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.commandDefinition;
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -227,18 +229,5 @@ class PublishedReleaseBundleServiceImplTest {
         "notes",
         LocalDateTime.now(),
         LocalDateTime.now());
-  }
-
-  private String validCommandDefinition() {
-    return commandDefinition("block", "block");
-  }
-
-  private String commandDefinition(String commandId, String alias) {
-    String template =
-        """
-        {"schemaVersion":1,"commandId":"%s","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","aliases":["%s"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1}]}}}]}%n
-        """
-            .stripTrailing();
-    return String.format(template, commandId, alias);
   }
 }

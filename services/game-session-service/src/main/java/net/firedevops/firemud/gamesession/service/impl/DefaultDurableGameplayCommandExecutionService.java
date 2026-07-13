@@ -121,8 +121,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
     TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    if (admittedRegistryResolver == null
-        && resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
+    if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
         && parsed.type() != TextCommandType.UNKNOWN) {
       return Optional.empty();
     }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -153,7 +154,7 @@ class RevisionServiceImplTest {
     setupGameAndVersion();
     String invalidDefinition =
         validCommandDefinition()
-            .replace("\"effectKind\": \"APPLY_ACTION_STATE\"", "\"effectKind\": \"RUN_SQL\"");
+            .replace("\"effectKind\":\"APPLY_ACTION_STATE\"", "\"effectKind\":\"RUN_SQL\"");
 
     IllegalArgumentException ex =
         assertThrows(
@@ -180,8 +181,7 @@ class RevisionServiceImplTest {
   @Test
   void saveRevisionRejectsCommandEffectWithMalformedModifierBeforePersisting() {
     setupGameAndVersion();
-    String invalidDefinition =
-        validCommandDefinition().replace("\"value\": 1", "\"value\": \"one\"");
+    String invalidDefinition = validCommandDefinition().replace("\"value\":1", "\"value\":\"one\"");
 
     IllegalArgumentException ex =
         assertThrows(
@@ -210,7 +210,7 @@ class RevisionServiceImplTest {
   void saveRevisionRejectsFractionalActionStateDurationBeforePersisting() {
     setupGameAndVersion();
     String invalidDefinition =
-        validCommandDefinition().replace("\"durationSeconds\": 5", "\"durationSeconds\": 1.5");
+        validCommandDefinition().replace("\"durationSeconds\":5", "\"durationSeconds\":1.5");
 
     IllegalArgumentException ex =
         assertThrows(
@@ -409,45 +409,6 @@ class RevisionServiceImplTest {
         mutation,
         null,
         null);
-  }
-
-  private String validCommandDefinition() {
-    return """
-        {
-          "schemaVersion": 1,
-          "commandId": "block",
-          "semanticOwner": "GAME_LOGIC",
-          "executionDiscipline": "DURABLE_GAMEPLAY",
-          "stageRequirement": "GAMEPLAY",
-          "promptPolicy": "WHEN_GAMEPLAY",
-          "actionCategory": "GAMEPLAY",
-          "aliases": ["block", "guard"],
-          "actionTags": ["COMBAT"],
-          "effects": [
-            {
-              "effectKind": "APPLY_ACTION_STATE",
-              "schemaVersion": 1,
-              "targeting": "SELF",
-              "replayPolicy": "EFFECT_IDEMPOTENT",
-              "payload": {
-                "conditionKey": "blocking",
-                "durationSeconds": 5,
-                "effectPayload": {
-                  "modifiers": [
-                    {
-                      "operation": "ADD",
-                      "target_key": "block_mitigation",
-                      "value": 1,
-                      "scope_kind": "ACTION_FAMILY",
-                      "scope_key": "defense"
-                    }
-                  ]
-                }
-              }
-            }
-          ]
-        }
-        """;
   }
 
   private WorldDesignMutationRevisionDto generationSubtreeMutation() {
