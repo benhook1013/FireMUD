@@ -24,6 +24,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessPr
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
@@ -924,12 +925,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
   }
 
-  private static Long parseWorkItemId(String workItemId) {
-    try {
-      return Long.parseLong(workItemId);
-    } catch (NumberFormatException ex) {
-      throw new IllegalArgumentException("work_item_id must be numeric");
-    }
+  private static long parseWorkItemId(String workItemId) {
+    return RequestIdValidation.requirePositiveLong(workItemId, "work_item_id");
   }
 
   private static Long parseOptionalWorkItemId(String workItemId) {
