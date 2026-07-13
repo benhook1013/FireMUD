@@ -675,6 +675,64 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
+  void executeReplaysAuthoredSnapshotAgainstItsOriginalSessionAfterSessionResumption() {
+    AdmittedTextCommandRegistryResolver admittedRegistryResolver =
+        Mockito.mock(AdmittedTextCommandRegistryResolver.class);
+    DefaultDurableGameplayCommandExecutionService admittedRegistryService =
+        new DefaultDurableGameplayCommandExecutionService(
+            meterRegistry,
+            parser,
+            admittedRegistryResolver,
+            sessionAuthenticationService,
+            moveCommandHandler,
+            itemCommandHandler,
+            communicationCommandHandler,
+            afkCommandHandler,
+            actionStateCommandHandler,
+            builtInMetadataResolver,
+            durableGameplayReplayService,
+            movementEffectIdempotencyService,
+            playerOutputDeliveryService,
+            scriptEventPublisher);
+    SessionContext resumedContext =
+        new SessionContext(43L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
+    TickEffect effect = tickEffect("tfx-resumed-authored", "cmd-resumed-authored");
+    PlayerOutput output = PlayerOutput.notice("Action applied.");
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 5L, 91L))
+        .thenReturn(Optional.of(resumedContext));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-resumed-authored"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result =
+        admittedRegistryService.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    verify(sessionAuthenticationService).resolveUnverifiedSessionContext("42");
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 5L, 91L);
+    verify(durableGameplayReplayService).find(22L, 42L, "tfx-resumed-authored");
+    verify(playerOutputDeliveryService).deliver(resumedContext, java.util.List.of(output), true);
+    verifyNoInteractions(admittedRegistryResolver, parser);
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verify(scriptEventPublisher, never()).publishCommandEvent(resumedContext, command);
+  }
+
+  @Test
   void executeRejectsAuthoredActionWhenTheSessionSwitchedGameplayIdentity() {
     SessionContext switchedContext =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 92L, "Other", 5L, "R-1", "jwt-token");

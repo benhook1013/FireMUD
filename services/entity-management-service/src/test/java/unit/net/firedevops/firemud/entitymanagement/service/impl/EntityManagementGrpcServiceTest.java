@@ -22,6 +22,7 @@ import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -71,6 +72,7 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
+import tools.jackson.databind.ObjectMapper;
 
 class EntityManagementGrpcServiceTest {
   private GameplaySessionAttestationService attestationService() {
@@ -1371,7 +1373,8 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.entitymanagement.service.EntityTemplateReferenceService
                     .class),
             attestationService(),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new EffectPayloadParser(new ObjectMapper()));
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse> ref =
         new AtomicReference<>();

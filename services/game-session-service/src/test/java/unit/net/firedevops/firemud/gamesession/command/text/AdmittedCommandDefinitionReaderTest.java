@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -157,7 +159,31 @@ class AdmittedCommandDefinitionReaderTest {
     assertEquals(12L, admission.releaseBundleId());
     assertEquals(9L, admission.versionId());
     assertEquals("block", admission.commandId());
-    assertTrue(admission.declaredEffectsJson().contains("APPLY_ACTION_STATE"));
+    var effects = new ObjectMapper().readTree(admission.declaredEffectsJson());
+    assertTrue(effects.isArray());
+    assertEquals(1, effects.size());
+    assertEquals("APPLY_ACTION_STATE", effects.get(0).path("effectKind").asText());
+  }
+
+  @Test
+  void reusesTheAdmittedBundleReadForDefinitionsAndAdmission() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validActionStateDefinition())
+                        .build())
+                .build());
+
+    assertTrue(reader.definitionsFor(context()).isPresent());
+    assertTrue(reader.admissionFor(context(), "block").isPresent());
+
+    verify(gameDesignClient, times(1)).getPublishedReleaseBundle(7L, 9L);
   }
 
   @Test

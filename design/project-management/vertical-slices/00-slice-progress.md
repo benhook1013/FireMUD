@@ -59,7 +59,7 @@ These are already partly real in code and should continue after the immediate ru
 16. [03.2 Runtime Room Identity Contract Convergence](./03.2-task-list-runtime-room-identity-contract-convergence-vertical-slice.md)
    Remaining: converge `roomInstanceId` onto one canonical runtime room identity across World Management, Entity Management, Game Logic, Game Session, read-fence, attestation, and shared proto/API seams, while renaming and confining World Management numeric room storage keys to explicitly internal mapping semantics instead of letting one shared name carry both routing identity and database-row meaning.
 
-### 3. Design settled enough, but not started or only placeholder-level
+### 3. Design settled, with partial or future implementation remaining
 
 These are not broad audit topics anymore; they are real future slices with known direction.
 

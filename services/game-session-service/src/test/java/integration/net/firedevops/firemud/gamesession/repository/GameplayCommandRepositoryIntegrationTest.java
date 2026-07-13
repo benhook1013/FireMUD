@@ -108,6 +108,9 @@ class GameplayCommandRepositoryIntegrationTest {
 
     GameplayCommand saved = repository.save(command);
     saved.setExecutionOutcome("STAGED");
+    saved.setAdmittedReleaseBundleId(999L);
+    saved.setAdmittedVersionId(998L);
+    saved.setDeclaredEffectsJson("[]");
     repository.save(saved);
 
     assertThat(repository.findByCommandId("cmd-authored-1"))

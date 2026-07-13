@@ -123,8 +123,7 @@ public class EntityManagementGrpcService
   private final EntityMutationEffectReplayService entityMutationEffectReplayService;
   private final EntityUpgradeValidationService entityUpgradeValidationService;
   private final EntityTemplateReferenceService entityTemplateReferenceService;
-  private final EffectPayloadParser effectPayloadParser =
-      new EffectPayloadParser(new ObjectMapper());
+  private final EffectPayloadParser effectPayloadParser;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -141,7 +140,8 @@ public class EntityManagementGrpcService
       EntityUpgradeValidationService entityUpgradeValidationService,
       EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      EffectPayloadParser effectPayloadParser) {
     this.pingService = pingService;
     this.characterService = characterService;
     this.actorStateService = actorStateService;
@@ -157,6 +157,7 @@ public class EntityManagementGrpcService
     this.entityTemplateReferenceService = entityTemplateReferenceService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
+    this.effectPayloadParser = effectPayloadParser;
   }
 
   public EntityManagementGrpcService(
@@ -231,7 +232,8 @@ public class EntityManagementGrpcService
       EntityUpgradeValidationService entityUpgradeValidationService,
       EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      EffectPayloadParser effectPayloadParser) {
     this(
         pingService,
         characterService,
@@ -249,7 +251,8 @@ public class EntityManagementGrpcService
         entityUpgradeValidationService,
         entityTemplateReferenceService,
         gameplaySessionAttestationService,
-        meterRegistry);
+        meterRegistry,
+        effectPayloadParser);
   }
 
   public EntityManagementGrpcService(
@@ -280,7 +283,8 @@ public class EntityManagementGrpcService
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
-        meterRegistry);
+        meterRegistry,
+        new EffectPayloadParser(new ObjectMapper()));
   }
 
   @Override

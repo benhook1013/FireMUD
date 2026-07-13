@@ -123,10 +123,14 @@ public final class DefaultDurableGameplayCommandExecutionService
   @Override
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
-    TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
-        && parsed.type() != TextCommandType.UNKNOWN) {
-      return Optional.empty();
+    boolean authoredSnapshot = hasAuthoredActionSnapshot(command);
+    TextCommand parsed = null;
+    if (!authoredSnapshot) {
+      parsed = textCommandParser.parse(command.getCommandText());
+      if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
+          && parsed.type() != TextCommandType.UNKNOWN) {
+        return Optional.empty();
+      }
     }
     Optional<SessionContext> maybeContext = resolveExecutionContext(command);
     if (maybeContext.isEmpty()) {
@@ -142,14 +146,14 @@ public final class DefaultDurableGameplayCommandExecutionService
     }
     SessionContext context = maybeContext.orElseThrow();
     TextCommandRegistry activeRegistry = null;
-    if (admittedRegistryResolver != null) {
+    if (!authoredSnapshot && admittedRegistryResolver != null) {
       activeRegistry = admittedRegistryResolver.resolve(context);
       parsed = textCommandParser.parse(command.getCommandText(), activeRegistry);
     }
     // An admitted authored snapshot is the execution contract. Do not reclassify it from a
     // later live registry read, otherwise a released-definition change can strand a command.
     CommandExecutionRoute route =
-        hasAuthoredActionSnapshot(command)
+        authoredSnapshot
             ? CommandExecutionRoute.AUTHORED
             : resolveRoute(command, parsed, activeRegistry);
     if (route == CommandExecutionRoute.IGNORE) {
@@ -283,6 +287,16 @@ public final class DefaultDurableGameplayCommandExecutionService
               "STALE_SESSION_CONTEXT",
               "The gameplay session identity changed before the authored action could execute"));
     }
+    if (command.getSessionId() == null || command.getSessionId() <= 0L) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "AUTHORED_ACTION_SNAPSHOT_INVALID",
+              "Authored action snapshot is missing its original session identity"));
+    }
     Optional<AuthoredActionState> actionState = authoredActionState(command);
     if (actionState.isEmpty()) {
       return recordResult(
@@ -299,6 +313,7 @@ public final class DefaultDurableGameplayCommandExecutionService
         context,
         command,
         effectId,
+        command.getSessionId(),
         () -> {
           var result =
               actionStateCommandHandler.apply(
@@ -399,8 +414,18 @@ public final class DefaultDurableGameplayCommandExecutionService
       GameplayCommand command,
       String effectId,
       Supplier<ReplayBackedMutationResult> liveExecution) {
+    return executeReplayBackedLocalMutation(
+        context, command, effectId, context.sessionId(), liveExecution);
+  }
+
+  private DurableGameplayCommandExecutionResult executeReplayBackedLocalMutation(
+      SessionContext context,
+      GameplayCommand command,
+      String effectId,
+      long replaySessionId,
+      Supplier<ReplayBackedMutationResult> liveExecution) {
     Optional<DurableGameplayReplayService.ReplayRecord> replay =
-        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
+        durableGameplayReplayService.find(context.tenantId(), replaySessionId, effectId);
     if (replay.isPresent()) {
       DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
       if (!record.actorOutputs().isEmpty()) {
@@ -412,7 +437,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     ReplayBackedMutationResult result = liveExecution.get();
     durableGameplayReplayService.save(
         context.tenantId(),
-        context.sessionId(),
+        replaySessionId,
         effectId,
         result.commandResult.accepted(),
         result.commandResult.errorCode(),

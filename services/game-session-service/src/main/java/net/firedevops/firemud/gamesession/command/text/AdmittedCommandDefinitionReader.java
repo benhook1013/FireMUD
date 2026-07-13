@@ -28,6 +28,8 @@ final class AdmittedCommandDefinitionReader {
   private final ObjectMapper objectMapper;
   private final ConcurrentMap<BundleKey, List<TextCommandDefinition>> definitionsByBundle =
       new ConcurrentHashMap<>();
+  private final ConcurrentMap<BundleKey, GetPublishedReleaseBundleResponse> bundlesByKey =
+      new ConcurrentHashMap<>();
 
   AdmittedCommandDefinitionReader(
       GameInstanceRepository gameInstanceRepository,
@@ -70,33 +72,9 @@ final class AdmittedCommandDefinitionReader {
           .findById(context.gameInstanceId())
           .filter(instance -> matchesContext(instance, context))
           .flatMap(
-              instance -> {
-                GetPublishedReleaseBundleResponse response =
-                    gameDesignClient.getPublishedReleaseBundle(
-                        context.tenantId(), instance.getVersionId());
-                if (response.hasError()
-                    || !response.hasBundle()
-                    || response.getBundle().getId() != instance.getReleaseBundleId()
-                    || response.getBundle().getVersionId() != instance.getVersionId()) {
-                  return Optional.empty();
-                }
-                for (String json : response.getBundle().getCommandDefinitionsList()) {
-                  JsonNode definition = objectMapper.readTree(json);
-                  if (commandId.equals(definition.path("commandId").asText())) {
-                    TextCommandDefinition parsed = parseDefinition(json);
-                    if (parsed.effects().size() != 1) {
-                      return Optional.empty();
-                    }
-                    return Optional.of(
-                        new AuthoredCommandAdmission(
-                            instance.getReleaseBundleId(),
-                            instance.getVersionId(),
-                            commandId,
-                            definition.path("effects").toString()));
-                  }
-                }
-                return Optional.empty();
-              });
+              instance ->
+                  readBundle(bundleKey(context.tenantId(), instance))
+                      .flatMap(response -> admissionFromBundle(instance, commandId, response)));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Unable to resolve admitted command declaration tenantId={} gameInstanceId={} commandId={}",
@@ -106,6 +84,26 @@ final class AdmittedCommandDefinitionReader {
           ex);
       return Optional.empty();
     }
+  }
+
+  private Optional<AuthoredCommandAdmission> admissionFromBundle(
+      GameInstance instance, String commandId, GetPublishedReleaseBundleResponse response) {
+    for (String json : response.getBundle().getCommandDefinitionsList()) {
+      JsonNode definition = objectMapper.readTree(json);
+      if (commandId.equals(definition.path("commandId").asText())) {
+        TextCommandDefinition parsed = parseDefinition(json);
+        if (parsed.effects().size() != 1) {
+          return Optional.empty();
+        }
+        return Optional.of(
+            new AuthoredCommandAdmission(
+                instance.getReleaseBundleId(),
+                instance.getVersionId(),
+                commandId,
+                definition.path("effects").toString()));
+      }
+    }
+    return Optional.empty();
   }
 
   private boolean matchesContext(GameInstance instance, SessionContext context) {
@@ -120,10 +118,12 @@ final class AdmittedCommandDefinitionReader {
   private Optional<List<TextCommandDefinition>> readDefinitions(
       long tenantId, GameInstance instance) {
     try {
-      BundleKey bundleKey =
-          new BundleKey(tenantId, instance.getVersionId(), instance.getReleaseBundleId());
-      return Optional.of(
-          definitionsByBundle.computeIfAbsent(bundleKey, ignored -> loadDefinitions(bundleKey)));
+      BundleKey bundleKey = bundleKey(tenantId, instance);
+      return readBundle(bundleKey)
+          .map(
+              response ->
+                  definitionsByBundle.computeIfAbsent(
+                      bundleKey, ignored -> parseDefinitions(response)));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Unable to read admitted command definitions tenantId={} versionId={} releaseBundleId={}",
@@ -135,7 +135,21 @@ final class AdmittedCommandDefinitionReader {
     }
   }
 
-  private List<TextCommandDefinition> loadDefinitions(BundleKey bundleKey) {
+  private Optional<GetPublishedReleaseBundleResponse> readBundle(BundleKey bundleKey) {
+    try {
+      return Optional.of(bundlesByKey.computeIfAbsent(bundleKey, this::loadBundle));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to read admitted command bundle tenantId={} versionId={} releaseBundleId={}",
+          bundleKey.tenantId(),
+          bundleKey.versionId(),
+          bundleKey.releaseBundleId(),
+          ex);
+      return Optional.empty();
+    }
+  }
+
+  private GetPublishedReleaseBundleResponse loadBundle(BundleKey bundleKey) {
     GetPublishedReleaseBundleResponse response =
         gameDesignClient.getPublishedReleaseBundle(bundleKey.tenantId(), bundleKey.versionId());
     if (response.hasError()
@@ -145,11 +159,19 @@ final class AdmittedCommandDefinitionReader {
       throw new IllegalArgumentException(
           "published release bundle does not match the game instance");
     }
+    return response;
+  }
+
+  private List<TextCommandDefinition> parseDefinitions(GetPublishedReleaseBundleResponse response) {
     List<TextCommandDefinition> definitions = new ArrayList<>();
     for (String json : response.getBundle().getCommandDefinitionsList()) {
       definitions.add(parseDefinition(json));
     }
     return List.copyOf(definitions);
+  }
+
+  private BundleKey bundleKey(long tenantId, GameInstance instance) {
+    return new BundleKey(tenantId, instance.getVersionId(), instance.getReleaseBundleId());
   }
 
   private record BundleKey(long tenantId, long versionId, long releaseBundleId) {}
