@@ -1505,6 +1505,59 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void rejectsFractionalTimerDuePointBeforeHandlerResolution() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            automationQueueService,
+            outputProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setEventType("onTimerExpire")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("timer-1")
+                .setReadSnapshotToken("snapshot-1")
+                .setPayloadJson("{\"scheduleId\":\"timer-1\",\"dueTickId\":1.5}")
+                .build(),
+            "automation-scripting-service");
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("invalid_built_in_payload");
+    verifyNoInteractions(
+        bindingRepository, workItemRepository, eventAuditRepository, automationQueueService);
+  }
+
+  @Test
   void admitsOnLoadAsPatchReadinessWorkForOneScript() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
