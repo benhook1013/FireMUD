@@ -3,7 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import org.springframework.stereotype.Component;
 
-/** Resolves the explicit friend/social visibility policy from account profile plus role clamp. */
+/** Resolves the explicit friend/social visibility policy from account profile. */
 @Component
 public class AccountPresenceVisibilityPolicyResolver {
   private final AccountClient accountClient;
@@ -14,9 +14,8 @@ public class AccountPresenceVisibilityPolicyResolver {
 
   public AccountPresenceVisibilityPolicy resolve(
       long tenantId, long accountId, GameplayPresenceRole role) {
-    if (role == GameplayPresenceRole.GOD) {
-      return AccountPresenceVisibilityPolicy.HIDDEN_STAFF;
-    }
+    // Elevated runtime role does not itself select a staff visibility mode. The later staff-policy
+    // owner may use this normalized role input, but hidden status must remain explicit.
     return resolve(tenantId, accountId);
   }
 
