@@ -94,6 +94,7 @@ class PlayerCommandHistoryRecorderTest {
         Optional.of(context));
     recorder.record(
         new TextCommand(TextCommandType.HISTORY, List.of(), "HISTORY"),
+        true,
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
