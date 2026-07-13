@@ -701,7 +701,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-logs-${{ matrix.service }}-${{ github.sha }}
-          path: services/${{ matrix.service }}/build/reports/tests/test/
+          path: services/${{ matrix.service }}/build/reports/tests/
 
   # Final gating and PR reporting
   validation-summary:

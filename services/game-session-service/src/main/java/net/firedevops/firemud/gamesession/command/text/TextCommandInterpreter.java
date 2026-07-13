@@ -29,6 +29,7 @@ public class TextCommandInterpreter {
   private final TextCommandRegistry registry;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final TextCommandDispatcher dispatcher;
+  private final AcceptedCommandHistoryRecorder commandHistoryRecorder;
 
   TextCommandInterpreter(
       CommandService commandService,
@@ -80,7 +81,63 @@ public class TextCommandInterpreter {
         registry,
         parser,
         null,
-        meterRegistry);
+        meterRegistry,
+        AcceptedCommandHistoryRecorder.NOOP);
+  }
+
+  TextCommandInterpreter(
+      CommandService commandService,
+      LookCommandHandler lookHandler,
+      LoginCommandHandler loginHandler,
+      LogoutCommandHandler logoutHandler,
+      PlayCommandHandler playHandler,
+      MoveCommandHandler moveHandler,
+      AfkCommandHandler afkHandler,
+      HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
+      StatusCommandHandler statusHandler,
+      FriendsCommandHandler friendsHandler,
+      AuthoredActionCommandHandler authoredActionHandler,
+      ConfiguredAuthoredActionCatalog authoredActionCatalog,
+      InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      ScriptEventPublisher scriptEventPublisher,
+      CommunicationCommandHandler communicationHandler,
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
+      TextCommandRegistry registry,
+      TextCommandParser parser,
+      MeterRegistry meterRegistry,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
+    this(
+        commandService,
+        lookHandler,
+        loginHandler,
+        logoutHandler,
+        playHandler,
+        moveHandler,
+        afkHandler,
+        helpHandler,
+        whoHandler,
+        statusHandler,
+        friendsHandler,
+        authoredActionHandler,
+        authoredActionCatalog,
+        inventoryHandler,
+        equipmentHandler,
+        containerHandler,
+        sessionAuthenticationService,
+        scriptEventPublisher,
+        communicationHandler,
+        worldsHandler,
+        promptComposer,
+        registry,
+        parser,
+        null,
+        meterRegistry,
+        commandHistoryRecorder);
   }
 
   @Autowired
@@ -109,7 +166,8 @@ public class TextCommandInterpreter {
       TextCommandRegistry registry,
       TextCommandParser parser,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this(
         sessionAuthenticationService,
         promptComposer,
@@ -138,7 +196,8 @@ public class TextCommandInterpreter {
                 scriptEventPublisher),
             scriptEventPublisher,
             communicationHandler,
-            worldsHandler));
+            worldsHandler),
+        commandHistoryRecorder);
   }
 
   TextCommandInterpreter(
@@ -147,7 +206,31 @@ public class TextCommandInterpreter {
       TextCommandParser parser,
       TextCommandRegistry registry,
       TextCommandDispatcher dispatcher) {
-    this(sessionAuthenticationService, promptComposer, parser, registry, null, dispatcher);
+    this(
+        sessionAuthenticationService,
+        promptComposer,
+        parser,
+        registry,
+        null,
+        dispatcher,
+        AcceptedCommandHistoryRecorder.NOOP);
+  }
+
+  TextCommandInterpreter(
+      SessionAuthenticationService sessionAuthenticationService,
+      PromptComposer promptComposer,
+      TextCommandParser parser,
+      TextCommandRegistry registry,
+      TextCommandDispatcher dispatcher,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
+    this(
+        sessionAuthenticationService,
+        promptComposer,
+        parser,
+        registry,
+        null,
+        dispatcher,
+        commandHistoryRecorder);
   }
 
   TextCommandInterpreter(
@@ -156,7 +239,8 @@ public class TextCommandInterpreter {
       TextCommandParser parser,
       TextCommandRegistry registry,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
-      TextCommandDispatcher dispatcher) {
+      TextCommandDispatcher dispatcher,
+      AcceptedCommandHistoryRecorder commandHistoryRecorder) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -165,6 +249,8 @@ public class TextCommandInterpreter {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
     this.admittedRegistryResolver = admittedRegistryResolver;
     this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher must not be null");
+    this.commandHistoryRecorder =
+        Objects.requireNonNull(commandHistoryRecorder, "commandHistoryRecorder must not be null");
   }
 
   public TextCommandInterpretationResult interpret(
@@ -245,6 +331,8 @@ public class TextCommandInterpreter {
             new TextCommandDispatchRequest(sessionId, command, requiresSoloTick, maybeContext));
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> promptContext =
         promptContextAfterDispatch(sessionId, definition, dispatchResult, maybeContext);
+    commandHistoryRecorder.record(
+        command, dispatchResult.commandResult(), maybeContext, promptContext);
     TextCommandInterpretationResult promptApplied =
         applyPromptPolicy(dispatchResult, definition.promptPolicy(), promptContext);
     return withResolvedCommand(

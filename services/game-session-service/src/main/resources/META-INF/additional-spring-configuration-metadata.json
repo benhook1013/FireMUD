@@ -140,6 +140,13 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudCommandHistoryProperties"
     },
     {
+      "name": "firemud.command-history.retention-sweep-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 60000,
+      "description": "Delay, in milliseconds, between bounded background sweeps that trim inactive player command histories to their current effective maximum.",
+      "sourceType": "net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJob"
+    },
+    {
       "name": "firemud.movement.post-move-look-enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,

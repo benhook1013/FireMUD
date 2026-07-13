@@ -4,7 +4,9 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Notes
 
-`HISTORY` is not currently available in the runtime command surface. Its contract below is the target state for the later parser, dispatch, capability, persistence, and presentation work; it does not imply that existing clients can invoke it yet. Typed, data-defined command execution effects are also target-state architecture: current built-ins still contain transitional handler routing until their declarations converge on the shared effect engine. Admitted authored commands are currently discoverable and validated, but reject with `AUTHORED_ACTION_EXECUTION_UNAVAILABLE` before durable replay because no typed authored-effect handler is live yet. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
+The durable storage and accepted-command recording foundation for `HISTORY` is live. It persists only safe, accepted gameplay commands under the resolved tenant/game/character identity in an independent transaction, avoiding an executor queue that could discard accepted commands under saturation or shutdown. Storage failure is quarantined so it cannot reverse command acceptance. Retention runs on a dedicated scheduler with a durable bounded-pass cursor, so replica changes cannot lose progress and continual creation of higher-sorting scopes cannot starve earlier scopes indefinitely. The player-facing parser, dispatch, capability, and presentation surface remains the next implementation boundary; existing clients cannot invoke `HISTORY` yet.
+
+Typed, data-defined command execution effects are now live for the first release-admitted `APPLY_ACTION_STATE` declaration. Built-ins still contain transitional handler routing until their declarations converge on the shared effect engine, and additional authored effect kinds remain unavailable. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
 
 ## Command Model
 

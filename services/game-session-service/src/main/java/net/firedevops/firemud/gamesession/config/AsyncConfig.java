@@ -5,8 +5,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
-/** Provides the executor used for running tick processing in parallel. */
+/** Provides bounded executors for background Game Session work. */
 @Configuration
 @EnableAsync
 public class AsyncConfig {
@@ -31,5 +32,14 @@ public class AsyncConfig {
     executor.setThreadNamePrefix("script-event-");
     executor.initialize();
     return executor;
+  }
+
+  @Bean(name = "commandHistoryRetentionScheduler")
+  public ThreadPoolTaskScheduler commandHistoryRetentionScheduler() {
+    ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+    scheduler.setPoolSize(1);
+    scheduler.setThreadNamePrefix("command-history-retention-");
+    scheduler.initialize();
+    return scheduler;
   }
 }

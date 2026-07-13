@@ -40,24 +40,27 @@ public class EffectiveCommandHistorySettingsResolver {
     return resolvedCommandHistory(context).effective();
   }
 
+  public FiremudCommandHistoryProperties commandHistory(long tenantId, long gameInstanceId) {
+    return resolvedCommandHistory(tenantId, gameInstanceId > 0L ? gameInstanceId : null)
+        .effective();
+  }
+
   public ResolvedValue<FiremudCommandHistoryProperties> resolvedCommandHistory(
       SessionContext context) {
-    Long gameInstanceId = resolveGameInstanceId(context);
+    return resolvedCommandHistory(
+        context == null ? 0L : context.tenantId(), resolveGameInstanceId(context));
+  }
+
+  private ResolvedValue<FiremudCommandHistoryProperties> resolvedCommandHistory(
+      long tenantId, Long gameInstanceId) {
     SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
-        context == null || context.tenantId() <= 0L
-            ? new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
-                ScopedSettingsOverrides.empty(),
-                ScopedSettingsOverrides.empty(),
-                ScopedSettingsOverrides.empty())
-            : sharedEffectiveSettingsResolver.resolve(context.tenantId(), gameInstanceId);
+        sharedEffectiveSettingsResolver.resolve(tenantId, gameInstanceId);
     FiremudCommandHistoryProperties effective =
         merge(defaults, persistedOverrides.effectiveOverrides().commandHistory());
     List<String> sources = new java.util.ArrayList<>(List.of("operatorDefaults"));
     sources.addAll(
         persistedOverrides.sourcesFor(
-            ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY,
-            context == null ? 0L : context.tenantId(),
-            gameInstanceId));
+            ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, tenantId, gameInstanceId));
     return new ResolvedValue<>(effective, sources);
   }
 

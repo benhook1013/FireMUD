@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.verify;
 
 import java.util.List;
 import java.util.Optional;
@@ -11,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class TextCommandInterpreterDispatchSeamTest {
@@ -68,9 +70,16 @@ class TextCommandInterpreterDispatchSeamTest {
             return Optional.empty();
           }
         };
+    AcceptedCommandHistoryRecorder commandHistoryRecorder =
+        Mockito.mock(AcceptedCommandHistoryRecorder.class);
     TextCommandInterpreter interpreter =
         new TextCommandInterpreter(
-            authenticationService, promptComposer, new TextCommandParser(), registry, dispatcher);
+            authenticationService,
+            promptComposer,
+            new TextCommandParser(),
+            registry,
+            dispatcher,
+            commandHistoryRecorder);
 
     TextCommandInterpretationResult actual = interpreter.interpret("1", "LOOK", false);
 
@@ -81,5 +90,15 @@ class TextCommandInterpreterDispatchSeamTest {
     assertEquals(
         expectedDispatchResult.reconnectRedrawRecommended(), actual.reconnectRedrawRecommended());
     assertEquals(false, actual.meaningfulGameplayActivity());
+    ArgumentCaptor<TextCommand> recordedCommand = ArgumentCaptor.forClass(TextCommand.class);
+    verify(commandHistoryRecorder)
+        .record(
+            recordedCommand.capture(),
+            Mockito.eq(expectedDispatchResult.commandResult()),
+            Mockito.eq(Optional.of(gameplayContext)),
+            Mockito.eq(Optional.of(gameplayContext)));
+    assertEquals(TextCommandType.LOOK, recordedCommand.getValue().type());
+    assertEquals("LOOK", recordedCommand.getValue().rawLine());
+    assertEquals(List.of(), recordedCommand.getValue().args());
   }
 }
