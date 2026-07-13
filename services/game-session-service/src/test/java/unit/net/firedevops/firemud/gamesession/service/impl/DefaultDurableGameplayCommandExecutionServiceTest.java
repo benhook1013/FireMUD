@@ -738,6 +738,39 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             Mockito.anyString());
   }
 
+  @Test
+  void executeRejectsAuthoredSnapshotAboveTheSharedDurationLimitBeforeReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(
+        authoredActionEffectsJson()
+            .replace("\"durationSeconds\": 30", "\"durationSeconds\": 3601"));
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+
+    DurableGameplayCommandExecutionResult result =
+        service
+            .execute(tickEffect("tfx-invalid-duration", "cmd-invalid-duration"), command)
+            .orElseThrow();
+
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_SNAPSHOT_INVALID");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
   private String authoredActionEffectsJson() {
     return """
         [{

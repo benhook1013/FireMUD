@@ -4,12 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.AuthoredActionExecutionOutcome;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
@@ -43,9 +42,6 @@ import tools.jackson.databind.ObjectMapper;
 public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
   private static final ObjectMapper JSON = new ObjectMapper();
-  private static final Set<String> ACTION_STATE_MODIFIER_OPERATIONS =
-      Set.of("ADD", "MULTIPLY", "CLAMP_MIN", "CLAMP_MAX", "GRANT_FLAG", "GRANT_CONDITION");
-  private static final String IDENTIFIER_PATTERN = "[A-Za-z][A-Za-z0-9_]{0,63}";
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
@@ -331,8 +327,8 @@ public final class DefaultDurableGameplayCommandExecutionService
           || !payload.isObject()
           || !isIdentifier(payload.path("conditionKey"))
           || !payload.path("durationSeconds").isInt()
-          || payload.path("durationSeconds").asInt() <= 0
-          || payload.path("durationSeconds").asInt() > 3600
+          || !CommandEffectDeclarationConstraints.isValidDurationSeconds(
+              payload.path("durationSeconds").asInt())
           || !validActionStatePayload(effectPayload)) {
         return Optional.empty();
       }
@@ -353,7 +349,8 @@ public final class DefaultDurableGameplayCommandExecutionService
     }
     for (JsonNode modifier : modifiers) {
       if (!modifier.isObject()
-          || !ACTION_STATE_MODIFIER_OPERATIONS.contains(modifier.path("operation").asText())
+          || !CommandEffectDeclarationConstraints.SUPPORTED_MODIFIER_OPERATIONS.contains(
+              modifier.path("operation").asText())
           || !isIdentifier(modifier.path("target_key"))
           || !modifier.path("value").isNumber()
           || (!modifier.path("priority").isMissingNode() && !modifier.path("priority").isInt())
@@ -368,7 +365,7 @@ public final class DefaultDurableGameplayCommandExecutionService
   }
 
   private boolean isIdentifier(JsonNode value) {
-    return value.isTextual() && value.asText().matches(IDENTIFIER_PATTERN);
+    return value.isTextual() && CommandEffectDeclarationConstraints.isIdentifier(value.asText());
   }
 
   private boolean hasAuthoredActionSnapshot(GameplayCommand command) {
