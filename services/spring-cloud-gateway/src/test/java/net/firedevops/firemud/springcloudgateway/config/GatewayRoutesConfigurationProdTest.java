@@ -75,7 +75,7 @@ class GatewayRoutesConfigurationProdTest {
 
     Map<String, String> pathArgs =
         sessionRoute.getPredicates().stream()
-            .filter(predicate -> predicate.getName().equalsIgnoreCase("path"))
+            .filter(predicate -> "path".equalsIgnoreCase(predicate.getName()))
             .findFirst()
             .map(predicate -> predicate.getArgs())
             .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
