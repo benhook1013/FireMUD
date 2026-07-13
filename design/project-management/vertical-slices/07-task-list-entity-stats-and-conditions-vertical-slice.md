@@ -2,14 +2,15 @@
 
 ## Goal and Status
 
-Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: first Entity Management-owned read substrate is live; authored definitions, shared effect evaluation, equipment/action contributions, and damage/mitigation remain future work.
+Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: the first Entity Management-owned evaluated-state substrate, shared effect evaluation, equipment contributions, and transient action-state execution are live; generic authored stat/condition definitions and damage/mitigation remain future work.
 
 ## Implementation Notes
 
 - Entity Management now owns persisted actor resource and active-condition state through `actor_resource_states` and `actor_active_conditions`, keyed by tenant, derived playable-state namespace, and character id rather than a raw game-instance shortcut.
 - `QueryActorState` exposes a gameplay-attested, playable-scope-aware read API that returns baseline character stats overlaid with persisted resource rows plus active non-expired conditions.
 - The first player-facing state reader is now live: in-world `STATUS` (alias `STAT`) reads the evaluated actor state through Game Session -> Game Logic -> Entity Management, renders a typed resources/visible-conditions view for text and first-party WebSocket clients, and never exposes internal effect payload or source provenance.
-- The first implementation is intentionally read-side only: active condition payload modifiers can influence evaluated resources, but the slice does not yet author stat/condition definitions, evaluate equipment/action modifiers, apply or expire effects, or resolve combat damage.
+- Active condition payloads, equipped item payloads, and replay-guarded transient action states now all contribute through the shared evaluator. `ApplyActorCondition` validates persisted effect JSON before replay lookup, and Entity Management expires elapsed action-state rows on its scheduled expiry path.
+- Game Design validates the first release-admitted authored `APPLY_ACTION_STATE` declaration, and Game Session executes its persisted snapshot through the same actor-condition seam. Generic authored stat/condition definitions, resource-cost mutation, multi-effect actions, and damage resolution remain future work.
 - Runtime game instance identifiers remain opaque strings, matching existing inventory/equipment/room-state tables rather than requiring numeric ids.
 
 ## Checklist
