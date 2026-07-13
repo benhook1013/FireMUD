@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,9 +13,12 @@ import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -213,6 +217,51 @@ class AccountControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void loginAuthModesAllowCurrentAccountWithoutTenantScope() throws Exception {
+    AccountLoginAuthModesDto modes =
+        new AccountLoginAuthModesDto(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP));
+    when(accountService.getLoginAuthModes(42L)).thenReturn(modes);
+    when(accountService.updateLoginAuthModes(
+            42L,
+            new UpdateAccountLoginAuthModesRequest(
+                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP))))
+        .thenReturn(modes);
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+
+    mockMvc
+        .perform(
+            get("/accounts/42/login-auth-modes")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.loginAuthModes[0]").value("EMAIL_OTP"));
+
+    mockMvc
+        .perform(
+            put("/accounts/42/login-auth-modes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"loginAuthModes\":[\"EMAIL_OTP\"]}")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.loginAuthModes[0]").value("EMAIL_OTP"));
+  }
+
+  @Test
+  void updateLoginAuthModesRejectsEmptySetBeforeDispatch() throws Exception {
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+
+    mockMvc
+        .perform(
+            put("/accounts/42/login-auth-modes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"loginAuthModes\":[]}")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
 
     verifyNoInteractions(accountService);
   }

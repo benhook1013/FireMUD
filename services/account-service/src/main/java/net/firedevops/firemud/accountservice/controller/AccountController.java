@@ -4,9 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -37,6 +40,25 @@ public class AccountController {
       @Valid @RequestBody CreateAccountRequest request) {
     AccountDto dto = accountService.createAccount(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @GetMapping("/{accountId}/login-auth-modes")
+  public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> getLoginAuthModes(
+      @PathVariable String accountId) {
+    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    return ResponseEntity.ok(
+        ApiResponse.success(accountService.getLoginAuthModes(parsedAccountId)));
+  }
+
+  @PutMapping("/{accountId}/login-auth-modes")
+  public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> updateLoginAuthModes(
+      @PathVariable String accountId,
+      @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {
+    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    return ResponseEntity.ok(
+        ApiResponse.success(accountService.updateLoginAuthModes(parsedAccountId, request)));
   }
 
   @GetMapping("/{accountId}/export")

@@ -31,7 +31,9 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
@@ -2161,6 +2163,44 @@ class AccountServiceImplTest {
 
     assertTrue(account.isEmailVerified());
     org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);
+  }
+
+  @Test
+  void updateLoginAuthModesPersistsVerifiedEmailOtpOnlySelection() {
+    Account account = new Account();
+    account.setId(44L);
+    account.setEmailVerified(true);
+    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
+    when(accountRepository.save(account)).thenReturn(account);
+
+    var result =
+        service.updateLoginAuthModes(
+            44L,
+            new UpdateAccountLoginAuthModesRequest(
+                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP)));
+
+    assertEquals(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP), result.loginAuthModes());
+    assertEquals("EMAIL_OTP", account.getLoginAuthModes());
+    org.mockito.Mockito.verify(accountRepository).save(account);
+  }
+
+  @Test
+  void updateLoginAuthModesRejectsEmailOtpBeforeEmailVerification() {
+    Account account = new Account();
+    account.setId(44L);
+    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.updateLoginAuthModes(
+                    44L,
+                    new UpdateAccountLoginAuthModesRequest(
+                        java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP))));
+
+    assertEquals("Email OTP requires a verified email address", exception.getMessage());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).save(account);
   }
 
   private static String hash(String password) {

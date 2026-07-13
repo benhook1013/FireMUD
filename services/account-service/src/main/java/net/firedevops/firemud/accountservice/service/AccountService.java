@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 
 public interface AccountService {
@@ -61,6 +63,11 @@ public interface AccountService {
   ProfileDto getProfile(Long tenantId, Long accountId);
 
   ProfileDto updateProfile(UpdateProfileRequest request);
+
+  AccountLoginAuthModesDto getLoginAuthModes(Long accountId);
+
+  AccountLoginAuthModesDto updateLoginAuthModes(
+      Long accountId, UpdateAccountLoginAuthModesRequest request);
 
   AccountDataExportDto exportAccountData(Long accountId);
 
