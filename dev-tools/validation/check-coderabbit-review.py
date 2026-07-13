@@ -55,7 +55,7 @@ class ReviewSummary:
     latest_review_request_rate_limited: bool
     latest_review_request_noop: bool
     retrigger_review_allowed: bool
-    requires_coderabbit_self_resolution: bool
+    manual_thread_resolution_required: bool
     must_resolve_outdated_threads: bool
     outside_diff_actionable_comments: int
     duplicate_actionable_comments: int
@@ -397,23 +397,19 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and not latest_review_request_rate_limited
         and not latest_review_request_noop
     )
-    requires_coderabbit_self_resolution = (
-        unresolved_total > 0
-        and not latest_review_request_still_running
-        and not latest_review_request_rate_limited
-        and not latest_review_request_noop
-    )
+    manual_thread_resolution_required = unresolved_total > 0
     must_resolve_outdated_threads = unresolved_outdated > 0
 
     reasons: list[str] = []
     if unresolved_non_outdated:
         reasons.append(
-            f"{unresolved_non_outdated} unresolved non-outdated CodeRabbit thread(s) remain"
+            f"{unresolved_non_outdated} unresolved non-outdated CodeRabbit thread(s) remain; "
+            "verify their fixes in HEAD, then manually resolve only verified-addressed threads"
         )
     if unresolved_outdated:
         reasons.append(
             f"{unresolved_outdated} unresolved outdated CodeRabbit thread(s) remain; "
-            "verify their fixes in HEAD and rerun CodeRabbit so it self-resolves them"
+            "verify their fixes in HEAD, then manually resolve only verified-addressed threads"
         )
     if outside_diff_actionable_comments:
         reasons.append(
@@ -458,7 +454,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_review_request_rate_limited=latest_review_request_rate_limited,
         latest_review_request_noop=latest_review_request_noop,
         retrigger_review_allowed=retrigger_review_allowed,
-        requires_coderabbit_self_resolution=requires_coderabbit_self_resolution,
+        manual_thread_resolution_required=manual_thread_resolution_required,
         must_resolve_outdated_threads=must_resolve_outdated_threads,
         outside_diff_actionable_comments=outside_diff_actionable_comments,
         duplicate_actionable_comments=duplicate_actionable_comments,
@@ -509,8 +505,8 @@ def emit_text(summary: ReviewSummary) -> None:
         f"{str(summary.retrigger_review_allowed).lower()}"
     )
     print(
-        "requires_coderabbit_self_resolution="
-        f"{str(summary.requires_coderabbit_self_resolution).lower()}"
+        "manual_thread_resolution_required="
+        f"{str(summary.manual_thread_resolution_required).lower()}"
     )
     print(
         "must_resolve_outdated_threads="
@@ -531,9 +527,9 @@ def emit_text(summary: ReviewSummary) -> None:
     print(f"ok={str(summary.ok).lower()}")
     if summary.unresolved_outdated:
         print(
-            "warning=UNRESOLVED OUTDATED CODERABBIT THREADS BLOCK MERGE. NEVER "
-            "RESOLVE THEM MANUALLY; VERIFY THEIR FIXES IN HEAD, THEN RERUN "
-            "@coderabbitai review SO CODERABBIT SELF-RESOLVES THEM"
+            "warning=UNRESOLVED OUTDATED CODERABBIT THREADS BLOCK MERGE. VERIFY "
+            "EACH FINDING AGAINST HEAD, FIX LIVE ISSUES, THEN MANUALLY RESOLVE "
+            "ONLY VERIFIED-ADDRESSED THREADS"
         )
     if summary.outside_diff_actionable_comments or summary.duplicate_actionable_comments:
         print(
@@ -543,9 +539,9 @@ def emit_text(summary: ReviewSummary) -> None:
         )
     if summary.unresolved_non_outdated or summary.unresolved_outdated:
         print(
-            "warning=UNRESOLVED CODERABBIT THREADS BLOCK MERGE. NEVER RESOLVE "
-            "THREADS MANUALLY; AFTER VERIFYING EVERY FINDING IS FIXED IN HEAD, "
-            "RERUN @coderabbitai review SO CODERABBIT SELF-RESOLVES THEM"
+            "warning=UNRESOLVED CODERABBIT THREADS BLOCK MERGE. VERIFY EACH "
+            "CURRENT AND OUTDATED FINDING AGAINST HEAD, FIX LIVE ISSUES, THEN "
+            "MANUALLY RESOLVE ONLY VERIFIED-ADDRESSED THREADS"
         )
     if (
         summary.unresolved_total == 0

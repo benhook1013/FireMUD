@@ -470,7 +470,7 @@ grep -q "review_finished_after_latest_request=true" <<<"$pass_output"
 grep -q "substantive_review_after_latest_commit=true" <<<"$pass_output"
 grep -q "latest_review_request_noop=false" <<<"$pass_output"
 grep -q "retrigger_review_allowed=true" <<<"$pass_output"
-grep -q "requires_coderabbit_self_resolution=false" <<<"$pass_output"
+grep -q "manual_thread_resolution_required=false" <<<"$pass_output"
 grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
 
@@ -479,9 +479,10 @@ expect_failure_output "$TMP_DIR/unresolved-outdated.json" "$TMP_DIR/unresolved-o
 grep -q "unresolved_outdated=1" "$TMP_DIR/unresolved-outdated.out"
 grep -q "unresolved_total=1" "$TMP_DIR/unresolved-outdated.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/unresolved-outdated.out"
-grep -q "requires_coderabbit_self_resolution=true" "$TMP_DIR/unresolved-outdated.out"
+grep -q "manual_thread_resolution_required=true" "$TMP_DIR/unresolved-outdated.out"
 grep -q "must_resolve_outdated_threads=true" "$TMP_DIR/unresolved-outdated.out"
-grep -q "reason=1 unresolved outdated CodeRabbit thread(s) remain; verify their fixes in HEAD and rerun CodeRabbit so it self-resolves them" "$TMP_DIR/unresolved-outdated.out"
+grep -q "reason=1 unresolved outdated CodeRabbit thread(s) remain; verify their fixes in HEAD, then manually resolve only verified-addressed threads" "$TMP_DIR/unresolved-outdated.out"
+grep -q "warning=UNRESOLVED OUTDATED CODERABBIT THREADS BLOCK MERGE. VERIFY EACH FINDING AGAINST HEAD, FIX LIVE ISSUES, THEN MANUALLY RESOLVE ONLY VERIFIED-ADDRESSED THREADS" "$TMP_DIR/unresolved-outdated.out"
 
 expect_failure_output "$TMP_DIR/stale-review.json" "$TMP_DIR/stale-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
@@ -495,15 +496,16 @@ expect_failure_output "$TMP_DIR/unresolved-non-outdated.json" "$TMP_DIR/unresolv
 grep -q "unresolved_non_outdated=1" "$TMP_DIR/unresolved-non-outdated.out"
 grep -q "unresolved_total=1" "$TMP_DIR/unresolved-non-outdated.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/unresolved-non-outdated.out"
-grep -q "requires_coderabbit_self_resolution=true" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "manual_thread_resolution_required=true" "$TMP_DIR/unresolved-non-outdated.out"
 grep -q "must_resolve_outdated_threads=false" "$TMP_DIR/unresolved-non-outdated.out"
-grep -q "reason=1 unresolved non-outdated CodeRabbit thread(s) remain" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "reason=1 unresolved non-outdated CodeRabbit thread(s) remain; verify their fixes in HEAD, then manually resolve only verified-addressed threads" "$TMP_DIR/unresolved-non-outdated.out"
+grep -q "warning=UNRESOLVED CODERABBIT THREADS BLOCK MERGE. VERIFY EACH CURRENT AND OUTDATED FINDING AGAINST HEAD, FIX LIVE ISSUES, THEN MANUALLY RESOLVE ONLY VERIFIED-ADDRESSED THREADS" "$TMP_DIR/unresolved-non-outdated.out"
 
 expect_failure_output "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-not-finished.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-not-finished.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
-grep -q "requires_coderabbit_self_resolution=false" "$TMP_DIR/review-not-finished.out"
+grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no substantive CodeRabbit review summary found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
 
 expect_failure_output "$TMP_DIR/review-command-noop.json" "$TMP_DIR/review-command-noop.out"
@@ -512,7 +514,7 @@ grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-command-no
 grep -q "substantive_review_after_latest_commit=false" "$TMP_DIR/review-command-noop.out"
 grep -q "latest_review_request_noop=true" "$TMP_DIR/review-command-noop.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-command-noop.out"
-grep -q "requires_coderabbit_self_resolution=false" "$TMP_DIR/review-command-noop.out"
+grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-command-noop.out"
 grep -q "reason=latest explicit CodeRabbit review request was acknowledged without reviewing commits" "$TMP_DIR/review-command-noop.out"
 
 expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-limited.out"
@@ -520,7 +522,7 @@ expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-
 grep -q "explicit_review_after_latest_commit=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
-grep -q "requires_coderabbit_self_resolution=false" "$TMP_DIR/review-rate-limited.out"
+grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
 
 superseded_outcome_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/superseded-review-outcome.json")"
@@ -529,7 +531,7 @@ grep -q "substantive_review_after_latest_commit=true" <<<"$superseded_outcome_ou
 grep -q "latest_review_request_rate_limited=false" <<<"$superseded_outcome_output"
 grep -q "latest_review_request_noop=false" <<<"$superseded_outcome_output"
 grep -q "retrigger_review_allowed=true" <<<"$superseded_outcome_output"
-grep -q "requires_coderabbit_self_resolution=false" <<<"$superseded_outcome_output"
+grep -q "manual_thread_resolution_required=false" <<<"$superseded_outcome_output"
 grep -q "ok=true" <<<"$superseded_outcome_output"
 
 expect_failure_output "$TMP_DIR/outside-diff-actionable.json" "$TMP_DIR/outside-diff-actionable.out"
