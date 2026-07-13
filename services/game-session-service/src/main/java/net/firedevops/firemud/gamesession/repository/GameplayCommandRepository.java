@@ -308,6 +308,9 @@ public class GameplayCommandRepository {
     record.setRegionId(entity.getRegionId());
     record.setRegionEpoch(entity.getRegionEpoch());
     record.setDueTickId(entity.getDueTickId());
+    record.setAdmittedReleaseBundleId(entity.getAdmittedReleaseBundleId());
+    record.setAdmittedVersionId(entity.getAdmittedVersionId());
+    record.setDeclaredEffectsJson(entity.getDeclaredEffectsJson());
   }
 
   private GameplayCommand toEntity(Record record) {
@@ -362,6 +365,9 @@ public class GameplayCommandRepository {
     entity.setRegionId(record.get(GAMEPLAY_COMMAND.REGION_ID));
     entity.setRegionEpoch(record.get(GAMEPLAY_COMMAND.REGION_EPOCH));
     entity.setDueTickId(record.get(GAMEPLAY_COMMAND.DUE_TICK_ID));
+    entity.setAdmittedReleaseBundleId(record.get(GAMEPLAY_COMMAND.ADMITTED_RELEASE_BUNDLE_ID));
+    entity.setAdmittedVersionId(record.get(GAMEPLAY_COMMAND.ADMITTED_VERSION_ID));
+    entity.setDeclaredEffectsJson(record.get(GAMEPLAY_COMMAND.DECLARED_EFFECTS_JSON));
     return entity;
   }
 }

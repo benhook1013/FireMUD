@@ -54,4 +54,7 @@ public class GameplayCommand {
   private String regionId;
   private Long regionEpoch;
   private Long dueTickId;
+  private Long admittedReleaseBundleId;
+  private Long admittedVersionId;
+  private String declaredEffectsJson;
 }

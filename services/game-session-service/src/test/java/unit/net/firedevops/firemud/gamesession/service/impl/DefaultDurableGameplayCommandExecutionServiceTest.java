@@ -404,6 +404,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     command.setSessionId(0L);
     command.setTenantId(22L);
     command.setGameInstanceId(7L);
+    command.setCharacterId(null);
     command.setTargetEntityId("npc-alpha");
     TickEffect effect = tickEffect("tfx-malformed", "cmd-malformed");
     when(parser.parse("SAY Hello there"))
@@ -425,6 +426,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     command.setSessionId(0L);
     command.setTenantId(22L);
     command.setGameInstanceId(7L);
+    command.setCharacterId(null);
     command.setTargetEntityId("0");
     TickEffect effect = tickEffect("tfx-zero", "cmd-zero");
     when(parser.parse("SAY Hello there"))
@@ -596,100 +598,288 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
-  void executeRejectsAuthoredActionBeforeReplayOrScriptPublication() {
+  void executeAppliesPersistedAuthoredActionSnapshotWithoutLiveMetadata() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
     TickEffect effect = tickEffect("tfx-8", "cmd-8");
-    TextCommand parsed =
-        new TextCommand(
-            "wave-salute",
-            TextCommandType.AUTHORED,
-            java.util.List.of("captain"),
-            "wave captain",
-            "wave",
-            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
-                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
-    when(parser.parse("wave captain")).thenReturn(parsed);
+    PlayerOutput output = PlayerOutput.notice("Action applied.");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-8")).thenReturn(Optional.empty());
+    when(actionStateCommandHandler.apply(
+            context,
+            "SALUTING",
+            java.time.Duration.ofSeconds(30),
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"block_mitigation\",\"value\":1}]}",
+            "tfx-8",
+            "Action applied."))
+        .thenReturn(
+            new ActionStateCommandHandlingResult(
+                CommandEnqueueResult.success(), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("APPLIED");
+    verify(actionStateCommandHandler)
+        .apply(
+            context,
+            "SALUTING",
+            java.time.Duration.ofSeconds(30),
+            "{\"modifiers\":[{\"operation\":\"ADD\",\"target_key\":\"block_mitigation\",\"value\":1}]}",
+            "tfx-8",
+            "Action applied.");
+    verify(durableGameplayReplayService)
+        .save(22L, 42L, "tfx-8", true, null, null, java.util.List.of(output));
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
+  }
+
+  @Test
+  void executeReplaysPersistedAuthoredActionWithoutApplyingItsSnapshotAgain() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
+    TickEffect effect = tickEffect("tfx-8b", "cmd-8b");
+    PlayerOutput output = PlayerOutput.notice("Action applied.");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-8b"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+  }
+
+  @Test
+  void executeReplaysAuthoredSnapshotAgainstItsOriginalSessionAfterSessionResumption() {
+    AdmittedTextCommandRegistryResolver admittedRegistryResolver =
+        Mockito.mock(AdmittedTextCommandRegistryResolver.class);
+    DefaultDurableGameplayCommandExecutionService admittedRegistryService =
+        new DefaultDurableGameplayCommandExecutionService(
+            meterRegistry,
+            parser,
+            admittedRegistryResolver,
+            sessionAuthenticationService,
+            moveCommandHandler,
+            itemCommandHandler,
+            communicationCommandHandler,
+            afkCommandHandler,
+            actionStateCommandHandler,
+            builtInMetadataResolver,
+            durableGameplayReplayService,
+            movementEffectIdempotencyService,
+            playerOutputDeliveryService,
+            scriptEventPublisher);
+    SessionContext resumedContext =
+        new SessionContext(43L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
+    TickEffect effect = tickEffect("tfx-resumed-authored", "cmd-resumed-authored");
+    PlayerOutput output = PlayerOutput.notice("Action applied.");
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.empty());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 5L, 91L))
+        .thenReturn(Optional.of(resumedContext));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-resumed-authored"))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    true, null, null, java.util.List.of(output))));
+
+    DurableGameplayCommandExecutionResult result =
+        admittedRegistryService.execute(effect, command).orElseThrow();
+
+    assertThat(result.effectStatus()).isEqualTo("REPLAY_NOOP");
+    verify(sessionAuthenticationService).resolveUnverifiedSessionContext("42");
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 5L, 91L);
+    verify(durableGameplayReplayService).find(22L, 42L, "tfx-resumed-authored");
+    verify(playerOutputDeliveryService).deliver(resumedContext, java.util.List.of(output), true);
+    verifyNoInteractions(admittedRegistryResolver, parser);
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verify(scriptEventPublisher, never()).publishCommandEvent(resumedContext, command);
+  }
+
+  @Test
+  void executeRejectsAuthoredActionWhenTheSessionSwitchedGameplayIdentity() {
+    SessionContext switchedContext =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 92L, "Other", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(authoredActionEffectsJson());
+    TickEffect effect = tickEffect("tfx-stale-identity", "cmd-stale-identity");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(switchedContext));
+
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
     assertThat(result.effectStatus()).isEqualTo("REJECTED");
-    assertThat(result.commandExecutionOutcome()).isEqualTo("COMPLETED");
-    assertThat(result.gameplayResult()).isEqualTo("NOT_APPLIED");
-    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
-    verify(durableGameplayReplayService, never())
-        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
-    verify(playerOutputDeliveryService, never())
-        .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
-    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+    assertThat(result.failureCode()).isEqualTo("STALE_SESSION_CONTEXT");
+    verifyNoInteractions(
+        durableGameplayReplayService, actionStateCommandHandler, scriptEventPublisher);
   }
 
   @Test
-  void executeRejectsSessionlessAuthoredActionBeforeReplayOrScriptPublication() {
+  void executeRejectsMalformedAuthoredSnapshotBeforeReplayOrScriptPublication() {
     SessionContext context =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
     GameplayCommand command = gameplayCommand("wave", "wave captain");
-    command.setSessionId(0L);
-    command.setTenantId(22L);
-    command.setGameInstanceId(7L);
-    command.setCharacterId(91L);
-    TickEffect effect = tickEffect("tfx-8b", "cmd-8b");
-    TextCommand parsed =
-        new TextCommand(
-            "wave-salute",
-            TextCommandType.AUTHORED,
-            java.util.List.of("captain"),
-            "wave captain",
-            "wave",
-            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
-                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
-    when(parser.parse("wave captain")).thenReturn(parsed);
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 7L, 91L))
-        .thenReturn(Optional.of(context));
-    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
-
-    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
-    verify(durableGameplayReplayService, never())
-        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
-    verify(playerOutputDeliveryService, never())
-        .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
-    verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
-  }
-
-  @Test
-  void executeRejectsAuthoredActionEvenWhenAnObsoleteReplayExists() {
-    SessionContext context =
-        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
-    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson("[{\"effectKind\":\"UNSUPPORTED\"}]");
     TickEffect effect = tickEffect("tfx-8", "cmd-8");
-    TextCommand parsed =
-        new TextCommand(
-            "wave-salute",
-            TextCommandType.AUTHORED,
-            java.util.List.of("captain"),
-            "wave captain",
-            "wave",
-            new net.firedevops.firemud.gamesession.command.text.TextCommandPayload
-                .AuthoredActionInvocation("wave-salute", java.util.List.of("captain")));
-    when(parser.parse("wave captain")).thenReturn(parsed);
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
         .thenReturn(Optional.of(context));
+
     DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
 
-    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_EXECUTION_UNAVAILABLE");
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_SNAPSHOT_INVALID");
     verify(durableGameplayReplayService, never())
         .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
     verify(playerOutputDeliveryService, never())
         .deliver(Mockito.any(), Mockito.anyList(), Mockito.anyBoolean());
     verify(scriptEventPublisher, never()).publishCommandEvent(context, command);
+  }
+
+  @Test
+  void executeRejectsAuthoredSnapshotWithAnInvalidModifierBeforeReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(
+        """
+        [{
+          "effectKind": "APPLY_ACTION_STATE",
+          "schemaVersion": 1,
+          "targeting": "SELF",
+          "replayPolicy": "EFFECT_IDEMPOTENT",
+          "payload": {
+            "conditionKey": "SALUTING",
+            "durationSeconds": 30,
+            "effectPayload": {"modifiers": [{"operation": "ARBITRARY", "target_key": "flag", "value": 1}]}
+          }
+        }]
+        """);
+    TickEffect effect = tickEffect("tfx-invalid-modifier", "cmd-invalid-modifier");
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+
+    DurableGameplayCommandExecutionResult result = service.execute(effect, command).orElseThrow();
+
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_SNAPSHOT_INVALID");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  @Test
+  void executeRejectsAuthoredSnapshotAboveTheSharedDurationLimitBeforeReplay() {
+    SessionContext context =
+        new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    GameplayCommand command = gameplayCommand("wave", "wave captain");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson(
+        authoredActionEffectsJson()
+            .replace("\"durationSeconds\": 30", "\"durationSeconds\": 3601"));
+    when(parser.parse("wave captain"))
+        .thenReturn(new TextCommand(TextCommandType.UNKNOWN, java.util.List.of(), "wave captain"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+
+    DurableGameplayCommandExecutionResult result =
+        service
+            .execute(tickEffect("tfx-invalid-duration", "cmd-invalid-duration"), command)
+            .orElseThrow();
+
+    assertThat(result.failureCode()).isEqualTo("AUTHORED_ACTION_SNAPSHOT_INVALID");
+    verify(durableGameplayReplayService, never())
+        .find(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString());
+    verify(actionStateCommandHandler, never())
+        .apply(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  private String authoredActionEffectsJson() {
+    return """
+        [{
+          "effectKind": "APPLY_ACTION_STATE",
+          "schemaVersion": 1,
+          "targeting": "SELF",
+          "replayPolicy": "EFFECT_IDEMPOTENT",
+          "payload": {
+            "conditionKey": "SALUTING",
+            "durationSeconds": 30,
+            "effectPayload": {
+              "modifiers": [
+                {"operation": "ADD", "target_key": "block_mitigation", "value": 1}
+              ]
+            }
+          }
+        }]
+        """;
   }
 
   private GameplayCommand gameplayCommand(String commandName, String commandText) {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("cmd-1");
+    command.setTenantId(22L);
+    command.setGameInstanceId(5L);
     command.setSessionId(42L);
+    command.setCharacterId(91L);
     command.setCommandName(commandName);
     command.setCommandText(commandText);
     command.setSanitizedCommandText(commandText);

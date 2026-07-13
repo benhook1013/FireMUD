@@ -5,10 +5,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.AfkCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.AuthoredActionExecutionOutcome;
 import net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.ItemCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
@@ -32,6 +32,8 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @SuppressFBWarnings(
@@ -39,6 +41,7 @@ import org.springframework.stereotype.Service;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class DefaultDurableGameplayCommandExecutionService
     implements DurableGameplayCommandExecutionService {
+  private static final ObjectMapper JSON = new ObjectMapper();
   private final MeterRegistry meterRegistry;
   private final TextCommandParser textCommandParser;
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
@@ -120,10 +123,14 @@ public final class DefaultDurableGameplayCommandExecutionService
   @Override
   public Optional<DurableGameplayCommandExecutionResult> execute(
       TickEffect effect, GameplayCommand command) {
-    TextCommand parsed = textCommandParser.parse(command.getCommandText());
-    if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
-        && parsed.type() != TextCommandType.UNKNOWN) {
-      return Optional.empty();
+    boolean authoredSnapshot = hasAuthoredActionSnapshot(command);
+    TextCommand parsed = null;
+    if (!authoredSnapshot) {
+      parsed = textCommandParser.parse(command.getCommandText());
+      if (resolveRoute(command, parsed, null) == CommandExecutionRoute.IGNORE
+          && parsed.type() != TextCommandType.UNKNOWN) {
+        return Optional.empty();
+      }
     }
     Optional<SessionContext> maybeContext = resolveExecutionContext(command);
     if (maybeContext.isEmpty()) {
@@ -139,11 +146,16 @@ public final class DefaultDurableGameplayCommandExecutionService
     }
     SessionContext context = maybeContext.orElseThrow();
     TextCommandRegistry activeRegistry = null;
-    if (admittedRegistryResolver != null) {
+    if (!authoredSnapshot && admittedRegistryResolver != null) {
       activeRegistry = admittedRegistryResolver.resolve(context);
       parsed = textCommandParser.parse(command.getCommandText(), activeRegistry);
     }
-    CommandExecutionRoute route = resolveRoute(command, parsed, activeRegistry);
+    // An admitted authored snapshot is the execution contract. Do not reclassify it from a
+    // later live registry read, otherwise a released-definition change can strand a command.
+    CommandExecutionRoute route =
+        authoredSnapshot
+            ? CommandExecutionRoute.AUTHORED
+            : resolveRoute(command, parsed, activeRegistry);
     if (route == CommandExecutionRoute.IGNORE) {
       return Optional.empty();
     }
@@ -189,15 +201,7 @@ public final class DefaultDurableGameplayCommandExecutionService
                     return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
                   }));
       case AUTHORED ->
-          Optional.of(
-              recordResult(
-                  command,
-                  new DurableGameplayCommandExecutionResult(
-                      "REJECTED",
-                      "COMPLETED",
-                      "NOT_APPLIED",
-                      AuthoredActionExecutionOutcome.CODE,
-                      AuthoredActionExecutionOutcome.MESSAGE)));
+          Optional.of(executeAuthoredActionState(context, command, effect.getEffectId()));
       case MOVE -> {
         publishCommandEventForLiveExecution(context, command);
         PreparedMoveCommandResult prepared = moveCommandHandler.prepare(context, activeParsed);
@@ -271,13 +275,157 @@ public final class DefaultDurableGameplayCommandExecutionService
             result.commandResult().errorMessage()));
   }
 
+  private DurableGameplayCommandExecutionResult executeAuthoredActionState(
+      SessionContext context, GameplayCommand command, String effectId) {
+    if (!matchesAuthoredCommandIdentity(context, command)) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "STALE_SESSION_CONTEXT",
+              "The gameplay session identity changed before the authored action could execute"));
+    }
+    if (command.getSessionId() == null || command.getSessionId() <= 0L) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "AUTHORED_ACTION_SNAPSHOT_INVALID",
+              "Authored action snapshot is missing its original session identity"));
+    }
+    Optional<AuthoredActionState> actionState = authoredActionState(command);
+    if (actionState.isEmpty()) {
+      return recordResult(
+          command,
+          new DurableGameplayCommandExecutionResult(
+              "REJECTED",
+              "COMPLETED",
+              "NOT_APPLIED",
+              "AUTHORED_ACTION_SNAPSHOT_INVALID",
+              "Authored action declaration snapshot is unavailable or unsupported"));
+    }
+    AuthoredActionState declaration = actionState.orElseThrow();
+    return executeReplayBackedLocalMutation(
+        context,
+        command,
+        effectId,
+        command.getSessionId(),
+        () -> {
+          var result =
+              actionStateCommandHandler.apply(
+                  context,
+                  declaration.conditionKey(),
+                  declaration.duration(),
+                  declaration.effectPayloadJson(),
+                  effectId,
+                  "Action applied.");
+          return new ReplayBackedMutationResult(result.commandResult(), result.outputs());
+        });
+  }
+
+  private boolean matchesAuthoredCommandIdentity(SessionContext context, GameplayCommand command) {
+    return command.getTenantId() != null
+        && command.getTenantId() > 0L
+        && command.getGameInstanceId() != null
+        && command.getGameInstanceId() > 0L
+        && command.getCharacterId() != null
+        && command.getCharacterId() > 0L
+        && context.tenantId() == command.getTenantId()
+        && context.gameInstanceId() == command.getGameInstanceId()
+        && context.characterId() == command.getCharacterId();
+  }
+
+  private Optional<AuthoredActionState> authoredActionState(GameplayCommand command) {
+    if (command.getAdmittedReleaseBundleId() == null
+        || command.getAdmittedReleaseBundleId() <= 0L
+        || command.getAdmittedVersionId() == null
+        || command.getAdmittedVersionId() <= 0L
+        || command.getDeclaredEffectsJson() == null) {
+      return Optional.empty();
+    }
+    try {
+      JsonNode effects = JSON.readTree(command.getDeclaredEffectsJson());
+      if (!effects.isArray() || effects.size() != 1) {
+        return Optional.empty();
+      }
+      JsonNode effect = effects.get(0);
+      JsonNode payload = effect.path("payload");
+      JsonNode effectPayload = payload.path("effectPayload");
+      if (!effect.isObject()
+          || !"APPLY_ACTION_STATE".equals(effect.path("effectKind").asText())
+          || !effect.path("schemaVersion").isInt()
+          || effect.path("schemaVersion").asInt() != 1
+          || !"SELF".equals(effect.path("targeting").asText())
+          || !"EFFECT_IDEMPOTENT".equals(effect.path("replayPolicy").asText())
+          || !payload.isObject()
+          || !isIdentifier(payload.path("conditionKey"))
+          || !payload.path("durationSeconds").isInt()
+          || !CommandEffectDeclarationConstraints.isValidDurationSeconds(
+              payload.path("durationSeconds").asInt())
+          || !validActionStatePayload(effectPayload)) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          new AuthoredActionState(
+              payload.path("conditionKey").asText(),
+              java.time.Duration.ofSeconds(payload.path("durationSeconds").asInt()),
+              effectPayload.toString()));
+    } catch (RuntimeException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private boolean validActionStatePayload(JsonNode effectPayload) {
+    JsonNode modifiers = effectPayload.path("modifiers");
+    if (!effectPayload.isObject() || !modifiers.isArray()) {
+      return false;
+    }
+    for (JsonNode modifier : modifiers) {
+      if (!modifier.isObject()
+          || !CommandEffectDeclarationConstraints.SUPPORTED_MODIFIER_OPERATIONS.contains(
+              modifier.path("operation").asText())
+          || !isIdentifier(modifier.path("target_key"))
+          || !modifier.path("value").isNumber()
+          || (!modifier.path("priority").isMissingNode() && !modifier.path("priority").isInt())
+          || (!modifier.path("scope_kind").isMissingNode()
+              && !isIdentifier(modifier.path("scope_kind")))
+          || (!modifier.path("scope_key").isMissingNode()
+              && !isIdentifier(modifier.path("scope_key")))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean isIdentifier(JsonNode value) {
+    return value.isTextual() && CommandEffectDeclarationConstraints.isIdentifier(value.asText());
+  }
+
+  private boolean hasAuthoredActionSnapshot(GameplayCommand command) {
+    return command.getDeclaredEffectsJson() != null && !command.getDeclaredEffectsJson().isBlank();
+  }
+
   private DurableGameplayCommandExecutionResult executeReplayBackedLocalMutation(
       SessionContext context,
       GameplayCommand command,
       String effectId,
       Supplier<ReplayBackedMutationResult> liveExecution) {
+    return executeReplayBackedLocalMutation(
+        context, command, effectId, context.sessionId(), liveExecution);
+  }
+
+  private DurableGameplayCommandExecutionResult executeReplayBackedLocalMutation(
+      SessionContext context,
+      GameplayCommand command,
+      String effectId,
+      long replaySessionId,
+      Supplier<ReplayBackedMutationResult> liveExecution) {
     Optional<DurableGameplayReplayService.ReplayRecord> replay =
-        durableGameplayReplayService.find(context.tenantId(), context.sessionId(), effectId);
+        durableGameplayReplayService.find(context.tenantId(), replaySessionId, effectId);
     if (replay.isPresent()) {
       DurableGameplayReplayService.ReplayRecord record = replay.orElseThrow();
       if (!record.actorOutputs().isEmpty()) {
@@ -289,7 +437,7 @@ public final class DefaultDurableGameplayCommandExecutionService
     ReplayBackedMutationResult result = liveExecution.get();
     durableGameplayReplayService.save(
         context.tenantId(),
-        context.sessionId(),
+        replaySessionId,
         effectId,
         result.commandResult.accepted(),
         result.commandResult.errorCode(),
@@ -382,6 +530,9 @@ public final class DefaultDurableGameplayCommandExecutionService
 
   private record ReplayBackedMutationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {}
+
+  private record AuthoredActionState(
+      String conditionKey, java.time.Duration duration, String effectPayloadJson) {}
 
   private CommandExecutionRoute resolveRoute(
       GameplayCommand command, TextCommand parsed, TextCommandRegistry activeRegistry) {

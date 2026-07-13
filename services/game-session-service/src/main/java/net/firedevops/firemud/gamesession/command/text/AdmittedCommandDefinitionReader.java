@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,8 @@ final class AdmittedCommandDefinitionReader {
   private final GameDesignClient gameDesignClient;
   private final ObjectMapper objectMapper;
   private final ConcurrentMap<BundleKey, List<TextCommandDefinition>> definitionsByBundle =
+      new ConcurrentHashMap<>();
+  private final ConcurrentMap<BundleKey, GetPublishedReleaseBundleResponse> bundlesByKey =
       new ConcurrentHashMap<>();
 
   AdmittedCommandDefinitionReader(
@@ -56,6 +59,53 @@ final class AdmittedCommandDefinitionReader {
     }
   }
 
+  Optional<AuthoredCommandAdmission> admissionFor(SessionContext context, String commandId) {
+    if (context == null
+        || context.tenantId() <= 0L
+        || context.gameInstanceId() <= 0L
+        || commandId == null
+        || commandId.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return gameInstanceRepository
+          .findById(context.gameInstanceId())
+          .filter(instance -> matchesContext(instance, context))
+          .flatMap(
+              instance ->
+                  readBundle(bundleKey(context.tenantId(), instance))
+                      .flatMap(response -> admissionFromBundle(instance, commandId, response)));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to resolve admitted command declaration tenantId={} gameInstanceId={} commandId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          commandId,
+          ex);
+      return Optional.empty();
+    }
+  }
+
+  private Optional<AuthoredCommandAdmission> admissionFromBundle(
+      GameInstance instance, String commandId, GetPublishedReleaseBundleResponse response) {
+    for (String json : response.getBundle().getCommandDefinitionsList()) {
+      JsonNode definition = objectMapper.readTree(json);
+      if (commandId.equals(definition.path("commandId").asText())) {
+        TextCommandDefinition parsed = parseDefinition(json);
+        if (parsed.effects().size() != 1) {
+          return Optional.empty();
+        }
+        return Optional.of(
+            new AuthoredCommandAdmission(
+                instance.getReleaseBundleId(),
+                instance.getVersionId(),
+                commandId,
+                definition.path("effects").toString()));
+      }
+    }
+    return Optional.empty();
+  }
+
   private boolean matchesContext(GameInstance instance, SessionContext context) {
     return instance.getTenantId() != null
         && instance.getTenantId() == context.tenantId()
@@ -68,10 +118,12 @@ final class AdmittedCommandDefinitionReader {
   private Optional<List<TextCommandDefinition>> readDefinitions(
       long tenantId, GameInstance instance) {
     try {
-      BundleKey bundleKey =
-          new BundleKey(tenantId, instance.getVersionId(), instance.getReleaseBundleId());
-      return Optional.of(
-          definitionsByBundle.computeIfAbsent(bundleKey, ignored -> loadDefinitions(bundleKey)));
+      BundleKey bundleKey = bundleKey(tenantId, instance);
+      return readBundle(bundleKey)
+          .map(
+              response ->
+                  definitionsByBundle.computeIfAbsent(
+                      bundleKey, ignored -> parseDefinitions(response)));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Unable to read admitted command definitions tenantId={} versionId={} releaseBundleId={}",
@@ -83,7 +135,21 @@ final class AdmittedCommandDefinitionReader {
     }
   }
 
-  private List<TextCommandDefinition> loadDefinitions(BundleKey bundleKey) {
+  private Optional<GetPublishedReleaseBundleResponse> readBundle(BundleKey bundleKey) {
+    try {
+      return Optional.of(bundlesByKey.computeIfAbsent(bundleKey, this::loadBundle));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Unable to read admitted command bundle tenantId={} versionId={} releaseBundleId={}",
+          bundleKey.tenantId(),
+          bundleKey.versionId(),
+          bundleKey.releaseBundleId(),
+          ex);
+      return Optional.empty();
+    }
+  }
+
+  private GetPublishedReleaseBundleResponse loadBundle(BundleKey bundleKey) {
     GetPublishedReleaseBundleResponse response =
         gameDesignClient.getPublishedReleaseBundle(bundleKey.tenantId(), bundleKey.versionId());
     if (response.hasError()
@@ -93,11 +159,19 @@ final class AdmittedCommandDefinitionReader {
       throw new IllegalArgumentException(
           "published release bundle does not match the game instance");
     }
+    return response;
+  }
+
+  private List<TextCommandDefinition> parseDefinitions(GetPublishedReleaseBundleResponse response) {
     List<TextCommandDefinition> definitions = new ArrayList<>();
     for (String json : response.getBundle().getCommandDefinitionsList()) {
       definitions.add(parseDefinition(json));
     }
     return List.copyOf(definitions);
+  }
+
+  private BundleKey bundleKey(long tenantId, GameInstance instance) {
+    return new BundleKey(tenantId, instance.getVersionId(), instance.getReleaseBundleId());
   }
 
   private record BundleKey(long tenantId, long versionId, long releaseBundleId) {}

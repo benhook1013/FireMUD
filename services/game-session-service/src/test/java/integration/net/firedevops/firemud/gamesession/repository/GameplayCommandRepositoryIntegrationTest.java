@@ -83,4 +83,43 @@ class GameplayCommandRepositoryIntegrationTest {
         .extracting(GameplayCommand::getExecutionHook)
         .isEqualTo("runtime.workflow.wave");
   }
+
+  @Test
+  void updatePreservesAdmittedAuthoredActionSnapshot() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-authored-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(11L);
+    command.setCommandName("wave-salute");
+    command.setCommandText("salute captain");
+    command.setSanitizedCommandText("salute captain");
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(1);
+    command.setSourceType("PLAYER");
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    command.setAdmittedReleaseBundleId(300L);
+    command.setAdmittedVersionId(41L);
+    command.setDeclaredEffectsJson("[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
+
+    GameplayCommand saved = repository.save(command);
+    saved.setExecutionOutcome("STAGED");
+    saved.setAdmittedReleaseBundleId(999L);
+    saved.setAdmittedVersionId(998L);
+    saved.setDeclaredEffectsJson("[]");
+    repository.save(saved);
+
+    assertThat(repository.findByCommandId("cmd-authored-1"))
+        .get()
+        .extracting(
+            GameplayCommand::getExecutionOutcome,
+            GameplayCommand::getAdmittedReleaseBundleId,
+            GameplayCommand::getAdmittedVersionId,
+            GameplayCommand::getDeclaredEffectsJson)
+        .containsExactly("STAGED", 300L, 41L, "[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
+  }
 }

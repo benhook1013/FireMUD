@@ -33,7 +33,7 @@ These are already partly real in code and should continue after the immediate ru
 3. [02.13.7 Action Classification and Activity Semantics](./02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: built-in and first-pass authored actions now carry bounded optional tags/facets too; the next follow-through is real scripting/policy consumers of those tags rather than metadata-only attachment.
 4. [02.13.9 Authored Action Definition and Execution Model](./02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-   Remaining: build on the now-live typed config-backed authored-action record, shared `commandId` registry seam, first non-built-in provider, authored `HELP` discovery, and fail-fast unsupported-metadata validation by adding richer targeting/cost/cooldown/effect semantics.
+   Remaining: build on the now-live release-admitted typed command-definition registry, authored `HELP` discovery, immutable durable effect snapshots, and first replay-guarded `APPLY_ACTION_STATE` execution by adding richer targeting, cost, cooldown, and effect semantics.
 5. [02.1.3 Session Activity and WHO Presence](./02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: the bounded gameplay-presence, AFK/activity, recent-presence disposition, and first current-game-instance `WHO` substrate are now live; only later activity consumers and richer visibility-policy follow-through remain when that work becomes active.
 6. [02.1.4 Cross-Game Social Presence and Friend Activity](./02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
@@ -59,7 +59,7 @@ These are already partly real in code and should continue after the immediate ru
 16. [03.2 Runtime Room Identity Contract Convergence](./03.2-task-list-runtime-room-identity-contract-convergence-vertical-slice.md)
    Remaining: converge `roomInstanceId` onto one canonical runtime room identity across World Management, Entity Management, Game Logic, Game Session, read-fence, attestation, and shared proto/API seams, while renaming and confining World Management numeric room storage keys to explicitly internal mapping semantics instead of letting one shared name carry both routing identity and database-row meaning.
 
-### 3. Design settled enough, but not started or only placeholder-level
+### 3. Design settled, with partial or future implementation remaining
 
 These are not broad audit topics anymore; they are real future slices with known direction.
 
@@ -70,11 +70,11 @@ These are not broad audit topics anymore; they are real future slices with known
    Remaining: the hot reconnect buffer now stores structured `PlayerOutput` replay metadata alongside classic rendered protocol text for new entries and keeps text-only legacy entries readable; the narrower storage-model follow-through is now locked at the design boundary, so the remaining work is bounded durable transcript history on top of that explicit transcript-entry and retention-class contract.
 5. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
 6. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
-   Remaining: Entity Management now has the first gameplay-attested actor-state read substrate for baseline resources plus persisted resource/condition rows; authored definitions, shared effect evaluation, mutation/expiry, equipment/action contributions, and damage/mitigation remain future work.
+   Remaining: Entity Management now has evaluated actor state, persisted resource/condition rows, shared effect evaluation, equipped-item contributions, replay-guarded action-state mutation/expiry, and the first release-admitted authored action-effect execution; generic stat/condition definitions, resource-cost mutation, multi-effect actions, and damage/mitigation remain future work.
 7. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)
-   Remaining: the first typed in-process effect evaluation seam now exists for additive/multiplicative/clamp modifiers, granted flags/conditions, scopes, and provenance, and active condition payloads are wired through it for actor-state reads; authored definitions plus equipment/action-state producer wiring remain future work.
+   Remaining: the typed evaluation seam now consumes active conditions, equipment payloads, replay-guarded action states, and the first admitted authored `APPLY_ACTION_STATE` declaration. The honest tail is generic authored stat/condition definitions, additional effect kinds, resource costs/cooldowns, and combat consumers.
 8. [07.2 Equipment and Action-State Contributions](./07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-   Remaining: equipped item templates can now contribute effect payload modifiers through actor-state reads, and an internal condition/action-state apply/expire seam exists; player command wiring, scheduled expiry execution, and richer scoped combat-facing consumption remain future work.
+   Remaining: equipped item templates contribute through actor-state reads, and player-authored `BLOCK` / `GUARD` plus the first release-admitted action-state effect execute through the replay-guarded condition mutation/expiry seam. Richer scoped combat-facing consumption remains future work.
 9. [07.3 Damage and Mitigation Resolution](./07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Lower-priority platform/settings expansion

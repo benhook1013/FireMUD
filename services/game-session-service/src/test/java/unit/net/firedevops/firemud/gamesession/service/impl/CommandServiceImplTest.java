@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -217,6 +218,45 @@ class CommandServiceImplTest {
     assertEquals("LOOK", staged.getCommandName());
     assertEquals("look", staged.getSanitizedCommandText());
     assertEquals(1L, staged.getEnqueueSeq());
+  }
+
+  @Test
+  void enqueuePersistsAdmittedAuthoredActionSnapshot() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(7L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    SessionAuthenticationService sessionAuthenticationService =
+        identitySessionAuthenticationService();
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
+        .thenReturn(Optional.of(bootstrapShell(7L, 9L, 7L)));
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            sessionAuthenticationService,
+            pointerAuthorityService,
+            Mockito.mock(ScriptEventPublisher.class));
+    AuthoredCommandAdmission admission =
+        new AuthoredCommandAdmission(
+            300L, 41L, "wave-salute", "[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
+
+    CommandEnqueueResult result = service.enqueue("7", "salute captain", false, admission);
+
+    assertTrue(result.accepted());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getAllValues().getFirst();
+    assertEquals("wave-salute", accepted.getCommandName());
+    assertEquals(300L, accepted.getAdmittedReleaseBundleId());
+    assertEquals(41L, accepted.getAdmittedVersionId());
+    assertEquals("[{\"effectKind\":\"APPLY_ACTION_STATE\"}]", accepted.getDeclaredEffectsJson());
   }
 
   @Test

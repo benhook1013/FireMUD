@@ -72,6 +72,38 @@ class ActionStateCommandHandlerTest {
   }
 
   @Test
+  void applyUsesTheProvidedEffectPayload() {
+    String effectPayload = "{\"source\":\"wave\"}";
+    when(gameLogicClient.applyActorCondition(
+            eq(context),
+            eq("saluting"),
+            eq("ACTION_STATE"),
+            eq("effect-wave"),
+            eq(NOW.plusSeconds(30)),
+            eq(effectPayload)))
+        .thenReturn(ApplyActorConditionResponse.newBuilder().build());
+
+    var result =
+        handler.apply(
+            context,
+            "saluting",
+            java.time.Duration.ofSeconds(30),
+            effectPayload,
+            "effect-wave",
+            "You salute.");
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    verify(gameLogicClient)
+        .applyActorCondition(
+            eq(context),
+            eq("saluting"),
+            eq("ACTION_STATE"),
+            eq("effect-wave"),
+            eq(NOW.plusSeconds(30)),
+            eq(effectPayload));
+  }
+
+  @Test
   void blockRejectsPartialGameplayIdentityShell() {
     SessionContext partialContext =
         new SessionContext(42L, 22L, 7L, "demo@example.com", 0L, null, 5L, "R-1", "jwt-token");

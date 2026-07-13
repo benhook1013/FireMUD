@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -11,6 +13,7 @@ import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -134,6 +137,71 @@ class AdmittedCommandDefinitionReaderTest {
     assertEquals(5L, actionState.duration().toSeconds());
     assertEquals("ADD", actionState.modifiers().getFirst().operation());
     assertEquals("block_mitigation", actionState.modifiers().getFirst().targetKey());
+  }
+
+  @Test
+  void snapshotsValidatedAuthoredEffectsFromTheAdmittedReleaseBundle() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validActionStateDefinition())
+                        .build())
+                .build());
+
+    AuthoredCommandAdmission admission = reader.admissionFor(context(), "block").orElseThrow();
+
+    assertEquals(12L, admission.releaseBundleId());
+    assertEquals(9L, admission.versionId());
+    assertEquals("block", admission.commandId());
+    var effects = new ObjectMapper().readTree(admission.declaredEffectsJson());
+    assertTrue(effects.isArray());
+    assertEquals(1, effects.size());
+    assertEquals("APPLY_ACTION_STATE", effects.get(0).path("effectKind").asText());
+  }
+
+  @Test
+  void reusesTheAdmittedBundleReadForDefinitionsAndAdmission() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validActionStateDefinition())
+                        .build())
+                .build());
+
+    assertTrue(reader.definitionsFor(context()).isPresent());
+    assertTrue(reader.admissionFor(context(), "block").isPresent());
+
+    verify(gameDesignClient, times(1)).getPublishedReleaseBundle(7L, 9L);
+  }
+
+  @Test
+  void doesNotAdmitDefinitionsWithoutTheSingleSupportedExecutionEffect() {
+    GameInstance instance = admittedInstance();
+    when(gameInstanceRepository.findById(44L)).thenReturn(Optional.of(instance));
+    when(gameDesignClient.getPublishedReleaseBundle(7L, 9L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(12L)
+                        .setVersionId(9L)
+                        .addCommandDefinitions(validDefinition())
+                        .build())
+                .build());
+
+    assertTrue(reader.admissionFor(context(), "salute").isEmpty());
   }
 
   @Test

@@ -18,6 +18,7 @@ import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -94,6 +95,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.ObjectMapper;
 
 /** Simple gRPC service exposing the Ping RPC. */
 @GrpcService
@@ -121,6 +123,7 @@ public class EntityManagementGrpcService
   private final EntityMutationEffectReplayService entityMutationEffectReplayService;
   private final EntityUpgradeValidationService entityUpgradeValidationService;
   private final EntityTemplateReferenceService entityTemplateReferenceService;
+  private final EffectPayloadParser effectPayloadParser;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -137,7 +140,8 @@ public class EntityManagementGrpcService
       EntityUpgradeValidationService entityUpgradeValidationService,
       EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      EffectPayloadParser effectPayloadParser) {
     this.pingService = pingService;
     this.characterService = characterService;
     this.actorStateService = actorStateService;
@@ -153,6 +157,7 @@ public class EntityManagementGrpcService
     this.entityTemplateReferenceService = entityTemplateReferenceService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
+    this.effectPayloadParser = effectPayloadParser;
   }
 
   public EntityManagementGrpcService(
@@ -183,7 +188,6 @@ public class EntityManagementGrpcService
         meterRegistry);
   }
 
-  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -213,6 +217,7 @@ public class EntityManagementGrpcService
         meterRegistry);
   }
 
+  @Autowired
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
@@ -227,7 +232,8 @@ public class EntityManagementGrpcService
       EntityUpgradeValidationService entityUpgradeValidationService,
       EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      EffectPayloadParser effectPayloadParser) {
     this(
         pingService,
         characterService,
@@ -245,7 +251,8 @@ public class EntityManagementGrpcService
         entityUpgradeValidationService,
         entityTemplateReferenceService,
         gameplaySessionAttestationService,
-        meterRegistry);
+        meterRegistry,
+        effectPayloadParser);
   }
 
   public EntityManagementGrpcService(
@@ -276,7 +283,8 @@ public class EntityManagementGrpcService
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
-        meterRegistry);
+        meterRegistry,
+        new EffectPayloadParser(new ObjectMapper()));
   }
 
   @Override
@@ -845,11 +853,13 @@ public class EntityManagementGrpcService
           requireGameplayActorScope(request.getTenantId(), request.getCharacterId());
       String conditionKey = requireText(request.getConditionKey(), "conditionKey");
       String sourceType = requireText(request.getSourceType(), "sourceType");
+      String sourceId = requireText(request.getSourceId(), "sourceId");
       Instant expiresAt = parseOptionalInstant(request.getExpiresAt());
+      effectPayloadParser.validate(request.getEffectPayloadJson());
       ApplyActorConditionResponse response =
           entityMutationEffectReplayService.execute(
               actorScope.tenantId(),
-              request.getSourceId(),
+              sourceId,
               "ApplyActorCondition",
               () -> {
                 ActorConditionStateDto activeCondition =
@@ -861,7 +871,7 @@ public class EntityManagementGrpcService
                         conditionKey,
                         request.getStackCount(),
                         sourceType,
-                        request.getSourceId(),
+                        sourceId,
                         expiresAt,
                         request.getEffectPayloadJson());
                 return ApplyActorConditionResponse.newBuilder()

@@ -1,15 +1,19 @@
 package net.firedevops.firemud.entitymanagement.effect;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class EffectPayloadParser {
+  private static final EffectSource VALIDATION_SOURCE =
+      new EffectSource("VALIDATION", "effect-payload", "");
+
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Spring injects ObjectMapper; storing the shared mapper reference is safe")
@@ -24,66 +28,84 @@ public class EffectPayloadParser {
       return List.of();
     }
     try {
-      Map<?, ?> payload = objectMapper.readValue(effectPayloadJson, Map.class);
-      Object rawModifiers = firstPresent(payload, "modifiers", "effects");
-      if (!(rawModifiers instanceof List<?> modifiers)) {
+      JsonNode payload = objectMapper.readTree(effectPayloadJson);
+      if (!payload.isObject()) {
+        throw new IllegalArgumentException("effect_payload_json must be an object");
+      }
+      JsonNode modifiers = payload.path("modifiers");
+      if (modifiers.isMissingNode()) {
+        if (!payload.path("effects").isMissingNode()) {
+          throw new IllegalArgumentException("effect_payload_json must use modifiers, not effects");
+        }
         return List.of();
       }
-      return modifiers.stream()
-          .filter(Map.class::isInstance)
-          .map(Map.class::cast)
-          .map(modifier -> toModifier(modifier, source))
-          .toList();
-    } catch (Exception ex) {
+      if (!modifiers.isArray()) {
+        throw new IllegalArgumentException("effect_payload_json modifiers must be an array");
+      }
+      List<EffectModifier> parsed = new ArrayList<>();
+      for (JsonNode modifier : modifiers) {
+        parsed.add(toModifier(modifier, source));
+      }
+      return List.copyOf(parsed);
+    } catch (RuntimeException ex) {
       throw new IllegalArgumentException("effect_payload_json is not a valid effect payload", ex);
     }
   }
 
-  private EffectModifier toModifier(Map<?, ?> modifier, EffectSource source) {
-    EffectOperation operation = EffectOperation.valueOf(requiredString(modifier, "operation"));
-    String targetKey = requiredString(modifier, "target_key", "targetKey", "stat_key", "state_key");
-    BigDecimal value = numericValue(modifier.get("value"), operation);
+  /** Validates the persisted effect payload shape without attaching it to an actor source. */
+  public void validate(String effectPayloadJson) {
+    parseModifiers(effectPayloadJson, VALIDATION_SOURCE);
+  }
+
+  private EffectModifier toModifier(JsonNode modifier, EffectSource source) {
+    if (!modifier.isObject()) {
+      throw new IllegalArgumentException("effect modifier must be an object");
+    }
+    String operationName = requiredText(modifier, "operation");
+    if (!CommandEffectDeclarationConstraints.SUPPORTED_MODIFIER_OPERATIONS.contains(
+        operationName)) {
+      throw new IllegalArgumentException("effect modifier operation is unsupported");
+    }
+    EffectOperation operation = EffectOperation.valueOf(operationName);
+    String targetKey = requiredIdentifier(modifier, "target_key");
+    JsonNode value = modifier.path("value");
+    if (!value.isNumber()) {
+      throw new IllegalArgumentException("effect modifier value must be numeric");
+    }
+    JsonNode priority = modifier.path("priority");
+    if (!priority.isMissingNode() && !priority.isInt()) {
+      throw new IllegalArgumentException("effect modifier priority must be an integer");
+    }
     EffectScope scope =
         new EffectScope(
-            optionalString(modifier, "scope_kind", "scopeKind"),
-            optionalString(modifier, "scope_key", "scopeKey"));
-    int priority = intValue(modifier.get("priority"));
-    return new EffectModifier(operation, targetKey, value, scope, source, priority);
+            optionalIdentifier(modifier, "scope_kind"), optionalIdentifier(modifier, "scope_key"));
+    return new EffectModifier(
+        operation,
+        targetKey,
+        value.decimalValue(),
+        scope,
+        source,
+        priority.isMissingNode() ? 0 : priority.asInt());
   }
 
-  private Object firstPresent(Map<?, ?> payload, String... keys) {
-    for (String key : keys) {
-      if (payload.containsKey(key)) {
-        return payload.get(key);
-      }
+  private String requiredText(JsonNode modifier, String field) {
+    JsonNode value = modifier.path(field);
+    if (!value.isTextual() || value.asText().isBlank()) {
+      throw new IllegalArgumentException("effect modifier " + field + " is required");
     }
-    return null;
+    return value.asText();
   }
 
-  private String requiredString(Map<?, ?> source, String... keys) {
-    String value = optionalString(source, keys);
-    if (!StringUtils.hasText(value)) {
-      throw new IllegalArgumentException("effect modifier is missing required field");
+  private String requiredIdentifier(JsonNode modifier, String field) {
+    String value = requiredText(modifier, field);
+    if (!CommandEffectDeclarationConstraints.isIdentifier(value)) {
+      throw new IllegalArgumentException("effect modifier " + field + " must be an identifier");
     }
     return value;
   }
 
-  private String optionalString(Map<?, ?> source, String... keys) {
-    Object value = firstPresent(source, keys);
-    return value == null ? "" : value.toString();
-  }
-
-  private BigDecimal numericValue(Object rawValue, EffectOperation operation) {
-    if (rawValue == null) {
-      return operation == EffectOperation.MULTIPLY ? BigDecimal.ONE : BigDecimal.ZERO;
-    }
-    return new BigDecimal(rawValue.toString());
-  }
-
-  private int intValue(Object rawValue) {
-    if (rawValue == null) {
-      return 0;
-    }
-    return Integer.parseInt(rawValue.toString());
+  private String optionalIdentifier(JsonNode modifier, String field) {
+    JsonNode value = modifier.path(field);
+    return value.isMissingNode() ? null : requiredIdentifier(modifier, field);
   }
 }
