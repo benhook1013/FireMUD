@@ -22,7 +22,7 @@ That is no longer just planning work: the family is now active in code.
 - script-patch publish already uses that same framework with real Automation & Scripting plus Game Design control-plane digests;
 - full-version publish now also uses the real domain participant matrix instead of placeholder missing-participant failures, while remaining follow-through is recorded-digest comparison and deeper target-state data modeling rather than absent participant coverage.
 - `08.5` is complete at the current boundary and is the strongest doc-first review candidate in this family;
-- `08.1` through `08.3` are materially real but still have meaningful remaining implementation follow-through and should be treated as in-progress slices rather than frozen review surfaces.
+- `08.1` through `08.3` are complete at their current publish, asset-lifecycle, and launch/activation boundaries; later domain-template and runtime-state families must adopt their contracts rather than reopening those slices.
 - `08.4` and `08.5` are now complete at their current canonical seams and are reasonable review entrypoints for publication-boundary truth and world-design mutation truth respectively.
 
 This parent doc is intentionally a family map, not a claim that the whole `08.x` domain is finished enough to review without code.
