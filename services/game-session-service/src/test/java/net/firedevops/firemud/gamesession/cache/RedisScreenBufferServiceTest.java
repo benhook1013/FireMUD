@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -135,6 +136,7 @@ class RedisScreenBufferServiceTest {
     assertThat(second.outputKind()).isEqualTo("MESSAGE");
     assertThat(second.payloadType()).isEqualTo("text_message");
     assertThat(second.payloadJson()).contains("SECOND");
+    assertThat(second.byteSize()).isGreaterThan("SECOND\n".getBytes(StandardCharsets.UTF_8).length);
     assertThat(valueCaptor.getAllValues()).hasSize(2);
     assertThat(valueCaptor.getAllValues().get(1)).contains("\"SECOND");
     assertThat(valueCaptor.getAllValues().get(1)).contains("\"payloadType\":\"text_message\"");

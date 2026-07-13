@@ -45,7 +45,10 @@ public class DurableScreenBufferService implements ScreenBufferService {
     List<BufferedEntry> filtered =
         entries == null
             ? List.of()
-            : entries.stream().filter(entry -> StringUtils.hasText(entry.text())).toList();
+            : entries.stream()
+                .filter(entry -> StringUtils.hasText(entry.text()))
+                .map(entry -> entry.withCanonicalByteSize(tenantId, gameInstanceId, characterId))
+                .toList();
     if (filtered.isEmpty()) {
       return;
     }
@@ -110,19 +113,35 @@ public class DurableScreenBufferService implements ScreenBufferService {
             repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
     List<Long> discardedIds = new ArrayList<>();
     while (retained.size() > 1
-        && totalBytes(retained) > buffer.softMaxBytes()
+        && totalBytes(retained, tenantId, gameInstanceId, characterId) > buffer.softMaxBytes()
         && retained.size() > buffer.minMessages()
         && totalLines(retained) > buffer.minLines()) {
       discardedIds.add(retained.remove(0).getId());
     }
-    while (retained.size() > 1 && totalBytes(retained) > buffer.hardMaxBytes()) {
+    while (retained.size() > 1
+        && totalBytes(retained, tenantId, gameInstanceId, characterId) > buffer.hardMaxBytes()) {
       discardedIds.add(retained.remove(0).getId());
     }
     repository.deleteByIds(discardedIds);
   }
 
-  private int totalBytes(List<ResumeTranscriptEntry> entries) {
-    return entries.stream().mapToInt(ResumeTranscriptEntry::getByteSize).sum();
+  private int totalBytes(
+      List<ResumeTranscriptEntry> entries, long tenantId, long gameInstanceId, long characterId) {
+    return entries.stream()
+        .mapToInt(
+            entry ->
+                new BufferedEntry(
+                        entry.getProtocolText(),
+                        entry.getLineCount(),
+                        entry.getByteSize(),
+                        entry.getAppendedAt().toEpochMilli(),
+                        entry.getOutputKind(),
+                        entry.getReplayPolicy(),
+                        entry.getBriefRenderPolicy(),
+                        entry.getPayloadType(),
+                        entry.getPayloadJson())
+                    .canonicalByteSize(tenantId, gameInstanceId, characterId))
+        .sum();
   }
 
   private int totalLines(List<ResumeTranscriptEntry> entries) {

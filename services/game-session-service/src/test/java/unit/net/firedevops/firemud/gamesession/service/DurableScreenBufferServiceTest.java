@@ -35,7 +35,7 @@ class DurableScreenBufferServiceTest {
         .thenReturn(
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(0L, 1, 1, 100, 200)));
+                new FiremudReconnectionProperties.Buffer(0L, 1, 1, 100, 250)));
   }
 
   @Test
@@ -60,9 +60,12 @@ class DurableScreenBufferServiceTest {
     assertThat(persisted.getCharacterId()).isEqualTo(13L);
     assertThat(persisted.getProtocolText()).isEqualTo("You say, \"hello\"\n");
     assertThat(persisted.getPayloadJson()).isEqualTo("{\"kind\":\"SAY\"}");
+    assertThat(persisted.getByteSize())
+        .isEqualTo(entry.withCanonicalByteSize(22L, 7L, 13L).byteSize())
+        .isGreaterThan(entry.byteSize());
     assertThat(persisted.getExpiresAt()).isNull();
     verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
-    verify(hotCache).append(22L, 7L, 13L, List.of(entry));
+    verify(hotCache).append(22L, 7L, 13L, List.of(entry.withCanonicalByteSize(22L, 7L, 13L)));
   }
 
   @Test
@@ -98,9 +101,9 @@ class DurableScreenBufferServiceTest {
   @Test
   void appendTrimsOldestEntriesUsingExistingBufferBounds() {
     ResumeTranscriptEntry first = entry(1L, "old", Instant.parse("2026-07-12T01:00:00Z"));
-    first.setByteSize(80);
+    first.setByteSize(1);
     ResumeTranscriptEntry second = entry(2L, "new", Instant.parse("2026-07-12T01:01:00Z"));
-    second.setByteSize(80);
+    second.setByteSize(1);
     when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
         .thenReturn(List.of(first, second));
 

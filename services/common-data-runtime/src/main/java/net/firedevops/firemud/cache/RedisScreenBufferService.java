@@ -40,7 +40,10 @@ public class RedisScreenBufferService implements ScreenBufferService {
     List<BufferedEntry> filtered =
         entries == null
             ? List.of()
-            : entries.stream().filter(entry -> StringUtils.hasText(entry.text())).toList();
+            : entries.stream()
+                .filter(entry -> StringUtils.hasText(entry.text()))
+                .map(entry -> entry.withCanonicalByteSize(tenantId, gameInstanceId, characterId))
+                .toList();
     if (filtered.isEmpty()) {
       return;
     }
@@ -59,7 +62,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
                           .orElseGet(BufferedPayload::new);
                   filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
                   payload.updatedAtMs = System.currentTimeMillis();
-                  trimPayload(payload, properties.buffer());
+                  trimPayload(payload, tenantId, gameInstanceId, characterId, properties.buffer());
                   try {
                     operations.multi();
                     if (ttl.isZero()) {
@@ -124,20 +127,32 @@ public class RedisScreenBufferService implements ScreenBufferService {
     }
   }
 
-  private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
+  private void trimPayload(
+      BufferedPayload payload,
+      long tenantId,
+      long gameInstanceId,
+      long characterId,
+      FiremudReconnectionProperties.Buffer buffer) {
     while (payload.entries.size() > 1
-        && totalBytes(payload.entries) > buffer.softMaxBytes()
+        && totalBytes(payload.entries, tenantId, gameInstanceId, characterId)
+            > buffer.softMaxBytes()
         && payload.entries.size() > buffer.minMessages()
         && totalLines(payload.entries) > buffer.minLines()) {
       payload.entries.remove(0);
     }
-    while (payload.entries.size() > 1 && totalBytes(payload.entries) > buffer.hardMaxBytes()) {
+    while (payload.entries.size() > 1
+        && totalBytes(payload.entries, tenantId, gameInstanceId, characterId)
+            > buffer.hardMaxBytes()) {
       payload.entries.remove(0);
     }
   }
 
-  private int totalBytes(List<EntryPayload> entries) {
-    return entries.stream().mapToInt(entry -> entry.byteSize).sum();
+  private int totalBytes(
+      List<EntryPayload> entries, long tenantId, long gameInstanceId, long characterId) {
+    return entries.stream()
+        .mapToInt(
+            entry -> entry.toPublicEntry().canonicalByteSize(tenantId, gameInstanceId, characterId))
+        .sum();
   }
 
   private int totalLines(List<EntryPayload> entries) {
