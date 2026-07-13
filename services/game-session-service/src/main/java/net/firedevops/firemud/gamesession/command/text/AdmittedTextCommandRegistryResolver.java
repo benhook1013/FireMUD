@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +21,8 @@ public final class AdmittedTextCommandRegistryResolver {
   private final Environment environment;
   private final TextCommandRegistry builtIns =
       new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider()));
+  private final ConcurrentMap<List<TextCommandDefinition>, TextCommandRegistry>
+      registriesByDefinitionSnapshot = new ConcurrentHashMap<>();
 
   AdmittedTextCommandRegistryResolver(
       AdmittedCommandDefinitionReader admittedCommandDefinitionReader,
@@ -42,10 +46,13 @@ public final class AdmittedTextCommandRegistryResolver {
     if (resolvedDefinitions.isEmpty()) {
       return builtIns;
     }
-    List<TextCommandDefinition> registryDefinitions = resolvedDefinitions;
     try {
-      return new AggregatingTextCommandRegistry(
-          List.of(new BuiltInTextCommandDefinitionProvider(), () -> registryDefinitions));
+      List<TextCommandDefinition> registryDefinitions = List.copyOf(resolvedDefinitions);
+      return registriesByDefinitionSnapshot.computeIfAbsent(
+          registryDefinitions,
+          definitions ->
+              new AggregatingTextCommandRegistry(
+                  List.of(new BuiltInTextCommandDefinitionProvider(), () -> definitions)));
     } catch (IllegalArgumentException | IllegalStateException ex) {
       LOG.warn("Unable to build admitted text command registry; using built-in commands", ex);
       return builtIns;
