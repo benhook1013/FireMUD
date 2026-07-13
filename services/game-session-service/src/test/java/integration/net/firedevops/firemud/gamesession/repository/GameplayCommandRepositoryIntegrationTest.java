@@ -100,6 +100,8 @@ class GameplayCommandRepositoryIntegrationTest {
     command.setAttemptCount(1);
     command.setSourceType("PLAYER");
     command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
     command.setDeclaredEffectsJson("[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
