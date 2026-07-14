@@ -95,6 +95,12 @@ The platform owns only a small typed grammar. The game owns every named mechanic
 
 This keeps the full game design surface scriptable as versioned DML while retaining a small hardcoded grammar that services can validate deterministically.
 
+### Capacity Changes From Continuous Sources
+
+The default behavior when a continuous source changes a bounded resource's maximum is an effective tenant/game setting, `actorState.capacityChangePolicy`, rather than a hardcoded meaning of a resource such as `health`. The platform admits only `CLAMP_ONLY`, `PRESERVE_RATIO`, and `PRESERVE_DEFICIT`. A continuous effect declaration from an item, condition, spell-backed aura, or equivalent source may specify a more-specific override for the maximum delta it causes.
+
+Entity Management applies that policy only at the durable source transition: attach, detach, refresh, expiry, or replacement. It never rewrites current resource state while evaluating an actor read. A transition with multiple maximum-affecting declarations executes them in frozen authored order, carries the intermediate state forward, and records each resolved policy with its idempotent result. An explicit heal or drain remains a separate instant effect. A starter experience profile may seed a recommended editable game-setting value, but it never supplies hidden runtime behavior after that setting is changed or removed.
+
 ### Starter Experience Profiles
 
 Creators do not need to author every actor-state definition from scratch. Game Design supplies curated, versioned starter experience profiles such as a classic text-MUD baseline, a solo-RPG baseline, or a minimal sandbox. A selected base profile and optional extension packs materialize ordinary stat, condition, action, disposition, and feedback DML into the target Draft version before publication.

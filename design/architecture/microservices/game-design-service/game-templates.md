@@ -23,6 +23,7 @@ A game selects one optional base profile and zero or more optional extension pac
 - A base profile and optional packs compose in explicitly declared order. Duplicate definition keys are rejected unless the later pack records an explicit override of the earlier definition; implicit last-writer-wins merging is prohibited.
 - Game Design records every selected pack's identity, revision, hash, application order, and explicit overrides as Draft provenance. Publishing freezes only the resulting single game version and release bundle.
 - Profiles are not runtime settings and provide no hidden fallback behavior. Removing an imported definition removes it from that game's published design; runtime services must not substitute a platform default.
+- A profile may seed recommended ordinary tenant/game setting values, such as the default bounded-resource capacity-change policy, during creation. The seed is written as an editable scoped setting, is not inherited from the profile at runtime, and may be changed or removed independently of the imported DML.
 
 This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below.
 

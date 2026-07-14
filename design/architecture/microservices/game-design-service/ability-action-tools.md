@@ -58,6 +58,14 @@ One typed `EffectDeclaration` grammar serves equipment, conditions, actions, and
 - Equipment may use both modes: passive worn effects are continuous, while a future on-equip/on-unequip trigger is instant. This is not an equipment-specific side channel.
 - Resource cost declarations remain conditional debits, separate from generic adjustment. Damage is deferred to the combat pipeline so hit, mitigation, and defeat semantics are not bypassed by a generic resource delta.
 
+### Capacity Changes From Continuous Sources
+
+A bounded-resource maximum is a typed field of the resource identified by `statKey`; the platform never introduces separate magic keys such as `max_health`. When a `CONTINUOUS` declaration from equipment, a condition, a spell-backed aura, or another attached source changes that field, Entity Management performs one durable normalization at the attach, detach, refresh, expiry, or replacement transition. Evaluating effective state remains read-only.
+
+The ordinary normalization policy is the resolved `actorState.capacityChangePolicy` tenant/game setting. Its platform grammar is deliberately small: `CLAMP_ONLY` leaves current value unchanged except for the new bounds; `PRESERVE_RATIO` keeps the current-to-maximum ratio; and `PRESERVE_DEFICIT` keeps the distance below maximum. A continuous declaration that changes a maximum may carry an optional `capacityChangePolicy` override. That override applies only to the maximum delta caused by that declared source, not as a global change to the game setting or to unrelated sources. An intentional heal, drain, or restoration remains a separate `INSTANT` resource mutation rather than an accidental side effect of raising capacity.
+
+When one lifecycle transition applies multiple maximum-changing declarations, Game Design's published declaration order is the deterministic execution order. Entity Management carries the resource current/maximum result forward one declaration at a time, using each declaration's override when supplied and the effective tenant/game setting otherwise. The idempotent transition records the resolved policy and resulting resource state, so replay cannot produce a different current value after a setting change.
+
 Resource-floor transitions and actor dispositions follow the same rule: a starter profile may supply common `health`, defeat, or recovery behavior as ordinary DML, but no action or runtime service may assume that a particular resource key means death. Games may replace or remove those imported declarations before publishing.
 
 ## Condition Application and Cure Declarations
