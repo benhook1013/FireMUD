@@ -67,18 +67,16 @@ jobs:
               return "⏭️";
             };
 
-            const codeqlRuns = await github.paginate(
-              github.rest.actions.listWorkflowRunsForRepo,
-              {
-                ...context.repo,
-                event: "pull_request",
-                per_page: 100,
-              },
-              (response) => response.data.workflow_runs
-            );
+            const { data: codeqlRunResponse } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo,
+              workflow_id: "codeql.yml",
+              event: "pull_request",
+              head_sha: headSha,
+              per_page: 100,
+            });
 
-            const codeqlRunForHead = codeqlRuns.find((workflowRun) =>
-              workflowRun?.name === "CodeQL Analysis" && workflowRun?.head_sha === headSha
+            const codeqlRunForHead = codeqlRunResponse.workflow_runs.find(
+              (workflowRun) => workflowRun?.head_sha === headSha
             );
 
             const normalizeStatus = (checkRun, checkName) => {
