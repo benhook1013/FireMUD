@@ -8,10 +8,13 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -20,14 +23,26 @@ class PlayerCommandHistoryRecorderTest {
       Mockito.mock(PlayerCommandHistoryStorageService.class);
   private final EffectiveCommandHistorySettingsResolver settingsResolver =
       Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver =
+      Mockito.mock(EffectiveCommandCapabilitiesSettingsResolver.class);
   private final PlayerCommandHistoryRecorder recorder =
-      new PlayerCommandHistoryRecorder(storageService, settingsResolver);
+      new PlayerCommandHistoryRecorder(
+          storageService, settingsResolver, commandCapabilitiesSettingsResolver);
+
+  @BeforeEach
+  void enableCommandHistory() {
+    when(commandCapabilitiesSettingsResolver.isEnabled(
+            Mockito.eq(PlayerCommandCapability.COMMAND_HISTORY),
+            Mockito.anyLong(),
+            Mockito.anyLong()))
+        .thenReturn(true);
+  }
 
   @Test
   void recordsAcceptedGameplayCommandWithEffectiveRetention() {
     SessionContext context = gameplayContext(17L);
     when(settingsResolver.commandHistory(context))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 12));
+        .thenReturn(new FiremudCommandHistoryProperties(12));
 
     recorder.record(
         new TextCommand(TextCommandType.LOOK, List.of(), "  LOOK  "),
@@ -44,7 +59,7 @@ class PlayerCommandHistoryRecorderTest {
     SessionContext before = gameplayContext(17L);
     SessionContext after = gameplayContext(19L);
     when(settingsResolver.commandHistory(after))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+        .thenReturn(new FiremudCommandHistoryProperties(10));
 
     recorder.record(
         new TextCommand(
@@ -61,7 +76,7 @@ class PlayerCommandHistoryRecorderTest {
   void fallsBackToPreDispatchIdentityForAcceptedLogout() {
     SessionContext before = gameplayContext(17L);
     when(settingsResolver.commandHistory(before))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+        .thenReturn(new FiremudCommandHistoryProperties(10));
 
     recorder.record(
         new TextCommand(TextCommandType.LOGOUT, List.of(), "LOGOUT"),
@@ -112,8 +127,9 @@ class PlayerCommandHistoryRecorderTest {
   @Test
   void doesNotRecordWhenCapabilityIsDisabled() {
     SessionContext context = gameplayContext(17L);
-    when(settingsResolver.commandHistory(context))
-        .thenReturn(new FiremudCommandHistoryProperties(false, 10));
+    when(commandCapabilitiesSettingsResolver.isEnabled(
+            PlayerCommandCapability.COMMAND_HISTORY, 7L, 11L))
+        .thenReturn(false);
 
     recorder.record(
         new TextCommand(TextCommandType.HELP, List.of(), "HELP"),
@@ -135,7 +151,7 @@ class PlayerCommandHistoryRecorderTest {
   void quarantinesHistoryPersistenceFailure() {
     SessionContext context = gameplayContext(17L);
     when(settingsResolver.commandHistory(context))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 10));
+        .thenReturn(new FiremudCommandHistoryProperties(10));
     Mockito.doThrow(new IllegalStateException("history storage unavailable"))
         .when(storageService)
         .append(7L, 11L, 17L, "LOOK", 10);
@@ -185,6 +201,32 @@ class PlayerCommandHistoryRecorderTest {
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
+
+    verify(storageService, never())
+        .append(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt());
+    verify(settingsResolver, never()).commandHistory(Mockito.any());
+  }
+
+  @Test
+  void quarantinesCapabilityResolutionFailure() {
+    SessionContext context = gameplayContext(17L);
+    when(commandCapabilitiesSettingsResolver.isEnabled(
+            PlayerCommandCapability.COMMAND_HISTORY, 7L, 11L))
+        .thenThrow(new IllegalStateException("settings authority unavailable"));
+
+    assertDoesNotThrow(
+        () ->
+            recorder.record(
+                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+                true,
+                CommandEnqueueResult.success(),
+                Optional.of(context),
+                Optional.of(context)));
 
     verify(storageService, never())
         .append(

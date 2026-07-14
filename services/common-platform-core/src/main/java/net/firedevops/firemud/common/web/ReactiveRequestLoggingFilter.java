@@ -50,13 +50,12 @@ public class ReactiveRequestLoggingFilter implements WebFilter, Ordered {
         .doFinally(
             signalType -> {
               long duration = System.currentTimeMillis() - start;
+              var statusCode = exchange.getResponse().getStatusCode();
               logger.info(
                   "HTTP request completed method={} path={} status={} durationMs={} service={} serviceInstanceId={} correlationId={} traceId={}",
                   request.getMethod(),
                   request.getPath().value(),
-                  exchange.getResponse().getStatusCode() != null
-                      ? exchange.getResponse().getStatusCode().value()
-                      : 200,
+                  statusCode != null ? statusCode.value() : 200,
                   duration,
                   runtimeIdentity.service(),
                   runtimeIdentity.serviceInstanceId(),

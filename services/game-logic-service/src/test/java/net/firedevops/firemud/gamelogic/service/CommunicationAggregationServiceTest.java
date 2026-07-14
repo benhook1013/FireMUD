@@ -2,12 +2,18 @@ package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
@@ -50,31 +56,22 @@ class CommunicationAggregationServiceTest {
   @BeforeEach
   void setUp() {
     meterRegistry = new SimpleMeterRegistry();
-    service =
-        new CommunicationAggregationService(
-            socialStub,
-            entityStub,
-            new EffectiveCommunicationSettingsResolver(
-                new CommunicationProperties(512), sharedSettingsAuthorityReader),
-            meterRegistry);
+    service = serviceWith(new CommunicationProperties(512, true), allCapabilitiesEnabled());
   }
 
   @Test
-  void disabledSayReturnsApplicationErrorWithoutCallingSocialService() {
+  void disabledSocialCapabilityReturnsApplicationErrorWithoutCallingDownstreamServices() {
+    when(sharedSettingsAuthorityReader.readOverrides(1L, null))
+        .thenReturn(ScopedSettingsSnapshot.empty());
     service =
-        new CommunicationAggregationService(
-            socialStub,
-            entityStub,
-            new EffectiveCommunicationSettingsResolver(
-                new CommunicationProperties(
-                    512, new CommunicationProperties.Defaults(false, true, true, true)),
-                sharedSettingsAuthorityReader),
-            meterRegistry);
+        serviceWith(
+            new CommunicationProperties(512, true),
+            new FiremudCommandCapabilitiesProperties(false, true, true, true));
 
     SendCommunicationResponse resp =
         service.send(
             SendCommunicationRequest.newBuilder()
-                .setTenantId("tenant-1")
+                .setTenantId("1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
@@ -83,8 +80,44 @@ class CommunicationAggregationServiceTest {
                 .build());
 
     assertThat(resp.getSuccess()).isFalse();
-    assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
-    assertThat(resp.getError().getMessage()).isEqualTo("SAY is disabled by operator policy");
+    assertThat(resp.getError().getCode()).isEqualTo("FEATURE_UNAVAILABLE");
+    assertThat(resp.getError().getMessage())
+        .isEqualTo("Social commands are unavailable for this game");
+    verify(entityStub, never()).listRoomEntities(any());
+    verify(socialStub, never()).sendMessage(any());
+  }
+
+  @Test
+  void unavailableSocialCapabilityAuthorityFailsClosedWithoutCallingDownstreamServices() {
+    EffectiveCommandCapabilitiesSettingsResolver failingCapabilitiesResolver =
+        mock(EffectiveCommandCapabilitiesSettingsResolver.class);
+    when(failingCapabilitiesResolver.isEnabled(eq(PlayerCommandCapability.SOCIAL), eq(1L), eq(7L)))
+        .thenThrow(new IllegalStateException("settings authority unavailable"));
+    service =
+        new CommunicationAggregationService(
+            socialStub,
+            entityStub,
+            new EffectiveCommunicationSettingsResolver(
+                new CommunicationProperties(512, true), sharedSettingsAuthorityReader),
+            failingCapabilitiesResolver,
+            meterRegistry);
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("7")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .build());
+
+    assertThat(resp.getSuccess()).isFalse();
+    assertThat(resp.getError().getCode()).isEqualTo("FEATURE_UNAVAILABLE");
+    verify(entityStub, never()).listRoomEntities(any());
+    verify(socialStub, never()).sendMessage(any());
   }
 
   @Test
@@ -109,30 +142,20 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
-  void gameInstanceOverrideCanDisableSay() {
+  void gameInstanceOverrideCanDisableSocialCapability() {
     when(sharedSettingsAuthorityReader.readOverrides(1L, 7L))
         .thenReturn(
             new net.firedevops.firemud.common.settings.ScopedSettingsSnapshot(
+                net.firedevops.firemud.common.settings.ScopedSettingsOverrides.empty(),
                 new net.firedevops.firemud.common.settings.ScopedSettingsOverrides(
                     null,
-                    new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
-                        .CommunicationOverride(
-                        512,
-                        new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
-                            .CommunicationOverride.DefaultsOverride(true, true, true, true)),
                     null,
                     null,
-                    null),
-                new net.firedevops.firemud.common.settings.ScopedSettingsOverrides(
+                    null,
+                    null,
                     null,
                     new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
-                        .CommunicationOverride(
-                        null,
-                        new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
-                            .CommunicationOverride.DefaultsOverride(false, null, null, null)),
-                    null,
-                    null,
-                    null)));
+                        .CommandCapabilitiesOverride(false, null, null, null))));
 
     SendCommunicationResponse resp =
         service.send(
@@ -147,7 +170,7 @@ class CommunicationAggregationServiceTest {
                 .build());
 
     assertThat(resp.getSuccess()).isFalse();
-    assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
+    assertThat(resp.getError().getCode()).isEqualTo("FEATURE_UNAVAILABLE");
   }
 
   @Test
@@ -438,15 +461,7 @@ class CommunicationAggregationServiceTest {
 
   @Test
   void whisperObserverMetadataCanBeDisabled() {
-    service =
-        new CommunicationAggregationService(
-            socialStub,
-            entityStub,
-            new EffectiveCommunicationSettingsResolver(
-                new CommunicationProperties(
-                    512, new CommunicationProperties.Defaults(true, true, true, false)),
-                sharedSettingsAuthorityReader),
-            meterRegistry);
+    service = serviceWith(new CommunicationProperties(512, false), allCapabilitiesEnabled());
     ListRoomEntitiesResponse roomEntities =
         ListRoomEntitiesResponse.newBuilder()
             .addEntities(
@@ -588,5 +603,22 @@ class CommunicationAggregationServiceTest {
 
     assertThat(resp.getSuccess()).isFalse();
     assertThat(resp.getError()).isEqualTo(detail);
+  }
+
+  private CommunicationAggregationService serviceWith(
+      CommunicationProperties communicationProperties,
+      FiremudCommandCapabilitiesProperties commandCapabilitiesProperties) {
+    return new CommunicationAggregationService(
+        socialStub,
+        entityStub,
+        new EffectiveCommunicationSettingsResolver(
+            communicationProperties, sharedSettingsAuthorityReader),
+        new EffectiveCommandCapabilitiesSettingsResolver(
+            commandCapabilitiesProperties, sharedSettingsAuthorityReader),
+        meterRegistry);
+  }
+
+  private FiremudCommandCapabilitiesProperties allCapabilitiesEnabled() {
+    return new FiremudCommandCapabilitiesProperties(true, true, true, true);
   }
 }

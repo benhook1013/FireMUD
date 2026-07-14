@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
+import net.firedevops.firemud.common.config.FiremudCommandCapabilitiesProperties;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
-import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -221,7 +221,8 @@ class HelpCommandHandlerTest {
   @Test
   void helpIndexHidesHistoryWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
-        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(false));
+        new HelpCommandHandler(
+            (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -235,9 +236,32 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpIndexHidesEveryDisabledStandardCapabilityFamily() {
+    HelpCommandHandler disabledHandler =
+        new HelpCommandHandler(
+            (context, topic) -> Optional.empty(),
+            null,
+            CommandCapabilitiesTestSupport.resolver(false, false, false, true));
+    SessionContext context =
+        new SessionContext(
+            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+
+    TextCommandInterpretationResult result =
+        disabledHandler.handle(
+            new TextCommand(TextCommandType.HELP, List.of(), "HELP"), Optional.of(context));
+
+    assertTrue(result.commandResult().accepted());
+    assertFalse(result.outputs().get(0).text().contains("- HELP SAY"));
+    assertFalse(result.outputs().get(0).text().contains("- HELP WHO"));
+    assertFalse(result.outputs().get(0).text().contains("- HELP INVENTORY"));
+    assertTrue(result.outputs().get(0).text().contains("- HELP HISTORY"));
+  }
+
+  @Test
   void helpHistoryTopicUnavailableWhenFeatureDisabled() {
     HelpCommandHandler disabledHandler =
-        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(false));
+        new HelpCommandHandler(
+            (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -254,7 +278,8 @@ class HelpCommandHandlerTest {
   @Test
   void helpHistoryTopicAvailableWhenFeatureEnabled() {
     HelpCommandHandler enabledHandler =
-        new HelpCommandHandler((context, topic) -> Optional.empty(), null, historyResolver(true));
+        new HelpCommandHandler(
+            (context, topic) -> Optional.empty(), null, capabilitiesResolver(true));
     SessionContext context =
         new SessionContext(
             42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -293,9 +318,10 @@ class HelpCommandHandlerTest {
         result.outputs().get(0).text());
   }
 
-  private static EffectiveCommandHistorySettingsResolver historyResolver(boolean enabled) {
-    return new EffectiveCommandHistorySettingsResolver(
-        new FiremudCommandHistoryProperties(enabled, 10),
+  private static EffectiveCommandCapabilitiesSettingsResolver capabilitiesResolver(
+      boolean historyEnabled) {
+    return new EffectiveCommandCapabilitiesSettingsResolver(
+        new FiremudCommandCapabilitiesProperties(true, true, true, historyEnabled),
         (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   }
 }

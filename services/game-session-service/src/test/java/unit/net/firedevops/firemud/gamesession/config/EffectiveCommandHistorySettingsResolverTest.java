@@ -26,17 +26,17 @@ class EffectiveCommandHistorySettingsResolverTest {
                     null,
                     null,
                     null,
-                    new ScopedSettingsOverrides.CommandHistoryOverride(false, 12)),
+                    new ScopedSettingsOverrides.CommandHistoryOverride(12)),
                 new ScopedSettingsOverrides(
                     null,
                     null,
                     null,
                     null,
                     null,
-                    new ScopedSettingsOverrides.CommandHistoryOverride(true, 20))));
+                    new ScopedSettingsOverrides.CommandHistoryOverride(20))));
     EffectiveCommandHistorySettingsResolver resolver =
         new EffectiveCommandHistorySettingsResolver(
-            new FiremudCommandHistoryProperties(true, 10), authorityReader);
+            new FiremudCommandHistoryProperties(10), authorityReader);
 
     EffectiveCommandHistorySettingsResolver.ResolvedValue<FiremudCommandHistoryProperties>
         resolved =
@@ -44,7 +44,7 @@ class EffectiveCommandHistorySettingsResolverTest {
                 new SessionContext(
                     1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
 
-    assertThat(resolved.effective()).isEqualTo(new FiremudCommandHistoryProperties(true, 20));
+    assertThat(resolved.effective()).isEqualTo(new FiremudCommandHistoryProperties(20));
     assertThat(resolved.sources())
         .containsExactly(
             "operatorDefaults", "tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
@@ -52,7 +52,7 @@ class EffectiveCommandHistorySettingsResolverTest {
 
   @Test
   void clampsConfiguredHistoryToThePlatformMaximum() {
-    assertThat(new FiremudCommandHistoryProperties(true, 99).maxEntries()).isEqualTo(20);
+    assertThat(new FiremudCommandHistoryProperties(99).maxEntries()).isEqualTo(20);
   }
 
   @Test
@@ -62,10 +62,9 @@ class EffectiveCommandHistorySettingsResolverTest {
     when(authorityReader.readOverrides(22L, null)).thenReturn(ScopedSettingsSnapshot.empty());
     EffectiveCommandHistorySettingsResolver resolver =
         new EffectiveCommandHistorySettingsResolver(
-            new FiremudCommandHistoryProperties(true, 10), authorityReader);
+            new FiremudCommandHistoryProperties(10), authorityReader);
 
-    assertThat(resolver.commandHistory(22L, 0L))
-        .isEqualTo(new FiremudCommandHistoryProperties(true, 10));
+    assertThat(resolver.commandHistory(22L, 0L)).isEqualTo(new FiremudCommandHistoryProperties(10));
 
     verify(authorityReader).readOverrides(22L, null);
   }

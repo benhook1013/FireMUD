@@ -9,6 +9,8 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -42,26 +44,25 @@ public class CommunicationAggregationService {
   private final SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
   private final EntityManagementServiceGrpc.EntityManagementServiceBlockingStub entityStub;
   private final EffectiveCommunicationSettingsResolver settingsResolver;
+  private final EffectiveCommandCapabilitiesSettingsResolver commandCapabilitiesSettingsResolver;
   private final MeterRegistry meterRegistry;
 
   public SendCommunicationResponse send(SendCommunicationRequest request) {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(request)) {
-      CommunicationProperties communicationProperties =
-          settingsResolver.communication(
-              parseTenantId(request.getTenantId()),
-              parseGameInstanceId(request.getGameInstanceId()));
+      Long tenantId = parseTenantId(request.getTenantId());
+      Long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
       String normalizedText = normalizeText(request.getText());
       SendCommunicationResponse.Builder builder =
           SendCommunicationResponse.newBuilder()
               .setType(request.getType())
               .setMessage(normalizedText);
 
-      if (!communicationProperties.enabled(request.getType())) {
+      if (tenantId != null && !isSocialCapabilityEnabled(tenantId, gameInstanceId)) {
         return errorResponse(
-            builder,
-            "COMMUNICATION_DISABLED",
-            request.getType().name() + " is disabled by operator policy");
+            builder, "FEATURE_UNAVAILABLE", "Social commands are unavailable for this game");
       }
+      CommunicationProperties communicationProperties =
+          settingsResolver.communication(tenantId, gameInstanceId);
       if (normalizedText.isBlank()) {
         return errorResponse(builder, "INVALID_ARGUMENT", "Message must not be empty");
       }
@@ -77,7 +78,8 @@ public class CommunicationAggregationService {
         return errorResponse(builder, roomEntities.getError(), "EntityManagementService");
       }
 
-      CommunicationAudience audience = resolveAudience(request, roomEntities);
+      CommunicationAudience audience =
+          resolveAudience(request, roomEntities, communicationProperties);
       if (!audience.valid()) {
         return errorResponse(builder, "INVALID_ARGUMENT", audience.errorMessage());
       }
@@ -139,11 +141,27 @@ public class CommunicationAggregationService {
     }
   }
 
+  private boolean isSocialCapabilityEnabled(long tenantId, Long gameInstanceId) {
+    try {
+      return commandCapabilitiesSettingsResolver.isEnabled(
+          PlayerCommandCapability.SOCIAL, tenantId, gameInstanceId);
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Social capability resolution failed tenantId={} gameInstanceId={}",
+          tenantId,
+          gameInstanceId,
+          ex);
+      return false;
+    }
+  }
+
   private CommunicationAudience resolveAudience(
-      SendCommunicationRequest request, ListRoomEntitiesResponse roomEntities) {
+      SendCommunicationRequest request,
+      ListRoomEntitiesResponse roomEntities,
+      CommunicationProperties communicationProperties) {
     return switch (request.getType()) {
       case SAY -> buildSayAudience(request.getCharacterId(), roomEntities, request.getText());
-      case WHISPER -> buildWhisperAudience(request, roomEntities);
+      case WHISPER -> buildWhisperAudience(request, roomEntities, communicationProperties);
       case TELL -> buildTellAudience(request);
       default -> CommunicationAudience.invalid("Unsupported communication type");
     };
@@ -194,7 +212,9 @@ public class CommunicationAggregationService {
   }
 
   private CommunicationAudience buildWhisperAudience(
-      SendCommunicationRequest request, ListRoomEntitiesResponse roomEntities) {
+      SendCommunicationRequest request,
+      ListRoomEntitiesResponse roomEntities,
+      CommunicationProperties communicationProperties) {
     String targetName = request.getTargetCharacterName();
     if (!StringUtils.hasText(targetName)) {
       return CommunicationAudience.invalid("Whisper target is required");
@@ -237,9 +257,7 @@ public class CommunicationAggregationService {
             roomEntities,
             speakerName,
             resolvedTargetName,
-            settingsResolver.communication(
-                parseTenantId(request.getTenantId()),
-                parseGameInstanceId(request.getGameInstanceId()))));
+            communicationProperties));
     return new CommunicationAudience(
         List.of(speakerName, resolvedTargetName),
         List.of(),
@@ -290,7 +308,7 @@ public class CommunicationAggregationService {
       String speakerName,
       String targetName,
       CommunicationProperties communicationProperties) {
-    if (!communicationProperties.defaults().whisperObserverMetadataEnabled()) {
+    if (!communicationProperties.whisperObserverMetadataEnabled()) {
       return List.of();
     }
     return roomEntities.getEntitiesList().stream()
@@ -393,7 +411,8 @@ public class CommunicationAggregationService {
 
   private SendCommunicationResponse errorResponse(
       SendCommunicationResponse.Builder builder, String code, String message) {
-    ErrorDetail detail = GrpcAppErrors.error(meterRegistry, code, message);
+    ErrorDetail detail =
+        GrpcAppErrors.error(meterRegistry, LOG, "SendCommunication", code, message);
     return builder.setSuccess(false).setError(detail).build();
   }
 

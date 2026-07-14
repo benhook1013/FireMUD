@@ -58,6 +58,12 @@ class GameDesignSettingsAuthorityClientTest {
                                 .newBuilder()
                                 .setPostMoveLookEnabled(true)
                                 .build())
+                        .setCommandCapabilities(
+                            net.firedevops.firemud.gamedesign.v1.CommandCapabilitiesSettingsOverride
+                                .newBuilder()
+                                .setSocialEnabled(false)
+                                .setInventoryEnabled(false)
+                                .build())
                         .build())
                 .build(),
             GetScopedSettingsOverridesResponse.newBuilder()
@@ -100,6 +106,9 @@ class GameDesignSettingsAuthorityClientTest {
     ScopedSettingsSnapshot afterInvalidate = client.readOverrides(22L, 7L);
 
     assertThat(first.tenantOverrides().movement().postMoveLookEnabled()).isTrue();
+    assertThat(first.tenantOverrides().commandCapabilities().socialEnabled()).isFalse();
+    assertThat(first.tenantOverrides().commandCapabilities().presenceEnabled()).isNull();
+    assertThat(first.tenantOverrides().commandCapabilities().inventoryEnabled()).isFalse();
     assertThat(cached).isEqualTo(first);
     assertThat(refreshed.tenantOverrides().movement().postMoveLookEnabled()).isFalse();
     assertThat(afterInvalidate.tenantOverrides().movement().postMoveLookEnabled()).isTrue();

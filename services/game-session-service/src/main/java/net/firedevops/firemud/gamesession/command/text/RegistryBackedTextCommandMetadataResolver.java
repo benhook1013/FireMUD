@@ -25,6 +25,7 @@ final class RegistryBackedTextCommandMetadataResolver implements TextCommandMeta
                     definition.dispatchGroup(),
                     definition.promptPolicy(),
                     definition.actionCategory(),
-                    definition.actionTags()));
+                    definition.actionTags(),
+                    definition.capability()));
   }
 }

@@ -11,7 +11,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-/** Resolves the platform and tenant/game command-history capability policy. */
+/** Resolves the platform and tenant/game command-history retention policy. */
 @Component
 @SuppressFBWarnings(
     value = "CT_CONSTRUCTOR_THROW",
@@ -71,7 +71,6 @@ public class EffectiveCommandHistorySettingsResolver {
       return base;
     }
     return new FiremudCommandHistoryProperties(
-        override.enabled() != null ? override.enabled() : base.enabled(),
         override.maxEntries() != null ? override.maxEntries() : base.maxEntries());
   }
 

@@ -28,6 +28,8 @@ Game Session currently owns the operator-default `firemud.*` layer for these sur
 
 - `firemud.presentation`
 - `firemud.reconnection`
+- `firemud.command-history`
+- `firemud.command-capabilities`
 - `firemud.movement`
 - `firemud.world-topology`
 
@@ -40,11 +42,11 @@ The generated reference carries the current defaults, descriptions, valid values
 - [Deployment Environments](../../infrastructure/deployment-environments.md) remains the canonical source for concrete environment examples and deployment-specific binding expectations.
 - The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
-- `firemud.presentation`, `firemud.reconnection`, `firemud.movement`, and `firemud.world-topology` remain file/env-backed operator defaults.
+- `firemud.presentation`, `firemud.reconnection`, `firemud.command-history`, `firemud.command-capabilities`, `firemud.movement`, and `firemud.world-topology` remain file/env-backed operator defaults.
 - Tenant/game overrides for these surfaced domains now come from the shared Game Design settings authority rather than service-local file/env maps.
 - The generated per-key schema/reference for those domains is the canonical operator/admin-facing documentation surface; this service doc keeps only the Game Session-specific ownership and runtime notes.
 - The current resolved result of that bounded read surface is available for operator/debug inspection at `/actuator/settings/effective`. With a persisted `sessionId` it resolves settings against the stored session scope; without one it can synthesize scope from query parameters such as `tenantId`, `gameInstanceId`, and `bootstrapGameInstanceId`.
-- That response now also exposes a first-class `prompt` section plus the scoped shared `communicationOverrides` view Game Session sees for the same scope, so the 02.10 communication/prompt neighborhood is inspectable from one session-oriented surface. The fully merged effective `communication` result remains owned by Game Logic at `/actuator/settings/effective/communication`.
+- That response now also exposes a first-class `prompt` section, resolved `commandCapabilities`, and the scoped shared `communicationOverrides` view Game Session sees for the same scope, so command availability and the 02.10 communication/prompt neighborhood are inspectable from one session-oriented surface. The fully merged effective `communication` result remains owned by Game Logic at `/actuator/settings/effective/communication`.
 - In addition to the raw domain payloads, that response now includes normalized subgroup views for the live room-view/transcript seams plus movement/topology seams so operators can inspect `transcriptRendering`, `reconnectionPolicy`, `reconnectBuffer`, `movementPostMoveView`, `worldTopologyScopeModel`, and `worldTopologyRegionBehavior` directly without reverse-mapping service property classes.
 - `firemud.world-topology` now resolves to one canonical effective topology shape in Game Session: any region-capable configuration is normalized to `scopeModel=REGION_AREA_AND_MAP` with `regionsEnabled=true`, and the normalized effective result is what the actuator surface publishes.
 - The current precedence inside Game Session is:

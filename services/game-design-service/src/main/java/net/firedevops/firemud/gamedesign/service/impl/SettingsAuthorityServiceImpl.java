@@ -94,6 +94,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     ScopedSettingsOverrides.MovementOverride movement = null;
     ScopedSettingsOverrides.WorldTopologyOverride worldTopology = null;
     ScopedSettingsOverrides.CommandHistoryOverride commandHistory = null;
+    ScopedSettingsOverrides.CommandCapabilitiesOverride commandCapabilities = null;
 
     for (GameSettingsOverride row : rows) {
       ScopedSettingsOverrides.SettingsDomain domain =
@@ -117,10 +118,20 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
         case COMMAND_HISTORY ->
             commandHistory =
                 deserialize(row.getPayload(), ScopedSettingsOverrides.CommandHistoryOverride.class);
+        case COMMAND_CAPABILITIES ->
+            commandCapabilities =
+                deserialize(
+                    row.getPayload(), ScopedSettingsOverrides.CommandCapabilitiesOverride.class);
       }
     }
     return new ScopedSettingsOverrides(
-        reconnection, communication, presentation, movement, worldTopology, commandHistory);
+        reconnection,
+        communication,
+        presentation,
+        movement,
+        worldTopology,
+        commandHistory,
+        commandCapabilities);
   }
 
   private Object extractDomainPayload(
@@ -136,6 +147,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
           case MOVEMENT -> overrides.movement();
           case WORLD_TOPOLOGY -> overrides.worldTopology();
           case COMMAND_HISTORY -> overrides.commandHistory();
+          case COMMAND_CAPABILITIES -> overrides.commandCapabilities();
         };
     if (payload == null) {
       throw new IllegalArgumentException("Overrides payload must include the selected domain");
@@ -145,14 +157,31 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
 
   private void validateDomainPayload(
       ScopedSettingsOverrides.SettingsDomain domain, Object payload) {
-    if (domain != ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY) {
-      return;
+    switch (domain) {
+      case COMMAND_HISTORY ->
+          validateCommandHistory((ScopedSettingsOverrides.CommandHistoryOverride) payload);
+      case COMMAND_CAPABILITIES ->
+          validateCommandCapabilities(
+              (ScopedSettingsOverrides.CommandCapabilitiesOverride) payload);
+      default -> {
+        return;
+      }
     }
-    ScopedSettingsOverrides.CommandHistoryOverride commandHistory =
-        (ScopedSettingsOverrides.CommandHistoryOverride) payload;
+  }
+
+  private void validateCommandHistory(
+      ScopedSettingsOverrides.CommandHistoryOverride commandHistory) {
     Integer maxEntries = commandHistory.maxEntries();
     if (maxEntries != null && (maxEntries < 1 || maxEntries > 20)) {
       throw new IllegalArgumentException("Command history maxEntries must be between 1 and 20");
+    }
+  }
+
+  private void validateCommandCapabilities(
+      ScopedSettingsOverrides.CommandCapabilitiesOverride commandCapabilities) {
+    if (commandCapabilities.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Command capabilities override must set at least one capability");
     }
   }
 

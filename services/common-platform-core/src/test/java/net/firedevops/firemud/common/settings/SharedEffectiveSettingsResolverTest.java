@@ -18,10 +18,7 @@ class SharedEffectiveSettingsResolverTest {
             new ScopedSettingsSnapshot(
                 new ScopedSettingsOverrides(
                     null,
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        640,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            true, true, true, true)),
+                    new ScopedSettingsOverrides.CommunicationOverride(640, true),
                     new ScopedSettingsOverrides.PresentationOverride(
                         null,
                         ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC,
@@ -30,32 +27,41 @@ class SharedEffectiveSettingsResolverTest {
                             true, null, 300L)),
                     null,
                     null,
-                    new ScopedSettingsOverrides.CommandHistoryOverride(true, 10)),
+                    new ScopedSettingsOverrides.CommandHistoryOverride(10),
+                    new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+                        true, true, true, true)),
                 new ScopedSettingsOverrides(
                     null,
-                    new ScopedSettingsOverrides.CommunicationOverride(
-                        null,
-                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-                            false, null, null, null)),
+                    new ScopedSettingsOverrides.CommunicationOverride(null, false),
                     new ScopedSettingsOverrides.PresentationOverride("fr", null, null, null),
                     null,
                     null,
-                    new ScopedSettingsOverrides.CommandHistoryOverride(null, 20))));
+                    new ScopedSettingsOverrides.CommandHistoryOverride(20),
+                    new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+                        null, null, false, null))));
 
     SharedEffectiveSettingsResolver resolver = new SharedEffectiveSettingsResolver(authorityReader);
 
     SharedEffectiveSettingsResolver.ResolvedScopedSettings resolved = resolver.resolve(22L, 7L);
 
     assertThat(resolved.effectiveOverrides().communication().maxMessageLength()).isEqualTo(640);
-    assertThat(resolved.effectiveOverrides().communication().defaults().sayEnabled()).isFalse();
+    assertThat(resolved.effectiveOverrides().communication().whisperObserverMetadataEnabled())
+        .isFalse();
     assertThat(resolved.effectiveOverrides().presentation().defaultLocaleTag()).isEqualTo("fr");
     assertThat(resolved.effectiveOverrides().presentation().defaultColorMode())
         .isEqualTo(ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC);
     assertThat(resolved.effectiveOverrides().commandHistory())
-        .isEqualTo(new ScopedSettingsOverrides.CommandHistoryOverride(true, 20));
+        .isEqualTo(new ScopedSettingsOverrides.CommandHistoryOverride(20));
+    assertThat(resolved.effectiveOverrides().commandCapabilities())
+        .isEqualTo(
+            new ScopedSettingsOverrides.CommandCapabilitiesOverride(true, true, false, true));
     assertThat(resolved.sourcesFor(ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, 22L, 7L))
         .containsExactly("tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
     assertThat(resolved.sourcesFor(ScopedSettingsOverrides.SettingsDomain.COMMUNICATION, 22L, 7L))
+        .containsExactly("tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
+    assertThat(
+            resolved.sourcesFor(
+                ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES, 22L, 7L))
         .containsExactly("tenantPersistedOverride:22", "gameInstancePersistedOverride:7");
   }
 
@@ -72,6 +78,7 @@ class SharedEffectiveSettingsResolverTest {
                     null,
                     null,
                     new ScopedSettingsOverrides.MovementOverride(false),
+                    null,
                     null,
                     null)));
 

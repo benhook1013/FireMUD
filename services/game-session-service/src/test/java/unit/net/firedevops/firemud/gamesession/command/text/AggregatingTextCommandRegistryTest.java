@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import org.junit.jupiter.api.Test;
 
 class AggregatingTextCommandRegistryTest {
@@ -76,6 +77,18 @@ class AggregatingTextCommandRegistryTest {
     assertEquals(
         List.of(TextCommandActionTag.INVENTORY),
         registry.findDefinition(TextCommandType.INVENTORY).orElseThrow().actionTags());
+    assertEquals(
+        PlayerCommandCapability.SOCIAL,
+        registry.findDefinition(TextCommandType.SAY).orElseThrow().capability());
+    assertEquals(
+        PlayerCommandCapability.PRESENCE,
+        registry.findDefinition(TextCommandType.WHO).orElseThrow().capability());
+    assertEquals(
+        PlayerCommandCapability.INVENTORY,
+        registry.findDefinition(TextCommandType.INVENTORY).orElseThrow().capability());
+    assertEquals(
+        PlayerCommandCapability.COMMAND_HISTORY,
+        registry.findDefinition(TextCommandType.HISTORY).orElseThrow().capability());
   }
 
   @Test

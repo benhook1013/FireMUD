@@ -1,7 +1,7 @@
 package net.firedevops.firemud.common.settings;
 
+import net.firedevops.firemud.gamedesign.v1.CommandCapabilitiesSettingsOverride;
 import net.firedevops.firemud.gamedesign.v1.CommandHistorySettingsOverride;
-import net.firedevops.firemud.gamedesign.v1.CommunicationDefaultsOverride;
 import net.firedevops.firemud.gamedesign.v1.CommunicationSettingsOverride;
 import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
 import net.firedevops.firemud.gamedesign.v1.MovementSettingsOverride;
@@ -40,7 +40,8 @@ public final class GameDesignSettingsProtoMapper {
         source.hasPresentation() ? fromProto(source.getPresentation()) : null,
         source.hasMovement() ? fromProto(source.getMovement()) : null,
         source.hasWorldTopology() ? fromProto(source.getWorldTopology()) : null,
-        source.hasCommandHistory() ? fromProto(source.getCommandHistory()) : null);
+        source.hasCommandHistory() ? fromProto(source.getCommandHistory()) : null,
+        source.hasCommandCapabilities() ? fromProto(source.getCommandCapabilities()) : null);
   }
 
   public static SettingsOverrides toProto(ScopedSettingsOverrides source) {
@@ -66,6 +67,9 @@ public final class GameDesignSettingsProtoMapper {
     if (source.commandHistory() != null && !source.commandHistory().isEmpty()) {
       builder.setCommandHistory(toProto(source.commandHistory()));
     }
+    if (source.commandCapabilities() != null && !source.commandCapabilities().isEmpty()) {
+      builder.setCommandCapabilities(toProto(source.commandCapabilities()));
+    }
     return builder.build();
   }
 
@@ -77,6 +81,7 @@ public final class GameDesignSettingsProtoMapper {
       case MOVEMENT -> SettingsDomain.SETTINGS_DOMAIN_MOVEMENT;
       case WORLD_TOPOLOGY -> SettingsDomain.SETTINGS_DOMAIN_WORLD_TOPOLOGY;
       case COMMAND_HISTORY -> SettingsDomain.SETTINGS_DOMAIN_COMMAND_HISTORY;
+      case COMMAND_CAPABILITIES -> SettingsDomain.SETTINGS_DOMAIN_COMMAND_CAPABILITIES;
     };
   }
 
@@ -89,6 +94,8 @@ public final class GameDesignSettingsProtoMapper {
       case SETTINGS_DOMAIN_WORLD_TOPOLOGY -> ScopedSettingsOverrides.SettingsDomain.WORLD_TOPOLOGY;
       case SETTINGS_DOMAIN_COMMAND_HISTORY ->
           ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY;
+      case SETTINGS_DOMAIN_COMMAND_CAPABILITIES ->
+          ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES;
       default -> throw new IllegalArgumentException("Unsupported settings domain: " + domain);
     };
   }
@@ -123,15 +130,6 @@ public final class GameDesignSettingsProtoMapper {
       CommunicationSettingsOverride source) {
     return new ScopedSettingsOverrides.CommunicationOverride(
         source.hasMaxMessageLength() ? source.getMaxMessageLength() : null,
-        source.hasDefaults() ? fromProto(source.getDefaults()) : null);
-  }
-
-  private static ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride fromProto(
-      CommunicationDefaultsOverride source) {
-    return new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-        source.hasSayEnabled() ? source.getSayEnabled() : null,
-        source.hasWhisperEnabled() ? source.getWhisperEnabled() : null,
-        source.hasTellEnabled() ? source.getTellEnabled() : null,
         source.hasWhisperObserverMetadataEnabled()
             ? source.getWhisperObserverMetadataEnabled()
             : null);
@@ -170,8 +168,16 @@ public final class GameDesignSettingsProtoMapper {
   private static ScopedSettingsOverrides.CommandHistoryOverride fromProto(
       CommandHistorySettingsOverride source) {
     return new ScopedSettingsOverrides.CommandHistoryOverride(
-        source.hasEnabled() ? source.getEnabled() : null,
         source.hasMaxEntries() ? source.getMaxEntries() : null);
+  }
+
+  private static ScopedSettingsOverrides.CommandCapabilitiesOverride fromProto(
+      CommandCapabilitiesSettingsOverride source) {
+    return new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+        source.hasSocialEnabled() ? source.getSocialEnabled() : null,
+        source.hasPresenceEnabled() ? source.getPresenceEnabled() : null,
+        source.hasInventoryEnabled() ? source.getInventoryEnabled() : null,
+        source.hasCommandHistoryEnabled() ? source.getCommandHistoryEnabled() : null);
   }
 
   private static ReconnectionSettingsOverride toProto(
@@ -189,11 +195,27 @@ public final class GameDesignSettingsProtoMapper {
   private static CommandHistorySettingsOverride toProto(
       ScopedSettingsOverrides.CommandHistoryOverride source) {
     CommandHistorySettingsOverride.Builder builder = CommandHistorySettingsOverride.newBuilder();
-    if (source.enabled() != null) {
-      builder.setEnabled(source.enabled());
-    }
     if (source.maxEntries() != null) {
       builder.setMaxEntries(source.maxEntries());
+    }
+    return builder.build();
+  }
+
+  private static CommandCapabilitiesSettingsOverride toProto(
+      ScopedSettingsOverrides.CommandCapabilitiesOverride source) {
+    CommandCapabilitiesSettingsOverride.Builder builder =
+        CommandCapabilitiesSettingsOverride.newBuilder();
+    if (source.socialEnabled() != null) {
+      builder.setSocialEnabled(source.socialEnabled());
+    }
+    if (source.presenceEnabled() != null) {
+      builder.setPresenceEnabled(source.presenceEnabled());
+    }
+    if (source.inventoryEnabled() != null) {
+      builder.setInventoryEnabled(source.inventoryEnabled());
+    }
+    if (source.commandHistoryEnabled() != null) {
+      builder.setCommandHistoryEnabled(source.commandHistoryEnabled());
     }
     return builder.build();
   }
@@ -236,24 +258,6 @@ public final class GameDesignSettingsProtoMapper {
     CommunicationSettingsOverride.Builder builder = CommunicationSettingsOverride.newBuilder();
     if (source.maxMessageLength() != null) {
       builder.setMaxMessageLength(source.maxMessageLength());
-    }
-    if (source.defaults() != null) {
-      builder.setDefaults(toProto(source.defaults()));
-    }
-    return builder.build();
-  }
-
-  private static CommunicationDefaultsOverride toProto(
-      ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride source) {
-    CommunicationDefaultsOverride.Builder builder = CommunicationDefaultsOverride.newBuilder();
-    if (source.sayEnabled() != null) {
-      builder.setSayEnabled(source.sayEnabled());
-    }
-    if (source.whisperEnabled() != null) {
-      builder.setWhisperEnabled(source.whisperEnabled());
-    }
-    if (source.tellEnabled() != null) {
-      builder.setTellEnabled(source.tellEnabled());
     }
     if (source.whisperObserverMetadataEnabled() != null) {
       builder.setWhisperObserverMetadataEnabled(source.whisperObserverMetadataEnabled());

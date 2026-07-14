@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
@@ -26,7 +27,7 @@ class SettingsAuthorityServiceImplTest {
             null,
             null,
             null,
-            new ScopedSettingsOverrides.CommandHistoryOverride(null, maxEntries));
+            new ScopedSettingsOverrides.CommandHistoryOverride(maxEntries));
 
     assertThatIllegalArgumentException()
         .isThrownBy(
@@ -34,6 +35,31 @@ class SettingsAuthorityServiceImplTest {
                 service.putDomainOverride(
                     "demo", 7L, ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, overrides))
         .withMessage("Command history maxEntries must be between 1 and 20");
+
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void rejectsAnEmptyCommandCapabilitiesOverrideBeforePersistence() {
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new ScopedSettingsOverrides.CommandCapabilitiesOverride(null, null, null, null));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.putDomainOverride(
+                    "demo",
+                    7L,
+                    ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES,
+                    overrides))
+        .withMessage("Command capabilities override must set at least one capability");
 
     verifyNoInteractions(repository);
   }

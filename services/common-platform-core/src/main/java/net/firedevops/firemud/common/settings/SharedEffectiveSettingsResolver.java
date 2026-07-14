@@ -66,7 +66,8 @@ public class SharedEffectiveSettingsResolver {
         merge(normalizedBase.presentation(), overrideLayer.presentation()),
         merge(normalizedBase.movement(), overrideLayer.movement()),
         merge(normalizedBase.worldTopology(), overrideLayer.worldTopology()),
-        merge(normalizedBase.commandHistory(), overrideLayer.commandHistory()));
+        merge(normalizedBase.commandHistory(), overrideLayer.commandHistory()),
+        merge(normalizedBase.commandCapabilities(), overrideLayer.commandCapabilities()));
   }
 
   private ScopedSettingsOverrides.ReconnectionOverride merge(
@@ -126,22 +127,6 @@ public class SharedEffectiveSettingsResolver {
     }
     return new ScopedSettingsOverrides.CommunicationOverride(
         override.maxMessageLength() != null ? override.maxMessageLength() : base.maxMessageLength(),
-        merge(base.defaults(), override.defaults()));
-  }
-
-  private ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride merge(
-      ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride base,
-      ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride override) {
-    if (override == null) {
-      return base;
-    }
-    if (base == null) {
-      return override;
-    }
-    return new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
-        override.sayEnabled() != null ? override.sayEnabled() : base.sayEnabled(),
-        override.whisperEnabled() != null ? override.whisperEnabled() : base.whisperEnabled(),
-        override.tellEnabled() != null ? override.tellEnabled() : base.tellEnabled(),
         override.whisperObserverMetadataEnabled() != null
             ? override.whisperObserverMetadataEnabled()
             : base.whisperObserverMetadataEnabled());
@@ -225,8 +210,25 @@ public class SharedEffectiveSettingsResolver {
       return override;
     }
     return new ScopedSettingsOverrides.CommandHistoryOverride(
-        override.enabled() != null ? override.enabled() : base.enabled(),
         override.maxEntries() != null ? override.maxEntries() : base.maxEntries());
+  }
+
+  private ScopedSettingsOverrides.CommandCapabilitiesOverride merge(
+      ScopedSettingsOverrides.CommandCapabilitiesOverride base,
+      ScopedSettingsOverrides.CommandCapabilitiesOverride override) {
+    if (override == null) {
+      return base;
+    }
+    if (base == null) {
+      return override;
+    }
+    return new ScopedSettingsOverrides.CommandCapabilitiesOverride(
+        override.socialEnabled() != null ? override.socialEnabled() : base.socialEnabled(),
+        override.presenceEnabled() != null ? override.presenceEnabled() : base.presenceEnabled(),
+        override.inventoryEnabled() != null ? override.inventoryEnabled() : base.inventoryEnabled(),
+        override.commandHistoryEnabled() != null
+            ? override.commandHistoryEnabled()
+            : base.commandHistoryEnabled());
   }
 
   private static Long normalizeGameInstanceId(Long gameInstanceId) {
@@ -266,6 +268,7 @@ public class SharedEffectiveSettingsResolver {
         case MOVEMENT -> overrides.movement() != null;
         case WORLD_TOPOLOGY -> overrides.worldTopology() != null;
         case COMMAND_HISTORY -> overrides.commandHistory() != null;
+        case COMMAND_CAPABILITIES -> overrides.commandCapabilities() != null;
       };
     }
   }

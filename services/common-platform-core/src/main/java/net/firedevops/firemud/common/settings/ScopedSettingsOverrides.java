@@ -7,7 +7,18 @@ public record ScopedSettingsOverrides(
     PresentationOverride presentation,
     MovementOverride movement,
     WorldTopologyOverride worldTopology,
-    CommandHistoryOverride commandHistory) {
+    CommandHistoryOverride commandHistory,
+    CommandCapabilitiesOverride commandCapabilities) {
+
+  public ScopedSettingsOverrides(
+      ReconnectionOverride reconnection,
+      CommunicationOverride communication,
+      PresentationOverride presentation,
+      MovementOverride movement,
+      WorldTopologyOverride worldTopology,
+      CommandHistoryOverride commandHistory) {
+    this(reconnection, communication, presentation, movement, worldTopology, commandHistory, null);
+  }
 
   public ScopedSettingsOverrides(
       ReconnectionOverride reconnection,
@@ -15,11 +26,11 @@ public record ScopedSettingsOverrides(
       PresentationOverride presentation,
       MovementOverride movement,
       WorldTopologyOverride worldTopology) {
-    this(reconnection, communication, presentation, movement, worldTopology, null);
+    this(reconnection, communication, presentation, movement, worldTopology, null, null);
   }
 
   public static ScopedSettingsOverrides empty() {
-    return new ScopedSettingsOverrides(null, null, null, null, null, null);
+    return new ScopedSettingsOverrides(null, null, null, null, null, null, null);
   }
 
   public boolean isEmpty() {
@@ -28,7 +39,8 @@ public record ScopedSettingsOverrides(
         && presentation == null
         && movement == null
         && worldTopology == null
-        && commandHistory == null;
+        && commandHistory == null
+        && commandCapabilities == null;
   }
 
   public enum SettingsDomain {
@@ -37,7 +49,8 @@ public record ScopedSettingsOverrides(
     PRESENTATION,
     MOVEMENT,
     WORLD_TOPOLOGY,
-    COMMAND_HISTORY
+    COMMAND_HISTORY,
+    COMMAND_CAPABILITIES
   }
 
   public record ReconnectionOverride(PolicyOverride policy, BufferOverride buffer) {
@@ -56,16 +69,11 @@ public record ScopedSettingsOverrides(
         Integer hardMaxBytes) {}
   }
 
-  public record CommunicationOverride(Integer maxMessageLength, DefaultsOverride defaults) {
+  public record CommunicationOverride(
+      Integer maxMessageLength, Boolean whisperObserverMetadataEnabled) {
     public boolean isEmpty() {
-      return maxMessageLength == null && defaults == null;
+      return maxMessageLength == null && whisperObserverMetadataEnabled == null;
     }
-
-    public record DefaultsOverride(
-        Boolean sayEnabled,
-        Boolean whisperEnabled,
-        Boolean tellEnabled,
-        Boolean whisperObserverMetadataEnabled) {}
   }
 
   public record PresentationOverride(
@@ -108,9 +116,22 @@ public record ScopedSettingsOverrides(
     }
   }
 
-  public record CommandHistoryOverride(Boolean enabled, Integer maxEntries) {
+  public record CommandHistoryOverride(Integer maxEntries) {
     public boolean isEmpty() {
-      return enabled == null && maxEntries == null;
+      return maxEntries == null;
+    }
+  }
+
+  public record CommandCapabilitiesOverride(
+      Boolean socialEnabled,
+      Boolean presenceEnabled,
+      Boolean inventoryEnabled,
+      Boolean commandHistoryEnabled) {
+    public boolean isEmpty() {
+      return socialEnabled == null
+          && presenceEnabled == null
+          && inventoryEnabled == null
+          && commandHistoryEnabled == null;
     }
   }
 }

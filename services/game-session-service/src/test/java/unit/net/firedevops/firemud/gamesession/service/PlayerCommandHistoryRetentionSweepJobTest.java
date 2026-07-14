@@ -26,7 +26,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
     when(repository.findDistinctScopesAfter(null, 500)).thenReturn(List.of(scope));
     when(settingsResolver.commandHistory(22L, 7L))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 4));
+        .thenReturn(new FiremudCommandHistoryProperties(4));
     PlayerCommandHistoryRetentionSweepJob job =
         new PlayerCommandHistoryRetentionSweepJob(repository, storageService, settingsResolver);
 
@@ -71,7 +71,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     when(repository.findDistinctScopesAfter(null, 500))
         .thenReturn(List.of(failingScope, succeedingScope));
     when(settingsResolver.commandHistory(22L, 7L))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 4));
+        .thenReturn(new FiremudCommandHistoryProperties(4));
     Mockito.doThrow(new IllegalStateException("database unavailable"))
         .when(storageService)
         .trimToMaxEntries(22L, 7L, 13L, 4);
@@ -102,7 +102,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(cursor, 3));
     when(repository.findDistinctScopesAfter(cursor, 500)).thenReturn(List.of(first, second));
     when(settingsResolver.commandHistory(22L, 7L))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 4));
+        .thenReturn(new FiremudCommandHistoryProperties(4));
     PlayerCommandHistoryRetentionSweepJob job =
         new PlayerCommandHistoryRetentionSweepJob(repository, storageService, settingsResolver);
 
@@ -152,7 +152,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(scope, 19));
     when(repository.findDistinctScopesAfter(scope, 500)).thenReturn(List.of(scope));
     when(settingsResolver.commandHistory(22L, 7L))
-        .thenReturn(new FiremudCommandHistoryProperties(true, 4));
+        .thenReturn(new FiremudCommandHistoryProperties(4));
     PlayerCommandHistoryRetentionSweepJob job =
         new PlayerCommandHistoryRetentionSweepJob(repository, storageService, settingsResolver);
 

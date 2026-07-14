@@ -715,6 +715,7 @@ enum SettingsDomain {
   SETTINGS_DOMAIN_MOVEMENT = 4;
   SETTINGS_DOMAIN_WORLD_TOPOLOGY = 5;
   SETTINGS_DOMAIN_COMMAND_HISTORY = 6;
+  SETTINGS_DOMAIN_COMMAND_CAPABILITIES = 7;
 }
 
 message SettingsOverrides {
@@ -724,6 +725,7 @@ message SettingsOverrides {
   MovementSettingsOverride movement = 4;
   WorldTopologySettingsOverride world_topology = 5;
   CommandHistorySettingsOverride command_history = 6;
+  CommandCapabilitiesSettingsOverride command_capabilities = 7;
 }
 
 message ReconnectionSettingsOverride {
@@ -732,8 +734,14 @@ message ReconnectionSettingsOverride {
 }
 
 message CommandHistorySettingsOverride {
-  optional bool enabled = 1;
-  optional int32 max_entries = 2;
+  optional int32 max_entries = 1;
+}
+
+message CommandCapabilitiesSettingsOverride {
+  optional bool social_enabled = 1;
+  optional bool presence_enabled = 2;
+  optional bool inventory_enabled = 3;
+  optional bool command_history_enabled = 4;
 }
 
 message ReconnectionPolicyOverride {
@@ -751,14 +759,7 @@ message ReconnectionBufferOverride {
 
 message CommunicationSettingsOverride {
   optional int32 max_message_length = 1;
-  CommunicationDefaultsOverride defaults = 2;
-}
-
-message CommunicationDefaultsOverride {
-  optional bool say_enabled = 1;
-  optional bool whisper_enabled = 2;
-  optional bool tell_enabled = 3;
-  optional bool whisper_observer_metadata_enabled = 4;
+  optional bool whisper_observer_metadata_enabled = 2;
 }
 
 message PresentationSettingsOverride {

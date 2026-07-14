@@ -6,6 +6,8 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 `HISTORY [count]` is live through the shared parser, registry, dispatch, capability, persistence, and presentation path. It reads only safe, accepted gameplay commands under the resolved tenant/game/character identity, applies the effective bounded retention policy, and never records its own display invocation. History persistence runs independently and remains best-effort, so it cannot change the outcome of the player command it observes. Retention uses a durable bounded-pass cursor, avoiding replica-loss and starvation of earlier scopes.
 
+Standard optional availability is one typed `commandCapabilities` policy, with operator defaults and persisted tenant/game overrides for `SOCIAL`, `PRESENCE`, `INVENTORY`, and `COMMAND_HISTORY`. Game Session checks that policy after stage validation and before dispatch; `HELP` filters the same capability families; Game Logic repeats the `SOCIAL` check at its gRPC ingress. Command-history retention is separate from availability and contains only its effective entry bound.
+
 Typed, data-defined command execution effects are now live for the first release-admitted `APPLY_ACTION_STATE` declaration. Built-ins still contain transitional handler routing until their declarations converge on the shared effect engine, and additional authored effect kinds remain unavailable. Run documentation checks through `dev-tools/validation/run-locked-gradle.sh linkCheck lintMarkdown`.
 
 ## Command Model
@@ -80,7 +82,7 @@ The standard catalog is grouped by command family. Detailed domain behavior rema
 | Command history | `HISTORY [count]` | Gameplay | Optional tenant/game capability | Game Session command-history surface |
 | Game-authored actions | Tenant/game-defined commands | Declared by the action definition | Tenant/game-defined | Game Design declaration with Game Session ingress and Game Logic execution |
 
-Disabled optional capabilities are not advertised by `HELP` and return a bounded feature-unavailable result when invoked. They are not silently repurposed or made available through an alternate alias.
+Disabled optional capabilities are not advertised by `HELP` and return `FEATURE_UNAVAILABLE` when their command is invoked. The policy is resolved from the same operator-default then tenant/game-override chain for every ingress, so an alternate alias or direct service call cannot bypass it.
 
 ## Reserved Names And Extensions
 

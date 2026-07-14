@@ -19,9 +19,9 @@ The canonical per-key reference for the surfaced pre-`06` platform settings now 
 - [Platform Settings Reference](../../generated/platform-settings-reference.md)
 - [Platform Settings Schema](../../generated/platform-settings-schema.json)
 
-Game Logic currently owns the operator-default `firemud.communication` layer. The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
+Game Logic owns the operator-default `firemud.communication` behavior layer and consumes the shared `firemud.command-capabilities` policy. The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
 
-The current effective communication result is also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. It resolves service-local operator defaults plus shared persisted tenant and optional game-instance overrides from the Game Design settings authority. The shared persisted layer is merged in `common-platform-core`; this is still a bounded read model with local TTL/refresh/evict cache semantics rather than a distributed config platform.
+The current effective communication result is also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. It resolves service-local operator defaults plus shared persisted tenant and optional game-instance overrides from the Game Design settings authority. Before accepting a direct communication RPC, Game Logic also checks the same resolved `SOCIAL` capability that Game Session applies to text-command dispatch. The shared persisted layer is merged in `common-platform-core`; this is still a bounded read model with local TTL/refresh/evict cache semantics rather than a distributed config platform.
 
 ## Dependent-Service Variables
 

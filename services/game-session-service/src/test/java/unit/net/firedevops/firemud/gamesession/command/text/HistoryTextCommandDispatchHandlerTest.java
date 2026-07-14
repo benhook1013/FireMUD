@@ -20,8 +20,9 @@ class HistoryTextCommandDispatchHandlerTest {
       new HistoryCommandHandler(
           historyStorageService,
           new EffectiveCommandHistorySettingsResolver(
-              new FiremudCommandHistoryProperties(true, 10),
-              (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()));
+              new FiremudCommandHistoryProperties(10),
+              (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
+          CommandCapabilitiesTestSupport.allEnabled());
   private final HistoryTextCommandDispatchHandler handler =
       new HistoryTextCommandDispatchHandler(historyHandler);
 
