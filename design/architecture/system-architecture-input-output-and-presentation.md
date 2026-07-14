@@ -285,10 +285,10 @@ The byte bound is deterministic: each retained entry costs the UTF-8 byte length
 
 The resume transcript is not a command-input history or a complete player archive.
 
-- A future [`HISTORY [count]` command](./system-architecture-player-command-model.md#command-history) is a separate, optional safe command-input history. It records only successfully accepted safe commands rather than screen output; unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns its retention and count limits.
+- [`HISTORY [count]`](./system-architecture-player-command-model.md#command-history) is a live, separate optional safe command-input history. It records only successfully accepted safe commands rather than screen output; unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns its bounded retention and count limits.
 - A future Player Transcript Archive and Export feature may retain the complete player-visible transcript as append-only archive segments for a finite tenant/game-configured period. It must preserve the canonical structured entries with derived rendered text for export, let players obtain an export before FireMUD-side expiry, and remain separate from the small resume context. The first export surface should be a FireMUD-managed downloadable artifact; arbitrary external destinations require later credential, privacy, retry, and deletion design.
 
-The current implementation remains narrower: the hot reconnect buffer already stores structured metadata beside rendered compatibility text, while the durable resume transcript and the two separate history features remain later implementation work.
+The current implementation includes the durable resume transcript and command history, while the hot reconnect buffer remains a cache of structured metadata beside rendered compatibility text. Player Transcript Archive and Export remains later implementation work.
 
 ---
 

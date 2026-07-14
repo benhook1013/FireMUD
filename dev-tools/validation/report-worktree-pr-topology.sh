@@ -46,12 +46,12 @@ fi
 echo "Repository: $repo"
 echo
 echo "Worktrees"
-printf 'PATH\tBRANCH\tHEAD\tDIRTY\n'
+printf 'PATH\tBRANCH\tHEAD\tSTATUS\n'
 git worktree list --porcelain | awk '
   function emit() {
     if (path != "") {
       if (branch == "") branch = "(detached)"
-      printf "%s\t%s\t%s\n", path, branch, head
+      printf "%s\t%s\t%s\t%s\n", path, branch, head, prunable
     }
   }
   /^worktree / {
@@ -59,17 +59,28 @@ git worktree list --porcelain | awk '
     path = substr($0, 10)
     head = ""
     branch = ""
+    prunable = ""
   }
   /^HEAD / { head = substr($0, 6) }
   /^branch / {
     branch = $2
     sub("refs/heads/", "", branch)
   }
+  /^prunable / { prunable = "true" }
   END { emit() }
-' | while IFS=$'\t' read -r path branch head; do
-  dirty="clean"
-  [[ -n "$(git -C "$path" status --porcelain)" ]] && dirty="dirty"
-  printf '%s\t%s\t%s\t%s\n' "$path" "$branch" "$head" "$dirty"
+' | while IFS=$'\t' read -r path branch head prunable; do
+  if [[ "$prunable" == "true" ]]; then
+    status="prunable"
+  elif [[ ! -d "$path" ]]; then
+    status="missing"
+  elif ! worktree_status="$(git -C "$path" status --porcelain 2>/dev/null)"; then
+    status="unavailable"
+  elif [[ -n "$worktree_status" ]]; then
+    status="dirty"
+  else
+    status="clean"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$path" "$branch" "$head" "$status"
 done
 
 echo
