@@ -482,6 +482,44 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void listPresenceVisibilityPoliciesMapsServiceRuntimeFailuresToApplicationErrors() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+        .thenThrow(new IllegalArgumentException("Tenant not found"));
+    RecordingObserver<ListPresenceVisibilityPoliciesResponse> notFoundObserver =
+        new RecordingObserver<>();
+    service.listPresenceVisibilityPolicies(
+        ListPresenceVisibilityPoliciesRequest.newBuilder()
+            .setTenantId("1")
+            .addAccountIds("2")
+            .build(),
+        notFoundObserver);
+
+    assertEquals("NOT_FOUND", notFoundObserver.response().getError().getCode());
+    assertTrue(notFoundObserver.completed());
+    assertFalse(notFoundObserver.receivedTransportError());
+
+    Mockito.reset(accountService);
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+        .thenThrow(new IllegalStateException("Policy lookup unavailable"));
+    RecordingObserver<ListPresenceVisibilityPoliciesResponse> internalObserver =
+        new RecordingObserver<>();
+    service.listPresenceVisibilityPolicies(
+        ListPresenceVisibilityPoliciesRequest.newBuilder()
+            .setTenantId("1")
+            .addAccountIds("2")
+            .build(),
+        internalObserver);
+
+    assertEquals("INTERNAL", internalObserver.response().getError().getCode());
+    assertTrue(internalObserver.completed());
+    assertFalse(internalObserver.receivedTransportError());
+  }
+
+  @Test
   void getTenantMembershipForRuntimeReturnsResponse() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);

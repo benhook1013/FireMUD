@@ -2,8 +2,12 @@ package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -106,44 +110,37 @@ public class DurableScreenBufferService implements ScreenBufferService {
       long gameInstanceId,
       long characterId,
       FiremudReconnectionProperties.Buffer buffer) {
-    List<ResumeTranscriptEntry> retained =
-        new ArrayList<>(
+    Deque<ResumeTranscriptEntry> retained =
+        new ArrayDeque<>(
             repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
     List<Long> discardedIds = new ArrayList<>();
+    Map<ResumeTranscriptEntry, Integer> entryByteSizes = new IdentityHashMap<>();
+    int currentBytes = 0;
+    int currentLines = 0;
+    for (ResumeTranscriptEntry entry : retained) {
+      int entryByteSize =
+          toBufferedEntry(entry).canonicalByteSize(tenantId, gameInstanceId, characterId);
+      entryByteSizes.put(entry, entryByteSize);
+      currentBytes += entryByteSize;
+      currentLines += entry.getLineCount();
+    }
     while (retained.size() > 1
-        && totalBytes(retained, tenantId, gameInstanceId, characterId) > buffer.softMaxBytes()
+        && currentBytes > buffer.softMaxBytes()
         && retained.size() > buffer.minMessages()
-        && totalLines(retained) > buffer.minLines()) {
-      discardedIds.add(retained.remove(0).getId());
+        && currentLines > buffer.minLines()) {
+      ResumeTranscriptEntry removed = retained.removeFirst();
+      discardedIds.add(removed.getId());
+      currentBytes -= entryByteSizes.get(removed);
+      currentLines -= removed.getLineCount();
     }
-    while (retained.size() > 1
-        && totalBytes(retained, tenantId, gameInstanceId, characterId) > buffer.hardMaxBytes()) {
-      discardedIds.add(retained.remove(0).getId());
+    while (retained.size() > 1 && currentBytes > buffer.hardMaxBytes()) {
+      ResumeTranscriptEntry removed = retained.removeFirst();
+      discardedIds.add(removed.getId());
+      currentBytes -= entryByteSizes.get(removed);
     }
-    repository.deleteByIds(discardedIds);
-  }
-
-  private int totalBytes(
-      List<ResumeTranscriptEntry> entries, long tenantId, long gameInstanceId, long characterId) {
-    return entries.stream()
-        .mapToInt(
-            entry ->
-                new BufferedEntry(
-                        entry.getProtocolText(),
-                        entry.getLineCount(),
-                        entry.getByteSize(),
-                        entry.getAppendedAt().toEpochMilli(),
-                        entry.getOutputKind(),
-                        entry.getReplayPolicy(),
-                        entry.getBriefRenderPolicy(),
-                        entry.getPayloadType(),
-                        entry.getPayloadJson())
-                    .canonicalByteSize(tenantId, gameInstanceId, characterId))
-        .sum();
-  }
-
-  private int totalLines(List<ResumeTranscriptEntry> entries) {
-    return entries.stream().mapToInt(ResumeTranscriptEntry::getLineCount).sum();
+    if (!discardedIds.isEmpty()) {
+      repository.deleteByIds(discardedIds);
+    }
   }
 
   private ResumeTranscriptEntry toEntity(

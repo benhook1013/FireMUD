@@ -54,6 +54,7 @@ import tools.jackson.databind.json.JsonMapper;
 @GrpcService
 public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(AccountGrpcService.class);
+  private static final int MAX_ACCOUNT_IDS_PER_REQUEST = 100;
   private final PingService pingService;
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
@@ -422,8 +423,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           responseObserver) {
     try {
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
-      if (request.getAccountIdsCount() > 100) {
-        throw new InvalidRequestException("accountIds must contain at most 100 entries", null);
+      if (request.getAccountIdsCount() > MAX_ACCOUNT_IDS_PER_REQUEST) {
+        throw new InvalidRequestException(
+            "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
       java.util.List<Long> accountIds =
           request.getAccountIdsList().stream()
@@ -448,6 +450,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
               .setError(
                   appError("ListPresenceVisibilityPolicies", "INVALID_ARGUMENT", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(appError("ListPresenceVisibilityPolicies", "NOT_FOUND", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(appError("ListPresenceVisibilityPolicies", "INTERNAL", ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     }

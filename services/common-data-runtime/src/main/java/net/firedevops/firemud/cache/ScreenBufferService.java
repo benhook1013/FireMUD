@@ -28,6 +28,7 @@ public interface ScreenBufferService {
       String payloadJson) {
     private static final DateTimeFormatter MILLIS_INSTANT_FORMATTER =
         new DateTimeFormatterBuilder().appendInstant(3).toFormatter();
+    private static final int JSON_CONTROL_CHARACTER_MAX = 0x1F;
 
     public BufferedEntry {
       text = text == null ? "" : text;
@@ -157,7 +158,7 @@ public interface ScreenBufferService {
           case '\r' -> target.append("\\r");
           case '\t' -> target.append("\\t");
           default -> {
-            if (character < 0x20) {
+            if (character <= JSON_CONTROL_CHARACTER_MAX) {
               target.append(String.format("\\u%04x", (int) character));
             } else {
               target.append(character);
