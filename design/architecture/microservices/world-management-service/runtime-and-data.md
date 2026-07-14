@@ -26,6 +26,8 @@ World Management is the authoritative owner of character and NPC location for ea
 - Other services, including Entity Management and Game Session, treat these tables as read-only and rely on World Management gRPC APIs or cached projections.
 - Any derived caches or denormalized views of location must be refreshed from World Management rather than persisting independent authoritative location fields.
 
+World Management is the fact owner for targeting predicates over location, occupancy, range, and mutable room state. Its bounded `TargetingFactSnapshot` responses contain only the compiled source/candidate facts for the requested `RoomInstanceRef` scope and a current world version or fence token. Before a plan that materially depends on those facts starts any source or target mutation, World validates that token; a mismatch makes the plan stale and requires Game Logic to re-resolve under the same effect id rather than acting on old occupancy or spatial state.
+
 ### Spatial Effects Contract
 
 Movement, drops, pickups, and room presence are cross-service by design:

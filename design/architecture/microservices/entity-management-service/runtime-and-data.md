@@ -218,6 +218,8 @@ The actor is the shared subject for gameplay targeting, effects, stats, conditio
 - Game Session owns only ephemeral session attachment, protocol state, and player-facing presence projection.
 - Account Service remains authoritative for account identity and authorization inputs.
 
+For published targeting predicates whose facts it owns, Entity Management exposes a bounded `TargetingFactSnapshot` for the requested scoped actor ids. The response includes only the requested actor-state facts and an actor-state revision token; it is not a general actor read. Before applying an approved effect plan, Entity Management validates the recorded token for every material Entity-owned fact. If any token is stale, it reports a pre-commit mismatch so Game Logic can discard and re-resolve the plan under the same effect id before any source cost or target mutation commits.
+
 Character and NPC records remain the durable domain records for their respective variants. The runtime actor links those records into one gameplay subject model; it does not replace character progression, authored NPC definitions, or World Management location state.
 
 ### Containment and Equipment Model
