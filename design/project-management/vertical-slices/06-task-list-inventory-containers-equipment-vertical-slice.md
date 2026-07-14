@@ -36,6 +36,7 @@ The current branch state is materially ahead of the original `06` plan:
 - First-party WebSocket cross-service proof now covers every typed item mutation: room-ground pickup/drop, container put/take with container identity, and equipment wear/remove with slot identity. The generic WebSocket and Telnet loops continue to prove the shared transcript prose.
 - Entity Management now has the first game-configured equipment schema substrate: versioned slot definitions, slot groups, body-layout slot membership, character body-layout keys, and runtime equipment validation against those authored concepts.
 - the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
+- `06.1` now confirms the settings boundary: inventory command availability is tenant/game policy, while slot/body/compatibility/stackability facts remain versioned DML-backed design data rather than a duplicate settings domain.
 
 The most important remaining design work in this slice family is:
 

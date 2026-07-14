@@ -55,7 +55,7 @@ These are already partly real in code and should continue after the immediate ru
 14. [02.18.10 Effect Idempotency and Replay Guards](./02.18.10-task-list-effect-idempotency-and-replay-guards-vertical-slice.md)
    Remaining: the first ledger-side `effectKey`, deterministic `effectId`, movement-backed replay/no-op seam, Game Session communication/activity replay guard, Social Groups communication replay guard, Entity Management item plus actor-condition mutation response replay guard, transfer-audit `effectId` plus session correlation, and first apply/replay metrics are now live; the next honest gap is later domain-specific effect guards as new owning mutation families land, not another forced proving-ground batch in the current built-in command set.
 15. [06 Task List Inventory, Containers, Equipment](./06-task-list-inventory-containers-equipment-vertical-slice.md)
-   Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, Game Session -> Game Logic -> Entity Management item command routing, game-configured equipment slot/body-layout validation, stable item-instance refs, explicit authored stackability, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live. The honest remaining tail is later item-family depth such as settings expansion, richer authored compatibility sources, and future gameplay consumers built on the now-canonical `06.3` / `06.4` substrate.
+   Remaining: holder-transfer safety, canonical transfer-audit persistence with attested session/effect correlation, Game Session -> Game Logic -> Entity Management item command routing, game-configured equipment slot/body-layout validation, stable item-instance refs, explicit authored stackability, and WebSocket plus Telnet cross-service room-ground/equipment happy/failure paths are now live. The honest remaining tail is later item-family depth such as richer authored compatibility sources and future gameplay consumers built on the now-canonical `06.3` / `06.4` substrate; `06.1` confirms that current slot/body/compatibility/stackability facts are versioned DML-backed design data, not a duplicate settings domain.
 16. [03.2 Runtime Room Identity Contract Convergence](./03.2-task-list-runtime-room-identity-contract-convergence-vertical-slice.md)
    Remaining: converge `roomInstanceId` onto one canonical runtime room identity across World Management, Entity Management, Game Logic, Game Session, read-fence, attestation, and shared proto/API seams, while renaming and confining World Management numeric room storage keys to explicitly internal mapping semantics instead of letting one shared name carry both routing identity and database-row meaning.
 
@@ -79,8 +79,7 @@ These are not broad audit topics anymore; they are real future slices with known
 
 These are still valid, but they are behind the current gameplay/runtime slices.
 
-1. [06.1 Inventory and Equipment Settings](./06.1-task-list-inventory-and-equipment-settings-vertical-slice.md)
-2. [02.9.1 Settings Presets and Operator Baselines](./02.9.1-task-list-settings-presets-and-operator-baselines-vertical-slice.md)
+1. [02.9.1 Settings Presets and Operator Baselines](./02.9.1-task-list-settings-presets-and-operator-baselines-vertical-slice.md)
 
 ### 5. Manual QA / operator-proof tails
 

@@ -47,6 +47,8 @@ Current equipment-schema note:
 - characters use a `bodyLayoutKey`; runtime equipment binding rejects a slot when the active version has a body-layout schema for that key and the slot is not included;
 - versions without authored slot/body-layout schema keep a bootstrap fallback that accepts the item template's direct slot string, so early content can run while creator-facing editors are still being built.
 
+Platform settings do not duplicate these versioned item and equipment facts. The existing inventory command capability controls whether the standard player inventory family is available for a tenant/game; slots, body layouts, compatibility, and stackability remain release-owned DML data. Future settings belong only to concrete runtime behavior policy that is neither authored content nor a canonical platform contract.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)
