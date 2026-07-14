@@ -335,6 +335,51 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/review-full-command-rate-limited.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2099-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/full-review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "Full review finished. More reviews will be available in 57 minutes.",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/full-review-rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/superseded-review-outcome.json" <<'JSON'
 {
   "data": {
@@ -524,6 +569,14 @@ grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+
+expect_failure_output "$TMP_DIR/review-full-command-rate-limited.json" "$TMP_DIR/review-full-command-rate-limited.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "explicit_review_after_latest_commit=true" "$TMP_DIR/review-full-command-rate-limited.out"
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-full-command-rate-limited.out"
+grep -q "review_rate_limit_until=2099-07-03T03:37:05+00:00" "$TMP_DIR/review-full-command-rate-limited.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-full-command-rate-limited.out"
+grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-full-command-rate-limited.out"
 
 superseded_outcome_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/superseded-review-outcome.json")"
 grep -q "review_finished_after_latest_request=true" <<<"$superseded_outcome_output"

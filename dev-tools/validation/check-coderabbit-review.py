@@ -16,7 +16,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,12 @@ REVIEW_COMMANDS = {
 # were reviewed. The walkthrough is emitted only by CodeRabbit's actual review summary.
 SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
+REVIEW_LIMIT_MESSAGE = "More reviews will be available in"
+REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
+    r"(?:next review available in|more reviews will be available in)\s*:?[\s*]*"
+    r"(\d+)\s+(minutes?|hours?)(?:\*\*)?",
+    re.IGNORECASE,
+)
 NOOP_REVIEW_MARKER = "does not re-review already reviewed commits"
 ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
 OUTSIDE_DIFF_MARKER = "Outside diff range comments"
@@ -53,6 +59,7 @@ class ReviewSummary:
     review_finished_after_latest_request: bool
     substantive_review_after_latest_commit: bool
     latest_review_request_rate_limited: bool
+    review_rate_limit_until: str | None
     latest_review_request_noop: bool
     retrigger_review_allowed: bool
     manual_thread_resolution_required: bool
@@ -273,6 +280,15 @@ def extract_section_count(body: str, marker: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime | None:
+    match = REVIEW_LIMIT_WINDOW_PATTERN.search(body)
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    return created_at + timedelta(**{"minutes" if unit.startswith("minute") else "hours": amount})
+
+
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:
     pr = payload["data"]["repository"]["pullRequest"]
     latest_commit = pr["commits"]["nodes"][-1]["commit"]
@@ -295,6 +311,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_coderabbit_review_finished_dt: datetime | None = None
     latest_review_outcome_dt: datetime | None = None
     latest_review_outcome: str | None = None
+    latest_rate_limit_at_dt: datetime | None = None
+    latest_rate_limit_until_dt: datetime | None = None
+    latest_rate_limit_without_expiry = False
     latest_actionable_comment_dt: datetime | None = None
     latest_actionable_comment_url: str | None = None
     outside_diff_actionable_comments = 0
@@ -342,14 +361,27 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if created_at_dt is None:
             continue
         body = comment.get("body", "")
+        if REVIEW_LIMIT_MARKER not in body and REVIEW_LIMIT_MESSAGE not in body:
+            continue
+        if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
+            continue
+        latest_rate_limit_at_dt = created_at_dt
+        latest_rate_limit_until_dt = parse_review_rate_limit_until(body, created_at_dt)
+        latest_rate_limit_without_expiry = latest_rate_limit_until_dt is None
+
+    for comment in pr["comments"]["nodes"]:
+        if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+            continue
+        created_at_dt = parse_timestamp(comment.get("createdAt"))
+        if created_at_dt is None:
+            continue
+        body = comment.get("body", "")
         if latest_commit_at_dt is None or created_at_dt < latest_commit_at_dt:
             continue
 
         outcome: str | None = None
         if SUBSTANTIVE_REVIEW_MARKER in body:
             outcome = "substantive"
-        elif REVIEW_LIMIT_MARKER in body:
-            outcome = "rate_limited"
         elif (
             latest_explicit_review_request_dt is not None
             and created_at_dt >= latest_explicit_review_request_dt
@@ -363,7 +395,18 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             latest_review_outcome_dt = created_at_dt
             latest_review_outcome = outcome
 
-    latest_review_request_rate_limited = latest_review_outcome == "rate_limited"
+    rate_limit_superseded_by_substantive_review = (
+        latest_rate_limit_at_dt is not None
+        and latest_coderabbit_review_finished_dt is not None
+        and latest_coderabbit_review_finished_dt > latest_rate_limit_at_dt
+    )
+    latest_review_request_rate_limited = not rate_limit_superseded_by_substantive_review and (
+        latest_rate_limit_without_expiry
+        or (
+            latest_rate_limit_until_dt is not None
+            and latest_rate_limit_until_dt > datetime.now(timezone.utc)
+        )
+    )
     latest_review_request_noop = latest_review_outcome == "noop"
     for comment in pr["comments"]["nodes"]:
         author = (comment.get("author") or {}).get("login", "")
@@ -452,6 +495,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         review_finished_after_latest_request=review_finished_after_latest_request,
         substantive_review_after_latest_commit=substantive_review_after_latest_commit,
         latest_review_request_rate_limited=latest_review_request_rate_limited,
+        review_rate_limit_until=(
+            latest_rate_limit_until_dt.isoformat() if latest_rate_limit_until_dt is not None else None
+        ),
         latest_review_request_noop=latest_review_request_noop,
         retrigger_review_allowed=retrigger_review_allowed,
         manual_thread_resolution_required=manual_thread_resolution_required,
@@ -496,6 +542,7 @@ def emit_text(summary: ReviewSummary) -> None:
         "latest_review_request_rate_limited="
         f"{str(summary.latest_review_request_rate_limited).lower()}"
     )
+    print(f"review_rate_limit_until={summary.review_rate_limit_until or 'unknown'}")
     print(
         "latest_review_request_noop="
         f"{str(summary.latest_review_request_noop).lower()}"
