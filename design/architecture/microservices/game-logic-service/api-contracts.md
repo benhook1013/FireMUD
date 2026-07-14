@@ -70,6 +70,16 @@ Game Logic applies a frozen action declaration only at durable execution time. T
 - Game Session maintains only reconstructible region-timer scheduling projections for expiry/wakeup. Reconnect, idle-region recovery, and timer rebuild always consult authoritative actor state before allowing an action.
 - Cross-region legs report durable target outcomes after source commit. They do not silently refund an already committed source cost or cooldown.
 
+## Gameplay Action Outcomes
+
+The target-state effect pathway returns and persists a structured `GameplayActionOutcome`, rather than a single text result or boolean. It contains the action/release/effect identity, source actor, cost/cooldown `commitState`, execution `completionState`, and ordered target-leg outcomes.
+
+- `commitState` distinguishes no source mutation from an idempotently committed source action.
+- `completionState` distinguishes local finality, remote-pending execution, and remote-final completion. A committed action with remote legs must not be flattened to generic success before those legs finish.
+- Each target outcome includes its canonical actor id, required/optional classification, result code, and remote-leg identity where relevant.
+- Game Logic derives idempotent semantic presentation events from the outcome for resolved authorized audiences. Events contain message keys, typed arguments, visibility classification, replay policy, and stable ids derived from the effect lifecycle.
+- Game Session receives those events as presentation data and renders/delivers `PlayerOutput`; it does not recreate outcome semantics from command tables or remote result rows.
+
 Call `ExecuteCommand` with:
 
 ```bash

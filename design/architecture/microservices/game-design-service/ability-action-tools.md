@@ -43,6 +43,12 @@ Published actions declare `costs[]` and `cooldowns[]` as typed DML. Each cost re
 
 Game Logic and Entity Management execute this immutable release declaration under the durable effect id. Queue admission does not consume resources or start a cooldown. Entity Management atomically checks source-actor availability, applies committed costs and same-region effects, and records durable actor cooldown state. A later cross-region leg failure is an explicit action outcome, not an implicit refund; refund behavior requires a future explicit authored declaration.
 
+## Action Feedback Declarations
+
+Published actions define semantic feedback declarations as versioned DML. Each declaration identifies an outcome event, audience role, message key/template, typed argument contract, visibility classification, and replay policy. Audience roles such as source actor, direct target, and authorized observer are resolved by Game Logic from the action outcome; display text is rendered later by Game Session.
+
+The resulting `GameplayPresentationEvent` is idempotent and tied to the action effect lifecycle, so replay cannot duplicate feedback and late remote completion can emit a distinct final event. Game-authored feedback cannot override platform validation, authorization, or infrastructure error codes.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:
