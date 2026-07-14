@@ -15,7 +15,7 @@ creators can quickly spin up new projects without starting from scratch.
 
 ## Starter Experience Profiles
 
-Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting-policy/default-path binding, and feedback declaration. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
+Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, and feedback declaration. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
 
 A game selects one optional base profile and zero or more optional extension packs while building a Draft version. Game Design materializes their content into that Draft version as ordinary versioned DML; profiles never remain as live runtime inheritance.
 

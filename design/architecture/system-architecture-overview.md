@@ -587,7 +587,7 @@ The following examples illustrate where key concepts live; the full matrix remai
 FireMUD provides usable default gameplay experiences without embedding game mechanics as hidden platform behavior. Curated starter experience profiles, such as classic text-MUD, solo-RPG, or minimal sandbox baselines, are versioned DML packs owned by Game Design.
 
 - A creator may select one base profile, optional extension packs, or no profile while building a Draft version.
-- Selected packs materialize ordinary stat, condition, action, actor-disposition, observation/targeting-policy/default-path binding, feedback, world, and starter-content DML into that Draft version. The resulting rows are game-owned and may be edited, replaced, or removed.
+- Selected packs materialize ordinary stat, condition, action, actor-disposition, observation/targeting/target-selection-policy/default-path binding, feedback, world, and starter-content DML into that Draft version. The resulting rows are game-owned and may be edited, replaced, or removed.
 - Pack composition is explicit and reproducible: Game Design records pack identity, revision, hash, order, and any deliberate override. Duplicate keys fail unless a later pack explicitly declares the replacement; implicit last-writer-wins merging is not allowed.
 - Published releases contain only the resulting single versioned design bundle. Runtime services never inherit changing profile content, and they must not substitute a platform default when a game removes or omits an imported definition.
 
