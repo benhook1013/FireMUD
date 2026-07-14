@@ -161,14 +161,19 @@ class RedisScreenBufferServiceTest {
   }
 
   @Test
-  void dropsSingleEntryWhoseSuppliedCanonicalSizeExceedsHardLimit() {
-    cacheService.append(
-        22L,
-        1L,
-        123L,
-        List.of(
-            new ScreenBufferService.BufferedEntry(
-                "short\n", 1, 65_537, 1_000L, "VIEW", "REPLAY", "FULL", "look-view", "{}", 1L)));
+  void dropsSingleEntryWhoseCanonicalEnvelopeExceedsHardLimit() {
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(65_536) + "\"}");
+
+    assertThat(oversized.canonicalByteSize(22L, 1L, 123L)).isGreaterThan(65_536);
+
+    cacheService.append(22L, 1L, 123L, List.of(oversized));
 
     assertThat(cacheService.get(22L, 1L, 123L)).isEmpty();
   }
