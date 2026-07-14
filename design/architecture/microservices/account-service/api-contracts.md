@@ -15,7 +15,8 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `SendNotification` – deliver account notifications asynchronously.
 - `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
 - `GetProfile` – retrieves profile information for the current account.
-- `UpdateProfile` – modifies profile fields and triggers notification emails.
+- `UpdateProfile` – modifies profile fields and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` is reserved for the staff-visibility owner and cannot be set through profile writes.
+- `ListPresenceVisibilityPolicies` – bounded internal bulk read of current tenant-scoped profile visibility policy for up to 100 account IDs. Social projections consume this authority at read time; unknown or unavailable entries are intentionally omitted so callers can fail closed.
 - `ExportAccount` – account-scoped export of portable account-owned data across all tenants visible to the authenticated subject.
 - `ExportTenantData` – tenant-scoped billing-safe export for one tenant, available to `tenantAdmin` while gameplay is billing-blocked and limited to that tenant's exportable game/billing records.
 - `DeleteAccount` – begins or completes global account deletion according to the account lifecycle state machine; it is not a tenant-scoped membership deletion.
@@ -120,7 +121,7 @@ Error responses use the standard `shared.v1.ErrorDetail` structure and `Authenti
 | Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
 | Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; discovery endpoints must apply the same membership, realm-visibility, and entitlement filtering as the in-band lobby discovery surfaces and return only caller-visible worlds/realms/characters plus a canonical `connectScopeId`. `/auth/connect-token` must not accept arbitrary `accountId` and must perform live membership/public-admission, runtime entitlement, and admission-pointer checks for the discovery-selected target. Browser response mode sets `Firemud-Connect-Token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. |
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenants/{tenantId}/export` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
-| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, `ListPresenceVisibilityPolicies`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
 ## Runtime Membership and Entitlement Response Shapes
 
@@ -218,34 +219,19 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 - Cross-tenant billing-safe variants (`cross_tenant_billing_safe`) are separate methods/routes restricted to `billingAdmin`/`platformAdmin` and may include billing-reporting fields.
 - Shared response-profile identifiers (`high_level_only`, `billing_reporting`, `membership_self_only`, `membership_reporting`) must be declared in the auth route matrix YAML entry for each variant so CI can enforce redaction tests by class.
 
-## Two-Factor Authentication
+## Login Modes
 
-Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
-
-When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over plaintext Telnet are additionally constrained:
-
-- Only accounts that have a `two_factor_secret` configured and
-- Have explicitly opted in to allow plaintext Telnet login in their account settings
-
-may authenticate via the raw TCP Telnet port. The account model includes a boolean flag (for example `allowPlaintextTelnetLogin`) that is exposed both:
-
-- As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
-- As an option in the Telnet account setup flow (default: off, with matching wording).
-
-Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `Authenticate` gRPC response returns a dedicated error code so the Game Session Service can present a clear message to the player. `/auth/login` remains a browser/control-plane endpoint.
+Account Service currently supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected login modes. Both `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not current contracts.
 
 ## Login Error Codes
 
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
 
-- `AUTH_INVALID_CREDENTIALS` - wrong username or password
-- `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
+- `AUTH_INVALID_CREDENTIALS` - wrong username or unsupported/invalid login secret
 - `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
-- `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP` - account attempted to log in over plaintext Telnet but does not yet have two-factor authentication enabled while `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is true
-- `AUTH_PLAINTEXT_TCP_NOT_PERMITTED` - account attempted to log in over plaintext Telnet without having opted in to allow this transport (for example `allowPlaintextTelnetLogin=false`)
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
-The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+The Game Session Service translates these codes into text-protocol `ERROR <CODE>` responses so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
 
 Canonical non-login authorization/entitlement errors:
 
@@ -266,12 +252,10 @@ curl -X POST http://localhost:8080/accounts \
 
 Example login request:
 
-`otp` is only required when two-factor authentication is enabled for the account.
-
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"demo","password":"secret","otp":"123456"}'
+  -d '{"tenantId":1,"username":"demo","password":"secret"}'
 ```
 
 Call the gRPC method with:

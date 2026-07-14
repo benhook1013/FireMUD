@@ -14,7 +14,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Tracking profiles, OAuth2 social logins, external account links, and achievements.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
-- Optional two-factor authentication for admin and moderator roles.
+- Account-selected `PASSWORD` and verified-email `EMAIL_OTP` login modes.
 
 ## Key Features
 

@@ -267,6 +267,7 @@ jobs:
         run: |
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
+          bash ./dev-tools/tests/static-analysis-summary-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh

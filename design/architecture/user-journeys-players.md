@@ -53,7 +53,7 @@ Creator-focused design flows are described in the [Creator Journeys](./user-jour
 
 ## 1. Sign Up
 
-Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Admins and moderators can enable **two-factor authentication** (TOTP) as described in the [Security Architecture](./system-architecture-security.md). Players may also link external accounts such as **Google**, **Discord**, or **Steam** for simplified logins, as detailed in the Account Service documentation.
+Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and the current password/verified-email-code login modes are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Players may also link external accounts such as **Google**, **Discord**, or **Steam** for simplified logins, as detailed in the Account Service documentation.
 
 ```plaintext
 Player → Account Service
@@ -239,7 +239,7 @@ Player → Account Service → Logging & Admin Service
 
 ## 7. Password Resets & Account Recovery
 
-Players occasionally lose access to their accounts. Recovery is performed through the [Account Service](./microservices/account-service/README.md), which issues password reset emails and temporary login tokens. Suspicious attempts are logged by the [Logging & Admin Service](./microservices/logging-admin-service/README.md). If two-factor authentication was enabled, the service validates the TOTP code before issuing a new password.
+Players occasionally lose access to their accounts. Recovery is performed through the [Account Service](./microservices/account-service/README.md), which issues password reset emails and temporary login tokens. Suspicious attempts are logged by the [Logging & Admin Service](./microservices/logging-admin-service/README.md).
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)

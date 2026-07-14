@@ -12,7 +12,6 @@ import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
-import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse;
 import net.firedevops.firemud.socialgroups.client.AccountClient;
@@ -115,6 +114,20 @@ class SocialGroupsApplicationIntegrationTest {
     Mockito.when(
             TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyLong()))
         .thenReturn(EvaluateModerationPolicyResponse.newBuilder().setAllowed(true).build());
+    Mockito.when(
+            TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicies(
+                Mockito.anyLong(), Mockito.anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              java.util.Collection<Long> accountIds = invocation.getArgument(1);
+              return accountIds.stream()
+                  .collect(
+                      java.util.stream.Collectors.toMap(
+                          accountId -> accountId,
+                          ignored ->
+                              net.firedevops.firemud.socialgroups.dto
+                                  .FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
+            });
     Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, 2L))
         .thenReturn(
             java.util.Optional.of(
@@ -221,9 +234,6 @@ class SocialGroupsApplicationIntegrationTest {
                         .setCharacterName("Sora")
                         .setActivityState(
                             AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .setRecentDisposition(
                             net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
                                 .ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT)
@@ -317,21 +327,9 @@ class SocialGroupsApplicationIntegrationTest {
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
-                        .setOnline(false)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
                 .build());
 
     HttpResponse<String> response =
@@ -382,9 +380,6 @@ class SocialGroupsApplicationIntegrationTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_SHARED)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
@@ -393,9 +388,6 @@ class SocialGroupsApplicationIntegrationTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 
@@ -441,21 +433,12 @@ class SocialGroupsApplicationIntegrationTest {
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
                         .setAccountId("4")
                         .setOnline(false)
                         .setLastSeenAtMs(1_744_353_730_000L)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 

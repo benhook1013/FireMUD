@@ -43,7 +43,6 @@ public class AccountRepository {
               .set(ACCOUNTS.EMAIL, entity.getEmail())
               .set(ACCOUNTS.PASSWORD_HASH, entity.getPasswordHash())
               .set(ACCOUNTS.ROLE, entity.getRole())
-              .set(ACCOUNTS.TWO_FACTOR_SECRET, entity.getTwoFactorSecret())
               .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
               .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
               .returningResult(ACCOUNTS.ID)
@@ -57,7 +56,6 @@ public class AccountRepository {
             .set(ACCOUNTS.EMAIL, entity.getEmail())
             .set(ACCOUNTS.PASSWORD_HASH, entity.getPasswordHash())
             .set(ACCOUNTS.ROLE, entity.getRole())
-            .set(ACCOUNTS.TWO_FACTOR_SECRET, entity.getTwoFactorSecret())
             .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
             .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
             .where(ACCOUNTS.ID.eq(entity.getId()))
@@ -81,7 +79,6 @@ public class AccountRepository {
         record.getEmail(),
         record.getPasswordHash(),
         record.getRole(),
-        record.getTwoFactorSecret(),
         record.getEmailVerified(),
         record.getLoginAuthModes());
   }

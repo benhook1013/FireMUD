@@ -8,7 +8,6 @@ For any shared or player-facing environment, operators should ensure at least:
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - In all shared and player-facing environments, Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`; the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port.
 - Plaintext Telnet on `TCP_PROXY_PORT` is treated as a legacy channel governed by the Telnet hardening rules in the Security Architecture, and TLS Telnet plus the web client are preferred for general use.
-- When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled, logins over the raw plaintext Telnet port are permitted only for accounts that both have TOTP-based two-factor authentication enabled and explicitly opt in to allow plaintext Telnet login in account settings.
 - Plaintext Telnet connections should trigger the canonical landing-menu warning recommending the TLS Telnet port or web client instead.
 
 ## TLS and Trust Surfaces

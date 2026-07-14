@@ -30,7 +30,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /** Handles LOGIN/LOGON commands and generates immediate responses when possible. */
 @Component
@@ -94,6 +93,11 @@ public final class LoginCommandHandler {
     }
     Optional<TextCommandPayload.Credentials> maybeCredentials = command.credentialsPayload();
     if (maybeCredentials.isEmpty()) {
+      if (!command.args().isEmpty()) {
+        return failure(
+            LoginCommandConstants.INVALID_ARGUMENTS_CODE,
+            LoginCommandConstants.INVALID_ARGUMENTS_MESSAGE);
+      }
       return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
@@ -116,13 +120,11 @@ public final class LoginCommandHandler {
     }
     GameInstance instance = maybeInstance.get();
 
-    String otp = StringUtils.hasText(credentials.otp()) ? credentials.otp() : "";
     AuthenticateResponse authResponse =
         accountClient.authenticate(
             String.valueOf(instance.getTenantId()),
             credentials.loginName(),
-            credentials.password(),
-            otp);
+            credentials.password());
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
@@ -445,8 +447,6 @@ public final class LoginCommandHandler {
       Map.of(
           AuthenticationErrorCodes.INVALID_CREDENTIALS,
           "INVALID_CREDENTIALS",
-          AuthenticationErrorCodes.OTP_REQUIRED,
-          "OTP_REQUIRED",
           AuthenticationErrorCodes.ACCOUNT_LOCKED,
           "ACCOUNT_LOCKED",
           AuthenticationErrorCodes.UPSTREAM_FAILURE,
@@ -463,9 +463,6 @@ public final class LoginCommandHandler {
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
       return "INVALID_CREDENTIALS";
-    }
-    if (message.contains("invalid 2fa") || message.contains("otp")) {
-      return "OTP_REQUIRED";
     }
     if (message.contains("locked")) {
       return "ACCOUNT_LOCKED";
@@ -534,10 +531,10 @@ public final class LoginCommandHandler {
       case "INVALID_ARGUMENT" -> "error.login.invalid-session-id";
       case "CONNECT_CONTEXT_INVALID" -> "error.login.connect-context-invalid";
       case LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE -> "error.login.prompt-unsupported";
+      case LoginCommandConstants.INVALID_ARGUMENTS_CODE -> "error.login.invalid-arguments";
       case LoginCommandConstants.ACCOUNT_MISMATCH_CODE -> "error.login.account-mismatch";
       case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
       case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
-      case "OTP_REQUIRED" -> "error.login.otp-required";
       case "ACCOUNT_LOCKED" -> "error.login.account-locked";
       case "UPSTREAM_FAILURE" -> "error.login.upstream-failure";
       default -> null;

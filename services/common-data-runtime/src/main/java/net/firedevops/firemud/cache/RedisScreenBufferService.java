@@ -2,8 +2,11 @@ package net.firedevops.firemud.cache;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
@@ -40,7 +43,10 @@ public class RedisScreenBufferService implements ScreenBufferService {
     List<BufferedEntry> filtered =
         entries == null
             ? List.of()
-            : entries.stream().filter(entry -> StringUtils.hasText(entry.text())).toList();
+            : entries.stream()
+                .filter(entry -> StringUtils.hasText(entry.text()))
+                .map(entry -> entry.withCanonicalByteSize(tenantId, gameInstanceId, characterId))
+                .toList();
     if (filtered.isEmpty()) {
       return;
     }
@@ -125,23 +131,27 @@ public class RedisScreenBufferService implements ScreenBufferService {
   }
 
   private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
+    Map<EntryPayload, Integer> entryByteSizes = new IdentityHashMap<>();
+    int currentBytes = 0;
+    int currentLines = 0;
+    for (EntryPayload entry : payload.entries) {
+      int entryByteSize = entry.byteSize;
+      entryByteSizes.put(entry, entryByteSize);
+      currentBytes += entryByteSize;
+      currentLines += entry.lineCount;
+    }
     while (payload.entries.size() > 1
-        && totalBytes(payload.entries) > buffer.softMaxBytes()
+        && currentBytes > buffer.softMaxBytes()
         && payload.entries.size() > buffer.minMessages()
-        && totalLines(payload.entries) > buffer.minLines()) {
-      payload.entries.remove(0);
+        && currentLines > buffer.minLines()) {
+      EntryPayload removed = payload.entries.removeFirst();
+      currentBytes -= entryByteSizes.get(removed);
+      currentLines -= removed.lineCount;
     }
-    while (payload.entries.size() > 1 && totalBytes(payload.entries) > buffer.hardMaxBytes()) {
-      payload.entries.remove(0);
+    while (payload.entries.size() > 1 && currentBytes > buffer.hardMaxBytes()) {
+      EntryPayload removed = payload.entries.removeFirst();
+      currentBytes -= entryByteSizes.get(removed);
     }
-  }
-
-  private int totalBytes(List<EntryPayload> entries) {
-    return entries.stream().mapToInt(entry -> entry.byteSize).sum();
-  }
-
-  private int totalLines(List<EntryPayload> entries) {
-    return entries.stream().mapToInt(entry -> entry.lineCount).sum();
   }
 
   private String key(long tenantId, long gameInstanceId, long characterId) {
@@ -149,7 +159,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
   }
 
   private static final class BufferedPayload {
-    public List<EntryPayload> entries = new ArrayList<>();
+    public Deque<EntryPayload> entries = new ArrayDeque<>();
     public long updatedAtMs;
   }
 

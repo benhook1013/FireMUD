@@ -37,6 +37,16 @@ public class ProfileRepository {
         .fetch(this::toEntity);
   }
 
+  public List<Profile> findByTenantIdAndAccountIds(Long tenantId, List<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return List.of();
+    }
+    return baseSelect()
+        .where(PROFILES.TENANT_ID.eq(tenantId).and(PROFILES.ACCOUNT_ID.in(accountIds)))
+        .orderBy(PROFILES.ACCOUNT_ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public Profile save(Profile entity) {
     Long accountId = entity.getAccount() == null ? null : entity.getAccount().getId();
     String policy =
@@ -96,7 +106,6 @@ public class ProfileRepository {
             ACCOUNTS.EMAIL,
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
-            ACCOUNTS.TWO_FACTOR_SECRET,
             ACCOUNTS.EMAIL_VERIFIED,
             ACCOUNTS.LOGIN_AUTH_MODES)
         .from(PROFILES)
@@ -114,7 +123,6 @@ public class ProfileRepository {
             record.get(ACCOUNTS.EMAIL),
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
-            record.get(ACCOUNTS.TWO_FACTOR_SECRET),
             record.get(ACCOUNTS.EMAIL_VERIFIED),
             record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     profile.setTenantId(record.get(PROFILES.TENANT_ID));

@@ -125,7 +125,7 @@ Long-lived gameplay sessions require periodic service-token rotation, independen
 3. On successful refresh, atomically update gameplay session binding fields `authTokenHash` and `authTokenIssuedAt` before using the new token for subsequent backend calls.
 4. If refresh fails and the existing token is expired or revoked, fail closed for gameplay actions that require backend auth and return a canonical session-expired error, forcing re-login.
 
-Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
+Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
 - For **account-level security events** such as account bans or password resets, services must:
   - Set `session:auth:revoked_after:account:<accountId>` to "now" so previously issued tokens become invalid without requiring key scans.

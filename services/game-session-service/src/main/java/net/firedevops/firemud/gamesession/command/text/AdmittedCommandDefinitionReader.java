@@ -199,6 +199,7 @@ final class AdmittedCommandDefinitionReader {
         TextCommandPromptPolicy.valueOf(requiredText(definition, "promptPolicy")),
         TextCommandActionCategory.valueOf(requiredText(definition, "actionCategory")),
         actionTags,
+        requiredBoolean(definition, "historyRecordable"),
         TextCommandSource.GAME_AUTHORED,
         "NONE",
         null,
@@ -283,6 +284,14 @@ final class AdmittedCommandDefinitionReader {
       throw new IllegalArgumentException(field + " is required");
     }
     return node.asText();
+  }
+
+  private boolean requiredBoolean(JsonNode definition, String field) {
+    JsonNode node = definition.path(field);
+    if (!node.isBoolean()) {
+      throw new IllegalArgumentException(field + " must be a boolean");
+    }
+    return node.asBoolean();
   }
 
   private String requiredIdentifier(JsonNode definition, String field) {

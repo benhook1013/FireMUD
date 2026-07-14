@@ -156,8 +156,7 @@ class TextCommandInterpreterTest {
   void setUp() {
     sessionContextService.save(bootstrapShell(1L, 1L));
     meterRegistry.clear();
-    when(accountClient.authenticate(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")

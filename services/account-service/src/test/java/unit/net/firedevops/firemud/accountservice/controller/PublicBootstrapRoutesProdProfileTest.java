@@ -36,8 +36,8 @@ class PublicBootstrapRoutesProdProfileTest {
 
   @Test
   void playerBootstrapRemainsPublicInProdProfile() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo@example.com", "swordfish", null);
-    when(accountService.issuePlayerBootstrap(1L, "demo@example.com", "swordfish", null))
+    LoginRequest request = new LoginRequest(1L, "demo@example.com", "swordfish");
+    when(accountService.issuePlayerBootstrap(1L, "demo@example.com", "swordfish"))
         .thenReturn(
             new PlayerBootstrapResult(
                 1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));

@@ -12,8 +12,7 @@ public record AccountRecentPresenceState(
     String realmSlug,
     Long pointerVersion,
     long lastSeenAtEpochMs,
-    AccountRecentPresenceDisposition disposition,
-    AccountPresenceVisibilityPolicy visibilityPolicy)
+    AccountRecentPresenceDisposition disposition)
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
@@ -21,18 +20,7 @@ public record AccountRecentPresenceState(
       long tenantId,
       long accountId,
       long lastSeenAtEpochMs,
-      AccountRecentPresenceDisposition disposition,
-      AccountPresenceVisibilityPolicy visibilityPolicy) {
-    this(
-        tenantId,
-        accountId,
-        null,
-        null,
-        null,
-        null,
-        null,
-        lastSeenAtEpochMs,
-        disposition,
-        visibilityPolicy);
+      AccountRecentPresenceDisposition disposition) {
+    this(tenantId, accountId, null, null, null, null, null, lastSeenAtEpochMs, disposition);
   }
 }

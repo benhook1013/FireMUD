@@ -8,7 +8,7 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 
 ## 1. Minimal LOGIN Protocol Behaviour and Docs
 
-- [x] Review the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) and the [Authentication & Authorization](../../architecture/system-architecture-authentication.md#login-and-session-flow) docs to confirm the intended `LOGIN` / `LOGON` semantics (prompt-based vs parameterized logins, optional OTP argument, error codes such as `INVALID_CREDENTIALS` and `ACCOUNT_LOCKED`).
+- [x] Review the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) and the [Authentication & Authorization](../../architecture/system-architecture-authentication.md#login-and-session-flow) docs to confirm the intended `LOGIN` / `LOGON` semantics (prompt-based vs parameterized logins, one supplied secret, error codes such as `INVALID_CREDENTIALS` and `ACCOUNT_LOCKED`).
 - [x] Update the Game Session Service design doc so the `Minimal Text Command Protocol` section explicitly documents `LOGIN` and `LOGON` behaviour for both Telnet and WebSocket clients, including at least one success and one failure transcript that show the `OK LOGIN` / `ERROR <CODE>` response format.
 - [x] Add a short subsection under the Authentication & Authorization doc describing how plain-text `LOGIN` commands map onto the Account Service `/auth/login` API (or gRPC equivalent), including how OTP values are forwarded when present.
 - [x] Ensure docs clearly state that once this slice is complete, gameplay commands such as `LOOK` and `SAY` require an authenticated session, except in explicitly documented dev/test bypass modes.
@@ -23,9 +23,9 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 
 ## 3. Account Service Integration for LOGIN
 
-- [x] Implement a Game Session Service client for the Account Service login API (REST or gRPC, per the current Account Service design), including fields for username, password, optional OTP, and any tenant/game selection identifiers required for session binding.
+- [x] Implement a Game Session Service client for the Account Service login API (REST or gRPC, per the current Account Service design), including username, one supplied secret, and any tenant/game selection identifiers required for session binding.
 - [x] Map Account Service responses into a small internal DTO (e.g., `LoginResult`) containing `accountId`, allowed tenant/game identifiers, and the issued JWT (if applicable), and store the JWT and identity details in Redis alongside the gameplay session entry as described in the Authentication & Authorization docs.
-- [x] Ensure Game Session converts Account Service failures into appropriate `ErrorDetail` codes (e.g., `INVALID_CREDENTIALS`, `ACCOUNT_LOCKED`, `OTP_REQUIRED`, `UPSTREAM_FAILURE`) and that these are surfaced in both the gRPC response and the text `ERROR <CODE> <message>` line returned to clients.
+- [x] Ensure Game Session converts Account Service failures into appropriate `ErrorDetail` codes (e.g., `INVALID_CREDENTIALS`, `ACCOUNT_LOCKED`, `UPSTREAM_FAILURE`) and that these are surfaced in both the gRPC response and the text `ERROR <CODE> <message>` line returned to clients.
 - [x] Add an integration test that starts Game Session Service with a lightweight Account Service stub (Spring Boot test configuration or Testcontainers-based stub), issues a `LOGIN` command over a direct WebSocket connection, and asserts that the stub receives the expected login request and that the client sees the correct `OK LOGIN ...` or `ERROR ...` text.
 - [x] Document the dependency on the Account Service in `services/game-session-service/README.md`, including example `grpcurl` or REST calls that demonstrate the login path in isolation.
 

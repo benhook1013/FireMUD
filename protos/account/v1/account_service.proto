@@ -18,6 +18,8 @@ service AccountService {
   rpc EnsurePublicProductionPlayerMembership(EnsurePublicProductionPlayerMembershipRequest) returns (EnsurePublicProductionPlayerMembershipResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+  rpc ListPresenceVisibilityPolicies(ListPresenceVisibilityPoliciesRequest)
+      returns (ListPresenceVisibilityPoliciesResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
   rpc ExportTenantData(ExportTenantDataRequest) returns (ExportTenantDataResponse);
@@ -64,7 +66,6 @@ message AuthenticateRequest {
   string tenant_id = 1;
   string username = 2;
   string password = 3;
-  string otp = 4;
 }
 
 message AuthenticateResponse {
@@ -166,6 +167,22 @@ message GetProfileRequest {
 
 message GetProfileResponse {
   string profile_json = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+// Internal bounded bulk read used by Social Groups when projecting friend presence.
+message ListPresenceVisibilityPoliciesRequest {
+  string tenant_id = 1;
+  repeated string account_ids = 2;
+}
+
+message PresenceVisibilityPolicyEntry {
+  string account_id = 1;
+  string policy = 2;
+}
+
+message ListPresenceVisibilityPoliciesResponse {
+  repeated PresenceVisibilityPolicyEntry policies = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

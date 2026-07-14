@@ -240,39 +240,16 @@ TCP Proxy Service and Spring Cloud Gateway forward canonical client identity hea
 
 ## Telnet Command Handling and Controls
 
-This section is the authoritative reference for plaintext Telnet security invariants (2FA requirements, per-account opt-in, and landing-menu warnings) and how the TCP Proxy Service and Game Session Service enforce them.
+This section is the authoritative reference for Telnet transport controls and the current preference for Telnet-over-TLS or the web client over plaintext Telnet.
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ. It forwards **all gameplay traffic** to the backend exclusively via WebSocket through Spring Cloud Gateway and uses a narrow, mTLS-protected gRPC link to the **Game Session Service** only to emit `NotifyDisconnect` lifecycle events (no gameplay payloads). These gRPC endpoints are internal-only and are never published through the gateway.
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences, using a dedicated Telnet pipeline in the TCP Proxy Service (currently implemented by `TelnetServerHandler`).
-- Telnet-derived flows are tagged with a **connection security** attribute at the TCP Proxy (“plaintext Telnet” vs “TLS Telnet”). This attribute is propagated via Spring Cloud Gateway to the Game Session Service, which uses it to:
-  - Include a **landing menu security warning** in the pre-login menu for plaintext Telnet sessions, advising players to prefer the TLS Telnet port or the web client.
-  - Include the transport context in internal `Authenticate` calls to the Account Service so deployment-wide rules such as `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags can be enforced consistently. Gameplay authentication must not use `/auth/login`, which remains a browser/control-plane endpoint.
+- Plaintext Telnet sessions should receive a landing-menu security warning that recommends the TLS Telnet port or web client. The current authentication RPC does not carry a transport-security field or enforce a TOTP/per-account plaintext gate; future transport admission hardening must introduce and enforce one complete contract rather than relying on documentation-only configuration.
 - Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the TCP Proxy Service supplies `X-Proxy-Client-IP` on its internal WebSocket hop and Spring Cloud Gateway sets the canonical `X-Client-IP` header after stripping spoofable headers from public ingress and authenticating the TCP Proxy identity. In production, the preferred deployment places a Telnet edge proxy (HAProxy) in front of the TCP Proxy Service and enables PROXY protocol so the TCP Proxy can recover the true client IP even when Kubernetes would otherwise SNAT the TCP peer address. When PROXY protocol is not enabled (or source IP is not preserved), per-IP limits and throttles should be treated as best-effort.
 
-### Plaintext Telnet safety matrix (design-time expectations)
+### Plaintext Telnet policy
 
-`FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag combine to gate which accounts may authenticate over raw Telnet. The intended matrix is:
-
-| Env toggle `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Per-account “allow plaintext Telnet login” | 2FA on account? | Plaintext Telnet login allowed? | Intended use |
-| --- | --- | --- | --- | --- |
-| `true` (default) | `false` | either | ❌ | Safe default; plaintext logins are disabled for this account. |
-| `true` (default) | `true` | `false` | ❌ | Misconfigured account; UI should prevent enabling this combination. |
-| `true` (default) | `true` | `true` | ✅ | Only this combination is permitted for plaintext Telnet in player-facing environments. |
-| `false` (override) | `false` | either | ❌ | Telnet plaintext remains disabled for this account even if the env guard is relaxed. |
-| `false` (override) | `true` | `true` | ✅ | Permitted but less strict; acceptable only in tightly controlled or non-production environments. |
-| `false` (override) | `true` | `false` | ❌ (design intent) | Implementations should continue to reject this combination to avoid silently weakening the 2FA requirement. |
-
-In other words:
-
-- The **per-account flag is always required** for plaintext Telnet, regardless of the environment toggle.
-- The **environment toggle controls whether 2FA is mandatory** for plaintext Telnet (`true` = required; `false` = may be relaxed only in non-prod, but the recommended implementation still enforces 2FA where possible).
-- Production deployments should keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true` and rely on the per-account flag plus 2FA to gate plaintext Telnet, treating any other combination as misconfiguration.
-
-Putting this together:
-
-- Local dev and single-operator hobby environments may temporarily relax `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` while flows are being built, but should still require the per-account “allow plaintext Telnet login” flag for any plaintext use.
-- Player-facing environments should treat plaintext Telnet as a hardened legacy channel: keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true`, require both the per-account flag and 2FA for plaintext logins, and prefer Telnet-over-TLS or the web client for normal play.
-- Recommended Telnet deployment modes by environment (including the Telnet edge proxy and PROXY-protocol expectations) are summarized in [Protocol Bridging](./system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes); this section remains the canonical source for the safety invariants that all implementations must enforce.
+Plaintext Telnet is a legacy compatibility transport, not a protected account-factor path. Local development may use it for protocol iteration. Player-facing deployments should expose Telnet-over-TLS or the web client and avoid public plaintext ingress until a complete transport-admission contract is implemented and verified end to end.
 
 ---
 
@@ -284,7 +261,6 @@ Putting this together:
   - **Certificate trust root**: operator clients must present a certificate that chains to the cluster CA used for gRPC mTLS, issued by cert-manager (ClusterIssuer `firemud-ca-issuer`) and configured via `FIREMUD_GRPC_CA_CERT_PATH`.
   - **Client certificate profile**: operator certificates must include the `clientAuth` extended key usage and should be provisioned as a dedicated Kubernetes Secret that is not mounted by normal workloads.
   - **Distribution and access**: Kubernetes RBAC and Secret scoping must restrict which service accounts can read/mount the operator client certificate Secret; NetworkPolicies restrict which pods can reach the management endpoints so that holding a valid certificate alone is not sufficient outside the approved operator surface.
-- Admin and moderator accounts can enable **two-factor authentication** using TOTP codes. When enabled, login requests must supply an `otp` field to the Account Service. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication) for implementation details.
 
 ### Operator Client Certificate Lifecycle
 
@@ -310,10 +286,10 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
 | Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces credential/login abuse lockouts; Game Session enforces post-auth gameplay command abuse limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
-| Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Plaintext Telnet logins are further constrained by `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags. |
+| Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Player-facing deployments prefer Telnet-over-TLS or the web client over plaintext ingress. |
 | Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |
 | Zero Trust | Enforced via mTLS and JWT-based validation |
-| 2FA | Available for admin and moderator accounts via TOTP codes and, when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled, required for any account that logs in over plaintext Telnet |
+| Account Factors | Current account modes are password and verified-email login codes; authenticator-app factors are future work |
 
 CI/CD trust boundaries:
 

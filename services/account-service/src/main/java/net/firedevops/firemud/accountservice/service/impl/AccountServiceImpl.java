@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
-import com.bastiaanjansen.otp.TOTPGenerator;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -20,6 +19,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
@@ -29,6 +29,7 @@ import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
@@ -45,6 +46,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
@@ -225,9 +227,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
-      Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication =
-        authenticateAccountIdentity(username, password, otp, true);
+      Long tenantId, String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
@@ -317,9 +318,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(
-      Long tenantId, String username, String password, String otp) {
-    PrimaryAuthentication authentication =
-        authenticateAccountIdentity(username, password, otp, false);
+      Long tenantId, String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, false);
     Account account = authentication.account();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
@@ -1037,7 +1037,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
-      String username, String password, String otp, boolean allowEmailLoginOtp) {
+      String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
         accountOpt.orElseThrow(
@@ -1059,16 +1059,6 @@ public class AccountServiceImpl implements AccountService {
           challenge -> recordFailedEmailLoginAttempt(challenge, LocalDateTime.now()));
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
-    }
-    if (account.getTwoFactorSecret() != null
-        && ("platformAdmin".equals(account.getRole())
-            || "tenantAdmin".equals(account.getRole())
-            || "moderator".equals(account.getRole()))) {
-      TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
-      if (otp == null || !generator.verify(otp)) {
-        throw new AuthenticationException(
-            AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
-      }
     }
     return new PrimaryAuthentication(account, Optional.empty());
   }
@@ -1230,9 +1220,31 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.list_presence_visibility_policies")
+  public Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, List<Long> accountIds) {
+    if (accountIds == null || accountIds.isEmpty()) {
+      return Map.of();
+    }
+    return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
+        .filter(
+            profile ->
+                profile.getAccount() != null
+                    && profile.getAccount().getId() != null
+                    && profile.getPresenceVisibilityPolicy() != null)
+        .collect(
+            java.util.stream.Collectors.toUnmodifiableMap(
+                profile -> profile.getAccount().getId(),
+                profile -> profile.getPresenceVisibilityPolicy(),
+                (left, right) -> left));
+  }
+
+  @Override
   @Transactional
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {
+    request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
@@ -1246,6 +1258,30 @@ public class AccountServiceImpl implements AccountService {
             notificationService.sendNotification(
                 request.tenantId(), request.accountId(), "Profile updated"));
     return profileMapper.toDto(profile);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.get_login_auth_modes")
+  public AccountLoginAuthModesDto getLoginAuthModes(Long accountId) {
+    Account account = requireAccount(accountId);
+    return new AccountLoginAuthModesDto(AccountLoginAuthModes.read(account.getLoginAuthModes()));
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.update_login_auth_modes")
+  public AccountLoginAuthModesDto updateLoginAuthModes(
+      Long accountId, UpdateAccountLoginAuthModesRequest request) {
+    Set<AccountLoginAuthMode> modes = request.loginAuthModes();
+    String serializedModes = AccountLoginAuthModes.normalize(modes);
+    Account account = requireAccount(accountId);
+    if (modes.contains(AccountLoginAuthMode.EMAIL_OTP) && !account.isEmailVerified()) {
+      throw new IllegalArgumentException("Email OTP requires a verified email address");
+    }
+    account.setLoginAuthModes(serializedModes);
+    accountRepository.save(account);
+    return new AccountLoginAuthModesDto(AccountLoginAuthModes.read(serializedModes));
   }
 
   @Override

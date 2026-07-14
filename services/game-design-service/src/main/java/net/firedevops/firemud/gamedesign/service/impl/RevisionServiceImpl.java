@@ -101,6 +101,7 @@ public class RevisionServiceImpl implements RevisionService {
       requireEnum(definition, "stageRequirement", "NONE", "LOGIN", "GAMEPLAY");
       requireEnum(definition, "promptPolicy", "NEVER", "WHEN_LOGGED_IN", "WHEN_GAMEPLAY");
       requireEnum(definition, "actionCategory", "GAMEPLAY", "SOCIAL", "META", "ADMIN", "SYSTEM");
+      requireBoolean(definition, "historyRecordable");
       requireTextArray(definition, "aliases");
       requireEnumArray(
           definition,
@@ -149,6 +150,12 @@ public class RevisionServiceImpl implements RevisionService {
       if (!value.isTextual() || value.asText().isBlank()) {
         throw invalidCommandDefinition(field + " entries must be nonblank strings");
       }
+    }
+  }
+
+  private void requireBoolean(JsonNode definition, String field) {
+    if (!definition.path(field).isBoolean()) {
+      throw invalidCommandDefinition(field + " must be a boolean");
     }
   }
 

@@ -82,7 +82,6 @@ public class PasswordResetTokenRepository {
             ACCOUNTS.EMAIL,
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
-            ACCOUNTS.TWO_FACTOR_SECRET,
             ACCOUNTS.EMAIL_VERIFIED,
             ACCOUNTS.LOGIN_AUTH_MODES)
         .from(PASSWORD_RESET_TOKEN)
@@ -100,7 +99,6 @@ public class PasswordResetTokenRepository {
             record.get(ACCOUNTS.EMAIL),
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
-            record.get(ACCOUNTS.TWO_FACTOR_SECRET),
             record.get(ACCOUNTS.EMAIL_VERIFIED),
             record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     token.setToken(record.get(PASSWORD_RESET_TOKEN.TOKEN));

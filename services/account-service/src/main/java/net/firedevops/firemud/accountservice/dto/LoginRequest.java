@@ -7,5 +7,4 @@ import jakarta.validation.constraints.Size;
 public record LoginRequest(
     @NotNull @Positive Long tenantId,
     @NotNull @Size(max = 50) String username,
-    @NotNull @Size(min = 6, max = 100) String password,
-    String otp) {}
+    @NotNull @Size(min = 6, max = 100) String password) {}

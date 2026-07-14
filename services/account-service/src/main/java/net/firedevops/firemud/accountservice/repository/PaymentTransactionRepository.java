@@ -97,7 +97,6 @@ public class PaymentTransactionRepository {
             ACCOUNTS.EMAIL,
             ACCOUNTS.PASSWORD_HASH,
             ACCOUNTS.ROLE,
-            ACCOUNTS.TWO_FACTOR_SECRET,
             ACCOUNTS.EMAIL_VERIFIED,
             ACCOUNTS.LOGIN_AUTH_MODES)
         .from(PAYMENT_TRANSACTION)
@@ -115,7 +114,6 @@ public class PaymentTransactionRepository {
             record.get(ACCOUNTS.EMAIL),
             record.get(ACCOUNTS.PASSWORD_HASH),
             record.get(ACCOUNTS.ROLE),
-            record.get(ACCOUNTS.TWO_FACTOR_SECRET),
             record.get(ACCOUNTS.EMAIL_VERIFIED),
             record.get(ACCOUNTS.LOGIN_AUTH_MODES)));
     entity.setAmountCents(record.get(PAYMENT_TRANSACTION.AMOUNT_CENTS));

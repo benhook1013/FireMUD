@@ -25,7 +25,6 @@ Centralized logging and administration tools for the platform. The service colle
 - Operator review of failed login attempts and suspicious activity reported by Game Session.
 - Automated alerts for suspicious activity via Alertmanager.
 - Real-time analytics on game performance.
-- Optional TOTP-based two-factor authentication for administrator accounts.
 
 ## Document Map
 

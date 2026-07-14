@@ -5,14 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
-import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
 import net.firedevops.firemud.socialgroups.client.AccountClient;
 import net.firedevops.firemud.socialgroups.client.GameSessionClient;
@@ -40,7 +43,22 @@ class FriendServiceImplTest {
     accountRepository = Mockito.mock(AccountFriendLinkRepository.class);
     gameSessionClient = Mockito.mock(GameSessionClient.class);
     accountClient = Mockito.mock(AccountClient.class);
+    when(accountClient.getPresenceVisibilityPolicies(anyLong(), anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              Collection<Long> accountIds = invocation.getArgument(1);
+              return friendsOnlyPolicies(accountIds);
+            });
     service = new FriendServiceImpl(accountRepository, gameSessionClient, accountClient);
+  }
+
+  private static Map<Long, FriendPresenceVisibilityPolicyValue> friendsOnlyPolicies(
+      Collection<Long> accountIds) {
+    return accountIds.stream()
+        .collect(
+            java.util.stream.Collectors.toUnmodifiableMap(
+                accountId -> accountId,
+                ignored -> FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
   }
 
   @Test
@@ -149,21 +167,12 @@ class FriendServiceImplTest {
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
                         .setAccountId("4")
                         .setOnline(false)
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 
@@ -202,9 +211,6 @@ class FriendServiceImplTest {
                         .setAccountId("3")
                         .setOnline(true)
                         .setCharacterName("Ben")
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 
@@ -323,9 +329,6 @@ class FriendServiceImplTest {
                         .setOnline(true)
                         .setGameInstanceId("0")
                         .setCharacterId("-7")
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
     AccountFriendLink sora = new AccountFriendLink();
@@ -420,9 +423,6 @@ class FriendServiceImplTest {
                         .setPointerVersion(17)
                         .setCharacterId("99")
                         .setCharacterName("Ben")
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 
@@ -460,9 +460,6 @@ class FriendServiceImplTest {
                         .setCharacterId("99")
                         .setCharacterName("Ben")
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .setRecentDisposition(
                             net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
                                 .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS)
@@ -521,9 +518,6 @@ class FriendServiceImplTest {
                         .setCharacterId("99")
                         .setCharacterName("Ben")
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .setRecentDisposition(
                             net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
                                 .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS)
@@ -568,21 +562,9 @@ class FriendServiceImplTest {
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
-                        .setOnline(false)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
                 .build());
 
     var result = service.listFriends(11L, 2L, FriendRosterFilter.ONLINE);
@@ -611,25 +593,18 @@ class FriendServiceImplTest {
     privateLink.setStatus("active");
     when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(friendsOnlyLink, privateLink));
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
+        .thenReturn(
+            Map.of(
+                3L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY,
+                4L, FriendPresenceVisibilityPolicyValue.PRIVATE));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
                 .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
-                        .setOnline(false)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE)
-                        .build())
+                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
                 .build());
 
     var result = service.listFriends(11L, 2L, FriendRosterFilter.FRIENDS_ONLY);
@@ -669,9 +644,6 @@ class FriendServiceImplTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_SHARED)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
@@ -680,9 +652,6 @@ class FriendServiceImplTest {
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .build())
                 .build());
 
@@ -711,6 +680,11 @@ class FriendServiceImplTest {
     hiddenLink.setStatus("active");
     when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(privateLink, hiddenLink));
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
+        .thenReturn(
+            Map.of(
+                3L, FriendPresenceVisibilityPolicyValue.PRIVATE,
+                4L, FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
@@ -725,9 +699,6 @@ class FriendServiceImplTest {
                         .setRealmDisplayName("Live Realm")
                         .setCharacterId("99")
                         .setCharacterName("Ben")
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE)
                         .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                         .setRecentDisposition(
                             net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
@@ -740,9 +711,6 @@ class FriendServiceImplTest {
                         .setGameInstanceId("10")
                         .setCharacterId("100")
                         .setCharacterName("Admin")
-                        .setVisibilityPolicy(
-                            AccountPresenceVisibilityPolicy
-                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF)
                         .build())
                 .build());
 
@@ -763,5 +731,41 @@ class FriendServiceImplTest {
     assertEquals(false, result.presences().get(1).online());
     assertEquals(null, result.presences().get(1).characterName());
     assertEquals(null, result.presences().get(1).lastSeenAt());
+  }
+
+  @Test
+  void listFriendPresenceFailsClosedWhenAccountPolicyBatchIsUnavailable() {
+    AccountFriendLink link = new AccountFriendLink();
+    link.setTenantId(11L);
+    link.setAccountId(2L);
+    link.setFriendAccountId(3L);
+    link.setStatus("active");
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(link));
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(Map.of());
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("3")
+                        .setOnline(true)
+                        .setGameInstanceId("9")
+                        .setWorldSlug("demo")
+                        .setRealmSlug("production")
+                        .setCharacterId("99")
+                        .setCharacterName("Ben")
+                        .build())
+                .build());
+
+    var result = service.listFriendPresence(11L, 2L);
+
+    assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
+    assertEquals(true, result.presences().get(0).online());
+    assertEquals(null, result.presences().get(0).gameInstanceId());
+    assertEquals(null, result.presences().get(0).worldSlug());
+    assertEquals(null, result.presences().get(0).realmSlug());
+    assertEquals(null, result.presences().get(0).characterId());
+    assertEquals(null, result.presences().get(0).characterName());
   }
 }

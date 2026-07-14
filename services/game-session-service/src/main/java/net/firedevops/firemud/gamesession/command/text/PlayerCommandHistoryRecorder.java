@@ -34,10 +34,11 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
   @Override
   public void record(
       TextCommand command,
+      boolean historyRecordable,
       CommandEnqueueResult commandResult,
       Optional<SessionContext> contextBefore,
       Optional<SessionContext> contextAfter) {
-    if (!isRecordable(command, commandResult)) {
+    if (!isRecordable(command, historyRecordable, commandResult)) {
       return;
     }
 
@@ -76,8 +77,10 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
     }
   }
 
-  private boolean isRecordable(TextCommand command, CommandEnqueueResult commandResult) {
+  private boolean isRecordable(
+      TextCommand command, boolean historyRecordable, CommandEnqueueResult commandResult) {
     return command != null
+        && historyRecordable
         && commandResult != null
         && commandResult.accepted()
         && command.type() != TextCommandType.LOGIN

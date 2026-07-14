@@ -33,7 +33,6 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material (required for player-facing environments; mounted from `jwt-signing-keys`) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
-| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Controls whether plaintext Telnet logins are restricted to 2FA-enabled, explicitly opted-in accounts | `true` |
 
 ## Proto Files
 

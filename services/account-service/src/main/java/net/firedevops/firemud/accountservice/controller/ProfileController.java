@@ -44,6 +44,10 @@ public class ProfileController {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+    if (request.presenceVisibilityPolicy() == null) {
+      throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
+    }
+    request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(

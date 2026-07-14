@@ -254,6 +254,8 @@ The canonical resume-transcript unit is one entry carrying:
 - ordering token;
 - output kind;
 - structured payload;
+- replay and presentation metadata needed to project the same output after reconnect;
+- derived rendered compatibility text;
 - timestamp metadata.
 
 For the current architecture, that means:
@@ -273,13 +275,12 @@ Every game uses the durable resume-transcript model. This is not a player prefer
 
 The policy defines:
 
-- maximum retained entry count;
-- maximum retained byte size;
+- soft and hard retained-byte ceilings, with message and line floors for the soft ceiling;
 - optional expiry after a character has been inactive for a configured duration, or `never`.
 
-When an entry or byte bound is exceeded, FireMUD evicts the oldest retained entries. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
+When a byte bound is exceeded, FireMUD evicts complete oldest retained entries. The soft ceiling preserves the configured message and line floors where possible. The hard ceiling then bounds every multi-entry window; when one complete current entry alone exceeds it, FireMUD retains that entry rather than storing a partial or truncated entry. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
 
-The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its canonical persisted structured-entry envelope. The envelope is compact canonical JSON with members ordered lexically as `characterId`, `gameInstanceId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `renderedText`, and `tenantId`; every member is present and an absent optional value is JSON `null`. Nested payload objects follow the same lexical member ordering. Strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. That envelope counts the entry metadata, structured payload, and any derived rendered-text compatibility projection exactly once. FireMUD never separately adds the same payload or rendered text again for transport projections. If one complete entry alone exceeds the configured byte bound, FireMUD does not retain a partial or truncated entry; it drops that entry and retains the prior valid window. Otherwise, eviction removes complete oldest entries until both the entry-count and byte bounds hold.
+The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its complete scope-bound persisted transcript envelope, not only its rendered text. The compact outer JSON envelope has lexically ordered members for `briefRenderPolicy`, `characterId`, `gameInstanceId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `payloadType`, `renderedText`, `replayPolicy`, and `tenantId`; every optional outer member is present and absent values are JSON `null`. Outer-envelope strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. The `payload` member preserves the canonical structured-output JSON emitted by the live output encoder. This accounts for entry metadata, structured payload, and the derived rendered-text compatibility projection exactly once in both the durable source of truth and Redis hot cache. FireMUD never separately adds the same payload or rendered text again for transport projections. If one complete entry alone exceeds the hard byte bound, it remains as the valid current window; later appends evict older complete entries first.
 
 ### Separate history features
 
@@ -288,7 +289,7 @@ The resume transcript is not a command-input history or a complete player archiv
 - [`HISTORY [count]`](./system-architecture-player-command-model.md#command-history) is a live, separate optional safe command-input history. It records only successfully accepted safe commands rather than screen output; unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns its bounded retention and count limits.
 - A future Player Transcript Archive and Export feature may retain the complete player-visible transcript as append-only archive segments for a finite tenant/game-configured period. It must preserve the canonical structured entries with derived rendered text for export, let players obtain an export before FireMUD-side expiry, and remain separate from the small resume context. The first export surface should be a FireMUD-managed downloadable artifact; arbitrary external destinations require later credential, privacy, retry, and deletion design.
 
-The current implementation includes the durable resume transcript and command history, while the hot reconnect buffer remains a cache of structured metadata beside rendered compatibility text. Player Transcript Archive and Export remains later implementation work.
+The current implementation persists the bounded durable resume transcript in Game Session as ordered `resume_transcript_entry` rows and retains structured replay metadata beside rendered compatibility text. Redis is only a best-effort hot cache. Command history is separate from reconnect retention, and Player Transcript Archive and Export remains later work.
 
 ---
 

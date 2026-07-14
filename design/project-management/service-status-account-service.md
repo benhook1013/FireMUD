@@ -4,7 +4,7 @@
 
 - Account registration, login, session management, and JWT issuance are implemented.
 - Password hashing uses Argon2 in the live service implementation.
-- Optional OTP-backed login flows exist and are consumed by Game Session.
+- Account-selected password and verified-email login-code flows are consumed by Game Session.
 - Profile management, external account linking, account recovery, notifications, and payment/subscription flows are implemented.
 - JWKS publication is implemented for token verification consumers.
 

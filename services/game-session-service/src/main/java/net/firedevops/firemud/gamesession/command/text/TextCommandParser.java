@@ -124,11 +124,9 @@ public class TextCommandParser {
       return new ParsedCommandData(
           args, new TextCommandPayload.EmailLoginChallengeRequest(args.getFirst()));
     }
-    if (args.size() >= 2) {
+    if (args.size() == 2) {
       return new ParsedCommandData(
-          args,
-          new TextCommandPayload.Credentials(
-              args.get(0), args.get(1), args.size() > 2 ? args.get(2) : ""));
+          args, new TextCommandPayload.Credentials(args.get(0), args.get(1)));
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }

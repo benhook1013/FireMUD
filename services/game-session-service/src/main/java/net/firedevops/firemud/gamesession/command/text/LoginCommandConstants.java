@@ -6,6 +6,9 @@ public final class LoginCommandConstants {
   public static final String PROMPT_MODE_UNSUPPORTED_MESSAGE =
       "Prompt-based login is not implemented yet; send LOGIN <email> [secret].";
 
+  public static final String INVALID_ARGUMENTS_CODE = "LOGIN_ARGUMENTS_INVALID";
+  public static final String INVALID_ARGUMENTS_MESSAGE = "Use LOGIN <email> [secret].";
+
   public static final String EMAIL_LOGIN_CODE_MESSAGE =
       "If that account is allowed to log in, a code has been sent. Use LOGIN <email> <code>.";
 

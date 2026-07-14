@@ -17,6 +17,7 @@ Every command definition carries:
 - a canonical command id and accepted aliases;
 - its allowed player stage;
 - its action category and optional semantic tags;
+- its explicit accepted-command-history policy;
 - its command capability and semantic owner;
 - whether it is a direct read/session operation or a durable gameplay action;
 - zero or more typed execution-effect declarations when it changes gameplay state;
@@ -46,7 +47,7 @@ Seeded platform commands and tenant/game-authored commands use the same declarat
 
 ### Versioned Declaration Lifecycle
 
-Game Design persists each command definition as a typed `COMMAND_DEFINITION` revision payload with one stable logical command identity. The payload contains command aliases, stage, category, tags, capability requirements, help metadata, and its typed execution-effect declarations. Revisions are version-scoped DML inputs; publish validates them, freezes an immutable command-definition artifact and digest for the version, and rejects ambiguous aliases, invalid effect payloads, or unsupported effect schemas.
+Game Design persists each command definition as a typed `COMMAND_DEFINITION` revision payload with one stable logical command identity. The payload contains command aliases, stage, category, tags, explicit `historyRecordable` policy, capability requirements, help metadata, and its typed execution-effect declarations. Revisions are version-scoped DML inputs; publish validates them, freezes an immutable command-definition artifact and digest for the version, and rejects ambiguous aliases, invalid history policy, invalid effect payloads, or unsupported effect schemas.
 
 At runtime, Game Session resolves only the declaration artifact pinned to the player's admitted tenant/game version and, where applicable, its approved script-patch version. The durable command and effect ledgers retain that version identity and the declared effect identity for replay. A runtime must fail closed rather than reinterpret a command against a newer definition or silently fall back to process-local configuration when the admitted artifact is unavailable or incompatible.
 
@@ -96,7 +97,7 @@ Games may extend standard behavior only through explicitly documented extension 
 
 ## Command History
 
-`HISTORY [count]` is a command-input history feature, not a screen transcript reader. It returns the caller's safe, accepted prior commands for the current tenant/game and character binding. Malformed, unknown, and failed input is not retained. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display.
+`HISTORY [count]` is a command-input history feature, not a screen transcript reader. It returns the caller's safe, accepted prior commands for the current tenant/game and character binding. Malformed, unknown, and failed input is not retained. Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display. Every command definition explicitly declares `historyRecordable`; `HISTORY` itself is not recordable, so reading history never creates another history row.
 
 The platform default is `10` entries and the platform maximum is `20`. A tenant/game may configure its own effective default and maximum within those platform limits. A supplied `count` returns the newest requested subset, bounded by the effective maximum.
 

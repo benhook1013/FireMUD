@@ -17,8 +17,15 @@ final class GameplayPresenceRoleClassifier {
     }
     try {
       SessionClaims claims = SessionClaims.fromJwt(jwtUtil.parseToken(context.jwt()));
-      if (claims.hasGameplayElevatedRole(Long.toString(context.tenantId()))) {
+      String tenantId = Long.toString(context.tenantId());
+      if (claims.hasGameplayRole(tenantId, "god")) {
         return GameplayPresenceRole.GOD;
+      }
+      if (claims.hasGameplayRole(tenantId, "platformAdmin", "tenantAdmin")) {
+        return GameplayPresenceRole.ADMIN;
+      }
+      if (claims.hasGameplayRole(tenantId, "moderator")) {
+        return GameplayPresenceRole.MODERATOR;
       }
     } catch (IllegalArgumentException | JwtException ex) {
       logger.debug(

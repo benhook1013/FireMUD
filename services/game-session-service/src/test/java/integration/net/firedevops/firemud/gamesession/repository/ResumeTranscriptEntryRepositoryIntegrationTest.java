@@ -156,6 +156,25 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
+  void refreshesExpiryForOnlyTheRequestedTranscriptScope() {
+    ResumeTranscriptEntry first = entry("Earlier\n", Instant.parse("2026-07-12T01:00:00Z"));
+    ResumeTranscriptEntry second = entry("Later\n", Instant.parse("2026-07-12T01:01:00Z"));
+    ResumeTranscriptEntry otherScope = entry("Other\n", Instant.parse("2026-07-12T01:02:00Z"));
+    otherScope.setCharacterId(14L);
+    repository.saveAll(List.of(first, second, otherScope));
+    Instant refreshedExpiry = Instant.parse("2026-07-12T02:00:00Z");
+
+    assertThat(repository.updateExpiryByScope(22L, 7L, 13L, refreshedExpiry)).isEqualTo(2);
+
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getExpiresAt)
+        .containsExactly(refreshedExpiry, refreshedExpiry);
+    assertThat(repository.findByScope(22L, 7L, 14L))
+        .extracting(ResumeTranscriptEntry::getExpiresAt)
+        .containsExactly(Instant.parse("2026-07-12T01:02:20Z"));
+  }
+
+  @Test
   void dropsExpiredTranscriptAfterTheDurableServiceIsRecreated() {
     ReconnectionSettingsResolver settingsResolver =
         (tenantId, gameInstanceId) ->

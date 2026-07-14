@@ -45,8 +45,7 @@ public class AuthController {
   public ResponseEntity<ApiResponse<AuthenticationResult>> login(
       @Valid @RequestBody LoginRequest request) {
     AuthenticationResult auth =
-        accountService.authenticate(
-            request.tenantId(), request.username(), request.password(), request.otp());
+        accountService.authenticate(request.tenantId(), request.username(), request.password());
     return ResponseEntity.ok(ApiResponse.success(auth));
   }
 
@@ -55,7 +54,7 @@ public class AuthController {
       @Valid @RequestBody LoginRequest request) {
     PlayerBootstrapResult bootstrap =
         accountService.issuePlayerBootstrap(
-            request.tenantId(), request.username(), request.password(), request.otp());
+            request.tenantId(), request.username(), request.password());
     return ResponseEntity.ok(ApiResponse.success(bootstrap));
   }
 

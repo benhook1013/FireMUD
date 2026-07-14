@@ -36,6 +36,18 @@ public final class AccountLoginAuthModes {
 
   /** Returns the database representation in stable enum declaration order. */
   public static String normalize(String serializedModes) {
-    return read(serializedModes).stream().sorted().map(Enum::name).collect(Collectors.joining(","));
+    return normalize(read(serializedModes));
+  }
+
+  /** Returns the database representation for a requested nonempty account mode set. */
+  public static String normalize(Set<AccountLoginAuthMode> modes) {
+    if (modes == null || modes.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Account must have at least one login authentication mode");
+    }
+    if (modes.stream().anyMatch(java.util.Objects::isNull)) {
+      throw new IllegalArgumentException("Account login authentication mode is required");
+    }
+    return modes.stream().sorted().map(Enum::name).collect(Collectors.joining(","));
   }
 }

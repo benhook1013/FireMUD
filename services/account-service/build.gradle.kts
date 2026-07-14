@@ -15,5 +15,4 @@ dependencies {
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)
-    implementation(libs.otp.java)
 }

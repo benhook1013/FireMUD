@@ -212,8 +212,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     }
 
     Comparator<GameplayPresence> ordering =
-        Comparator.comparing(
-                (GameplayPresence presence) -> presence.role() == GameplayPresenceRole.GOD ? 0 : 1)
+        Comparator.comparing((GameplayPresence presence) -> presence.role().presenceOrdering())
             .thenComparing(
                 presence -> presence.characterName().toLowerCase(Locale.ROOT), String::compareTo)
             .thenComparingLong(GameplayPresence::sessionId);

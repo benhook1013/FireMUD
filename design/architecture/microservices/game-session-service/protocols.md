@@ -27,7 +27,7 @@ The player-facing protocol is also stage-aware:
 The normal happy path for a human player should therefore be:
 
 ```text
-LOGIN <username> <password> [otp]
+LOGIN <username> <secret>
 PLAY <world> [realm] [character]
 ```
 
@@ -35,8 +35,8 @@ PLAY <world> [realm] [character]
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
-| `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
+| `LOGIN <username> <secret>` | Authenticates a session and binds it to an account on credential-bearing transports. Account Service interprets the secret as an enabled password or verified-email login code. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish` |
+| `LOGON <username> <secret>` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
@@ -57,12 +57,11 @@ Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable wo
 
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
-- For Telnet and generic WebSocket clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <password> [otp]` performs an immediate authentication attempt.
+- For Telnet and generic WebSocket clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <secret>` performs an immediate authentication attempt.
 - For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
-- OTP values on credential-bearing logins are passed through verbatim to Account Service so two-factor accounts get the same behavior across transports.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
-Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
+Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <secret>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
 
 After `LOGIN` succeeds, the normal player-facing expectation is `PLAY <world> [realm] [character]`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
 
@@ -113,7 +112,7 @@ OK PLAY Entered world: Demo World / Live Realm as Sora
 
 The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId, characterId}` target.
 
-The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` and `ERROR OTP_REQUIRED` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
+The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 

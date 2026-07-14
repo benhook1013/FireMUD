@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
@@ -18,21 +19,22 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
+import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 
 public interface AccountService {
   AccountDto createAccount(CreateAccountRequest request);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
-      Long tenantId, String username, String password, String otp);
+      Long tenantId, String username, String password);
 
   void requestEmailLoginOtp(Long tenantId, String email);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       Long tenantId, String email, String code);
 
-  PlayerBootstrapResult issuePlayerBootstrap(
-      Long tenantId, String username, String password, String otp);
+  PlayerBootstrapResult issuePlayerBootstrap(Long tenantId, String username, String password);
 
   java.util.List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken);
 
@@ -60,7 +62,15 @@ public interface AccountService {
 
   ProfileDto getProfile(Long tenantId, Long accountId);
 
+  java.util.Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, java.util.List<Long> accountIds);
+
   ProfileDto updateProfile(UpdateProfileRequest request);
+
+  AccountLoginAuthModesDto getLoginAuthModes(Long accountId);
+
+  AccountLoginAuthModesDto updateLoginAuthModes(
+      Long accountId, UpdateAccountLoginAuthModesRequest request);
 
   AccountDataExportDto exportAccountData(Long accountId);
 

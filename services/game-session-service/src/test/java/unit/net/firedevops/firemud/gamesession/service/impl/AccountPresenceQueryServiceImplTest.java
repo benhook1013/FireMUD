@@ -7,8 +7,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
-import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
@@ -27,19 +25,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -56,8 +48,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     17L,
                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.PRIVATE)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -82,8 +73,6 @@ class AccountPresenceQueryServiceImplTest {
                         150L,
                         180L,
                         120L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
-        .thenReturn(AccountPresenceVisibilityPolicy.FRIENDS_ONLY);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
             List.of(
@@ -105,7 +94,6 @@ class AccountPresenceQueryServiceImplTest {
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,
         result.get(0).activityState());
     assertEquals(null, result.get(0).recentDisposition());
-    assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, result.get(0).visibilityPolicy());
     assertEquals(4L, result.get(1).accountId());
     assertEquals(false, result.get(1).online());
     assertEquals(2L, result.get(1).gameInstanceId());
@@ -117,7 +105,6 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(1).lastSeenAt());
     assertEquals(
         AccountRecentPresenceDisposition.TRANSPORT_LOSS, result.get(1).recentDisposition());
-    assertEquals(AccountPresenceVisibilityPolicy.PRIVATE, result.get(1).visibilityPolicy());
   }
 
   @Test
@@ -125,19 +112,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -154,8 +135,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     18L,
                     Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -191,7 +171,6 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(false, result.get(0).online());
     assertEquals(9L, result.get(0).gameInstanceId());
     assertEquals(18L, result.get(0).pointerVersion());
-    assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, result.get(0).visibilityPolicy());
   }
 
   @Test
@@ -199,19 +178,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -228,8 +201,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     17L,
                     Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -275,19 +247,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -304,8 +270,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     17L,
                     Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -351,19 +316,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -409,8 +368,6 @@ class AccountPresenceQueryServiceImplTest {
                         null,
                         80L,
                         80L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
-        .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
             List.of(
@@ -430,19 +387,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -459,8 +410,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     17L,
                     Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -507,19 +457,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -536,8 +480,7 @@ class AccountPresenceQueryServiceImplTest {
                     "production",
                     17L,
                     Instant.parse("2026-04-11T07:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -595,19 +538,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -637,8 +574,6 @@ class AccountPresenceQueryServiceImplTest {
                         150L,
                         180L,
                         120L))));
-    when(visibilityPolicyResolver.resolve(1L, 3L, GameplayPresenceRole.PLAYER))
-        .thenReturn(AccountPresenceVisibilityPolicy.PUBLIC);
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
             List.of(
@@ -659,19 +594,13 @@ class AccountPresenceQueryServiceImplTest {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
-    AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver =
-        Mockito.mock(AccountPresenceVisibilityPolicyResolver.class);
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
         new AccountPresenceQueryServiceImpl(
-            presenceService,
-            resolver,
-            recentPresenceService,
-            visibilityPolicyResolver,
-            pointerAuthorityService);
+            presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
@@ -688,8 +617,7 @@ class AccountPresenceQueryServiceImplTest {
                     "Production",
                     17L,
                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                    AccountPresenceVisibilityPolicy.PRIVATE)));
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(

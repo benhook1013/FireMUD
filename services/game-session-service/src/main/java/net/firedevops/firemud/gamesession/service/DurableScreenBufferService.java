@@ -2,8 +2,12 @@ package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -24,6 +28,7 @@ import org.springframework.util.StringUtils;
         "Injected repository, settings resolver, and cache are shared Spring collaborators.")
 public class DurableScreenBufferService implements ScreenBufferService {
   private static final Logger log = LoggerFactory.getLogger(DurableScreenBufferService.class);
+  private static final long NO_TTL_MILLIS = 0L;
 
   private final ResumeTranscriptEntryRepository repository;
   private final ReconnectionSettingsResolver settingsResolver;
@@ -45,7 +50,10 @@ public class DurableScreenBufferService implements ScreenBufferService {
     List<BufferedEntry> filtered =
         entries == null
             ? List.of()
-            : entries.stream().filter(entry -> StringUtils.hasText(entry.text())).toList();
+            : entries.stream()
+                .filter(entry -> StringUtils.hasText(entry.text()))
+                .map(entry -> entry.withCanonicalByteSize(tenantId, gameInstanceId, characterId))
+                .toList();
     if (filtered.isEmpty()) {
       return;
     }
@@ -53,15 +61,17 @@ public class DurableScreenBufferService implements ScreenBufferService {
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
     repository.lockScope(tenantId, gameInstanceId, characterId);
-    if (buffer.ttlMs() > 0L) {
+    if (buffer.ttlMs() > NO_TTL_MILLIS) {
       expireExpiredEntries(tenantId, gameInstanceId, characterId);
+    }
+    Instant scopeExpiresAt =
+        buffer.ttlMs() > NO_TTL_MILLIS ? scopeExpiresAt(filtered, buffer) : null;
+    if (scopeExpiresAt != null) {
+      repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
     repository.saveAll(
         filtered.stream()
-            .map(
-                entry ->
-                    toEntity(
-                        tenantId, gameInstanceId, characterId, entry, expiresAt(entry, buffer)))
+            .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry, scopeExpiresAt))
             .toList());
     trim(tenantId, gameInstanceId, characterId, buffer);
     appendToHotCache(tenantId, gameInstanceId, characterId, filtered);
@@ -70,8 +80,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Override
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
-    // Redis cannot retain each durable entry's immutable expiry after later appends reset its key
-    // TTL.
+    // Redis only caches the durable scope and cannot authoritatively enforce its inactivity expiry.
     List<ResumeTranscriptEntry> entries =
         repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now());
     if (entries.isEmpty()) {
@@ -105,28 +114,36 @@ public class DurableScreenBufferService implements ScreenBufferService {
       long gameInstanceId,
       long characterId,
       FiremudReconnectionProperties.Buffer buffer) {
-    List<ResumeTranscriptEntry> retained =
-        new ArrayList<>(
+    Deque<ResumeTranscriptEntry> retained =
+        new ArrayDeque<>(
             repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
     List<Long> discardedIds = new ArrayList<>();
+    Map<ResumeTranscriptEntry, Integer> entryByteSizes = new IdentityHashMap<>();
+    int currentBytes = 0;
+    int currentLines = 0;
+    for (ResumeTranscriptEntry entry : retained) {
+      int entryByteSize = entry.getByteSize();
+      entryByteSizes.put(entry, entryByteSize);
+      currentBytes += entryByteSize;
+      currentLines += entry.getLineCount();
+    }
     while (retained.size() > 1
-        && totalBytes(retained) > buffer.softMaxBytes()
+        && currentBytes > buffer.softMaxBytes()
         && retained.size() > buffer.minMessages()
-        && totalLines(retained) > buffer.minLines()) {
-      discardedIds.add(retained.remove(0).getId());
+        && currentLines > buffer.minLines()) {
+      ResumeTranscriptEntry removed = retained.removeFirst();
+      discardedIds.add(removed.getId());
+      currentBytes -= entryByteSizes.get(removed);
+      currentLines -= removed.getLineCount();
     }
-    while (retained.size() > 1 && totalBytes(retained) > buffer.hardMaxBytes()) {
-      discardedIds.add(retained.remove(0).getId());
+    while (retained.size() > 1 && currentBytes > buffer.hardMaxBytes()) {
+      ResumeTranscriptEntry removed = retained.removeFirst();
+      discardedIds.add(removed.getId());
+      currentBytes -= entryByteSizes.get(removed);
     }
-    repository.deleteByIds(discardedIds);
-  }
-
-  private int totalBytes(List<ResumeTranscriptEntry> entries) {
-    return entries.stream().mapToInt(ResumeTranscriptEntry::getByteSize).sum();
-  }
-
-  private int totalLines(List<ResumeTranscriptEntry> entries) {
-    return entries.stream().mapToInt(ResumeTranscriptEntry::getLineCount).sum();
+    if (!discardedIds.isEmpty()) {
+      repository.deleteByIds(discardedIds);
+    }
   }
 
   private ResumeTranscriptEntry toEntity(
@@ -152,11 +169,11 @@ public class DurableScreenBufferService implements ScreenBufferService {
     return entity;
   }
 
-  private Instant expiresAt(BufferedEntry entry, FiremudReconnectionProperties.Buffer buffer) {
-    if (buffer.ttlMs() == 0L) {
-      return null;
-    }
-    return Instant.ofEpochMilli(entry.appendedAtMs()).plusMillis(buffer.ttlMs());
+  private Instant scopeExpiresAt(
+      List<BufferedEntry> entries, FiremudReconnectionProperties.Buffer buffer) {
+    long latestAppendedAtMs =
+        entries.stream().mapToLong(BufferedEntry::appendedAtMs).max().orElseThrow();
+    return Instant.ofEpochMilli(latestAppendedAtMs).plusMillis(buffer.ttlMs());
   }
 
   private BufferedEntry toBufferedEntry(ResumeTranscriptEntry entry) {
