@@ -153,7 +153,14 @@ This model is designed to reduce risk now without introducing unnecessary operat
 
 ### Secret Compliance Controls
 
-Tier A controls must be measurable, not policy-only. Each player-facing environment (`hobby-self-hosted`, staging, production) maintains a secret compliance record with:
+Tier A controls must be measurable, not policy-only. Each player-facing environment (`hobby-self-hosted`, staging, production) maintains a versioned secret compliance record with an explicit provisioning state:
+
+- `not-provisioned` means the player-facing environment does not yet exist. Its record must contain an empty `credentialClasses` object; it is not promotion-eligible and does not start credential-age enforcement.
+- `provisioned` means the environment has been bootstrapped or is live. Its record must contain all required credential classes and their current immutable evidence. CI enforces the configured credential-age limits.
+
+Before the first player-facing deployment, change the environment record to `provisioned` in the same change that creates the namespace and bootstrap-secret evidence. A missing or malformed state is non-compliant.
+
+A provisioned record contains:
 
 - Credential class owner (for example platform/security owner role).
 - Maximum credential age target.
@@ -203,6 +210,7 @@ Illustrative bootstrap compliance record:
 ```json
 {
   "environment": "staging",
+  "provisioningState": "provisioned",
   "generatedAt": "2026-03-13T00:00:00Z",
   "credentialClasses": {
     "jwt-signing-keys-jwks": {

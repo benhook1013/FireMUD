@@ -36,6 +36,7 @@ write_compliance_file() {
   cat >"$path" <<YAML
 {
   "environment": "$env",
+  "provisioningState": "provisioned",
   "credentialClasses": {
     "jwt-signing-keys-jwks": {
       "maxAgeDays": 30,
@@ -67,6 +68,19 @@ write_compliance_file() {
 YAML
 }
 
+write_not_provisioned_file() {
+  local env="$1"
+  local credential_classes="${2:-{}}"
+  local path="$TMP_DIR/design/operations/secret-compliance/$env.yaml"
+  cat >"$path" <<YAML
+{
+  "environment": "$env",
+  "provisioningState": "not-provisioned",
+  "credentialClasses": $credential_classes
+}
+YAML
+}
+
 write_compliance_file production lastProvisionedAt
 write_compliance_file staging lastRotationAt
 write_compliance_file hobby-self-hosted lastRotationAt
@@ -85,5 +99,48 @@ if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   exit 1
 fi
 grep -q "exactly one of lastRotationAt/lastProvisionedAt" /tmp/firemud-secret-compliance-invalid.out
+
+write_not_provisioned_file production
+write_not_provisioned_file staging
+write_not_provisioned_file hobby-self-hosted
+SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >/tmp/firemud-secret-compliance-not-provisioned.out
+
+write_not_provisioned_file production '{"unexpected": {}}'
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >/tmp/firemud-secret-compliance-not-provisioned-invalid.out 2>&1; then
+  echo "secret compliance validator accepted credential evidence for an unprovisioned environment" >&2
+  exit 1
+fi
+grep -q "not-provisioned compliance records must not list credential classes" /tmp/firemud-secret-compliance-not-provisioned-invalid.out
+
+write_not_provisioned_file hobby-self-hosted '{"unexpected": {}}'
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >/tmp/firemud-secret-compliance-hobby-schema-invalid.out 2>&1; then
+  echo "secret compliance validator treated an invalid hobby record as advisory" >&2
+  exit 1
+fi
+grep -q "not-provisioned compliance records must not list credential classes" /tmp/firemud-secret-compliance-hobby-schema-invalid.out
+
+cat >"$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'YAML'
+{
+  "environment": "production",
+  "credentialClasses": {}
+}
+YAML
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >/tmp/firemud-secret-compliance-missing-state.out 2>&1; then
+  echo "secret compliance validator accepted a record without provisioningState" >&2
+  exit 1
+fi
+grep -q "provisioningState must be one of" /tmp/firemud-secret-compliance-missing-state.out
 
 echo "secret compliance contract checks passed"
