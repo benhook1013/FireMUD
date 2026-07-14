@@ -19,6 +19,18 @@ Published ability and action references use stable design identifiers, not displ
 
 Any script or plugin field that references an ability must use a typed selector such as `{"abilityId":"abilityId:<stable-id>"}`; action sequence references must use `{"actionSequenceId":"actionSequenceId:<stable-id>"}`. Game Design validates these selectors against the exact `baseVersionId` and its recorded `abilitySchemaDigest` during `PublishVersion`, `PublishScriptPatchVersion`, and `PublishPluginVersion`. Runtime services must not reinterpret display names or aliases as ability identities.
 
+## Authored Actor-State Catalog
+
+Every published game version includes a versioned actor-state catalog. It is DML-authored design data, not service configuration: the platform supplies a small typed grammar while each game supplies all named stats, resources, conditions, tags, presentation values, and effect declarations.
+
+- Stat definitions use a stable `statKey`, one primitive kind (`NUMERIC`, `BOUNDED_RESOURCE`, or `BOOLEAN_FLAG`), base/default value, applicable hard bounds, visibility/presentation metadata, and tags.
+- Condition definitions use a stable `conditionKey`, explicit stacking and duration policy, visibility/presentation metadata, tags, and typed effect declarations.
+- Typed effects reference catalog keys. Abilities, action sequences, equipment, consumables, room effects, scripts, and later combat all use this one declaration grammar rather than creating private stat maps or platform-specific names such as `health` or `fire_resistance`.
+
+Game Design validates every reference and effect declaration at publish time, includes the immutable catalog in the release bundle, and records its digest with the release. Runtime services resolve definitions only from the game instance's pinned release catalog; unknown or stale keys fail closed. Entity Management stores active runtime state separately, but an active condition retains its source, definition key, release identity, and immutable applied-effect snapshot so a later publish cannot rewrite an effect that is already running.
+
+This provides a fully game-authored, scriptable design surface while keeping enough platform type information for deterministic validation and evaluation. See [Entity Stats and Conditions](../../../project-management/vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md) for the runtime ownership and evaluation contract.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:

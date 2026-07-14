@@ -81,6 +81,20 @@ FireMUD should treat gameplay state as four related but distinct layers:
 
 The shared platform should provide typed primitives, while each game authors the actual named stats and conditions it uses.
 
+### Canonical Authored Actor-State Catalog
+
+Game Design owns a versioned, DML-authored actor-state catalog for each `(tenantId, versionId)`. Publishing freezes that catalog into the game's release bundle; runtime services resolve it from the game instance's pinned release rather than from mutable design rows or per-command settings reads.
+
+The platform owns only a small typed grammar. The game owns every named mechanic, including `health`, `mana`, resistances, conditions, presentation labels, tags, and authored effect values. A game-specific universal-stat enum is not permitted.
+
+- A stat definition has a stable `statKey`, primitive kind, default/base value, hard bounds where applicable, visibility/presentation metadata, and tags. The initial primitive kinds are `NUMERIC`, `BOUNDED_RESOURCE`, and `BOOLEAN_FLAG`; later damage or region semantics use tagged effects rather than introducing platform-owned `fire_resistance`-style stat names.
+- A condition definition has a stable `conditionKey`, explicit stacking and duration policy, visibility/presentation metadata, tags, and typed effect declarations. Conditions are definitions, not unvalidated free-form payload keys.
+- Effect declarations are typed, validated data that reference declared stat or condition keys. Equipment, actions, spells, consumables, room effects, and scripts use this same grammar instead of feature-local stat maps.
+- Entity Management persists only runtime state and provenance. It rejects definitions or references that are absent from the actor's pinned release catalog; it must not invent defaults or reinterpret unknown keys.
+- An active condition records its source, definition key, release identity, and immutable applied-effect snapshot. Later publishes therefore do not silently change an already-active condition. A replacement-instance/cutover flow must validate or remap durable actor state explicitly against its target release rather than applying best-effort name matching.
+
+This keeps the full game design surface scriptable as versioned DML while retaining a small hardcoded grammar that services can validate deterministically.
+
 Examples of primitive categories:
 
 - numeric stat
@@ -106,6 +120,7 @@ Examples of game-authored values built from those primitives:
 - One shared modifier/effect engine should evaluate contributions from equipment, actions, spells, potions, and conditions.
 - The platform should not create separate bespoke rule engines for "equipment stats", "buffs", and "action states".
 - Game-authored stat and condition definitions should be data-driven and validated, not free-form runtime maps.
+- The authored actor-state catalog is versioned DML in the Game Design Service and is frozen into the published release bundle; it is not a tenant/game setting group.
 - The model should remain typed enough that services can validate definitions and produce deterministic effective-state evaluations.
 - Presentation should consume evaluated state; it should not reverse-engineer effective gameplay state from ad hoc transcript text.
 - The first implementation should preserve raw source/state identity so later debugging and audit work can answer why a final effective value exists.
