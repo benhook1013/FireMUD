@@ -1,0 +1,8 @@
+# Player Access and Session Migration Ledger
+
+Tracker: [Player Access and Session](../player-access-and-session.md)
+
+Status: Not started. Add one row per allocated source range before transposition.
+
+| Legacy source record | Source lines | Disposition | Destination heading or anchor | Preserved facts or explicit rationale | Spark review |
+| --- | --- | --- | --- | --- | --- |

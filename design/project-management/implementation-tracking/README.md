@@ -12,6 +12,8 @@ During the migration from vertical slices, each tracker will contain only:
 
 Existing files under [`../vertical-slices`](../vertical-slices/README.md) remain historical delivery records until their facts have been reconciled into the appropriate tracker. Do not delete, rename, or treat those records as migrated solely because this scaffold exists.
 
+Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md). Each allocated legacy source range must be migrated or have an explicit retained/superseded disposition before a tracker can claim migration completion.
+
 ## Trackers
 
 - [Player Access and Session](./player-access-and-session.md)
