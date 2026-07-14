@@ -28,7 +28,6 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Fold slice/project-management documentation into its owning functional PR unless the documentation itself is an explicitly requested, independently reviewable deliverable.
 - Treat a failing Renovate PR as actionable maintenance work. Inspect its CI failure and push the smallest compatible fix to the Renovate branch when possible so Renovate can rebase and complete its own update; otherwise perform the dependency upgrade directly on a replacement branch with the required compatibility changes.
 - After a PR merges or its content is folded into another PR, proactively remove its now-defunct local worktree and local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
-- If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
 ## Required Validation
