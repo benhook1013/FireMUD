@@ -70,7 +70,10 @@ YAML
 
 write_not_provisioned_file() {
   local env="$1"
-  local credential_classes="${2:-{}}"
+  local credential_classes="${2:-}"
+  if [[ -z "$credential_classes" ]]; then
+    credential_classes="{}"
+  fi
   local path="$TMP_DIR/design/operations/secret-compliance/$env.yaml"
   cat >"$path" <<YAML
 {
