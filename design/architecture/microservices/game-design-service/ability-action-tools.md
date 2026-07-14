@@ -49,6 +49,15 @@ Published actions define semantic feedback declarations as versioned DML. Each d
 
 The resulting `GameplayPresentationEvent` is idempotent and tied to the action effect lifecycle, so replay cannot duplicate feedback and late remote completion can emit a distinct final event. Game-authored feedback cannot override platform validation, authorization, or infrastructure error codes.
 
+## Effect Declaration Lifecycle
+
+One typed `EffectDeclaration` grammar serves equipment, conditions, actions, and future auras. Its `lifecycle` prevents a declarative effect from being interpreted differently at each runtime seam.
+
+- `CONTINUOUS` declarations attach to a source such as an equipped item, active condition, stance, or aura and contribute to evaluated actor state for as long as that source exists. They use derived-state modifiers such as `ADD`, `MULTIPLY`, clamps, and granted state.
+- `INSTANT` declarations execute once through the `ResolvedEffectPlan` under its idempotent effect id. The initial mutation grammar is `ADJUST_RESOURCE`, `APPLY_CONDITION`, and `REMOVE_CONDITION`.
+- Equipment may use both modes: passive worn effects are continuous, while a future on-equip/on-unequip trigger is instant. This is not an equipment-specific side channel.
+- Resource cost declarations remain conditional debits, separate from generic adjustment. Damage is deferred to the combat pipeline so hit, mitigation, and defeat semantics are not bypassed by a generic resource delta.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:
