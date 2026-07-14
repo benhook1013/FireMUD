@@ -1,38 +1,5 @@
 {
   "environment": "staging",
-  "generatedAt": "2026-06-13T00:00:00Z",
-  "credentialClasses": {
-    "jwt-signing-keys-jwks": {
-      "owner": "platform-security",
-      "maxAgeDays": 30,
-      "lastRotationAt": "2026-06-13T00:00:00Z",
-      "alertRuleId": "sec.jwt.rotation.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/staging-2026-06-13.json",
-      "evidenceKey": "jwt-signing-keys-jwks"
-    },
-    "postgres-application-credentials": {
-      "owner": "platform-database",
-      "maxAgeDays": 45,
-      "lastRotationAt": "2026-06-13T00:00:00Z",
-      "alertRuleId": "sec.postgres.credentials.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/staging-2026-06-13.json",
-      "evidenceKey": "postgres-application-credentials"
-    },
-    "backup-object-store-credentials": {
-      "owner": "platform-infra",
-      "maxAgeDays": 60,
-      "lastRotationAt": "2026-06-13T00:00:00Z",
-      "alertRuleId": "sec.backup.objectstore.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/staging-2026-06-13.json",
-      "evidenceKey": "backup-object-store-credentials"
-    },
-    "operator-credentials": {
-      "owner": "platform-security",
-      "maxAgeDays": 90,
-      "lastRotationAt": "2026-04-16T00:00:00Z",
-      "alertRuleId": "sec.operator.credentials.age",
-      "evidenceRef": "design/operations/secret-compliance/evidence/staging-2026-06-13.json",
-      "evidenceKey": "operator-credentials"
-    }
-  }
+  "provisioningState": "not-provisioned",
+  "credentialClasses": {}
 }

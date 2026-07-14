@@ -23,6 +23,7 @@ ENV_FILES = {
         "design/operations/secret-compliance/hobby-self-hosted.yaml"
     ),
 }
+PROVISIONING_STATES = {"not-provisioned", "provisioned"}
 
 
 def utc_now() -> dt.datetime:
@@ -73,6 +74,12 @@ def main() -> int:
         else:
             warnings.append(msg)
 
+    def record_schema_issue(msg: str) -> None:
+        if enforcement_mode == "strict":
+            failures.append(msg)
+        else:
+            warnings.append(msg)
+
     for env, relative_path in ENV_FILES.items():
         path = root / relative_path
         if not path.exists():
@@ -85,11 +92,42 @@ def main() -> int:
             record_issue(env, f"{env}: cannot parse {relative_path} as YAML: {exc}")
             continue
 
+        if not isinstance(data, dict):
+            record_schema_issue(f"{env}: compliance record must be a mapping")
+            continue
+
+        record_environment = data.get("environment")
+        if record_environment != env:
+            record_schema_issue(
+                f"{env}: compliance record environment must be '{env}', got "
+                f"{record_environment!r}",
+            )
+            continue
+
+        provisioning_state = data.get("provisioningState")
+        if provisioning_state not in PROVISIONING_STATES:
+            record_schema_issue(
+                f"{env}: provisioningState must be one of "
+                f"{', '.join(sorted(PROVISIONING_STATES))}",
+            )
+            continue
+
         classes = data.get("credentialClasses", {})
+        if not isinstance(classes, dict):
+            record_schema_issue(f"{env}: credentialClasses must be a mapping")
+            continue
+
+        if provisioning_state == "not-provisioned":
+            if classes:
+                record_schema_issue(
+                    f"{env}: not-provisioned compliance records must not list "
+                    "credential classes",
+                )
+            continue
+
         missing = sorted(REQUIRED - set(classes.keys()))
         if missing:
-            record_issue(
-                env,
+            record_schema_issue(
                 f"{env}: missing required credential classes: {', '.join(missing)}",
             )
 
