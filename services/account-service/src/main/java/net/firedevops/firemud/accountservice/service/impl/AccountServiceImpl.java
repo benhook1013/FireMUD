@@ -1228,7 +1228,11 @@ public class AccountServiceImpl implements AccountService {
       return Map.of();
     }
     return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
-        .filter(profile -> profile.getAccount() != null && profile.getAccount().getId() != null)
+        .filter(
+            profile ->
+                profile.getAccount() != null
+                    && profile.getAccount().getId() != null
+                    && profile.getPresenceVisibilityPolicy() != null)
         .collect(
             java.util.stream.Collectors.toUnmodifiableMap(
                 profile -> profile.getAccount().getId(),

@@ -169,6 +169,24 @@ class ProfileControllerTest {
   }
 
   @Test
+  void updateProfileRejectsUnauthorizedCallerBeforeReservedPolicyValidation() throws Exception {
+    UpdateProfileRequest request =
+        new UpdateProfileRequest(
+            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
+    String token = jwtUtil.generateToken("3", Map.of("accountId", "3"));
+
+    mockMvc
+        .perform(
+            put("/profiles/2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
   void updateProfileRejectsZeroAccountIdBeforeDispatch() throws Exception {
     UpdateProfileRequest req =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);

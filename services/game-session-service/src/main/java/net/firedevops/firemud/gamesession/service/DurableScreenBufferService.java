@@ -28,6 +28,7 @@ import org.springframework.util.StringUtils;
         "Injected repository, settings resolver, and cache are shared Spring collaborators.")
 public class DurableScreenBufferService implements ScreenBufferService {
   private static final Logger log = LoggerFactory.getLogger(DurableScreenBufferService.class);
+  private static final long NO_TTL_MILLIS = 0L;
 
   private final ResumeTranscriptEntryRepository repository;
   private final ReconnectionSettingsResolver settingsResolver;
@@ -60,11 +61,12 @@ public class DurableScreenBufferService implements ScreenBufferService {
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
     repository.lockScope(tenantId, gameInstanceId, characterId);
-    if (buffer.ttlMs() > 0L) {
+    Instant scopeExpiresAt = null;
+    if (buffer.ttlMs() > NO_TTL_MILLIS) {
       expireExpiredEntries(tenantId, gameInstanceId, characterId);
+      scopeExpiresAt = scopeExpiresAt(filtered, buffer);
+      repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
-    Instant scopeExpiresAt = scopeExpiresAt(filtered, buffer);
-    repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     repository.saveAll(
         filtered.stream()
             .map(entry -> toEntity(tenantId, gameInstanceId, characterId, entry, scopeExpiresAt))
@@ -118,8 +120,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
     int currentBytes = 0;
     int currentLines = 0;
     for (ResumeTranscriptEntry entry : retained) {
-      int entryByteSize =
-          toBufferedEntry(entry).canonicalByteSize(tenantId, gameInstanceId, characterId);
+      int entryByteSize = entry.getByteSize();
       entryByteSizes.put(entry, entryByteSize);
       currentBytes += entryByteSize;
       currentLines += entry.getLineCount();
@@ -168,9 +169,6 @@ public class DurableScreenBufferService implements ScreenBufferService {
 
   private Instant scopeExpiresAt(
       List<BufferedEntry> entries, FiremudReconnectionProperties.Buffer buffer) {
-    if (buffer.ttlMs() == 0L) {
-      return null;
-    }
     long latestAppendedAtMs =
         entries.stream().mapToLong(BufferedEntry::appendedAtMs).max().orElseThrow();
     return Instant.ofEpochMilli(latestAppendedAtMs).plusMillis(buffer.ttlMs());

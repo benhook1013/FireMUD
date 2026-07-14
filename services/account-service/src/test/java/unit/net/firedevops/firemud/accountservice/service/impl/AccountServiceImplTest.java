@@ -1971,6 +1971,22 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listPresenceVisibilityPoliciesOmitsProfilesWithoutAPolicy() {
+    Account account = new Account();
+    account.setId(2L);
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setPresenceVisibilityPolicy(null);
+    when(profileRepository.findByTenantIdAndAccountIds(1L, java.util.List.of(2L)))
+        .thenReturn(java.util.List.of(profile));
+
+    Map<Long, ProfilePresenceVisibilityPolicy> policies =
+        service.listPresenceVisibilityPolicies(1L, java.util.List.of(2L));
+
+    assertTrue(policies.isEmpty());
+  }
+
+  @Test
   void updateProfileStoresChanges() {
     Profile profile = new Profile();
     profile.setAccount(new Account());

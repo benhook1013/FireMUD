@@ -8,6 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannel;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -85,21 +88,51 @@ class AccountClientTest {
           }
         };
     AccountClient client =
-        new AccountClient(endpoints, grpc, mock(GrpcChannelFactory.class), stubCustomizer);
+        new AccountClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            stubCustomizer,
+            new SimpleMeterRegistry());
 
     invokeBuildStub(client, mock(ManagedChannel.class));
 
     assertThat(customizeCalls.get()).isEqualTo(1);
   }
 
+  @Test
+  void recordsApplicationErrorsFromPresenceVisibilityPolicyReads() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.listPresenceVisibilityPolicies(any()))
+        .thenReturn(
+            ListPresenceVisibilityPoliciesResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("Retry later"))
+                .build());
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    AccountClient client = newClient(stub, meterRegistry);
+
+    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L))).isEmpty();
+    assertThat(meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE").count())
+        .isEqualTo(1.0d);
+  }
+
   private static AccountClient newClient(AccountServiceGrpc.AccountServiceBlockingStub stub)
+      throws Exception {
+    return newClient(stub, new SimpleMeterRegistry());
+  }
+
+  private static AccountClient newClient(
+      AccountServiceGrpc.AccountServiceBlockingStub stub, MeterRegistry meterRegistry)
       throws Exception {
     AccountClient client =
         new AccountClient(
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
             mock(GrpcChannelFactory.class),
-            BlockingGrpcStubCustomizer.noop());
+            BlockingGrpcStubCustomizer.noop(),
+            meterRegistry);
     Field field =
         net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient.class.getDeclaredField(
             "stub");

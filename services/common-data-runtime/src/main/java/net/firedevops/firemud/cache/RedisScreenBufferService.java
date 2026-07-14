@@ -65,7 +65,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
                           .orElseGet(BufferedPayload::new);
                   filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
                   payload.updatedAtMs = System.currentTimeMillis();
-                  trimPayload(payload, tenantId, gameInstanceId, characterId, properties.buffer());
+                  trimPayload(payload, properties.buffer());
                   try {
                     operations.multi();
                     if (ttl.isZero()) {
@@ -130,18 +130,12 @@ public class RedisScreenBufferService implements ScreenBufferService {
     }
   }
 
-  private void trimPayload(
-      BufferedPayload payload,
-      long tenantId,
-      long gameInstanceId,
-      long characterId,
-      FiremudReconnectionProperties.Buffer buffer) {
+  private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
     Map<EntryPayload, Integer> entryByteSizes = new IdentityHashMap<>();
     int currentBytes = 0;
     int currentLines = 0;
     for (EntryPayload entry : payload.entries) {
-      int entryByteSize =
-          entry.toPublicEntry().canonicalByteSize(tenantId, gameInstanceId, characterId);
+      int entryByteSize = entry.byteSize;
       entryByteSizes.put(entry, entryByteSize);
       currentBytes += entryByteSize;
       currentLines += entry.lineCount;

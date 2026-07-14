@@ -46,6 +46,7 @@ components:
         loginAuthModes:
           type: array
           minItems: 1
+          maxItems: 2
           items:
             type: string
             enum: [PASSWORD, EMAIL_OTP]
@@ -56,6 +57,7 @@ components:
         loginAuthModes:
           type: array
           minItems: 1
+          maxItems: 2
           items:
             type: string
             enum: [PASSWORD, EMAIL_OTP]

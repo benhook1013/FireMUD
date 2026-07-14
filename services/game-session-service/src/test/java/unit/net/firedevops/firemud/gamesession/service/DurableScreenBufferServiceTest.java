@@ -65,7 +65,7 @@ class DurableScreenBufferServiceTest {
         .isGreaterThan(entry.byteSize());
     assertThat(persisted.getExpiresAt()).isNull();
     verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
-    verify(repository).updateExpiryByScope(22L, 7L, 13L, null);
+    verify(repository, never()).updateExpiryByScope(eq(22L), eq(7L), eq(13L), any());
     verify(hotCache).append(22L, 7L, 13L, List.of(entry.withCanonicalByteSize(22L, 7L, 13L)));
   }
 
@@ -101,10 +101,15 @@ class DurableScreenBufferServiceTest {
 
   @Test
   void appendTrimsOldestEntriesUsingExistingBufferBounds() {
+    when(settingsResolver.resolve(22L, 7L))
+        .thenReturn(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(0L, 1, 1, 100, 100)));
     ResumeTranscriptEntry first = entry(1L, "old", Instant.parse("2026-07-12T01:00:00Z"));
-    first.setByteSize(1);
+    first.setByteSize(75);
     ResumeTranscriptEntry second = entry(2L, "new", Instant.parse("2026-07-12T01:01:00Z"));
-    second.setByteSize(1);
+    second.setByteSize(75);
     when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
         .thenReturn(List.of(first, second));
 

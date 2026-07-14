@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.client;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
 import org.slf4j.Logger;
@@ -32,13 +34,19 @@ public final class AccountClient
   private static final Logger logger = LoggerFactory.getLogger(AccountClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final int PRESENCE_VISIBILITY_POLICY_BATCH_SIZE = 100;
+  private static final String PRESENCE_VISIBILITY_POLICY_READ_OPERATION =
+      "AccountService.listPresenceVisibilityPolicies";
+
+  private final MeterRegistry meterRegistry;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
+      BlockingGrpcStubCustomizer stubCustomizer,
+      MeterRegistry meterRegistry) {
     super(endpoints, tlsProps, channelFactory, stubCustomizer);
+    this.meterRegistry = meterRegistry;
   }
 
   @PostConstruct
@@ -83,6 +91,9 @@ public final class AccountClient
         ListPresenceVisibilityPoliciesResponse response =
             callStub().listPresenceVisibilityPolicies(request.build());
         if (response.hasError()) {
+          GrpcAppErrors.countIfError(meterRegistry, response.getError());
+          GrpcAppErrors.logIfError(
+              logger, PRESENCE_VISIBILITY_POLICY_READ_OPERATION, response.getError());
           return Map.of();
         }
         response
