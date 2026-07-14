@@ -41,7 +41,7 @@ class ResumeTranscriptEntryCanonicalizerTest {
     entry.setBriefRenderPolicy("FULL");
     entry.setPayloadType("look-view");
     entry.setPayloadJson("{\"z\":1.0,\"a\":{\"y\":\"e\\u0301\",\"x\":true}}");
-    entry.setProtocolText("Café\\n");
+    entry.setProtocolText("Cafe\u0301\n");
     ScreenBufferService.BufferedEntry buffered =
         new ScreenBufferService.BufferedEntry(
             entry.getProtocolText(),

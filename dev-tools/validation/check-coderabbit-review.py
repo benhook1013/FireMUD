@@ -363,6 +363,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         body = comment.get("body", "")
         if REVIEW_LIMIT_MARKER not in body and REVIEW_LIMIT_MESSAGE not in body:
             continue
+        if latest_explicit_review_request_dt is None or (
+            created_at_dt < latest_explicit_review_request_dt
+        ):
+            continue
         if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
             continue
         latest_rate_limit_at_dt = created_at_dt
@@ -429,7 +433,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_review_request_still_running = (
         explicit_review_after_latest_commit
         and not review_finished_after_latest_request
-        and not latest_review_request_rate_limited
+        and latest_rate_limit_at_dt is None
         and not latest_review_request_noop
     )
     retrigger_review_allowed = (

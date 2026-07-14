@@ -6,6 +6,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Map;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -108,10 +109,24 @@ public final class ResumeTranscriptCanonicalizer {
       return "null";
     }
     if (node.isObject()) {
-      return node.properties().stream()
-          .sorted(Map.Entry.comparingByKey())
-          .map(entry -> quote(entry.getKey()) + ":" + canonicalizeNode(entry.getValue()))
-          .collect(java.util.stream.Collectors.joining(",", "{", "}"));
+      List<Map.Entry<String, JsonNode>> entries =
+          node.properties().stream()
+              .map(entry -> Map.entry(normalize(entry.getKey()), entry.getValue()))
+              .sorted(Map.Entry.comparingByKey())
+              .toList();
+      StringBuilder result = new StringBuilder("{");
+      for (int index = 0; index < entries.size(); index++) {
+        if (index > 0) {
+          result.append(',');
+        }
+        Map.Entry<String, JsonNode> entry = entries.get(index);
+        if (index > 0 && entry.getKey().equals(entries.get(index - 1).getKey())) {
+          throw new IllegalArgumentException(
+              "JSON object contains duplicate keys after NFC normalization: " + entry.getKey());
+        }
+        result.append(quote(entry.getKey())).append(':').append(canonicalizeNode(entry.getValue()));
+      }
+      return result.append('}').toString();
     }
     if (node.isArray()) {
       return node.valueStream()
@@ -137,9 +152,13 @@ public final class ResumeTranscriptCanonicalizer {
       return "null";
     }
     try {
-      return OBJECT_MAPPER.writeValueAsString(Normalizer.normalize(value, Normalizer.Form.NFC));
+      return OBJECT_MAPPER.writeValueAsString(normalize(value));
     } catch (JacksonException ex) {
       throw new IllegalStateException("Unable to serialize canonical transcript value", ex);
     }
+  }
+
+  private static String normalize(String value) {
+    return Normalizer.normalize(value, Normalizer.Form.NFC);
   }
 }

@@ -119,6 +119,7 @@ class DurableScreenBufferServiceTest {
     assertThat(screen.entries().getFirst().payloadJson()).isEqualTo("{\"room\":\"R-1\"}");
     assertThat(screen.entries().getFirst().orderingToken()).isEqualTo(1L);
     verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
     verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
   }
 
@@ -203,7 +204,7 @@ class DurableScreenBufferServiceTest {
     verify(repository, never())
         .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
-    verify(hotCache, never()).replace(anyLong(), anyLong(), anyLong(), any());
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
   }
 
   @Test
@@ -244,6 +245,32 @@ class DurableScreenBufferServiceTest {
         List.of(ScreenBufferService.BufferedEntry.fromText("current")));
 
     verify(repository).deleteByIds(List.of(1L, 2L));
+  }
+
+  @Test
+  void getTrimsLegacyEntriesBeforeReplacingTheHotCache() {
+    configureBuffer(0L, 1, 1, 1, 1_000, 2_000);
+    persistedEntries.add(entry(1L, "old\n", Instant.parse("2026-07-12T01:00:00Z")));
+    persistedEntries.add(entry(2L, "current\n", Instant.parse("2026-07-12T01:01:00Z")));
+
+    ScreenBufferService.BufferedScreen screen =
+        service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID).orElseThrow();
+
+    assertThat(screen.protocolText()).isEqualTo("current\n");
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository).deleteByIds(List.of(1L));
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
+  }
+
+  @Test
+  void replaceClearsTheHotCacheWhenNoReplacementEntriesCanBePersisted() {
+    persistedEntries.add(entry(1L, "previous\n", Instant.parse("2026-07-12T01:00:00Z")));
+
+    service.replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
+
+    verify(repository).deleteByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(hotCache, never()).replace(anyLong(), anyLong(), anyLong(), any());
   }
 
   @Test

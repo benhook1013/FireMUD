@@ -207,11 +207,43 @@ class RedisScreenBufferServiceTest {
 
   @Test
   void replaceWritesTheAuthoritativeEntriesWithoutClearingTheExistingCacheFirst() {
-    cacheService.replace(
-        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n")));
+    storedPayload.set(
+        """
+        {"entries":[{"protocolText":"PREVIOUS\\n","lineCount":1,"byteSize":9,"appendedAtMs":1000}],"updatedAtMs":1000}
+        """
+            .trim());
 
+    cacheService.replace(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
+
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
     verify(redisTemplate, times(0)).delete(REDIS_KEY);
-    verify(valueOperations).set(eq(REDIS_KEY), anyString(), any(Duration.class));
+    verify(valueOperations).set(eq(REDIS_KEY), payload.capture(), any(Duration.class));
+    assertThat(payload.getValue()).contains("CURRENT").doesNotContain("PREVIOUS");
+  }
+
+  @Test
+  void replaceTrimsEntriesToTheConfiguredBoundsBeforeWritingRedis() {
+    RedisScreenBufferService limitedCache =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 1, 1, 1, 16_384, 65_536)));
+
+    limitedCache.replace(
+        22L,
+        1L,
+        123L,
+        List.of(
+            ScreenBufferService.BufferedEntry.fromText("PREVIOUS\n"),
+            ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
+
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(valueOperations).set(eq(REDIS_KEY), payload.capture(), any(Duration.class));
+    assertThat(payload.getValue()).contains("CURRENT").doesNotContain("PREVIOUS");
   }
 
   @Test

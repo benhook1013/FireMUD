@@ -79,15 +79,13 @@ public class DurableScreenBufferService implements ScreenBufferService {
       repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
     if (retainedEntries.isEmpty()) {
-      if (scopeExpiresAt != null) {
-        replaceHotCache(
-            tenantId,
-            gameInstanceId,
-            characterId,
-            trim(tenantId, gameInstanceId, characterId, buffer, Set.of()).stream()
-                .map(this::toBufferedEntry)
-                .toList());
-      }
+      replaceHotCache(
+          tenantId,
+          gameInstanceId,
+          characterId,
+          trim(tenantId, gameInstanceId, characterId, buffer, Set.of()).stream()
+              .map(this::toBufferedEntry)
+              .toList());
       return;
     }
     repository.saveAll(retainedEntries);
@@ -108,8 +106,11 @@ public class DurableScreenBufferService implements ScreenBufferService {
   @Transactional
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
     // Redis only caches the durable scope and cannot authoritatively enforce its inactivity expiry.
+    FiremudReconnectionProperties.Buffer buffer =
+        settingsResolver.resolve(tenantId, gameInstanceId).buffer();
+    repository.lockScope(tenantId, gameInstanceId, characterId);
     List<ResumeTranscriptEntry> entries =
-        repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now());
+        trim(tenantId, gameInstanceId, characterId, buffer, Set.of());
     if (entries.isEmpty()) {
       clearHotCache(tenantId, gameInstanceId, characterId);
       return Optional.empty();
@@ -138,6 +139,10 @@ public class DurableScreenBufferService implements ScreenBufferService {
       long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
     repository.lockScope(tenantId, gameInstanceId, characterId);
     repository.deleteByScope(tenantId, gameInstanceId, characterId);
+    if (entries == null || entries.stream().noneMatch(entry -> StringUtils.hasText(entry.text()))) {
+      clearHotCache(tenantId, gameInstanceId, characterId);
+      return;
+    }
     append(tenantId, gameInstanceId, characterId, entries);
   }
 

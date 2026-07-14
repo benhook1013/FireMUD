@@ -110,6 +110,11 @@ public class RedisScreenBufferService implements ScreenBufferService {
     FiremudReconnectionProperties properties = settingsResolver.resolve(tenantId, gameInstanceId);
     BufferedPayload payload = new BufferedPayload();
     filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
+    trimPayload(payload, properties.buffer());
+    if (payload.entries.isEmpty()) {
+      redisTemplate.delete(redisKey);
+      return;
+    }
     payload.updatedAtMs = System.currentTimeMillis();
     writePayload(redisKey, payload, Duration.ofMillis(properties.buffer().ttlMs()));
   }
