@@ -102,7 +102,7 @@ Client authors should treat MCP integration as **backwards-compatible but evolvi
 
 MCP state is **strictly per TCP connection** and does not survive reconnects on its own:
 
-- When a Telnet client disconnects and later reconnects (whether due to client-side network loss, TCP Proxy restart, Gateway outages, or other infrastructure events), the TCP connection and its associated MCP negotiation are gone. Redis-backed gameplay session state (account/player bindings, tick queues, cooldowns) lives in the Game Session Service and determines whether gameplay resumes or starts fresh, but it does **not** restore MCP negotiation or cords.
+- When a Telnet client disconnects and later reconnects (whether due to client-side network loss, TCP Proxy restart, Gateway outages, or other infrastructure events), the TCP connection and its associated MCP negotiation are gone. Redis-backed session state (account/player bindings and tick queues) lives in Game Session; durable actor gameplay state, including cooldowns, continues independently. Neither restores MCP negotiation or cords.
 - After any reconnect, MCP-aware clients must:
   - Re-run the `mcp` version negotiation and agree on a fresh `authentication-key`.
   - Re-advertise and activate packages with `mcp-negotiate-can` / `mcp-negotiate-end`.

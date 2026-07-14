@@ -95,6 +95,19 @@ The platform owns only a small typed grammar. The game owns every named mechanic
 
 This keeps the full game design surface scriptable as versioned DML while retaining a small hardcoded grammar that services can validate deterministically.
 
+### Canonical Resource-Cost and Cooldown Lifecycle
+
+Resource costs and cooldowns are actor gameplay state, not command-acceptance metadata or reconnect-session state. Game Design authors them in the published action declaration as `costs[]` and `cooldowns[]`, each referencing the frozen actor-state catalog and carrying its own typed commit policy.
+
+- `ON_EXECUTION` commits after required target and rule validation succeeds, before outcome effects run.
+- `ON_EFFECT_SUCCESS` commits only after the required effect plan has committed.
+- Entity Management atomically checks resource availability, consumes the declared source-actor resources, creates durable actor cooldown records, and applies same-region action effects under the one idempotent effect id.
+- Cooldown records carry actor identity, cooldown key, release/action provenance, start/expiry, and effect id. They are a sibling timed-state type, never synthetic conditions.
+- Game Session's region timer keys are reconstructible scheduling projections. They may wake expiry or retry work, but the durable actor record decides whether an action is on cooldown across reconnect, idle regions, and scheduler recovery.
+- A cross-region target-leg failure after the source action has committed is reported in the durable outcome. There is no implicit refund; a future authored refund rule must be explicit.
+
+Two commands racing for the same actor resources or cooldown key must serialize through the authoritative mutation and yield one deterministic committed outcome. Queuing or text-command acceptance alone consumes neither cost nor cooldown.
+
 Examples of primitive categories:
 
 - numeric stat
@@ -128,6 +141,7 @@ Examples of game-authored values built from those primitives:
 - Game Logic should own gameplay-rule orchestration and requests that apply, expire, consume, or evaluate that state.
 - Active conditions and transient action states should both be treated as actor state rather than split across unrelated service-owned stores.
 - Cooldowns should remain in the same broad timed-runtime family, but as a sibling timed-state type rather than being forced to masquerade as a condition or action stance.
+- Resource costs and cooldowns commit only through idempotent durable action execution, with Entity Management as authoritative state and Game Session timers as reconstructible scheduling projections.
 
 ## First Implementation Boundary
 

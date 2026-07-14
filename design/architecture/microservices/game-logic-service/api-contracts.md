@@ -61,6 +61,15 @@ The target-state cross-actor effect API is a Game Logic-owned `ResolvedEffectPla
 
 `ApplyActorCondition` may remain as the narrow self-target compatibility seam until the generic plan is implemented, but new cross-actor action behavior must use the resolved-plan pathway rather than extending that RPC ad hoc.
 
+## Action Cost and Cooldown Lifecycle
+
+Game Logic applies a frozen action declaration only at durable execution time. Text parsing and queue admission do not consume actor resources or start cooldowns.
+
+- The declaration contains typed `costs[]` and `cooldowns[]`, each keyed to the published actor-state catalog and carrying `ON_EXECUTION` or `ON_EFFECT_SUCCESS` commit semantics.
+- Entity Management is authoritative for conditional resource consumption and actor cooldown records. The one idempotent effect id protects costs, cooldown creation, and same-region effect mutation from replay or concurrent double-spend.
+- Game Session maintains only reconstructible region-timer scheduling projections for expiry/wakeup. Reconnect, idle-region recovery, and timer rebuild always consult authoritative actor state before allowing an action.
+- Cross-region legs report durable target outcomes after source commit. They do not silently refund an already committed source cost or cooldown.
+
 Call `ExecuteCommand` with:
 
 ```bash

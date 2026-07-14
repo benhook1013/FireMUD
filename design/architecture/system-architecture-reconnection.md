@@ -51,7 +51,7 @@ For the **concrete `NotifyDisconnect` message shape and transport behaviour** â€
 
 ### Game Session Service
 
-- Uses Redis to store session state such as command queues, tick participation, cooldowns, and retry info. Reconnect logic restores these details.
+- Uses Redis to store session state such as command queues, tick participation, and retry coordination. Reconnect logic restores these details and reattaches the player to the actor's durable gameplay state.
 - On reconnect, rebinds:
   - Socket connection
   - Tick region context
@@ -156,7 +156,7 @@ The active gameplay identity is `characterId`. When a new client successfully is
 - Redis stores:
   - Socket bindings and session metadata
   - Queued commands and tick state
-  - Timers, cooldowns, and retry info
+- Reconstructible timer/retry scheduling metadata; authoritative actor cooldown state remains outside session state
 - Game Session Service governs all reconnection, deduplication, and rebinding
 - Non-edge gameplay services should remain replaceable/stateless workers against shared state; if restarting one of them visibly disconnects clients, the system should treat that as a gap in durable coordination rather than an accepted steady-state behavior
 - The canonical recovery path remains explicit and protocol-visible for all clients

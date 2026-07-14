@@ -37,6 +37,12 @@ Published actions declare a typed targeting mode and DML-authored targeting poli
 
 An action declaration supplies the target filters, range/scope constraints, tags, visibility/targetability requirements, and optional-target outcome policy for its selected mode. Game Logic resolves that declaration at execution time into a `ResolvedEffectPlan` using canonical actor identity and World Management occupancy. The release declaration and final target set are frozen into the plan before Entity Management applies effects, so target text, display names, or mutable design rows cannot be reinterpreted during mutation.
 
+## Resource Cost and Cooldown Declarations
+
+Published actions declare `costs[]` and `cooldowns[]` as typed DML. Each cost references a declared bounded-resource `statKey`; each cooldown references a stable author-defined `cooldownKey`. A declaration also chooses a typed commit policy: `ON_EXECUTION` after required validation and target resolution, or `ON_EFFECT_SUCCESS` after required effect application.
+
+Game Logic and Entity Management execute this immutable release declaration under the durable effect id. Queue admission does not consume resources or start a cooldown. Entity Management atomically checks source-actor availability, applies committed costs and same-region effects, and records durable actor cooldown state. A later cross-region leg failure is an explicit action outcome, not an implicit refund; refund behavior requires a future explicit authored declaration.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:
