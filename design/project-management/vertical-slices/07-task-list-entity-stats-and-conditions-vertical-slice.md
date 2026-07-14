@@ -116,6 +116,20 @@ Reaching a bounded resource's floor has no universal platform meaning. A resourc
 - Generic resource adjustment clamps to declared bounds. It does not create a corpse, respawn an actor, distribute loot, decide combat victory, or infer permanent death.
 - Damage and mitigation later consume the floor transition and disposition contract. They own hit resolution, mitigation, defeat/revival, respawn, and corpse/loot policy through explicit authored rules.
 
+### Canonical Condition Application and Removal
+
+Each condition definition owns its application policy. Repeated application never relies on the caller's source-id shape or on handler-local assumptions.
+
+- `REPLACE` removes the prior matching instance before applying the new one; use it for exclusive states such as stances.
+- `REFRESH` maintains one active instance and refreshes its duration; use it for effects such as shields or blocking.
+- `STACK` maintains one active instance and increments its DML-authored bounded stack count; use it for poison or bleed.
+- `PARALLEL` retains independently sourced active instances with their own expiry; use it where effects from separate sources must coexist.
+- Every definition selects duration behavior: reset from now, extend, or preserve the longer expiry. `STACK` also declares its maximum stack count.
+
+Active condition instances retain a stable instance id, definition/release snapshot, source provenance, stack count, start/expiry, and applied effect snapshot. Entity Management resolves reapplication atomically under the idempotent effect id.
+
+`REMOVE_CONDITION` uses typed authored selectors: exact condition key, condition tag, or an allowed source selector. Tag-based removal follows the definition's authored removal priority and a stable instance-id tie-breaker, so cure/replay behavior stays deterministic. Player input never chooses raw payload rows or arbitrary source identifiers to delete.
+
 ### Canonical Resource-Cost and Cooldown Lifecycle
 
 Resource costs and cooldowns are actor gameplay state, not command-acceptance metadata or reconnect-session state. Game Design authors them in the published action declaration as `costs[]` and `cooldowns[]`, each referencing the frozen actor-state catalog and carrying its own typed commit policy.

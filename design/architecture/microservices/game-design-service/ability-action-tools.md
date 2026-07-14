@@ -60,6 +60,12 @@ One typed `EffectDeclaration` grammar serves equipment, conditions, actions, and
 
 Resource-floor transitions and actor dispositions follow the same rule: a starter profile may supply common `health`, defeat, or recovery behavior as ordinary DML, but no action or runtime service may assume that a particular resource key means death. Games may replace or remove those imported declarations before publishing.
 
+## Condition Application and Cure Declarations
+
+Condition definitions choose one DML-authored reapplication policy: `REPLACE`, `REFRESH`, `STACK`, or `PARALLEL`. They also declare duration behavior (reset, extend, or preserve longer expiry), and stacked conditions declare a maximum stack count. Runtime callers do not infer these rules from condition names or source identifiers.
+
+`REMOVE_CONDITION` declarations use typed selectors for an exact key, authored condition tag, or permitted source. Tag removals use the definition's authored removal priority and a stable instance-id tie-breaker. This lets starter profiles provide ordinary poison, bleed, shield, stance, and cure mechanics while games replace them with their own DML without custom mutation handlers.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:
