@@ -100,5 +100,33 @@ result = run_transport_session(
 assert isinstance(result, FakeSession)
 assert attempts["count"] == 2
 
+
+upstream_attempts = []
+
+
+def open_after_transient_upstream_failure():
+    responses = (
+        ["ERROR UPSTREAM_FAILURE Login is temporarily unavailable."]
+        if not upstream_attempts
+        else ["OK LOGIN"]
+    )
+    session = FakeSession(responses)
+    upstream_attempts.append(session)
+    return session
+
+
+upstream_responses = run_telnet_smoke_session(
+    "example.test",
+    2323,
+    [("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN")],
+    1,
+    open_session=open_after_transient_upstream_failure,
+    retry_window_seconds=1,
+    retry_interval_seconds=0,
+)
+assert upstream_responses == ["OK LOGIN"]
+assert len(upstream_attempts) == 2
+assert all(session.closed for session in upstream_attempts)
+
 print("smoke transport contract checks passed")
 PY

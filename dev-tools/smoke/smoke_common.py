@@ -9,6 +9,10 @@ from contextlib import closing
 from urllib.parse import quote
 
 
+class TransientUpstreamSmokeFailure(RuntimeError):
+    """A startup-time upstream error that a bounded smoke retry may retry."""
+
+
 def compose_postgres_container_name():
     compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
     return f"{compose_project_name}-postgres-1"
@@ -171,6 +175,10 @@ def run_transport_session(
         try:
             with closing(open_session()) as session:
                 return execute_session(session)
+        except TransientUpstreamSmokeFailure:
+            if deadline is None or time.time() >= deadline:
+                raise
+            time.sleep(retry_interval_seconds)
         except retriable_exceptions as exc:
             if deadline is None or time.time() >= deadline:
                 raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
@@ -234,6 +242,10 @@ def wait_for_incremental_response(
             if not expects_explicit_failure and any(
                 stripped.startswith(prefix) for prefix in explicit_failure_prefixes
             ):
+                if stripped.startswith("ERROR UPSTREAM_FAILURE"):
+                    raise TransientUpstreamSmokeFailure(
+                        f"Command failed explicitly: {stripped}"
+                    )
                 raise RuntimeError(f"Command failed explicitly: {stripped}")
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
