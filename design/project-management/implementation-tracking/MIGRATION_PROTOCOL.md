@@ -2,13 +2,19 @@
 
 This protocol moves current implementation facts from vertical-slice delivery records into domain trackers without silently losing detail. It does not change canonical product design, which remains under [`design/architecture`](../../architecture/README.md), and it does not delete or rewrite legacy slice records during migration.
 
+## Workflow
+
+1. Build and review the [global source allocation map](./migration-ledgers/SOURCE_ALLOCATION_MAP.md). It is the refactor tracker: every legacy source range must have an exact destination tracker, split, or explicit historical disposition before transposition starts.
+2. Migrate one domain tracker at a time on the main thread. The global map records allocation; the relevant domain ledger records the completed source-to-destination transposition.
+3. Run independent review after each domain batch. Spark performs the primary source-to-destination coverage audit and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful.
+
 ## Unit Of Work
 
-Migrate one domain tracker at a time. A source slice may contribute to more than one tracker, but every source range must have one explicit ledger disposition in the relevant tracker ledger. Do not assign work by service alone: a slice often crosses service boundaries, while the tracker owns the domain fact.
+Migrate one domain tracker at a time. A source slice may contribute to more than one tracker, but every source range must appear in the global allocation map and have one explicit ledger disposition in the relevant tracker ledger. Do not assign work by service alone: a slice often crosses service boundaries, while the tracker owns the domain fact.
 
 ## Required Process
 
-1. Allocate the source record and exact line range in the domain ledger before changing the tracker.
+1. Allocate the source record and exact line range in the global source allocation map before changing any tracker, then copy the applicable allocation into the domain ledger.
 2. Transpose one bounded source section at a time. Preserve every target-state decision, verified implementation claim, active gap, and unresolved design question unless the ledger explicitly records why it remains only in the legacy delivery record or is superseded.
 3. After each bounded section, inspect the old and new text side by side and inspect `git diff --word-diff` before continuing. Do not summarize several source sections from memory.
 4. Update the ledger row with the destination heading or anchor and the disposition.
