@@ -69,6 +69,7 @@ record TextCommandDefinition(
         promptPolicy,
         actionCategory,
         actionTags,
+        true,
         source,
         targetingMode,
         cooldownKey,
@@ -113,7 +114,8 @@ record TextCommandDefinition(
         costKey,
         costAmount,
         executionHook,
-        List.of());
+        List.of(),
+        null);
   }
 
   TextCommandDefinition(
@@ -150,7 +152,8 @@ record TextCommandDefinition(
         costKey,
         costAmount,
         executionHook,
-        List.of());
+        List.of(),
+        null);
   }
 
   static TextCommandDefinition extensionDefinition(TextCommandType type, String commandId) {

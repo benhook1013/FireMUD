@@ -207,7 +207,8 @@ final class AdmittedCommandDefinitionReader {
         null,
         0L,
         null,
-        effects);
+        effects,
+        null);
   }
 
   private List<TextCommandEffectDeclaration> parseEffects(JsonNode effects) {
