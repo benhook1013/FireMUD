@@ -209,6 +209,8 @@ Entity Management owns one persisted runtime actor for every active gameplay bei
 - An `NPC` actor links to one NPC runtime instance. An authored NPC definition may create many concurrent runtime NPC actors and is not itself actor identity.
 - `PET` and `SUMMON` extend the same core when implemented. God/admin behavior is a capability and visibility overlay on a `PLAYER` actor, not a separate actor kind.
 
+Each actor also has one persisted, release-admitted `dispositionKey`: its main gameplay state. The disposition supplies base action-admission, targetability, visibility, and feedback policy. Conditions and equipment are explicit continuous overlays over that base; they can restrict or modify behavior but do not become competing death/defeat lifecycle owners. Transport/session presence is a separate fact and must not be repurposed as disposition.
+
 The actor is the shared subject for gameplay targeting, effects, stats, conditions, and communication. It does not move other service ownership:
 
 - World Management remains authoritative for an actor's room location and the room occupancy view.

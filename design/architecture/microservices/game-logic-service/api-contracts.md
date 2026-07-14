@@ -53,7 +53,7 @@ Expected response:
 
 The target-state cross-actor effect API is a Game Logic-owned `ResolvedEffectPlan` contract. Game Session provides the authenticated source context and a raw player selector where the command syntax permits one; it must not select final actor ids.
 
-- Game Logic resolves target selectors at durable execution time against the source actor, frozen release declaration, Entity Management actor identity, and World Management occupancy/visibility state.
+- Game Logic resolves target selectors at durable execution time against the source actor, frozen release declaration, Entity Management actor identity and resolved disposition/condition overlays, and World Management occupancy state.
 - The resulting plan contains the source actor, canonical target actor ids, action/release snapshot, idempotent effect id, typed effect declarations, and target-resolution evidence.
 - Entity Management applies only an approved plan. It never parses player-facing target text or recreates target policy from a partial request.
 - Required same-region targets are applied atomically as one local Entity Management mutation. Cross-region target legs use durable coordinator/follow-up outcomes; the final gameplay outcome reports each leg rather than claiming a distributed transaction.

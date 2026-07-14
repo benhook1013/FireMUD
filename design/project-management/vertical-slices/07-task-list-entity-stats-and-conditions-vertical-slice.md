@@ -112,6 +112,7 @@ Reaching a bounded resource's floor has no universal platform meaning. A resourc
 
 - A floor transition fires once when an idempotent instant mutation crosses the resource downward to its declared floor. It reports the actual applied delta and a `FLOOR_REACHED` fact; reads while already at the floor do not repeat it.
 - The transition references an authored `ActorDisposition` definition with action-admission, targetability, visibility, optional condition, and semantic feedback policy. It can represent unconsciousness, defeat, death, exhaustion, or a game-specific state without making any of those a platform-owned `health` rule.
+- Every actor has one persisted main `dispositionKey`, normally initialized from the selected experience profile. Conditions and equipment are overlays on that base state: `stunned` or `invisible` can change specific behavior, but they do not become competing defeat/death lifecycle owners. Transport/session presence remains separate from disposition.
 - Generic resource adjustment clamps to declared bounds. It does not create a corpse, respawn an actor, distribute loot, decide combat victory, or infer permanent death.
 - Damage and mitigation later consume the floor transition and disposition contract. They own hit resolution, mitigation, defeat/revival, respawn, and corpse/loot policy through explicit authored rules.
 
