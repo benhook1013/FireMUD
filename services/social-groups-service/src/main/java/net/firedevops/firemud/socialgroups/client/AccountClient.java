@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.client;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.util.Collection;
@@ -37,6 +38,9 @@ public final class AccountClient
   private static final String PRESENCE_VISIBILITY_POLICY_READ_OPERATION =
       "AccountService.listPresenceVisibilityPolicies";
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is a shared Spring singleton used to record gRPC app errors")
   private final MeterRegistry meterRegistry;
 
   public AccountClient(
