@@ -67,6 +67,7 @@ These are not broad audit topics anymore; they are real future slices with known
 2. [02.1.5 Admin and God Capability and Visibility](./02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
 3. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
 4. [07.4 Unified Actor Model](./07.4-task-list-unified-actor-model-vertical-slice.md)
+   Decision locked: every active gameplay being has a persisted opaque runtime actor. Player actors are scoped by `{tenantId, gameInstanceId, characterId}`; NPC actors are scoped by runtime NPC instance; reconnect changes presence rather than identity.
 5. [07 Entity Stats and Conditions](./07-task-list-entity-stats-and-conditions-vertical-slice.md)
    Remaining: Entity Management now has evaluated actor state, persisted resource/condition rows, shared effect evaluation, equipped-item contributions, replay-guarded action-state mutation/expiry, and the first release-admitted authored action-effect execution; generic stat/condition definitions, resource-cost mutation, multi-effect actions, and damage/mitigation remain future work.
 6. [07.1 Shared Effect Engine](./07.1-task-list-shared-effect-engine-vertical-slice.md)

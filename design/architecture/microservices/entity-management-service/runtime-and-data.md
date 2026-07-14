@@ -200,6 +200,23 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - Character location and instance membership are stored by the World Management Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 
+### Runtime Actor Identity
+
+Entity Management owns one persisted runtime actor for every active gameplay being. `actorId` is an opaque canonical gameplay-facing identity; services must not substitute composite reference strings such as `PLAYER:<characterId>` or re-derive different player/NPC identity forms at each boundary.
+
+- The actor core carries `tenantId`, `gameInstanceId`, `actorKind`, display name, presence state, targetability state, and visibility state.
+- A `PLAYER` actor is unique for its active `{tenantId, gameInstanceId, characterId}` scope and links to the durable account and character records. Disconnect/reconnect changes presence on that actor rather than creating a replacement identity.
+- An `NPC` actor links to one NPC runtime instance. An authored NPC definition may create many concurrent runtime NPC actors and is not itself actor identity.
+- `PET` and `SUMMON` extend the same core when implemented. God/admin behavior is a capability and visibility overlay on a `PLAYER` actor, not a separate actor kind.
+
+The actor is the shared subject for gameplay targeting, effects, stats, conditions, and communication. It does not move other service ownership:
+
+- World Management remains authoritative for an actor's room location and the room occupancy view.
+- Game Session owns only ephemeral session attachment, protocol state, and player-facing presence projection.
+- Account Service remains authoritative for account identity and authorization inputs.
+
+Character and NPC records remain the durable domain records for their respective variants. The runtime actor links those records into one gameplay subject model; it does not replace character progression, authored NPC definitions, or World Management location state.
+
 ### Containment and Equipment Model
 
 Entity Management's target-state containment model is container-first:

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
+Handles player characters, NPCs, runtime actor identity, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
 
 The target-state model is container-first:
 
@@ -30,6 +30,7 @@ Character discovery/creation contract consequence:
 ### Responsibilities
 
 - Persist characters, NPCs, and items with optimistic locking
+- Own the persisted runtime actor core that unifies player and NPC gameplay identity; World Management remains authoritative for location and occupancy
 - Provide CRUD and query APIs for other services
 - Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
 - Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
