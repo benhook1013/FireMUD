@@ -15,5 +15,6 @@ Keep source and destination open side by side while filling a row. The legacy sl
 - [Game Authoring, Publishing, and Activation](./game-authoring-publishing-and-activation.md)
 - [Realm Routing and Playable State](./realm-routing-and-playable-state.md)
 - [Automation and Scheduler Runtime](./automation-and-scheduler-runtime.md)
+- [Game Session Runtime and Tick Coordination](./game-session-runtime-and-tick-coordination.md)
 - [Shared Runtime, Service Contracts, and Persistence](./shared-runtime-contracts-and-persistence.md)
 - [Platform Operations and Delivery](./platform-operations-and-delivery.md)
