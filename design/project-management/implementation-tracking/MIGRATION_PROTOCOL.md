@@ -4,9 +4,10 @@ This protocol moves current implementation facts from vertical-slice delivery re
 
 ## Workflow
 
-1. Build and review the [global source allocation map](./migration-ledgers/SOURCE_ALLOCATION_MAP.md). It is the refactor tracker: every legacy source range must have an exact destination tracker, split, or explicit historical disposition before transposition starts.
-2. Migrate one domain tracker at a time on the main thread. The global map records allocation; the relevant domain ledger records the completed source-to-destination transposition.
-3. Run independent review after each domain batch. Spark performs the primary source-to-destination coverage audit and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful.
+1. Build the [global source allocation map](./migration-ledgers/SOURCE_ALLOCATION_MAP.md) on the main thread. It is the refactor tracker: every legacy source range must have an exact destination tracker, split, or explicit historical disposition before transposition starts. Bounded internal research may help locate source ranges, but main-thread reasoning owns the mapping decision.
+2. Use a fresh, independent Luna pass to audit the completed map by disjoint domain. It must find unallocated ranges, overlapping tracker ownership, and incorrect boundaries before any tracker migration begins. It does not make design decisions.
+3. Migrate one domain tracker at a time on the main thread. The global map records allocation; the relevant domain ledger records the completed source-to-destination transposition.
+4. Run independent review after each domain batch. Spark performs the primary source-to-destination coverage audit and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful. Spark is not an allocation prerequisite.
 
 ## Unit Of Work
 
