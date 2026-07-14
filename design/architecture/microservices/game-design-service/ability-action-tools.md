@@ -31,6 +31,12 @@ Game Design validates every reference and effect declaration at publish time, in
 
 This provides a fully game-authored, scriptable design surface while keeping enough platform type information for deterministic validation and evaluation. See [Entity Stats and Conditions](../../../project-management/vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md) for the runtime ownership and evaluation contract.
 
+## Action Target Declarations
+
+Published actions declare a typed targeting mode and DML-authored targeting policy. The platform grammar begins with `SELF` and `DIRECT_ACTOR` and may add room/area modes later; it does not contain game-specific range, faction, visibility, or eligibility rules.
+
+An action declaration supplies the target filters, range/scope constraints, tags, visibility/targetability requirements, and optional-target outcome policy for its selected mode. Game Logic resolves that declaration at execution time into a `ResolvedEffectPlan` using canonical actor identity and World Management occupancy. The release declaration and final target set are frozen into the plan before Entity Management applies effects, so target text, display names, or mutable design rows cannot be reinterpreted during mutation.
+
 ## Integration with the Scripting DSL
 
 Abilities and actions defined through these tools can participate in scripted behavior:

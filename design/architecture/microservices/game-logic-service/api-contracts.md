@@ -34,7 +34,7 @@ Expected response:
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
 - `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
 - `PickupVisibleRoomItem` and `DropCarriedItem` are the player-facing item selector RPCs for the current `GET` and `DROP` command path. Game Session sends the current session/game/room context, raw item reference, and quantity; Game Logic resolves names, visible refs, container identities, and stack-family refs against the appropriate visible holder before delegating the concrete mutation to Entity Management.
-- `ApplyActorCondition` is the gameplay orchestration pass-through for the first actor-state mutation path. Game Session supplies the same gameplay attestation and scoped character context used by item/equipment commands; Game Logic keeps this as the action-state boundary before Entity Management persists the active condition row.
+- `ApplyActorCondition` is the current self-scoped gameplay orchestration path for the first actor-state mutation. It is not the target-state generic cross-actor effect API.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -48,6 +48,18 @@ Expected response:
   "message": "pong"
 }
 ```
+
+## Actor Effect Targeting
+
+The target-state cross-actor effect API is a Game Logic-owned `ResolvedEffectPlan` contract. Game Session provides the authenticated source context and a raw player selector where the command syntax permits one; it must not select final actor ids.
+
+- Game Logic resolves target selectors at durable execution time against the source actor, frozen release declaration, Entity Management actor identity, and World Management occupancy/visibility state.
+- The resulting plan contains the source actor, canonical target actor ids, action/release snapshot, idempotent effect id, typed effect declarations, and target-resolution evidence.
+- Entity Management applies only an approved plan. It never parses player-facing target text or recreates target policy from a partial request.
+- Required same-region targets are applied atomically as one local Entity Management mutation. Cross-region target legs use durable coordinator/follow-up outcomes; the final gameplay outcome reports each leg rather than claiming a distributed transaction.
+- Platform targeting modes are typed grammar. Game-specific range, tag, visibility, targetability, and optional-target rules are validated versioned DML in the published action declaration.
+
+`ApplyActorCondition` may remain as the narrow self-target compatibility seam until the generic plan is implemented, but new cross-actor action behavior must use the resolved-plan pathway rather than extending that RPC ad hoc.
 
 Call `ExecuteCommand` with:
 
