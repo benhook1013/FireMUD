@@ -31,6 +31,12 @@ Game Design validates every reference and effect declaration at publish time, in
 
 This provides a fully game-authored, scriptable design surface while keeping enough platform type information for deterministic validation and evaluation. See [Entity Stats and Conditions](../../../project-management/vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md) for the runtime ownership and evaluation contract.
 
+## Actor Disposition and Continuous Overlay Policy
+
+An actor's DML-authored `ActorDisposition` is the baseline for action admission, targetability, visibility, and semantic feedback. `CONTINUOUS` condition, equipment, stance, and aura effects may narrow that baseline only; their typed policy modifiers can deny or reduce what the disposition admits, but cannot grant a capability, targetability, or visibility that the main disposition denies.
+
+Games author the restrictive overlays and their condition/application eligibility as ordinary release DML. Recovery, immunity, revival, or an exceptional state change is never inferred from a continuous item. It uses an explicit `INSTANT` operation: remove or prevent the restrictive condition, or transition the actor's persisted disposition. This preserves one lifecycle owner for defeat/death-like states while allowing each game to author its own recovery rules.
+
 ## Action Target Declarations
 
 Published actions declare a typed targeting mode and DML-authored targeting policy. The platform grammar begins with `SELF` and `DIRECT_ACTOR` and may add room/area modes later; it does not contain game-specific range, faction, visibility, or eligibility rules.
@@ -54,7 +60,7 @@ The resulting `GameplayPresentationEvent` is idempotent and tied to the action e
 One typed `EffectDeclaration` grammar serves equipment, conditions, actions, and future auras. Its `lifecycle` prevents a declarative effect from being interpreted differently at each runtime seam.
 
 - `CONTINUOUS` declarations attach to a source such as an equipped item, active condition, stance, or aura and contribute to evaluated actor state for as long as that source exists. They use derived-state modifiers such as `ADD`, `MULTIPLY`, clamps, and granted state.
-- `INSTANT` declarations execute once through the `ResolvedEffectPlan` under its idempotent effect id. The initial mutation grammar is `ADJUST_RESOURCE`, `APPLY_CONDITION`, and `REMOVE_CONDITION`.
+- `INSTANT` declarations execute once through the `ResolvedEffectPlan` under its idempotent effect id. The initial mutation grammar is `ADJUST_RESOURCE`, `APPLY_CONDITION`, and `REMOVE_CONDITION`; a later `TRANSITION_DISPOSITION` operation owns explicit defeat, recovery, revival, or other main-state changes.
 - Equipment may use both modes: passive worn effects are continuous, while a future on-equip/on-unequip trigger is instant. This is not an equipment-specific side channel.
 - Resource cost declarations remain conditional debits, separate from generic adjustment. Damage is deferred to the combat pipeline so hit, mitigation, and defeat semantics are not bypassed by a generic resource delta.
 

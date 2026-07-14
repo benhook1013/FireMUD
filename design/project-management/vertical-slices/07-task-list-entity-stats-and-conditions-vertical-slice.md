@@ -122,6 +122,12 @@ Reaching a bounded resource's floor has no universal platform meaning. A resourc
 - Generic resource adjustment clamps to declared bounds. It does not create a corpse, respawn an actor, distribute loot, decide combat victory, or infer permanent death.
 - Damage and mitigation later consume the floor transition and disposition contract. They own hit resolution, mitigation, defeat/revival, respawn, and corpse/loot policy through explicit authored rules.
 
+### Disposition and Overlay Composition
+
+The persisted `ActorDisposition` is the DML-authored baseline for action admission, targetability, visibility, and semantic feedback. A condition, equipment, stance, or aura uses a continuous overlay only to narrow that baseline. It cannot grant behavior that the main disposition denies, so a continuous source cannot accidentally revive a defeated actor or bypass another main-state lifecycle.
+
+Games retain full authoring control through explicit instant effects. A recovery may remove or prevent a restrictive condition; a revival or comparable main-state change uses an idempotent disposition transition. The release declaration, effect id, and resulting disposition are recorded with the mutation, so replay never derives a different lifecycle outcome from current equipment or condition reads.
+
 ### Canonical Condition Application and Removal
 
 Each condition definition owns its application policy. Repeated application never relies on the caller's source-id shape or on handler-local assumptions.
