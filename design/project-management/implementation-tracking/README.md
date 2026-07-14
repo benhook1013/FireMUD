@@ -2,15 +2,16 @@
 
 These files are the current domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
 
-During the migration from vertical slices, each tracker will contain only:
+Each tracker is scan-first: its `Implementation Record Index` names the domain capabilities, source-declared state, and direct evidence link before the detailed material. The tracker then retains exact source evidence in the same file, so readers can audit a claim without searching a separate ledger or depending on a remembered slice number.
+
+During migration, each tracker contains:
 
 - canonical design-source links;
-- verified live implementation;
-- active implementation gaps;
-- high-level items still to discuss; and
-- links to relevant legacy delivery records.
+- a named implementation-record index;
+- source-backed implementation state, active gaps, and items still to discuss; and
+- lossless source evidence linked to the relevant legacy delivery records.
 
-Existing files under [`../vertical-slices`](../vertical-slices/README.md) remain historical delivery records until their facts have been reconciled into the appropriate tracker. Do not delete, rename, or treat those records as migrated solely because this scaffold exists.
+Existing files under [`../vertical-slices`](../vertical-slices/README.md) remain historical delivery records. Do not delete, rename, or rewrite them as part of this refactor. The implementation trackers preserve exact allocated source ranges and the migration validator verifies that preservation.
 
 Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md). Each allocated legacy source range must be migrated or have an explicit retained/superseded disposition before a tracker can claim migration completion.
 
