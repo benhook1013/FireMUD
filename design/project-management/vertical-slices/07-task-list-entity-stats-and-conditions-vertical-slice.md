@@ -95,6 +95,26 @@ The platform owns only a small typed grammar. The game owns every named mechanic
 
 This keeps the full game design surface scriptable as versioned DML while retaining a small hardcoded grammar that services can validate deterministically.
 
+### Starter Experience Profiles
+
+Creators do not need to author every actor-state definition from scratch. Game Design supplies curated, versioned starter experience profiles such as a classic text-MUD baseline, a solo-RPG baseline, or a minimal sandbox. A selected base profile and optional extension packs materialize ordinary stat, condition, action, disposition, and feedback DML into the target Draft version before publication.
+
+- The imported rows are normal game-owned DML after application: creators may edit, replace, or remove them, and a game may select no profile at all.
+- Profiles are not runtime settings and do not create hidden fallback mechanics. If a game removes or does not select a definition, runtime behavior cannot silently resurrect it from a platform default.
+- Optional packs compose in declared order. Duplicate definition keys fail by default; a later pack may replace an earlier definition only through an explicit recorded override. There is no implicit last-writer-wins merge.
+- Game Design records selected pack identities, revisions, hashes, application order, and explicit overrides as Draft provenance. Publishing freezes only the resulting single game version and its release bundle; running instances never inherit moving profile content.
+
+This gives new games a sane usable default experience while preserving the fully DML-authored, scriptable model for games that need different mechanics.
+
+### Canonical Resource Floor and Actor Disposition
+
+Reaching a bounded resource's floor has no universal platform meaning. A resource definition may optionally reference a versioned DML `floorTransition`; an omitted transition means the resource can remain at its floor without changing actor disposition.
+
+- A floor transition fires once when an idempotent instant mutation crosses the resource downward to its declared floor. It reports the actual applied delta and a `FLOOR_REACHED` fact; reads while already at the floor do not repeat it.
+- The transition references an authored `ActorDisposition` definition with action-admission, targetability, visibility, optional condition, and semantic feedback policy. It can represent unconsciousness, defeat, death, exhaustion, or a game-specific state without making any of those a platform-owned `health` rule.
+- Generic resource adjustment clamps to declared bounds. It does not create a corpse, respawn an actor, distribute loot, decide combat victory, or infer permanent death.
+- Damage and mitigation later consume the floor transition and disposition contract. They own hit resolution, mitigation, defeat/revival, respawn, and corpse/loot policy through explicit authored rules.
+
 ### Canonical Resource-Cost and Cooldown Lifecycle
 
 Resource costs and cooldowns are actor gameplay state, not command-acceptance metadata or reconnect-session state. Game Design authors them in the published action declaration as `costs[]` and `cooldowns[]`, each referencing the frozen actor-state catalog and carrying its own typed commit policy.
@@ -142,6 +162,7 @@ Examples of game-authored values built from those primitives:
 - Active conditions and transient action states should both be treated as actor state rather than split across unrelated service-owned stores.
 - Cooldowns should remain in the same broad timed-runtime family, but as a sibling timed-state type rather than being forced to masquerade as a condition or action stance.
 - Resource costs and cooldowns commit only through idempotent durable action execution, with Entity Management as authoritative state and Game Session timers as reconstructible scheduling projections.
+- Bounded-resource floor transitions resolve to DML-authored actor dispositions; no generic resource key has implicit death or respawn semantics.
 
 ## First Implementation Boundary
 
