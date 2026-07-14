@@ -253,4 +253,4 @@ Do not use file names alone. Add exact source ranges after reading source conten
 
 ## Mapping Status
 
-Not started. Populate allocation rows from the domain Phase 1 Spark reviews, then run the cross-domain allocation review before the first tracker migration. The inventory must have no pending rows when the full refactor is declared complete.
+Not started. Populate allocation rows through main-thread mapping before the first tracker migration. The inventory must have no pending rows when the full refactor is declared complete.
