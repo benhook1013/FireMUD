@@ -53,11 +53,11 @@ Expected response:
 
 The target-state cross-actor effect API is a Game Logic-owned `ResolvedEffectPlan` contract. Game Session provides the authenticated source context and a raw player selector where the command syntax permits one; it must not select final actor ids.
 
-- Game Logic resolves target selectors at durable execution time against the source actor, frozen release declaration, Entity Management actor identity and resolved disposition/condition overlays, and World Management occupancy state.
+- Game Logic resolves target selectors at durable execution time against the source actor, frozen release declaration, Entity Management actor state, and World Management occupancy state. It first uses the typed platform candidate selector, then evaluates the release-pinned DML `TargetingPolicy` over the candidate facts.
 - The resulting plan contains the source actor, canonical target actor ids, action/release snapshot, idempotent effect id, typed effect declarations, and target-resolution evidence.
 - Entity Management applies only an approved plan. It never parses player-facing target text or recreates target policy from a partial request.
 - Required same-region targets are applied atomically as one local Entity Management mutation. Cross-region target legs use durable coordinator/follow-up outcomes; the final gameplay outcome reports each leg rather than claiming a distributed transaction.
-- Platform targeting modes are typed grammar. Game-specific range, tag, visibility, targetability, and optional-target rules are validated versioned DML in the published action declaration.
+- Platform targeting modes are typed candidate-selection grammar. Game-specific range, relationship, status, visibility, targetability, and optional-target rules are validated versioned DML in the published `TargetingPolicy`; a game's standard target paths resolve through named release-pinned default-policy bindings. Visibility and targetability are optional game facts, never universal actor fields.
 
 `ApplyActorCondition` may remain as the narrow self-target compatibility seam until the generic plan is implemented, but new cross-actor action behavior must use the resolved-plan pathway rather than extending that RPC ad hoc.
 

@@ -103,7 +103,7 @@ Entity Management applies that policy only at the durable source transition: att
 
 ### Starter Experience Profiles
 
-Creators do not need to author every actor-state definition from scratch. Game Design supplies curated, versioned starter experience profiles such as a classic text-MUD baseline, a solo-RPG baseline, or a minimal sandbox. A selected base profile and optional extension packs materialize ordinary stat, condition, action, disposition, and feedback DML into the target Draft version before publication.
+Creators do not need to author every actor-state definition from scratch. Game Design supplies curated, versioned starter experience profiles such as a classic text-MUD baseline, a solo-RPG baseline, or a minimal sandbox. A selected base profile and optional extension packs materialize ordinary stat, condition, action, disposition, targeting-policy/default-path binding, and feedback DML into the target Draft version before publication.
 
 - The imported rows are normal game-owned DML after application: creators may edit, replace, or remove them, and a game may select no profile at all.
 - Profiles are not runtime settings and do not create hidden fallback mechanics. If a game removes or does not select a definition, runtime behavior cannot silently resurrect it from a platform default.
@@ -117,14 +117,14 @@ This gives new games a sane usable default experience while preserving the fully
 Reaching a bounded resource's floor has no universal platform meaning. A resource definition may optionally reference a versioned DML `floorTransition`; an omitted transition means the resource can remain at its floor without changing actor disposition.
 
 - A floor transition fires once when an idempotent instant mutation crosses the resource downward to its declared floor. It reports the actual applied delta and a `FLOOR_REACHED` fact; reads while already at the floor do not repeat it.
-- The transition references an authored `ActorDisposition` definition with action-admission, targetability, visibility, optional condition, and semantic feedback policy. It can represent unconsciousness, defeat, death, exhaustion, or a game-specific state without making any of those a platform-owned `health` rule.
-- Every actor has one persisted main `dispositionKey`, normally initialized from the selected experience profile. Conditions and equipment are overlays on that base state: `stunned` or `invisible` can change specific behavior, but they do not become competing defeat/death lifecycle owners. Transport/session presence remains separate from disposition.
+- The transition references an authored `ActorDisposition` definition with action-admission, optional condition, and semantic feedback policy. It can represent unconsciousness, defeat, death, exhaustion, or a game-specific state without making any of those a platform-owned `health` rule.
+- Every actor has one persisted main `dispositionKey`, normally initialized from the selected experience profile. Conditions and equipment are overlays on that base state: `stunned` can restrict action admission, while `invisible` is an optional game-authored fact that a separate targeting policy may use. Neither becomes a competing defeat/death lifecycle owner. Transport/session presence remains separate from disposition.
 - Generic resource adjustment clamps to declared bounds. It does not create a corpse, respawn an actor, distribute loot, decide combat victory, or infer permanent death.
 - Damage and mitigation later consume the floor transition and disposition contract. They own hit resolution, mitigation, defeat/revival, respawn, and corpse/loot policy through explicit authored rules.
 
 ### Disposition and Overlay Composition
 
-The persisted `ActorDisposition` is the DML-authored baseline for action admission, targetability, visibility, and semantic feedback. A condition, equipment, stance, or aura uses a continuous overlay only to narrow that baseline. It cannot grant behavior that the main disposition denies, so a continuous source cannot accidentally revive a defeated actor or bypass another main-state lifecycle.
+The persisted `ActorDisposition` is the DML-authored baseline for action admission and semantic feedback. A condition, equipment, stance, or aura uses a continuous overlay only to narrow that admission baseline. It cannot grant behavior that the main disposition denies, so a continuous source cannot accidentally revive a defeated actor or bypass another main-state lifecycle.
 
 Games retain full authoring control through explicit instant effects. A recovery may remove or prevent a restrictive condition; a revival or comparable main-state change uses an idempotent disposition transition. The release declaration, effect id, and resulting disposition are recorded with the mutation, so replay never derives a different lifecycle outcome from current equipment or condition reads.
 
@@ -133,6 +133,12 @@ Games retain full authoring control through explicit instant effects. A recovery
 Game Design publishes a DML `ActionAdmissionTag` catalog with the actor-state and command definitions. Every command/action definition carries a required ordered `admissionTags` field that references it; an explicitly empty list is valid for an action that disposition does not restrict. The `ActorDisposition` definition names the tags it denies, and continuous overlays can add only further denials. An enabled action is admitted only if none of its tags are denied; invalid, unknown, stale, or omitted required tags fail closed. This is distinct from a primary action category and activity/AFK tags, which do not decide actor capability.
 
 Tenant/game command capability policy is also separate. A command family disabled by `commandCapabilities` returns `FEATURE_UNAVAILABLE` before actor admission; login/play stage gates remain separate; only an enabled stage-valid command reaches this disposition gate. The resulting action-admission failure uses a stable platform result and the resolved disposition's authored safe feedback.
+
+### Targeting Policies
+
+Game Design publishes a DML `TargetingPolicy` catalog and named default bindings for platform target paths. The platform supplies only typed candidate selectors such as `SELF` and `DIRECT_ACTOR`; a policy supplies the game-specific eligibility expression using bounded `ALL`/`ANY`/`NOT` composition over declared source/target state facts, conditions, tags, dispositions, relationships, and World-owned spatial facts. An action can reference a policy directly, while a standard path resolves the game's default binding.
+
+Visibility, hidden state, see-hidden state, targetability, faction, phase, and comparable mechanics are optional facts, not mandatory actor columns or platform booleans. A starter profile may materialize a visible-direct-actor policy, while a game without visibility omits that policy predicate entirely. Game Logic resolves the frozen policy only at durable execution and records the policy snapshot plus decisive evidence in the `ResolvedEffectPlan`; missing or stale references fail closed.
 
 ### Canonical Condition Application and Removal
 

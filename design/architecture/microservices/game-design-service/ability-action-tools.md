@@ -33,7 +33,7 @@ This provides a fully game-authored, scriptable design surface while keeping eno
 
 ## Actor Disposition and Continuous Overlay Policy
 
-An actor's DML-authored `ActorDisposition` is the baseline for action admission, targetability, visibility, and semantic feedback. `CONTINUOUS` condition, equipment, stance, and aura effects may narrow that baseline only; their typed policy modifiers can deny or reduce what the disposition admits, but cannot grant a capability, targetability, or visibility that the main disposition denies.
+An actor's DML-authored `ActorDisposition` is the baseline for action admission and semantic feedback. `CONTINUOUS` condition, equipment, stance, and aura effects may narrow that admission policy only; their typed policy modifiers can add denied action tags but cannot grant behavior that the main disposition denies.
 
 Games author the restrictive overlays and their condition/application eligibility as ordinary release DML. Recovery, immunity, revival, or an exceptional state change is never inferred from a continuous item. It uses an explicit `INSTANT` operation: remove or prevent the restrictive condition, or transition the actor's persisted disposition. This preserves one lifecycle owner for defeat/death-like states while allowing each game to author its own recovery rules.
 
@@ -47,9 +47,11 @@ Feature availability is a separate earlier gate: `commandCapabilities` decides w
 
 ## Action Target Declarations
 
-Published actions declare a typed targeting mode and DML-authored targeting policy. The platform grammar begins with `SELF` and `DIRECT_ACTOR` and may add room/area modes later; it does not contain game-specific range, faction, visibility, or eligibility rules.
+Game Design owns a versioned DML `TargetingPolicy` catalog and named default-path bindings for each release. A policy uses a bounded boolean predicate grammar (`ALL`, `ANY`, and `NOT`) over declared source/target actor facts, conditions, tags, dispositions, relationships, and World-owned spatial facts. The platform adds a new predicate kind only when it has stable typed data and deterministic evaluation; arbitrary script expressions do not become a hidden targeting engine.
 
-An action declaration supplies the target filters, range/scope constraints, tags, visibility/targetability requirements, and optional-target outcome policy for its selected mode. Game Logic resolves that declaration at execution time into a `ResolvedEffectPlan` using canonical actor identity and World Management occupancy. The release declaration and final target set are frozen into the plan before Entity Management applies effects, so target text, display names, or mutable design rows cannot be reinterpreted during mutation.
+Published actions and standard targetable command paths declare a typed candidate selector plus a `targetingPolicyKey`. The platform grammar begins with `SELF` and `DIRECT_ACTOR` and may add room/area modes later; it resolves only the bounded candidate set, canonical actor identity, tenant/game scope, and World occupancy. An action may name its own policy, while a standard path without an action-specific declaration resolves its release-pinned default binding. Missing policy keys or references fail closed at publication and runtime admission.
+
+`visibility`, `hidden`, `seeInvisible`, `untargetable`, faction, phase, and similar mechanics are optional game-authored facts, not platform fields. A game whose targeting does not use visibility simply has no policy predicate that references it. For example, a starter profile may materialize a `visible-direct-actor` policy whose predicate is `(target lacks hidden) OR (source has see-hidden)`, while another game can bind the same direct-actor path to a different policy. Game Logic evaluates the frozen policy at durable execution and records its policy snapshot and decisive predicate evidence in the `ResolvedEffectPlan`; Entity Management never reinterprets player text or mutable design data during mutation.
 
 ## Resource Cost and Cooldown Declarations
 
