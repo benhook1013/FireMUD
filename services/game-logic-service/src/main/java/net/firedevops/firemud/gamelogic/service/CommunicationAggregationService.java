@@ -411,7 +411,8 @@ public class CommunicationAggregationService {
 
   private SendCommunicationResponse errorResponse(
       SendCommunicationResponse.Builder builder, String code, String message) {
-    ErrorDetail detail = GrpcAppErrors.error(meterRegistry, code, message);
+    ErrorDetail detail =
+        GrpcAppErrors.error(meterRegistry, LOG, "SendCommunication", code, message);
     return builder.setSuccess(false).setError(detail).build();
   }
 

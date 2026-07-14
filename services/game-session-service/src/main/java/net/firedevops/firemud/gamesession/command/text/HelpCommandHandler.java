@@ -328,7 +328,7 @@ public class HelpCommandHandler {
               context ->
                   commandCapabilitiesSettingsResolver.isEnabled(
                       capability, context.tenantId(), context.gameInstanceId()))
-          .orElse(commandCapabilitiesSettingsResolver.isEnabled(capability, 0L, null));
+          .orElseGet(() -> commandCapabilitiesSettingsResolver.isEnabled(capability, 0L, null));
     } catch (RuntimeException ex) {
       return false;
     }

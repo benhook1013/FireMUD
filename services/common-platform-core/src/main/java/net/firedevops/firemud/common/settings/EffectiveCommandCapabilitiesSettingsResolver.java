@@ -64,7 +64,7 @@ public class EffectiveCommandCapabilitiesSettingsResolver {
       SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides,
       long tenantId,
       Long gameInstanceId) {
-    java.util.ArrayList<String> sources = new java.util.ArrayList<>();
+    List<String> sources = new java.util.ArrayList<>();
     sources.add("operatorDefaults");
     sources.addAll(
         persistedOverrides.sourcesFor(
