@@ -61,10 +61,12 @@ public class DurableScreenBufferService implements ScreenBufferService {
     FiremudReconnectionProperties.Buffer buffer =
         settingsResolver.resolve(tenantId, gameInstanceId).buffer();
     repository.lockScope(tenantId, gameInstanceId, characterId);
-    Instant scopeExpiresAt = null;
     if (buffer.ttlMs() > NO_TTL_MILLIS) {
       expireExpiredEntries(tenantId, gameInstanceId, characterId);
-      scopeExpiresAt = scopeExpiresAt(filtered, buffer);
+    }
+    Instant scopeExpiresAt =
+        buffer.ttlMs() > NO_TTL_MILLIS ? scopeExpiresAt(filtered, buffer) : null;
+    if (scopeExpiresAt != null) {
       repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
     repository.saveAll(
