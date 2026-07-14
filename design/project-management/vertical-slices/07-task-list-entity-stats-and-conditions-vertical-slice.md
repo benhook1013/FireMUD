@@ -128,6 +128,12 @@ The persisted `ActorDisposition` is the DML-authored baseline for action admissi
 
 Games retain full authoring control through explicit instant effects. A recovery may remove or prevent a restrictive condition; a revival or comparable main-state change uses an idempotent disposition transition. The release declaration, effect id, and resulting disposition are recorded with the mutation, so replay never derives a different lifecycle outcome from current equipment or condition reads.
 
+### Action Admission Facets
+
+Game Design publishes a DML `ActionAdmissionTag` catalog with the actor-state and command definitions. Every command/action definition carries a required ordered `admissionTags` field that references it; an explicitly empty list is valid for an action that disposition does not restrict. The `ActorDisposition` definition names the tags it denies, and continuous overlays can add only further denials. An enabled action is admitted only if none of its tags are denied; invalid, unknown, stale, or omitted required tags fail closed. This is distinct from a primary action category and activity/AFK tags, which do not decide actor capability.
+
+Tenant/game command capability policy is also separate. A command family disabled by `commandCapabilities` returns `FEATURE_UNAVAILABLE` before actor admission; login/play stage gates remain separate; only an enabled stage-valid command reaches this disposition gate. The resulting action-admission failure uses a stable platform result and the resolved disposition's authored safe feedback.
+
 ### Canonical Condition Application and Removal
 
 Each condition definition owns its application policy. Repeated application never relies on the caller's source-id shape or on handler-local assumptions.

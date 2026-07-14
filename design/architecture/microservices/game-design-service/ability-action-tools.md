@@ -37,6 +37,14 @@ An actor's DML-authored `ActorDisposition` is the baseline for action admission,
 
 Games author the restrictive overlays and their condition/application eligibility as ordinary release DML. Recovery, immunity, revival, or an exceptional state change is never inferred from a continuous item. It uses an explicit `INSTANT` operation: remove or prevent the restrictive condition, or transition the actor's persisted disposition. This preserves one lifecycle owner for defeat/death-like states while allowing each game to author its own recovery rules.
 
+## Action Admission Facets
+
+Game Design owns a versioned DML `ActionAdmissionTag` catalog for each release. Every command/action definition publishes a required ordered `admissionTags` list that references that catalog; an explicitly empty list is valid for an action intentionally unrestricted by actor disposition. Built-in commands publish their corresponding metadata through the same active command-definition registry. The platform validates tag syntax and catalog membership against the pinned release/registry but does not hardcode game-specific categories such as `canCast` or `canMove`. Admission tags are a dedicated policy field, not the existing primary action category or optional activity/AFK tags.
+
+An `ActorDisposition` declares its denied admission tags. Continuous condition, equipment, stance, and aura overlays may add further denied tags only. An enabled, stage-valid action is admitted only when none of its `admissionTags` are denied by the resolved actor policy; unknown, stale, or absent required tags fail closed. A game that needs a broad restriction authors a shared tag such as `gameplay` and applies it to the relevant definitions rather than requiring a platform-owned all-actions boolean.
+
+Feature availability is a separate earlier gate: `commandCapabilities` decides whether a standard command family exists for the tenant/game and returns `FEATURE_UNAVAILABLE` when disabled. Session/login/play stage validation remains separate as well. Only after those gates does Game Logic apply actor admission, returning a stable platform action-admission failure with the resolved disposition's DML-authored safe feedback. This gives a disabled feature, an unauthenticated caller, and a stunned actor distinct deterministic outcomes.
+
 ## Action Target Declarations
 
 Published actions declare a typed targeting mode and DML-authored targeting policy. The platform grammar begins with `SELF` and `DIRECT_ACTOR` and may add room/area modes later; it does not contain game-specific range, faction, visibility, or eligibility rules.
