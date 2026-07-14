@@ -74,11 +74,20 @@ public class DurableScreenBufferService implements ScreenBufferService {
     retainedEntries.forEach(
         entry -> entry.setByteSize(ResumeTranscriptEntryCanonicalizer.byteSize(entry)));
     retainedEntries.removeIf(entry -> entry.getByteSize() > buffer.hardMaxBytes());
-    if (retainedEntries.isEmpty()) {
-      return;
-    }
     if (scopeExpiresAt != null) {
       repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
+    }
+    if (retainedEntries.isEmpty()) {
+      if (scopeExpiresAt != null) {
+        replaceHotCache(
+            tenantId,
+            gameInstanceId,
+            characterId,
+            trim(tenantId, gameInstanceId, characterId, buffer).stream()
+                .map(this::toBufferedEntry)
+                .toList());
+      }
+      return;
     }
     repository.saveAll(retainedEntries);
     List<ResumeTranscriptEntry> effectiveEntries =
@@ -116,6 +125,15 @@ public class DurableScreenBufferService implements ScreenBufferService {
     repository.lockScope(tenantId, gameInstanceId, characterId);
     repository.deleteByScope(tenantId, gameInstanceId, characterId);
     clearHotCache(tenantId, gameInstanceId, characterId);
+  }
+
+  @Override
+  @Transactional
+  public void replace(
+      long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
+    repository.lockScope(tenantId, gameInstanceId, characterId);
+    repository.deleteByScope(tenantId, gameInstanceId, characterId);
+    append(tenantId, gameInstanceId, characterId, entries);
   }
 
   private boolean expireExpiredEntries(long tenantId, long gameInstanceId, long characterId) {
@@ -227,10 +245,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
   private void replaceHotCache(
       long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
     try {
-      hotCache.clear(tenantId, gameInstanceId, characterId);
-      if (!entries.isEmpty()) {
-        hotCache.append(tenantId, gameInstanceId, characterId, entries);
-      }
+      hotCache.replace(tenantId, gameInstanceId, characterId, entries);
     } catch (RuntimeException ex) {
       log.warn("Failed to replace reconnect transcript cache", ex);
     }

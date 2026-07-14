@@ -93,6 +93,28 @@ public class RedisScreenBufferService implements ScreenBufferService {
   }
 
   @Override
+  public void replace(
+      long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
+    List<BufferedEntry> filtered =
+        entries == null
+            ? List.of()
+            : entries.stream()
+                .filter(entry -> StringUtils.hasText(entry.text()))
+                .map(entry -> entry.withCanonicalByteSize(tenantId, gameInstanceId, characterId))
+                .toList();
+    String redisKey = key(tenantId, gameInstanceId, characterId);
+    if (filtered.isEmpty()) {
+      redisTemplate.delete(redisKey);
+      return;
+    }
+    FiremudReconnectionProperties properties = settingsResolver.resolve(tenantId, gameInstanceId);
+    BufferedPayload payload = new BufferedPayload();
+    filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
+    payload.updatedAtMs = System.currentTimeMillis();
+    writePayload(redisKey, payload, Duration.ofMillis(properties.buffer().ttlMs()));
+  }
+
+  @Override
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
     return readPayload(tenantId, gameInstanceId, characterId)
         .filter(payload -> !payload.entries.isEmpty())
@@ -108,6 +130,19 @@ public class RedisScreenBufferService implements ScreenBufferService {
   @Override
   public void clear(long tenantId, long gameInstanceId, long characterId) {
     redisTemplate.delete(key(tenantId, gameInstanceId, characterId));
+  }
+
+  private void writePayload(String redisKey, BufferedPayload payload, Duration ttl) {
+    try {
+      String serializedPayload = objectMapper.writeValueAsString(payload);
+      if (ttl.isZero()) {
+        redisTemplate.opsForValue().set(redisKey, serializedPayload);
+      } else {
+        redisTemplate.opsForValue().set(redisKey, serializedPayload, ttl);
+      }
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Failed to serialize screen buffer payload", ex);
+    }
   }
 
   private Optional<BufferedPayload> readPayload(

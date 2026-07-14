@@ -247,6 +247,10 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
           long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {}
 
       @Override
+      public void replace(
+          long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {}
+
+      @Override
       public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
         return Optional.empty();
       }

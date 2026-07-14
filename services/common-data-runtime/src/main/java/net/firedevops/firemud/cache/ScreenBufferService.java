@@ -12,6 +12,13 @@ public interface ScreenBufferService {
   void append(
       long tenantId, long gameInstanceId, long characterId, java.util.List<BufferedEntry> entries);
 
+  /**
+   * Replaces the complete reconnect transcript for one scope without exposing an empty interim
+   * view.
+   */
+  void replace(
+      long tenantId, long gameInstanceId, long characterId, java.util.List<BufferedEntry> entries);
+
   Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId);
 
   void clear(long tenantId, long gameInstanceId, long characterId);

@@ -92,9 +92,8 @@ class DurableScreenBufferServiceTest {
 
     ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries =
         ArgumentCaptor.captor();
-    verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
     verify(hotCache)
-        .append(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), hotCacheEntries.capture());
+        .replace(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), hotCacheEntries.capture());
     ScreenBufferService.BufferedEntry cached = hotCacheEntries.getValue().getFirst();
     assertThat(cached.text()).isEqualTo(entry.text());
     assertThat(cached.orderingToken()).isEqualTo(100L);
@@ -118,8 +117,7 @@ class DurableScreenBufferServiceTest {
     assertThat(screen.protocolText()).isEqualTo("Recent room line\n");
     assertThat(screen.entries().getFirst().payloadJson()).isEqualTo("{\"room\":\"R-1\"}");
     assertThat(screen.entries().getFirst().orderingToken()).isEqualTo(1L);
-    verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
-    verify(hotCache).append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
     verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
   }
 
@@ -204,6 +202,32 @@ class DurableScreenBufferServiceTest {
     verify(repository, never())
         .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
+    verify(hotCache, never()).replace(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
+  void appendRefreshesExistingExpiryAndHotCacheWhenOversizedEntriesAreDiscarded() {
+    configureBuffer(1_000L, 256, 1, 1, 1_000, 2_000);
+    ResumeTranscriptEntry retained = entry(1L, "Earlier line\n", Instant.ofEpochMilli(1_000L));
+    retained.setExpiresAt(Instant.ofEpochMilli(2_000L));
+    persistedEntries.add(retained);
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(4_096) + "\"}");
+
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(oversized));
+
+    verify(repository)
+        .updateExpiryByScope(
+            eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any(Instant.class));
+    verify(repository, never()).saveAll(any());
+    verify(hotCache)
+        .replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(toBufferedEntry(retained)));
   }
 
   @Test
@@ -268,5 +292,19 @@ class DurableScreenBufferServiceTest {
     entry.setByteSize(text.length());
     entry.setAppendedAt(appendedAt);
     return entry;
+  }
+
+  private ScreenBufferService.BufferedEntry toBufferedEntry(ResumeTranscriptEntry entry) {
+    return new ScreenBufferService.BufferedEntry(
+        entry.getProtocolText(),
+        entry.getLineCount(),
+        entry.getByteSize(),
+        entry.getAppendedAt().toEpochMilli(),
+        entry.getOutputKind(),
+        entry.getReplayPolicy(),
+        entry.getBriefRenderPolicy(),
+        entry.getPayloadType(),
+        entry.getPayloadJson(),
+        entry.getId());
   }
 }

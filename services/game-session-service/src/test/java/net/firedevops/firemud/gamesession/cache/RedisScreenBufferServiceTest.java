@@ -202,4 +202,13 @@ class RedisScreenBufferServiceTest {
               assertThat(transcript).doesNotContain("FIRST\n");
             });
   }
+
+  @Test
+  void replaceWritesTheAuthoritativeEntriesWithoutClearingTheExistingCacheFirst() {
+    cacheService.replace(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n")));
+
+    verify(redisTemplate, times(0)).delete(REDIS_KEY);
+    verify(valueOperations).set(eq(REDIS_KEY), anyString(), any(Duration.class));
+  }
 }

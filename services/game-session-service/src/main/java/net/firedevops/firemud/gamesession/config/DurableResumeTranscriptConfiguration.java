@@ -41,6 +41,13 @@ public class DurableResumeTranscriptConfiguration {
         java.util.List<BufferedEntry> entries) {}
 
     @Override
+    public void replace(
+        long tenantId,
+        long gameInstanceId,
+        long characterId,
+        java.util.List<BufferedEntry> entries) {}
+
+    @Override
     public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
       return Optional.empty();
     }
