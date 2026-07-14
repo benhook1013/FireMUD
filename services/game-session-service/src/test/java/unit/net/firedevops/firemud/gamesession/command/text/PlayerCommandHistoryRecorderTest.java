@@ -201,7 +201,7 @@ class PlayerCommandHistoryRecorderTest {
         CommandEnqueueResult.success(),
         Optional.of(context),
         Optional.of(context));
- 
+
     verify(storageService, never())
         .append(
             Mockito.anyLong(),
