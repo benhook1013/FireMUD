@@ -220,6 +220,27 @@ Illustrative bootstrap compliance record:
       "alertRuleId": "sec.jwt.rotation.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/staging-bootstrap.json",
       "evidenceKey": "jwt-signing-keys-jwks"
+    },
+    "postgres-application-credentials": {
+      "owner": "platform-data",
+      "maxAgeDays": 30,
+      "lastProvisionedAt": "2026-03-13T00:00:00Z",
+      "evidenceRef": "design/operations/secret-compliance/evidence/staging-bootstrap.json",
+      "evidenceKey": "postgres-application-credentials"
+    },
+    "backup-object-store-credentials": {
+      "owner": "platform-operations",
+      "maxAgeDays": 30,
+      "lastProvisionedAt": "2026-03-13T00:00:00Z",
+      "evidenceRef": "design/operations/secret-compliance/evidence/staging-bootstrap.json",
+      "evidenceKey": "backup-object-store-credentials"
+    },
+    "operator-credentials": {
+      "owner": "platform-operations",
+      "maxAgeDays": 30,
+      "lastProvisionedAt": "2026-03-13T00:00:00Z",
+      "evidenceRef": "design/operations/secret-compliance/evidence/staging-bootstrap.json",
+      "evidenceKey": "operator-credentials"
     }
   }
 }
@@ -237,6 +258,24 @@ Corresponding evidence payload:
       "immutableArtifactId": "change-ticket:STAGE-401:sha256:9a1b2c3d",
       "source": "bootstrap-runbook",
       "recordedBy": "platform-security"
+    },
+    "postgres-application-credentials": {
+      "evidenceType": "provisioning",
+      "immutableArtifactId": "change-ticket:STAGE-402:sha256:2b3c4d5e",
+      "source": "bootstrap-runbook",
+      "recordedBy": "platform-data"
+    },
+    "backup-object-store-credentials": {
+      "evidenceType": "provisioning",
+      "immutableArtifactId": "change-ticket:STAGE-403:sha256:3c4d5e6f",
+      "source": "bootstrap-runbook",
+      "recordedBy": "platform-operations"
+    },
+    "operator-credentials": {
+      "evidenceType": "provisioning",
+      "immutableArtifactId": "change-ticket:STAGE-404:sha256:4d5e6f70",
+      "source": "bootstrap-runbook",
+      "recordedBy": "platform-operations"
     }
   }
 }
