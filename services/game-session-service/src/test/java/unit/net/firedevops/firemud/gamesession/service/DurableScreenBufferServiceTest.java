@@ -85,13 +85,16 @@ class DurableScreenBufferServiceTest {
         .isEqualTo(ResumeTranscriptEntryCanonicalizer.byteSize(persisted))
         .isGreaterThan(entry.byteSize());
     assertThat(persisted.getExpiresAt()).isNull();
-    verify(repository, never()).deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository, never())
+        .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(repository, never())
         .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
 
-    ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries = ArgumentCaptor.captor();
+    ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries =
+        ArgumentCaptor.captor();
     verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
-    verify(hotCache).append(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), hotCacheEntries.capture());
+    verify(hotCache)
+        .append(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), hotCacheEntries.capture());
     ScreenBufferService.BufferedEntry cached = hotCacheEntries.getValue().getFirst();
     assertThat(cached.text()).isEqualTo(entry.text());
     assertThat(cached.orderingToken()).isEqualTo(100L);
@@ -100,7 +103,8 @@ class DurableScreenBufferServiceTest {
 
   @Test
   void getRehydratesTheHotCacheFromDurableStructuredEntries() {
-    ResumeTranscriptEntry entry = entry(1L, "Recent room line\n", Instant.parse("2026-07-12T01:02:03Z"));
+    ResumeTranscriptEntry entry =
+        entry(1L, "Recent room line\n", Instant.parse("2026-07-12T01:02:03Z"));
     entry.setOutputKind("VIEW");
     entry.setReplayPolicy("REPLAY");
     entry.setBriefRenderPolicy("FULL");
@@ -124,7 +128,8 @@ class DurableScreenBufferServiceTest {
     assertThat(service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID)).isEmpty();
 
     verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
-    verify(repository, never()).deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository, never())
+        .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
   }
 
@@ -154,9 +159,11 @@ class DurableScreenBufferServiceTest {
 
     ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
     verify(repository).saveAll(entries.capture());
-    assertThat(entries.getValue().getFirst().getExpiresAt()).isEqualTo(Instant.ofEpochMilli(2_000L));
+    assertThat(entries.getValue().getFirst().getExpiresAt())
+        .isEqualTo(Instant.ofEpochMilli(2_000L));
     verify(repository)
-        .updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(2_000L));
+        .updateExpiryByScope(
+            TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(2_000L));
   }
 
   @Test
@@ -172,10 +179,12 @@ class DurableScreenBufferServiceTest {
     service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(newEntry));
 
     verify(repository)
-        .updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(4_000L));
+        .updateExpiryByScope(
+            TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(4_000L));
     ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
     verify(repository).saveAll(entries.capture());
-    assertThat(entries.getValue().getFirst().getExpiresAt()).isEqualTo(Instant.ofEpochMilli(4_000L));
+    assertThat(entries.getValue().getFirst().getExpiresAt())
+        .isEqualTo(Instant.ofEpochMilli(4_000L));
   }
 
   @Test
