@@ -89,6 +89,7 @@ class DurableScreenBufferServiceTest {
         .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(repository, never())
         .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository, never()).updateByteSizes(any());
 
     ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries =
         ArgumentCaptor.captor();

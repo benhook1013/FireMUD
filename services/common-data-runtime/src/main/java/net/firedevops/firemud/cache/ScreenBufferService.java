@@ -1,10 +1,6 @@
 package net.firedevops.firemud.cache;
 
 import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeFormatterBuilder;
 import java.util.Optional;
 
 /** Stores a bounded per-player transcript window for reconnect context restoration. */
@@ -34,10 +30,6 @@ public interface ScreenBufferService {
       String payloadType,
       String payloadJson,
       long orderingToken) {
-    private static final DateTimeFormatter MILLIS_INSTANT_FORMATTER =
-        new DateTimeFormatterBuilder().appendInstant(3).toFormatter();
-    private static final int JSON_CONTROL_CHARACTER_MAX = 0x1F;
-
     public BufferedEntry {
       text = text == null ? "" : text;
     }
@@ -116,90 +108,18 @@ public interface ScreenBufferService {
     }
 
     public int canonicalByteSize(long tenantId, long gameInstanceId, long characterId) {
-      return canonicalEnvelope(tenantId, gameInstanceId, characterId)
-          .getBytes(StandardCharsets.UTF_8)
-          .length;
-    }
-
-    private String canonicalEnvelope(long tenantId, long gameInstanceId, long characterId) {
-      StringBuilder envelope = new StringBuilder();
-      envelope.append('{');
-      appendMember(envelope, "briefRenderPolicy", briefRenderPolicy);
-      envelope.append(',');
-      appendNumberMember(envelope, "characterId", characterId);
-      envelope.append(',');
-      appendNumberMember(envelope, "gameInstanceId", gameInstanceId);
-      envelope.append(',');
-      appendMember(
-          envelope,
-          "occurredAt",
-          MILLIS_INSTANT_FORMATTER.format(Instant.ofEpochMilli(appendedAtMs)));
-      envelope.append(',');
-      appendNumberMember(envelope, "orderingToken", orderingToken);
-      envelope.append(',');
-      appendMember(envelope, "outputKind", outputKind);
-      envelope.append(',');
-      appendJsonMember(envelope, "payload", payloadJson);
-      envelope.append(',');
-      appendMember(envelope, "payloadType", payloadType);
-      envelope.append(',');
-      appendMember(envelope, "renderedText", text);
-      envelope.append(',');
-      appendMember(envelope, "replayPolicy", replayPolicy);
-      envelope.append(',');
-      appendNumberMember(envelope, "tenantId", tenantId);
-      envelope.append('}');
-      return envelope.toString();
-    }
-
-    private static void appendMember(StringBuilder target, String name, String value) {
-      appendJsonString(target, name);
-      target.append(':');
-      if (value == null) {
-        target.append("null");
-        return;
-      }
-      appendJsonString(target, value);
-    }
-
-    private static void appendNumberMember(StringBuilder target, String name, long value) {
-      appendJsonString(target, name);
-      target.append(':').append(value);
-    }
-
-    private static void appendJsonMember(StringBuilder target, String name, String json) {
-      appendJsonString(target, name);
-      target.append(':');
-      if (json == null || json.isBlank()) {
-        target.append("null");
-        return;
-      }
-      target.append(json);
-    }
-
-    private static void appendJsonString(StringBuilder target, String value) {
-      target.append('"');
-      String normalized = Normalizer.normalize(value, Normalizer.Form.NFC);
-      for (int index = 0; index < normalized.length(); index++) {
-        char character = normalized.charAt(index);
-        switch (character) {
-          case '"' -> target.append("\\\"");
-          case '\\' -> target.append("\\\\");
-          case '\b' -> target.append("\\b");
-          case '\f' -> target.append("\\f");
-          case '\n' -> target.append("\\n");
-          case '\r' -> target.append("\\r");
-          case '\t' -> target.append("\\t");
-          default -> {
-            if (character <= JSON_CONTROL_CHARACTER_MAX) {
-              target.append(String.format("\\u%04x", (int) character));
-            } else {
-              target.append(character);
-            }
-          }
-        }
-      }
-      target.append('"');
+      return ResumeTranscriptCanonicalizer.byteSize(
+          tenantId,
+          gameInstanceId,
+          characterId,
+          orderingToken,
+          appendedAtMs,
+          outputKind,
+          replayPolicy,
+          briefRenderPolicy,
+          payloadType,
+          payloadJson,
+          text);
     }
 
     public boolean hasStructuredOutput() {

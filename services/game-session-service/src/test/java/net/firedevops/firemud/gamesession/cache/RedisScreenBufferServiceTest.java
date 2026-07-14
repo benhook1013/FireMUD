@@ -1,11 +1,13 @@
 package net.firedevops.firemud.gamesession.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -210,5 +212,35 @@ class RedisScreenBufferServiceTest {
 
     verify(redisTemplate, times(0)).delete(REDIS_KEY);
     verify(valueOperations).set(eq(REDIS_KEY), anyString(), any(Duration.class));
+  }
+
+  @Test
+  void replaceLeavesTheExistingCacheVisibleWhenTheReplacementWriteFails() {
+    storedPayload.set(
+        """
+        {"entries":[{"protocolText":"PREVIOUS\\n","lineCount":1,"byteSize":9,"appendedAtMs":1000}],"updatedAtMs":1000}
+        """
+            .trim());
+    doAnswer(
+            invocation -> {
+              throw new IllegalStateException("Redis unavailable");
+            })
+        .when(valueOperations)
+        .set(eq(REDIS_KEY), anyString(), any(Duration.class));
+
+    assertThatThrownBy(
+            () ->
+                cacheService.replace(
+                    22L,
+                    1L,
+                    123L,
+                    List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n"))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Redis unavailable");
+
+    assertThat(cacheService.get(22L, 1L, 123L))
+        .map(ScreenBufferService.BufferedScreen::protocolText)
+        .hasValueSatisfying(transcript -> assertThat(transcript).contains("PREVIOUS"));
+    verify(redisTemplate, never()).delete(REDIS_KEY);
   }
 }

@@ -9,6 +9,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
@@ -83,15 +84,19 @@ public class DurableScreenBufferService implements ScreenBufferService {
             tenantId,
             gameInstanceId,
             characterId,
-            trim(tenantId, gameInstanceId, characterId, buffer).stream()
+            trim(tenantId, gameInstanceId, characterId, buffer, Set.of()).stream()
                 .map(this::toBufferedEntry)
                 .toList());
       }
       return;
     }
     repository.saveAll(retainedEntries);
+    Set<Long> freshlyCanonicalEntryIds =
+        retainedEntries.stream()
+            .map(ResumeTranscriptEntry::getId)
+            .collect(java.util.stream.Collectors.toSet());
     List<ResumeTranscriptEntry> effectiveEntries =
-        trim(tenantId, gameInstanceId, characterId, buffer);
+        trim(tenantId, gameInstanceId, characterId, buffer, freshlyCanonicalEntryIds);
     replaceHotCache(
         tenantId,
         gameInstanceId,
@@ -144,19 +149,25 @@ public class DurableScreenBufferService implements ScreenBufferService {
       long tenantId,
       long gameInstanceId,
       long characterId,
-      FiremudReconnectionProperties.Buffer buffer) {
+      FiremudReconnectionProperties.Buffer buffer,
+      Set<Long> freshlyCanonicalEntryIds) {
     Deque<ResumeTranscriptEntry> retained =
         new ArrayDeque<>(
             repository.findActiveByScope(tenantId, gameInstanceId, characterId, Instant.now()));
     List<ResumeTranscriptEntry> reaccounted = new ArrayList<>();
     for (ResumeTranscriptEntry entry : retained) {
+      if (freshlyCanonicalEntryIds.contains(entry.getId())) {
+        continue;
+      }
       int canonicalByteSize = ResumeTranscriptEntryCanonicalizer.byteSize(entry);
       if (entry.getByteSize() != canonicalByteSize) {
         entry.setByteSize(canonicalByteSize);
         reaccounted.add(entry);
       }
     }
-    repository.updateByteSizes(reaccounted);
+    if (!reaccounted.isEmpty()) {
+      repository.updateByteSizes(reaccounted);
+    }
     List<Long> discardedIds = new ArrayList<>();
     retained.removeIf(
         entry -> {

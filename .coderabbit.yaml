@@ -15,7 +15,6 @@ reviews:
   auto_review:
     enabled: true
     auto_incremental_review: false
-    auto_pause_after_reviewed_commits: 1
     drafts: false
     base_branches:
       - "develop"

@@ -1,0 +1,145 @@
+package net.firedevops.firemud.cache;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/** Defines the deterministic envelope used by every reconnect transcript storage tier. */
+public final class ResumeTranscriptCanonicalizer {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final DateTimeFormatter TIMESTAMP_FORMAT =
+      DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+
+  private ResumeTranscriptCanonicalizer() {}
+
+  public static int byteSize(
+      long tenantId,
+      long gameInstanceId,
+      long characterId,
+      long orderingToken,
+      long appendedAtMs,
+      String outputKind,
+      String replayPolicy,
+      String briefRenderPolicy,
+      String payloadType,
+      String payloadJson,
+      String protocolText) {
+    return canonicalJson(
+            tenantId,
+            gameInstanceId,
+            characterId,
+            orderingToken,
+            appendedAtMs,
+            outputKind,
+            replayPolicy,
+            briefRenderPolicy,
+            payloadType,
+            payloadJson,
+            protocolText)
+        .getBytes(StandardCharsets.UTF_8)
+        .length;
+  }
+
+  public static String canonicalJson(
+      long tenantId,
+      long gameInstanceId,
+      long characterId,
+      long orderingToken,
+      long appendedAtMs,
+      String outputKind,
+      String replayPolicy,
+      String briefRenderPolicy,
+      String payloadType,
+      String payloadJson,
+      String protocolText) {
+    return "{"
+        + field("characterId", Long.toString(characterId))
+        + ","
+        + field("gameInstanceId", Long.toString(gameInstanceId))
+        + ","
+        + field("occurredAt", quote(TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(appendedAtMs))))
+        + ","
+        + field("orderingToken", Long.toString(orderingToken))
+        + ","
+        + field("outputKind", quote(outputKind))
+        + ","
+        + field(
+            "payload", canonicalPayload(briefRenderPolicy, payloadJson, payloadType, replayPolicy))
+        + ","
+        + field("renderedText", quote(protocolText))
+        + ","
+        + field("tenantId", Long.toString(tenantId))
+        + "}";
+  }
+
+  private static String canonicalPayload(
+      String briefRenderPolicy, String payloadJson, String payloadType, String replayPolicy) {
+    return "{"
+        + field("briefRenderPolicy", quote(briefRenderPolicy))
+        + ","
+        + field("payload", canonicalJsonValue(payloadJson))
+        + ","
+        + field("payloadType", quote(payloadType))
+        + ","
+        + field("replayPolicy", quote(replayPolicy))
+        + "}";
+  }
+
+  private static String canonicalJsonValue(String rawJson) {
+    if (rawJson == null || rawJson.isBlank()) {
+      return "null";
+    }
+    try {
+      return canonicalizeNode(OBJECT_MAPPER.readTree(rawJson));
+    } catch (JacksonException ex) {
+      return quote(rawJson);
+    }
+  }
+
+  private static String canonicalizeNode(JsonNode node) {
+    if (node == null || node.isNull()) {
+      return "null";
+    }
+    if (node.isObject()) {
+      return node.properties().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .map(entry -> quote(entry.getKey()) + ":" + canonicalizeNode(entry.getValue()))
+          .collect(java.util.stream.Collectors.joining(",", "{", "}"));
+    }
+    if (node.isArray()) {
+      return node.valueStream()
+          .map(ResumeTranscriptCanonicalizer::canonicalizeNode)
+          .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+    }
+    if (node.isTextual()) {
+      return quote(node.asString());
+    }
+    if (node.isFloatingPointNumber()) {
+      BigDecimal normalized = node.decimalValue().stripTrailingZeros();
+      return normalized.signum() == 0 ? "0" : normalized.toPlainString();
+    }
+    return node.toString();
+  }
+
+  private static String field(String name, String value) {
+    return quote(name) + ":" + value;
+  }
+
+  private static String quote(String value) {
+    if (value == null) {
+      return "null";
+    }
+    try {
+      return OBJECT_MAPPER.writeValueAsString(Normalizer.normalize(value, Normalizer.Form.NFC));
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Unable to serialize canonical transcript value", ex);
+    }
+  }
+}

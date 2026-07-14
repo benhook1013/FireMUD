@@ -66,6 +66,10 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     otherCharacter.setCharacterId(14L);
 
     repository.saveAll(List.of(earlier, later, otherCharacter));
+
+    assertThat(earlier.getId()).isPositive();
+    assertThat(later.getId()).isGreaterThan(earlier.getId());
+    assertThat(otherCharacter.getId()).isGreaterThan(later.getId());
     List<ResumeTranscriptEntry> entries = repository.findByScope(22L, 7L, 13L);
 
     assertThat(entries)

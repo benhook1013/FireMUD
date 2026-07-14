@@ -36,6 +36,7 @@ public class ResumeTranscriptEntryRepository {
     if (entries == null || entries.isEmpty()) {
       return;
     }
+    assignOrderingTokens(entries);
     List<ResumeTranscriptEntryRecord> records = new ArrayList<>(entries.size());
     for (ResumeTranscriptEntry entry : entries) {
       ResumeTranscriptEntryRecord record = dsl.newRecord(RESUME_TRANSCRIPT_ENTRY);
