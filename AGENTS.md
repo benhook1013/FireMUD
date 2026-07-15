@@ -60,6 +60,7 @@ The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design disc
 - `gpt-5.6-luna`: Default for bulk repository reading, exhaustive inventories, mechanical or well-specified edits, focused investigation, and targeted test work. Sol must define the boundary and review the result. Do not use Luna as independent final-review evidence.
 - `gpt-5.6-terra`: Use selectively for difficult bounded work or independent verification where Luna is not reliable enough. Do not delegate product or architecture design decisions.
 - If answering a bounded repository question would likely require several exploratory tool calls, delegate that investigation to Luna and wait for its result instead of spending Sol context on the search.
+- Subagents must not run Gradle, Docker, smoke, or repository-wide validation commands unless the main thread explicitly delegates one specific command. Sol runs consolidated formatting and validation after integrating delegated work so parallel agents do not compete for local resources or corrupt shared results.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
 - Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
 
