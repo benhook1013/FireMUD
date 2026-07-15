@@ -7,12 +7,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.jsonwebtoken.Claims;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Map;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
+import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.ReactiveValueOperations;
@@ -40,12 +42,14 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void rejectsFirstPartyHandshakeWithoutConnectToken() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
             TEST_RUNTIME_IDENTITY,
             null,
-            environmentWithProfiles("test"));
+            environmentWithProfiles("test"),
+            new GameplayWebSocketObservability(meterRegistry));
 
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/test").build());
@@ -55,6 +59,19 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_MISSING);
+    assertThat(
+            meterRegistry
+                .get("gateway.websocket.handshake.rejected")
+                .tags(
+                    "route",
+                    GameplayWebSocketObservability.GAMEPLAY_ROUTE,
+                    "status",
+                    "403",
+                    "error_class",
+                    GameplayHandshakeFilter.CONNECT_TOKEN_MISSING)
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test

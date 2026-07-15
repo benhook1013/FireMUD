@@ -66,6 +66,8 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 Prometheus metrics use bounded semantic labels. Raw tenant, session, player, version, and per-instance identifiers are prohibited as labels, and a new bounded-scope exception requires an architecture update rather than a local workaround. `regionId` logging remains deferred until an authoritative current-region source exists; broader reactive MDC propagation is optional follow-through, not a silent correctness gap.
 
+Gateway gameplay handshakes now emit a bounded rejection counter keyed by the canonical route, HTTP status, and handshake error class. Gateway-originated client closes are normalized to the bounded close and subreason taxonomy, logged with those fields, and counted through `gateway.websocket.closes`; outbound bridge-buffer pressure closes with `policy_violation/edge_backpressure` and increments the dedicated slow-client subset meter. This preserves an operable client-close contract without exposing arbitrary upstream close text as a metric label.
+
 ### Player-Experience Smoke, Canaries, and Evidence
 
 The canonical smoke runner proves public bootstrap, connect-token admission, WebSocket `LOGIN -> PLAY -> LOOK`, Telnet `WORLDS`, and the current real-stack transport path. It uses a synthetic non-player identity per environment, emits canary metrics, supports independent entry probes and failure injection, validates retained evidence freshness, and feeds alert/deadman behavior. `LOOK` is the first gameplay command canary.
