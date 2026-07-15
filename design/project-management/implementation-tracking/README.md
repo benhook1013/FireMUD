@@ -2,7 +2,7 @@
 
 These files are the current domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
 
-Each tracker is scan-first. Its `Consolidated Implementation Record` describes the current domain capability, authority boundaries, active gaps, and future decisions in domain language. The `Implementation Record Index` maps those claims to source-declared delivery records, and the source-evidence appendix retains exact transposed material in the same file for lossless audit.
+Each tracker is scan-first. Its `Consolidated Implementation Record` describes the current domain capability, authority boundaries, active gaps, and future decisions in domain language. During the migration audit, the `Implementation Record Index` and source-evidence appendix map those claims to exact legacy material so reviewers can prove that consolidation is lossless.
 
 Each tracker contains:
 
@@ -11,9 +11,9 @@ Each tracker contains:
 - a named implementation-record index; and
 - lossless source evidence linked to the relevant legacy delivery records.
 
-Existing files under [`../vertical-slices`](../vertical-slices/README.md) remain historical delivery records. Do not delete, rename, or rewrite them as part of this refactor. The implementation trackers preserve exact allocated source ranges and the migration validator verifies that preservation.
+Files under [`../vertical-slices`](../vertical-slices/README.md), the generated evidence appendices, and migration ledgers are temporary audit inputs. Keep them unchanged until independent coverage and semantic-fidelity review is complete. Once all findings are resolved, remove that temporary material and repair links so these domain trackers are the sole implementation-tracking source.
 
-Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md). The mechanical evidence layer and semantic consolidation layer are both required before a tracker can claim migration completion; Spark then audits coverage and semantic fidelity.
+Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md) while migration is active. The mechanical evidence layer and exhaustive semantic consolidation are required before Spark audits coverage and fidelity; migration completes only after audit findings are fixed and the temporary evidence/source scaffolding is removed.
 
 ## Trackers
 

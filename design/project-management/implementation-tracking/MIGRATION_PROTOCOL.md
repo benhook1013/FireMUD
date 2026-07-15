@@ -1,6 +1,6 @@
 # Implementation-Tracker Migration Protocol
 
-This protocol moves current implementation facts from vertical-slice delivery records into domain trackers without silently losing detail. It does not change canonical product design, which remains under [`design/architecture`](../../architecture/README.md), and it does not delete or rewrite legacy slice records during migration.
+This protocol moves current implementation facts from vertical-slice delivery records into domain trackers without silently losing detail. It does not change canonical product design, which remains under [`design/architecture`](../../architecture/README.md). Legacy slices and generated evidence remain unchanged only while they are needed for migration verification; they are removed after the standardized trackers pass that gate.
 
 ## Workflow
 
@@ -9,6 +9,7 @@ This protocol moves current implementation facts from vertical-slice delivery re
 3. Run the deterministic transposition tool on the main thread after the map has passed its audit. It generates every affected domain tracker and supporting ledger from the exact allocation map; the map records allocation and the ledger records completed source-to-destination transposition. This is the lossless evidence layer, not the final reader-facing implementation record.
 4. Author the semantic consolidation on the main thread. Each tracker must replace placeholder status text with a concise domain capability record, canonical design sources, active gaps, decisions still to discuss, and a service/contract map. It must preserve the source evidence appendix unchanged and may not silently omit a current fact merely because several source records repeat it.
 5. Run independent review after the semantic consolidation. Spark performs the primary source-to-destination coverage and semantic-fidelity audit and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful. Spark is not an allocation prerequisite.
+6. Resolve every review finding in the standardized tracker body, rerun the affected audit, then delete the source-evidence appendices, legacy vertical-slice records, generated allocation/coverage ledgers, and migration-only tooling. Repair all links and indexes so the standardized domain trackers are the only implementation-tracking surface.
 
 ## Unit Of Work
 
@@ -38,13 +39,16 @@ Every allocated source range must be one of:
 
 ## Completion Gate
 
-A tracker migration is not complete until:
+A tracker is ready for independent verification when:
 
 - its ledger has no unallocated source range;
 - every active source fact has a destination anchor or explicit disposition;
-- its consolidated record, index, and evidence appendix agree on the current domain boundary;
-- the Spark domain review reports no unaddressed loss or semantic drift; and
-- the resulting service-level audit queue is recorded in the tracker or explicitly scheduled as follow-through.
+- its consolidated record, index, and evidence appendix agree on the current domain boundary; and
+- the standardized body is self-sufficient, with the appendix needed only to detect omissions or drift.
+
+A tracker is independently verified when the Spark domain review reports no unaddressed loss or semantic drift and the resulting service-level audit queue is recorded in the tracker or explicitly scheduled as follow-through.
+
+The repository-wide migration is complete only when every tracker has passed that gate and the temporary evidence appendices, legacy slice records, migration ledgers, and migration-only tooling have been removed without leaving broken links or unique implementation facts behind.
 
 ## Service Audits
 

@@ -55,10 +55,10 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 ## Subagent Models
 
-Subagents share the main weekly allowance. Use them only for bounded parallel work that preserves main-thread context or clearly improves turnaround.
+The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design discussion with the human, task decomposition, integration, validation, and final repository decisions. Use subagents heavily for bounded bulk work so Sol context and usage stay focused on orchestration.
 
-- `gpt-5.6-luna`: Default for repository searches, focused investigation, narrow test work, and mechanical local fixes. Do not use Luna as independent review evidence.
-- `gpt-5.6-terra`: Use for bounded implementation that Luna cannot handle reliably, and for every independent review that substitutes for CodeRabbit on a tiny PR.
+- `gpt-5.6-luna`: Default for bulk repository reading, exhaustive inventories, mechanical or well-specified edits, focused investigation, and targeted test work. Sol must define the boundary and review the result. Do not use Luna as independent final-review evidence.
+- `gpt-5.6-terra`: Use selectively for difficult bounded work or independent verification where Luna is not reliable enough. Do not delegate product or architecture design decisions.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
 - Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
 
@@ -66,8 +66,8 @@ Subagents share the main weekly allowance. Use them only for bounded parallel wo
 
 - Prefer a single main-thread workflow on the active branch and in the current working tree unless a human explicitly asks otherwise.
 - Keep orchestration, integration, end-to-end reasoning, and final verification on the main thread.
-- Use subagents only for bounded parallelizable work that preserves main-thread context or clearly improves turnaround.
-- When delegating, prefer `gpt-5.6-luna` for bounded work and `gpt-5.6-terra` for bounded implementation or independent tiny-PR review; give each subagent a narrowly scoped task with explicit success conditions.
+- Delegate bounded bulk work proactively when it preserves Sol context or materially reduces orchestration cost. Prefer `gpt-5.6-luna`; reserve `gpt-5.6-terra` for tasks that need stronger independent reasoning.
+- Give each subagent a disjoint write scope, explicit success conditions, and enough canonical context to execute without making design decisions.
 - Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
 - For slice or branch reconciliation, read the owning vertical-slice doc first and use its declared scope, proof, and status before interpreting branch names, commit messages, or raw diffs.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.

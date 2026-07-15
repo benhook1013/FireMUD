@@ -2,7 +2,7 @@
 
 ## Current Status
 
-The lossless source transposition is complete. This tracker consolidates shared time semantics, service contracts, orchestration boundaries, persistence, and workflow infrastructure by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
+The implemented record below is the canonical reader-facing account of the shared runtime, service-contract, orchestration, persistence, and workflow boundaries represented by this tracker. The source appendix is retained unchanged as provenance and audit evidence. The record distinguishes live implementation from bounded follow-up work; it does not claim that every future service, runtime consumer, or workflow family has already adopted these conventions.
 
 ## Implementation Record Index
 
@@ -48,65 +48,103 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Consolidated Implementation Record
 
-### Explicit Time Domains and Contract Naming
+### Time Domains, Duration Contracts, and Scheduling
 
-FireMUD uses two declared time domains: wall-clock time for auth, session, operator, and expiry behavior; gameplay-clock time for cooldowns, conditions, temporary action state, and later scheduled mechanics. Cross-boundary fields must declare their domain and unit. The repository guard rejects ambiguous proto names such as bare `timeout`, `expires`, `expiry`, `duration`, or `cooldown`; accepted names encode a timestamp, duration unit, or gameplay tick domain.
+FireMUD has two declared time domains. Wall-clock time is used for authentication/session/operator expiry behavior such as OTP expiry, reconnect grace, and AFK policy. Gameplay-clock time is used for tick-relative mechanics such as cooldowns, buffs, temporary conditions, and action state. Cross-service contracts must declare both domain and unit; the shared vocabulary includes `occurredAt`, `expiresAt`, `duration`, `cooldownEndsAt`, and `nextEligibleAt`, with timestamp-style fields for wall-clock behavior and tick-relative fields such as `remainingTicks`, `appliesAtTick`, and `expiresAtTick` for gameplay behavior. A cross-service duration name must still declare its unit or domain.
 
-The current implementation is a contract guardrail, not a central timing platform. Authored actions carry tick-relative cooldown metadata, while runtime cooldown state, shared scheduled-effect execution, and broader timing adoption proceed only as concrete consumers become real.
+The live contract guard is `dev-tools/validation/check-proto-time-fields.py`, wired into root verification through `checkProtoTimeFields`. It rejects ambiguous proto names including bare `time`, `timeout`, `expires`, `expiry`, `duration`, and `cooldown` unless the name declares an accepted timestamp, unit, or gameplay-tick suffix such as `_at`, `_ms`, `_seconds`, `_tick`, or `_ticks`. The checked-in proto corpus currently passes. Authored action metadata carries gameplay cooldowns as `cooldownTicks`, never milliseconds.
 
-### Authenticated, Fail-Closed Service Boundaries
+This is a contract guardrail, not a central timing or job platform. Runtime cooldown state, shared scheduled-effect execution, richer gameplay-clock APIs, and broad adoption by buffs/conditions remain consumer-driven follow-up work. The current tick pulse scheduler remains bounded fan-out: at most one pending or running tick exists per session, overloaded pulses merge or skip rather than accumulating debt, and merges, rejections, and scheduler pressure are observable through the implemented threshold-aware operator-proof contract. Separately, `TickQueueControlService` owns live Redis queue/lease coordination and queue-admin controls for durable tick execution; it does not change the bounded pulse-scheduler policy. Whether pulse scheduling needs a different queue/lease scheduler remains a separate follow-up requiring load evidence.
 
-Internal blocking gRPC clients use the shared auth-attaching stub customization seam when downstream RPCs are secured; deliberate raw-stub exceptions are documented rather than accidental. World Management and Entity Management enforce baseline JWT and tenant access at their exposed edges. Internal delegated gameplay calls use service identity and session attestation, preserving caller/gameplay identity without treating transport errors as ordinary application outcomes.
+### Authenticated Internal Boundaries
 
-Application failures are normal `ErrorDetail` responses: they log warnings, increment bounded `grpc.app_error` metrics, and tag spans. They do not use gRPC transport errors for routine authorization, validation, or business outcomes. Routing, service identity, and session attestation fail closed before protected domain work continues.
+The canonical caller-side pattern for secured internal blocking gRPC is the shared `BlockingGrpcStubCustomizer` seam in common platform code, implemented by common security when a local `JwtUtil` is available. Account, Logging & Admin, World Management, Game Design, Social Groups, Game Logic, and Game Session clients use this path for secured downstream calls; focused proof covers Logging & Admin to Account, Logging & Admin to Game Session, and Game Design to Automation Scripting. `TcpProxyEventClient` is an intentional raw-stub exception because it is an ingress-side Telnet event bridge, not a normal authenticated business client. Any new raw-stub exception must be role-justified and documented.
 
-### Audit, Moderation, and Operator Authority
+When no player or operator caller context exists, `GrpcClientAuth` mints explicit minimally privileged internal-service identity claims: `internalService`, `serviceName`, and `serviceInstanceId`. Shared parsing preserves these claims in `SessionContext`; absent context no longer silently becomes `platformAdmin`. This distinguishes operator, tenant-scoped, and background/service work for authorization and audit.
 
-Non-destructive audit/logging traffic uses dedicated log-event paths rather than moderation mutation RPCs. Moderation definition, enforcement, and audit are separated by owning authority: policy lives where it is authored, runtime enforcement occurs at the relevant admission/send boundary, and Logging & Admin remains privileged ingress/audit rather than a duplicate persistence owner.
+Game Session owns the first delegated-gameplay authority seam through `GameplaySessionAttestationService`. It issues signed `GAMEPLAY_SESSION` attestations and bounded `INTERNAL_PROBE` attestations. Live Game Session to World, Entity, and Game Logic gameplay RPCs carry the attestation, and downstream services validate the attestation together with internal-service identity rather than relying on generic bearer-role inference alone. Game Session remains authoritative for player-session-to-gameplay delegation; invalid or missing attestations are rejected.
 
-Operator facades and control-plane read models delegate to owning services. They preserve app-error, tenant/scope, and audit contracts instead of reaching into private storage or recreating authoritative state in a second service.
+World Management and Entity Management now have service-local auth configuration and JWT interceptors on their gRPC boundaries, baseline auth on exposed REST boundaries, and tenant-access checks on tenant-scoped REST/gRPC operations, including the Entity friend REST path. Tenant failures return normal `PERMISSION_DENIED` `ErrorDetail` payloads rather than becoming `INTERNAL`. Their tests assert auth wiring and tenant enforcement, and protected internal callers use the shared auth propagation seam.
 
-### Transaction, Saga, and Control-Plane Boundaries
+### gRPC Application Errors and Observability
 
-Audited workflows no longer keep local database transactions open across remote side effects. Local durable state commits before outbound effects, or the work uses an explicit after-commit/outbox/workflow seam. Game Session lifecycle writes fail before committing a durable `RUNNING` or `STOPPED` state that cannot be reconciled with required runtime/Redis work.
+Application failures use normal response payloads containing `ErrorDetail`; `GrpcAppErrors` logs warnings, increments bounded `grpc.app_error` metrics tagged by error code, and tags spans. Transport `onError` is reserved for transport or infrastructure failure, not routine authorization, validation, or business outcomes. The visible audited service set now follows this contract across Account, Gateway Management, current admin services, Social Groups, Notification, Payment, Virtual Currency, and Game Session, including lifecycle failures caused by runtime-state/dependency validation. The obsolete transport-error admin aspect was removed in favor of explicit in-band admin-role guards.
 
-Shared saga repositories have one owner, and control-plane gRPC facades are thinned to transport/auth/error delegation over owning collaborators. This pre-v1 convergence removed obsolete HTTP shims and constructor/orchestration tangles rather than maintaining compatibility scaffolding.
+### Audit, Moderation, and Authority Boundaries
 
-### jOOQ, Flyway, and Relational Persistence
+Logging & Admin exposes dedicated non-destructive `CreateLogEvent` ingress. Account logging for creation and payment uses that RPC and the `LogEvent` persistence path; it does not fabricate moderation fields, delete accounts, or stop sessions. Moderation mutation remains a separate explicit operator/admin operation. Focused tests prove both the log-event behavior and the absence of destructive account/session effects.
 
-The relational persistence substrate has converged on shared jOOQ build/codegen/runtime conventions and Flyway-managed schemas. Hibernate/JPA runtime paths were removed. Account, Automation, Game Session, Game Design, Entity Management, Logging & Admin, Social Groups, and World Management use the shared persistence model with canonical migration history and validation.
+Logging & Admin records moderation policy actions and exposes internal `EvaluateModerationPolicy`. Game Session owns enforcement of `GAMEPLAY_ADMISSION` during `PLAY`; Social & Groups owns `CHAT_SEND` enforcement before chat persistence or publication. Policy definition, distribution/evaluation, runtime enforcement, and audit are therefore separate authorities. Broader staff capability/RBAC redesign, appeals/case-management UX, and durable moderation UI are not implemented by this boundary.
 
-Persistence contract and saga topology cleanup removed duplicate or ambiguous database ownership. New relational work should use the same generated types, migration discipline, SQL validation, and owning-service schema boundaries rather than reintroducing ORM or unmanaged JDBC patterns.
+### Transactions, Saga Ownership, and Runtime Truth
 
-### Temporal Workflow Foundation and Operator Truth
+The audited purchase and moderation workflows no longer use broad service-level `@Transactional` boundaries across remote effects. Payment creation/follow-on logging and moderation record/account/session mutations run as explicit saga steps. Focused failure tests prove payment compensation after post-payment logging failure and moderation-record compensation after downstream shutdown failure. Existing account notification and social/chat publication paths use narrow local commit followed by outbound effect seams; the boundary does not claim a repo-wide outbox rollout.
 
-Temporal provides the shared foundation for genuinely long-lived control-plane workflows. Publish and script-patch readiness use durable workflow identity and business-step idempotency; operator surfaces project canonical workflow state instead of inventing a parallel lifecycle. The repo distinguishes publication, activation, readiness, cancellation, and runtime execution truth rather than collapsing them into one status field.
+Game Session lifecycle uses staged durable state instead of remote Redis/runtime work in `beforeCommit`: start, stop, and restart stage `STARTING`/`STOPPING`, validate dependencies and mutate runtime state after the staging transaction commits, then write final `RUNNING`/`STOPPED` in a second local transaction. Failure compensates staged rows/runtime state, and replacement-start rollback snapshots the previous running session so failed replacement restores prior runtime truth. Lifecycle failures occur before a false final state is committed and are represented as normal application errors.
 
-Temporal is not a blanket replacement for every local synchronous operation. A workflow is introduced only for a concrete durable business process; short validation/saga seams remain explicit and bounded. Operator truthfulness work keeps workflow summaries aligned with the real Temporal execution and owning-domain state.
+Saga persistence has one explicit shared owner. `CommonSagaAutoConfiguration` creates the canonical `SagaInstanceRepository` and `SagaStepRepository` when saga entities are present; `DatabaseAutoConfiguration` no longer synthesizes them, `common-data-runtime` no longer depends on `common-saga` for that hidden seam, and service-local same-name wrappers have been removed. Shared saga repositories address `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step` explicitly. Repository integration proof remains valid after PostgreSQL `search_path` is forced to `public`, so correctness does not depend on ambient schema search paths.
+
+### Orchestration and Control-Plane Shape
+
+Control-plane gRPC facades are transport/auth/error boundaries over owning collaborators. The Game Session façade delegates to `GameSessionRuntimeControlPlaneReadService`, `GameSessionRemoteControlPlaneService`, `GameSessionAdmissionPointerControlPlaneService`, `GameSessionOperatorControlPlaneService`, and `GameSessionVersionUpgradeControlPlaneService` for runtime ownership/status reads, remote follow-up queries and scheduling, admission-pointer and prepared-cutover lifecycle, operator pin/purge/pause-resume actions, and version-upgrade compatibility preparation. The HTTP command shim was removed; the canonical gameplay ingress set is text command, WebSocket, and gRPC. Test-only production constructor overloads were removed from the targeted Game Session and Automation seams in favor of explicit test collaborators/builders.
+
+`TickServiceImpl` now orchestrates explicit collaborators: `TickQueueControlService` owns Redis queue/lease and queue-admin controls; `TickBatchExecutionService` owns durable batch/effect transitions, replay mismatch terminalization, stale-fence requeue, and queue-source stamping; `TickStagingService` owns selection, replay/sealed-manifest restoration, remote-follow-up claim/drain, and selected-work manifests; `TickRuntimeProgressService` owns gauges, timeout/paused-result reconciliation, tick advancement, and Automation progress publication. Direct seam tests cover these responsibilities. `AutomationScriptingControlPlaneGrpcService` delegates event catalog, patch/admission/schedule/dead-letter, and plugin-runtime flows to `AutomationEventControlPlaneService`, `AutomationPatchControlPlaneService`, and `AutomationPluginControlPlaneService`, with direct seam tests.
+
+Pre-v1 compatibility paths in the audited seams now have one current truth: Automation patch-status/readiness reads use readiness projections without nullable projection or durable fallback merging; fresh-schema `genrev:legacy` and `legacy:` effect-key sentinels are replaced by canonical generation revisions and deterministic `effect:<effectId>` keys. Migration baseline reset/squash execution is owned by the separate Flyway/reset slice, not this orchestration boundary. Game Session downstream test-fixture dependencies are explicit fixture-local implementation dependencies rather than transitive `testFixturesApi` exports; the gameplay harness retains them because it boots live downstream applications and mutable stub servers.
+
+### jOOQ, Flyway, and SQL Persistence
+
+`jOOQ + Flyway` is the only canonical SQL persistence runtime. Flyway migrations are the schema authority; `net.firedevops.firemud.jooq-conventions` generates DSL/record sources from migration SQL, normally under `net.firedevops.firemud.<servicebase>.jooq`, and services adopt repositories through `DSLContext` and generated types. The shared foundation is intentionally thin: Java time mappings are enabled, common transaction/pagination/filter/sort/JSON/timestamp/constraint-error helpers exist where repeated value is real, database-enum bindings remain consumer-driven, and JSON/structured columns retain the owning schema's explicit storage type. `automation-scripting-service` is the first-adopter proof and generates through the shared path with `./gradlew :automation-scripting-service:generateJooq` rather than service-local task wiring.
+
+All current SQL-backed business services have no Spring Data JPA repository surface and use explicit jOOQ repositories:
+
+- Account: identity, tenant membership, profiles, realm grants, email/password tokens, linked accounts, payment/subscription rows, and virtual-currency balances.
+- Automation Scripting: work items, readiness/pin/rollout projections, event/audit and handoff history, rollout/runtime history, plugin state, admission, authored scripts/bindings, schedules, and NPC/faction support.
+- Game Session: admission pointers/audit, prepared upgrades, feature flags, manifests, game instances, gameplay commands, runtime region status, tick batches/effects, and remote follow-up/result/coordinator records.
+- Game Design: versions/games/templates/assets, revisions, settings overrides, remap sets/entries, publication attempts and participant digests, release bundles, launch descriptors, asset purge workflows, and plugin publication/status rows.
+- Entity Management: characters, items, NPCs, actor state/conditions/resources, equipment/body layouts, friends, visible-reference counters, transfer audit, item/container/stack instances, inventory/equipment/room-ground projections, crafting recipes, and mutation-effect replay state.
+- Logging & Admin: moderation actions, player reports, log events, and moderation-policy reads; its log-event, moderation, and report repositories use shared timestamp helpers.
+- World Management: generation rules, authored topology and exits, design scope/epoch/revision ledger, spawn bindings, runtime world/region/zone/room instances and exits, and world-event history.
+- Social & Groups: account-scoped friends, guilds/members/storage/alliances, chat persistence and effect-id replay lookup, and mail messages.
+
+Repo-wide Hibernate/JPA build/runtime support, ORM configuration, and dead helpers have been removed. Common data runtime owns the JDBC/Flyway/Postgres contract without Hibernate default-schema assumptions; common saga uses explicit jOOQ repositories; shared Postgres-backed test support expresses service-schema boot once, including former H2-backed Game Session seams. `PostgresBackedServiceTestSupport` uses an explicit schema-to-module map rather than guessing module directories from schema names, matching reset-tooling truth. Logging & Admin saga dashboard availability is conditional on saga beans and fails closed when absent; Game Session no-database bootstrap/recovery beans are explicitly gated. Service boot, hosted manifests, Compose, and reset tooling use `flyway_schema_history_<service_schema>` consistently. Saga migration resources are bundled from `common-saga` and applied alongside service-local migrations in the owning service schema, not in a dedicated saga schema or separate common-library Flyway pass. Shared Gradle conventions now use SQL-era names (`sql-postgres-conventions` and `secured-sql-aop-service-conventions`). Logging & Admin and Social & Groups test profiles normalize H2 identifier casing where generated metadata needs it, while World Management's leftover H2 test dependency tail is removed. Social guild-member/storage/alliance migrations were also aligned with the current surrogate-id, tenant, and `Long`-identifier model rather than relying on JPA to mask drift.
+
+### Temporal Control-Plane Workflows
+
+Temporal is the shared durable substrate for long-lived, restart-safe, wait/timer-capable, resumable, operator-visible control-plane workflows. The shared runtime lives in `services/common-temporal`; services opt in through `net.firedevops.firemud.temporal-conventions`; `TemporalWorkerRegistrar` and `TemporalWorkerHost` provide worker hosting; `TemporalTaskQueueResolver` and `FiremudWorkflowIds` provide queue, workflow identity, and business-step identity conventions. The foundation includes canonical retry/timer, signal/query/update, and operator-read integration without speculative workflow logic. A world-management-module proof exercises the shared worker host/registration pattern without adding speculative workflow behavior to the foundation.
+
+The implemented adopters are world creation/activation/termination, publish/release, and script-patch readiness/rollout lifecycle. Their operator read models expose stable `workflowFamily` together with `workflowId`, `workflowRunId`, and `workflowStatus`; world-management, automation-scripting, and game-design proto/DTO metadata resolvers preserve those family constants. Publication, activation, readiness, cancellation, and runtime execution remain distinguishable rather than being collapsed into one status. The operator-facing documentation now teaches the same contract.
+
+`common-saga` remains the correct mechanism for short synchronous orchestration that does not need survive-restart execution, durable waiting, or operator-driven resume/retry/signal behavior. Gameplay ticks, Redis coordination, per-command execution, and hot runtime mutation stay on the tick/idempotency/reconciliation model and are not Temporal workflows. Temporal is not a generic CRUD job runner and new adopters require a concrete durable business process.
+
+### Ownership Summary
+
+| Owner | Live authority and capability | Contract boundary |
+| --- | --- | --- |
+| Common platform/security | Internal auth propagation, service identity parsing, gRPC app-error representation/observability, and proto time-field guard | Shared Java seams, gRPC helpers, Gradle/root verification |
+| Owning domain services | Domain authority, tenant/access enforcement, local transaction boundary, durable local state, and app-error mapping | Service REST/gRPC APIs and service-local Flyway schema |
+| Logging & Admin | Non-destructive log-event ingress, moderation policy definition/evaluation, moderation/report persistence, and operator projections | Audit/log-event and moderation/control-plane REST/gRPC contracts |
+| Game Session | Player-session authority, gameplay attestation, lifecycle finalization/compensation, tick runtime coordination, and gameplay control-plane delegation | Session/gameplay gRPC, attestation fields, Redis/runtime records, and durable SQL ledgers |
+| Common saga | Shared saga repository ownership and short synchronous saga persistence/runner contract | Schema-qualified jOOQ repositories and saga steps |
+| jOOQ/Flyway tooling | Generated relational access, migration history, service-schema conventions, and Postgres-backed proof support | Build/codegen tasks, Flyway resources, reset/bootstrap tooling |
+| Temporal | Durable control-plane workflow execution, identity/idempotency conventions, and canonical workflow operator read metadata | Workflow/activity contracts and operator projections |
+
+### Recorded Proof
+
+The evidence records focused and repository-level proof for the implemented seams. Time-contract proof includes `python3 -m unittest discover -s dev-tools/validation -p 'test_check_proto_time_fields.py'`, `./gradlew checkProtoTimeFields`, and `./gradlew lintMarkdown linkCheck`. Boundary hardening records touched-service tests/checks, `spotlessCheck`/`spotlessJavaCheck`, `./gradlew check`, and `./gradlew linkCheck lintMarkdown`; dedicated collaborator tests cover the extracted Game Session and Automation control-plane seams. Persistence convergence records `:common-saga:test`, `:common-saga:integrationTest`, `:common-test-support:testFixturesJar`, `:buildSrc:check`, affected service compilation, `./gradlew spotlessApply`, `./gradlew check`, and Markdown/link checks. Temporal operator proof covers `TemporalWorldLifecycleWorkflowMetadataResolverTest` and `WorldManagementGrpcServiceTest`, `TemporalScriptPatchReadinessWorkflowMetadataResolverTest` and `AutomationScriptingControlPlaneGrpcServiceTest`, `TemporalVersionPublishWorkflowMetadataResolverTest` and `GameDesignGrpcServiceTest`, plus `./gradlew linkCheck lintMarkdown`.
 
 ## Active Gaps
 
-- The time contract guard is live, but broader runtime adoption for cooldowns, buffs, conditions, scheduled effects, and richer gameplay-clock APIs remains future consumer-driven work.
-- New secured services and new gRPC surfaces must adopt the existing app-error/auth/attestation conventions; the current work does not claim every hypothetical future endpoint is already audited.
-- New workflow families require a concrete long-lived business process and an owning-domain state model; Temporal is not a generic substitute for every transaction or queue.
-- Future persistence changes must continue the jOOQ/Flyway model and service-local ownership; no remaining ORM/JPA migration lane is intended.
+- The shared time guard is implemented, but runtime cooldown state, common timed-state handling for buffs/conditions, scheduled-effect execution, and richer gameplay-clock APIs are not implemented by this tracker.
+- The bounded fan-out pulse scheduler and the separate Redis queue/lease control seam are live. Whether pulse scheduling should move to a different queue/lease scheduler remains a separate possible follow-up and requires real load evidence before design or implementation.
+- New secured endpoints and blocking gRPC clients must adopt JWT propagation, explicit service identity/attestation where delegated gameplay is involved, and normal `ErrorDetail` application failures. This record does not pre-audit hypothetical future surfaces.
+- Future SQL work must use jOOQ/Flyway and owning service schemas; there is no intended remaining ORM/JPA migration lane. A new shared persistence abstraction would require an explicit design decision.
+- New Temporal workflow families require a concrete long-lived business process, owning-domain state, and a reason to need durable waits/resume/operator control. Gameplay/tick runtime and small CRUD orchestration remain outside Temporal.
+- Destructive pre-v1 Flyway baseline restatement is owned by the separate migration-squash/reset slice; this tracker records the ownership boundary but does not claim that follow-up as part of the runtime-contract implementation.
 
 ## To Discuss
 
-No competing target state is currently recorded for time-domain naming, normal-response gRPC application errors, non-destructive audit boundaries, jOOQ/Flyway persistence, or deliberately bounded Temporal use. Future design discussion is required before defining a central gameplay clock API, a new workflow family, cross-domain compensation semantics, or a new shared persistence abstraction. The unchanged source evidence retains detailed historical hardening and migration context.
-
-## Service and Contract Map
-
-| Owner | Current responsibility | Primary contract boundary |
-| --- | --- | --- |
-| Common libraries/platform core | Shared auth propagation, error representation, observability, time-field guards | Shared Java modules, Gradle verification, gRPC helpers |
-| Owning domain services | Domain authority, transaction boundary, durable local state, app-error mapping | Service REST/gRPC APIs and service-local relational schema |
-| Logging & Admin | Non-destructive audit ingress and operator read/write projection | Audit/log-event and control-plane REST/gRPC contracts |
-| Game Session | Session attestation, lifecycle convergence, durable gameplay control-plane delegation | Gameplay/session gRPC and durable runtime records |
-| jOOQ and Flyway tooling | Generated relational access and canonical migration history | Build/codegen tasks, Flyway migrations, validation scripts |
-| Temporal | Durable long-lived workflow execution and canonical workflow status | Workflow/activity contracts and operator projections |
-
-Focused contract, auth, audit, transaction, persistence, migration, and workflow proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
+No competing current target state is recorded for explicit time-domain naming, normal-response gRPC application errors, non-destructive audit ingress, jOOQ/Flyway persistence, schema-qualified shared saga ownership, or bounded Temporal use. Before adding a central gameplay clock/scheduler API, a new Temporal family, cross-domain compensation semantics, or a new shared persistence abstraction, the owning design must settle the boundary and its proof obligations. The existing choices for `workflowFamily`, shared saga repositories, and the audit/moderation enforcement split are resolved rather than open alternatives.
 
 ## Source Evidence
 
