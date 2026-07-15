@@ -63,6 +63,8 @@ The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design disc
 - Subagents must not run Gradle, Docker, smoke, or repository-wide validation commands unless the main thread explicitly delegates one specific command. Sol runs consolidated formatting and validation after integrating delegated work so parallel agents do not compete for local resources or corrupt shared results.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
 - Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
+- For an exhaustive Spark audit, require an explicit per-item coverage ledger, named source/design documents read, and an incomplete-review gate; do not accept an unsupported `No findings` summary as evidence of full coverage.
+- Treat Spark as opportunistic defect discovery using its separate allowance. If it does not satisfy the declared coverage gate, use Luna for exhaustive bounded checking and Terra for independent final verification rather than treating the Spark run as review completion.
 
 ## Execution Style
 
