@@ -343,6 +343,43 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/automatic-review-rate-limited.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2099-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/automatic-rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/review-rate-limit-expired.json" <<'JSON'
 {
   "data": {
@@ -613,6 +650,12 @@ grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+
+expect_failure_output "$TMP_DIR/automatic-review-rate-limited.json" "$TMP_DIR/automatic-review-rate-limited.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/automatic-review-rate-limited.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/automatic-review-rate-limited.out"
+grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/automatic-review-rate-limited.out"
 
 expect_failure_output "$TMP_DIR/review-full-command-rate-limited.json" "$TMP_DIR/review-full-command-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

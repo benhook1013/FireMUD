@@ -354,6 +354,11 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and latest_commit_at_dt is not None
         and latest_coderabbit_review_finished_dt >= latest_commit_at_dt
     )
+    latest_review_trigger_dt = latest_explicit_review_request_dt
+    if latest_commit_at_dt is not None and (
+        latest_review_trigger_dt is None or latest_commit_at_dt > latest_review_trigger_dt
+    ):
+        latest_review_trigger_dt = latest_commit_at_dt
     for comment in pr["comments"]["nodes"]:
         if (comment.get("author") or {}).get("login", "") != "coderabbitai":
             continue
@@ -363,9 +368,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         body = comment.get("body", "")
         if REVIEW_LIMIT_MARKER not in body and REVIEW_LIMIT_MESSAGE not in body:
             continue
-        if latest_explicit_review_request_dt is None or (
-            created_at_dt < latest_explicit_review_request_dt
-        ):
+        if latest_review_trigger_dt is not None and created_at_dt < latest_review_trigger_dt:
             continue
         if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
             continue
