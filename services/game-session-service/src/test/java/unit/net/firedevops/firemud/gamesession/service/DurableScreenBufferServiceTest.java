@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,9 +34,10 @@ class DurableScreenBufferServiceTest {
   private final ReconnectionSettingsResolver settingsResolver =
       Mockito.mock(ReconnectionSettingsResolver.class);
   private final ScreenBufferService hotCache = Mockito.mock(ScreenBufferService.class);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final List<ResumeTranscriptEntry> persistedEntries = new ArrayList<>();
   private final DurableScreenBufferService service =
-      new DurableScreenBufferService(repository, settingsResolver, hotCache);
+      new DurableScreenBufferService(repository, settingsResolver, hotCache, meterRegistry);
 
   @BeforeEach
   void setUp() {
@@ -131,6 +133,46 @@ class DurableScreenBufferServiceTest {
     verify(repository, never())
         .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
     verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+  }
+
+  @Test
+  void appendRecordsAReplaceCacheFailure() {
+    Mockito.doThrow(new IllegalStateException("Redis unavailable"))
+        .when(hotCache)
+        .replace(anyLong(), anyLong(), anyLong(), any());
+
+    service.append(
+        TENANT_ID,
+        GAME_INSTANCE_ID,
+        CHARACTER_ID,
+        List.of(ScreenBufferService.BufferedEntry.fromText("Recent room line\\n")));
+
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.reconnect_transcript.hot_cache_sync_failures",
+                    "operation",
+                    "replace")
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void getRecordsAClearCacheFailure() {
+    Mockito.doThrow(new IllegalStateException("Redis unavailable"))
+        .when(hotCache)
+        .clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+
+    service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.reconnect_transcript.hot_cache_sync_failures",
+                    "operation",
+                    "clear")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test

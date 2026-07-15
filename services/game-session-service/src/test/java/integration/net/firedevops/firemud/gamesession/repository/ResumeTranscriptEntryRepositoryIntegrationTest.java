@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -94,7 +95,6 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     ResumeTranscriptEntry second = entry("Second\n", occurredAt);
     List<ResumeTranscriptEntry> entries = List.of(first, second);
 
-    repository.assignOrderingTokens(entries);
     repository.saveAll(entries);
 
     assertThat(first.getId()).isPositive();
@@ -112,7 +112,8 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
                 new FiremudReconnectionProperties.Policy(180_000L, true),
                 new FiremudReconnectionProperties.Buffer(60_000L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
     initial.append(
         22L,
         7L,
@@ -120,7 +121,8 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
         List.of(ScreenBufferService.BufferedEntry.fromText("Durable reconnect line\n")));
 
     DurableScreenBufferService recreated =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
 
     assertThat(recreated.get(22L, 7L, 13L))
         .map(ScreenBufferService.BufferedScreen::protocolText)
@@ -203,7 +205,8 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
                 new FiremudReconnectionProperties.Policy(180_000L, true),
                 new FiremudReconnectionProperties.Buffer(1L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
     initial.append(
         22L,
         7L,
@@ -221,7 +224,8 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
                 null)));
 
     DurableScreenBufferService recreated =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
 
     assertThat(recreated.get(22L, 7L, 13L)).isEmpty();
   }

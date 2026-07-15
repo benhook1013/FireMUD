@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -30,18 +32,27 @@ import org.springframework.util.StringUtils;
 public class DurableScreenBufferService implements ScreenBufferService {
   private static final Logger log = LoggerFactory.getLogger(DurableScreenBufferService.class);
   private static final long NO_TTL_MILLIS = 0L;
+  private static final String HOT_CACHE_SYNC_FAILURES_METRIC =
+      "gamesession.reconnect_transcript.hot_cache_sync_failures";
 
   private final ResumeTranscriptEntryRepository repository;
   private final ReconnectionSettingsResolver settingsResolver;
   private final ScreenBufferService hotCache;
+  private final Counter replaceHotCacheFailureCounter;
+  private final Counter clearHotCacheFailureCounter;
 
   public DurableScreenBufferService(
       ResumeTranscriptEntryRepository repository,
       ReconnectionSettingsResolver settingsResolver,
-      ScreenBufferService hotCache) {
+      ScreenBufferService hotCache,
+      MeterRegistry meterRegistry) {
     this.repository = repository;
     this.settingsResolver = settingsResolver;
     this.hotCache = hotCache;
+    this.replaceHotCacheFailureCounter =
+        meterRegistry.counter(HOT_CACHE_SYNC_FAILURES_METRIC, "operation", "replace");
+    this.clearHotCacheFailureCounter =
+        meterRegistry.counter(HOT_CACHE_SYNC_FAILURES_METRIC, "operation", "clear");
   }
 
   @Override
@@ -263,6 +274,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
     try {
       hotCache.replace(tenantId, gameInstanceId, characterId, entries);
     } catch (RuntimeException ex) {
+      replaceHotCacheFailureCounter.increment();
       log.warn("Failed to replace reconnect transcript cache", ex);
     }
   }
@@ -271,6 +283,7 @@ public class DurableScreenBufferService implements ScreenBufferService {
     try {
       hotCache.clear(tenantId, gameInstanceId, characterId);
     } catch (RuntimeException ex) {
+      clearHotCacheFailureCounter.increment();
       log.warn("Failed to clear reconnect transcript cache", ex);
     }
   }

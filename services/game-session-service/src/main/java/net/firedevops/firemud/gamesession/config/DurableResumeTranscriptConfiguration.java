@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.cache.RedisScreenBufferService;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -22,14 +23,15 @@ public class DurableResumeTranscriptConfiguration {
       ResumeTranscriptEntryRepository repository,
       ReconnectionSettingsResolver settingsResolver,
       ObjectProvider<StringRedisTemplate> redisTemplateProvider,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry) {
     ScreenBufferService hotCache =
         Optional.ofNullable(redisTemplateProvider.getIfAvailable())
             .<ScreenBufferService>map(
                 redisTemplate ->
                     new RedisScreenBufferService(redisTemplate, objectMapper, settingsResolver))
             .orElseGet(NoopScreenBufferService::new);
-    return new DurableScreenBufferService(repository, settingsResolver, hotCache);
+    return new DurableScreenBufferService(repository, settingsResolver, hotCache, meterRegistry);
   }
 
   private static final class NoopScreenBufferService implements ScreenBufferService {

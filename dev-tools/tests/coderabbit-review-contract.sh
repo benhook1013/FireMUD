@@ -631,7 +631,9 @@ expect_failure_output "$TMP_DIR/old-rate-limit-before-later-request.json" "$TMP_
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "latest_review_request_rate_limited=false" "$TMP_DIR/old-rate-limit-before-later-request.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/old-rate-limit-before-later-request.out"
-! grep -q "rate limited; do not retrigger yet" "$TMP_DIR/old-rate-limit-before-later-request.out"
+if grep -q "rate limited; do not retrigger yet" "$TMP_DIR/old-rate-limit-before-later-request.out"; then
+  exit 1
+fi
 
 superseded_outcome_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/superseded-review-outcome.json")"
 grep -q "review_finished_after_latest_request=true" <<<"$superseded_outcome_output"
