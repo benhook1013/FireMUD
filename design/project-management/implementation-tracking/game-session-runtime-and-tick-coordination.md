@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates the live Game Session execution substrate by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -31,27 +31,84 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Tick concepts and invariants](../../architecture/system-architecture-tick-concepts-and-invariants.md) defines durable execution identity, ordering, ownership, and replay boundaries.
+- [Tick execution flows](../../architecture/system-architecture-tick-execution-flows.md) defines ingress, staging, batch drain, effect application, and recovery.
+- [Tick failures and operations](../../architecture/system-architecture-tick-failures-and-operations.md) and the [tick incident runbook](../../architecture/system-architecture-tick-incident-runbook.md) define pressure, failure, and operator response.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns the live command, batch, effect, and runtime ownership records.
+- [Automation Scripting Service](../../architecture/microservices/automation-scripting-service/README.md), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) consume or expose the canonical runtime seams rather than duplicating their truth.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Durable Command Ingress and Status
+
+An accepted gameplay mutation receives a durable `commandId` before Redis staging. The `gameplay_command` ledger stores sanitized command identity, actor and admitted runtime scope, ordering/provenance facts, status, and correlation fields. Its current lifecycle distinguishes `ACCEPTED`, `STAGED`, `DRAINED`, `RETRY_QUEUED`, `FAILED`, and `LOST_BEFORE_STAGING`; startup recovery terminalizes accepted commands that never reached staging instead of leaving them ambiguous.
+
+The command identifier flows through queue staging, batch selection, durable effects, retry, remote execution, logs, and the Game Session control plane. `GetGameplayCommandStatus` is the current canonical status read, and Logging & Admin exposes the bounded tenant-qualified REST read. The ledger deliberately records sanitized command text so credential-bearing input cannot become durable command history.
+
+### Bounded Scheduling and Queue Coordination
+
+Redis remains the fast coordination plane for locks, queues, pending state, wake-up hints, and scheduling cadence. It is not the only execution record. The scheduler allows at most one pending or running tick per current runtime scope, merges overlapping pulses rather than accumulating debt, and exposes scheduled, merged, rejected, paused, queue-depth, and sustained-pressure signals. Gameplay and automation tick keys use distinct Redis namespaces.
+
+The present pressure policy is observability-first: saturation does not silently alter gameplay timing. Operators receive explicit metrics, conservative threshold counters and gauges, and a dedicated incident runbook; a future adaptive timing policy requires separate evidence and a deliberate design decision.
+
+### Durable Batches, Effects, and Replay
+
+Each staged batch has a durable `tick_batch` record and each selected command has a durable `tick_effect` record linked to its `commandId` where applicable. The sealed selected-work manifest stores a digest, comparable ordering, source kind/state, due-point, admitted routing, automation, and target-aggregate facts. Batch states are `STAGED`, `DRAINED`, `APPLIED`, and `ABANDONED`; effect states are `STAGED`, `DRAINED`, `APPLIED`, `REPLAY_NOOP`, `REJECTED`, and `ABANDONED`.
+
+Replay and repair rebuild from durable manifest and ledger truth rather than guessing from Redis residue. Redis-only residue is safely returned to the queue, manifest divergence is explicit, and post-drain recovery resumes from `DRAINED` effects. Current built-in state-changing commands, including movement, inventory/equipment/container mutation, and communication/activity mutation, execute through this durable path. Pure view commands remain direct reads until they have a real correctness reason to become durable work.
+
+### Ownership, Epochs, and Fencing
+
+`runtime_region_status` provides the durable current owner-of-record for the live queue boundary, including `regionId`, `regionEpoch`, opaque `executorFence`, owner identity, paused state, last committed batch, and backlog truth. The present queue boundary remains game-instance scoped, but it records explicit region identity so later true partitioning does not require a retroactive contract change.
+
+Pause, resume, and recovery advance the durable epoch/fence timeline. Batch creation captures that snapshot, and drain or effect application fails closed when it no longer matches: stale work is abandoned and eligible commands are requeued for a fresh owner. Game Session runtime reads prefer explicit region identity and reject selector disagreement rather than flattening stale same-instance state into a current queue.
+
+### Cross-Region Follow-Ups and Automation Handoff
+
+Cross-region work is durable on both sides of the ownership boundary. Origin scheduling creates coordinator and follow-up records with immutable routing, payload-kind, source, script, plugin, dispatch, and command provenance. Target execution claims fair-selected due follow-ups into ordinary durable batch/effect work and produces one deterministic origin-addressed result row per follow-up. Origin reconciliation is the only path that advances coordinator truth, waits for linked target-command convergence where applicable, handles late results without overwriting original terminal causes, and fails closed on ownership-epoch drift.
+
+The currently live payload families are `enqueue_automation_command`, `enqueue_gameplay_command`, and `trigger_script_event`. They validate before durable schedule writes, use persisted row authority rather than JSON reconstruction, and keep target command identity directly on remote rows. Automation uses the same substrate for cross-scope emissions rather than weakening them into local-only handoff.
+
+### Operator Runtime Readback and Control-Plane Boundaries
+
+Game Session owns command, remote, and runtime ownership projection. Its gRPC facade is transport, authorization, and application-error delegation over dedicated collaborators rather than a second domain implementation. Logging & Admin consumes those canonical reads for command status, remote coordinators/follow-ups/results, and tick remediation ownership status; it does not create a parallel control-plane database.
+
+The ownership status read accepts exactly one current selector, `gameInstanceId` or `regionId`, and returns current owner, epoch/fence, last committed batch, and backlog/drain-lag data. Remote list and point reads expose first-class durable row authority and bounded filters rather than requiring operators to parse payload JSON or stitch together private storage.
+
+### Lifecycle and Runtime Feature Authority
+
+Game Session lifecycle rows use optimistic locking, Redis session context writes use watched multi-key retries, and World termination does not hold a database transaction open across Entity Management cleanup. Same-request termination retries continue from `TERMINATING` rather than depending on callers discovering a changed epoch.
+
+Runtime feature-flag writes enter through Logging & Admin but land with the runtime owner. Consumers read that single canonical authority; split feature-flag persistence has been retired.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- The durable ownership record is live at the current game-instance queue boundary. True region-partitioned execution, lease-owner forwarding from session front ends, and a broader cluster scheduler remain future work.
+- The current scheduler intentionally has no adaptive gameplay-timing feedback loop. Any such policy needs preview or production-like operating data and an explicit design decision.
+- Later authored/game-defined mutation families must begin on the durable command/effect path. Read-only commands remain direct by design, and no generalized conversion of all views or metadata commands is planned.
+- Current remote payload families and producer paths are live, but new timer, retry, script, and cross-region work sources must enter through the same selected-work, fence, and durable-result contracts rather than adding side channels.
+- Broader historical operator dashboards and full region-level UI are outside the current bounded readback surface.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded. Future design discussion is required before introducing adaptive scheduling, real region partitioning, a new durable work-source family, or a new state-changing gameplay path that might otherwise bypass the command/effect substrate. The unchanged evidence retains the detailed source-specific follow-up context.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Game Session | Command ledger, queue staging, ticks, durable batches/effects, ownership, remote runtime, control-plane projection | Game Session gRPC/control plane; durable PostgreSQL records; Redis coordination |
+| Automation Scripting | Scheduler/timer origins and local or remote gameplay-command handoff | Automation ingress and Game Session command/follow-up APIs |
+| Game Logic and domain services | Execute admitted durable effects in their owning domains | Durable effect ids, command provenance, owner-fence checks |
+| Logging & Admin | Tenant-guarded operator ingress and readback, pause/resume remediation | REST/OpenAPI over canonical Game Session control-plane reads |
+| World Management and Entity Management | Lifecycle cleanup and domain mutations invoked from durable execution | Termination and domain effect contracts |
+| Redis and PostgreSQL | Fast coordination versus durable execution/ownership truth | Queue/lock/pending keys; command, batch, effect, ownership, and remote ledgers |
+
+Focused scheduler, durable-ledger, remote-runtime, operator-readback, lifecycle, and fencing proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-18-11-task-list-migrate-live-gameplay-commands-onto-durable-execution-path-vertical-slice-1-111
 

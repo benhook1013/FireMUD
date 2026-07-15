@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+Lossless domain transposition is complete. This tracker now consolidates the migrated implementation record by capability while retaining the exact source appendix below. The consolidated record remains source-backed until the required Spark coverage audit verifies each migrated range; canonical target-state design remains under [design/architecture](../../architecture/README.md).
 
 ## Implementation Record Index
 
@@ -10,38 +10,84 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 | Capability and ownership focus | Source-declared status | Source range | Evidence |
 | --- | --- | --- | --- |
-| [Movement and Topology Settings Vertical Slice Task List](../vertical-slices/02.12-task-list-movement-and-topology-settings-vertical-slice.md) - Runtime movement and topology settings | implemented for pre-06 scope | 1-19, 31-55, 65-69 | [source evidence](#source-02-12-task-list-movement-and-topology-settings-vertical-slice-1-19-31-55-65-69) |
+| [Movement and Topology Settings Vertical Slice Task List](../vertical-slices/02.12-task-list-movement-and-topology-settings-vertical-slice.md) - Runtime movement and topology settings | first settings boundary implemented | 1-19, 31-55, 65-69 | [source evidence](#source-02-12-task-list-movement-and-topology-settings-vertical-slice-1-19-31-55-65-69) |
 | [`02.18.15` World and Session Lifecycle Concurrency Hardening](../vertical-slices/02.18.15-task-list-world-and-session-lifecycle-concurrency-hardening-vertical-slice.md) - World lifecycle transaction boundary and termination ownership | complete | 25-27, 44 | [source evidence](#source-02-18-15-task-list-world-and-session-lifecycle-concurrency-hardening-vertical-slice-25-27-44) |
 | [World Lifecycle Temporal Migration Vertical Slice](../vertical-slices/02.20.2-task-list-world-lifecycle-temporal-migration-vertical-slice.md) - Audited primary runtime or service owner | implemented at the current world lifecycle boundary | 1-26 | [source evidence](#source-02-20-2-task-list-world-lifecycle-temporal-migration-vertical-slice-1-26) |
-| [Data-Driven LOOK Vertical Slice Task List](../vertical-slices/03-task-list-data-driven-look-vertical-slice.md) - Authoritative room snapshot and exit topology | the main LOOK flow and several regression tests are implemented; this document continues to describe the target-state behaviour, with implementation details and | 1-40 | [source evidence](#source-03-task-list-data-driven-look-vertical-slice-1-40) |
+| [Data-Driven LOOK Vertical Slice Task List](../vertical-slices/03-task-list-data-driven-look-vertical-slice.md) - Authoritative room snapshot and exit topology | core flow live; later overlays remain separate work | 1-40 | [source evidence](#source-03-task-list-data-driven-look-vertical-slice-1-40) |
 | [`03.1` Same-Fence LOOK Read Consistency](../vertical-slices/03.1-task-list-same-fence-look-read-consistency-vertical-slice.md) - Same-fence room-read consistency | complete | 1-50 | [source evidence](#source-03-1-task-list-same-fence-look-read-consistency-vertical-slice-1-50) |
 | [03.2 Task List: Runtime Room Identity Contract Convergence Vertical Slice](../vertical-slices/03.2-task-list-runtime-room-identity-contract-convergence-vertical-slice.md) - Canonical runtime room identity and world mapping | implementation-complete at the current touched branch boundary; reopen only if fresh proof exposes a remaining public/runtime room identity drift seam | 1-218 | [source evidence](#source-03-2-task-list-runtime-room-identity-contract-convergence-vertical-slice-1-218) |
-| [Movement Vertical Slice Task List](../vertical-slices/05-task-list-movement-vertical-slice.md) - Movement topology and authoritative location mutation | completed for this PR. Movement is now wired end-to-end through Game Session, Game Logic, and World Management, with WebSocket and Telnet parity coverage plus r | 1-67 | [source evidence](#source-05-task-list-movement-vertical-slice-1-67) |
+| [Movement Vertical Slice Task List](../vertical-slices/05-task-list-movement-vertical-slice.md) - Movement topology and authoritative location mutation | end-to-end directional movement complete; broader travel remains later work | 1-67 | [source evidence](#source-05-task-list-movement-vertical-slice-1-67) |
 | [World Design Mutation API Surface Vertical Slice](../vertical-slices/08.5-task-list-world-design-mutation-api-surface-vertical-slice.md) - World-owned draft topology and mutation enforcement | complete | 1-9, 11-23, 27-48, 52-61, 63-84 | [source evidence](#source-08-5-task-list-world-design-mutation-api-surface-vertical-slice-1-9-11-23-27-48-52-61-63-84) |
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [World Management service architecture](../../architecture/microservices/world-management-service/README.md), [API contracts](../../architecture/microservices/world-management-service/api-contracts.md), [runtime and data](../../architecture/microservices/world-management-service/runtime-and-data.md), and [world creation workflow](../../architecture/microservices/world-management-service/world-creation-workflow.md) define world ownership, lifecycle, and topology boundaries.
+- [Game Logic service architecture](../../architecture/microservices/game-logic-service/README.md) and [API contracts](../../architecture/microservices/game-logic-service/api-contracts.md) define authoritative gameplay aggregation over world and entity reads.
+- [Game Session protocols](../../architecture/microservices/game-session-service/protocols.md) and [runtime and data](../../architecture/microservices/game-session-service/runtime-and-data.md) define player command ingress, session binding, and client-facing room refresh.
+- [System settings model](../../architecture/system-architecture-settings-model.md) remains the target-state authority for configurable movement and topology policy.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Runtime Room Identity
+
+- `roomInstanceId` is the opaque canonical runtime identity at every cross-service boundary. Current canonical examples use the `R-<roomInstanceRowId>` form; callers must not infer World Management storage semantics from it.
+- World Management owns the only mapping between that runtime identity and its numeric `roomInstanceRowId` or record-key persistence seams. Internal room rows and room-exit foreign keys use distinct row or record naming rather than leaking as `roomInstanceId`.
+- Shared attestation, read fences, Game Session routing, Game Logic aggregation, Entity Management room-ground ingress, movement idempotency, and automation event publication reject legacy storage-shaped or malformed room identities before dispatch, replay, or persistence.
+
+### Authoritative Room Reads and LOOK
+
+- World Management supplies the runtime room snapshot and exit topology. Entity Management supplies visible room-ground state through the room-attached containment model; nested container contents are outside the base room view.
+- Game Logic owns the structured `LookResult` and requires World Management and Entity Management read fences to be present and equal before composing a result. Mixed or missing fences return an explicit read-fence failure rather than a potentially inconsistent view.
+- Game Session renders `LOOK` and `QUICKLOOK`, owns transcript replay and prompt emission, and always obtains a fresh `LOOK` after reconnect restoration or successful movement rather than serving a rendered-room cache as authority.
+
+### Movement and Location Mutation
+
+- The baseline `MOVE` and `GO` loop is live across WebSocket and Telnet: Game Session accepts an authenticated gameplay command, Game Logic resolves the request against authoritative topology, World Management owns the location transition, and Game Session refreshes the destination room with a fresh `LOOK`.
+- Invalid exits and downstream failures remain stable application failures without disconnecting the player. The movement path has command metrics and transport-parity proof, including reconnect-after-move behavior.
+- `movement.postMoveView` is the current settings home for post-move room refresh. `worldTopology.scopeModel` and `worldTopology.regionBehavior` provide typed configuration homes for later topology-sensitive behavior without hard-coded policy forks.
+
+### World Lifecycle
+
+- World creation, activation, failure, termination, and retry or repair lifecycle orchestration use the `world-lifecycle` Temporal workflow when Temporal is enabled, while local non-Temporal contexts delegate to the same extracted command service.
+- Lifecycle reads expose deterministic workflow identity and execution status through the control-plane read surface. Transaction boundaries, remote cleanup ordering, epoch checks, and lifecycle validation are fenced so blocking remote calls do not remain inside a local transaction.
+
+### Draft World Topology and Generation
+
+- World Management exposes typed `ApplyWorldDesignMutation` operations for Draft regions, zones, rooms, exits, generation rules, spawn bindings, and generated subtrees. Revision-ledger idempotency and aggregate or scope epoch checks make duplicate writes no-op and stale writes fail as conflicts.
+- Declared generation scopes use typed scope enums and one canonical positive scope-id reader. `REPLACE_SCOPE` and `SEED_APPEND_ONLY` enforce deterministic subtree replacement or append-only behavior, including topology, generation-rule, and spawn-binding constraints.
+- `GetDraftDesignDigest(versionId)` includes the design families that affect publish semantics. Entity references are validated through the canonical Entity Management seam; Automation and Scripting does not author topology, bindings, or live entities as a design-time side effect.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Broader travel, pathfinding, combat adjacency, richer movement failure semantics, and additional client polish are not part of the completed directional-movement baseline.
+- Room-view overlays such as hazards or combat state, richer visibility policy, and inspection of nested container contents remain later player-experience and gameplay work; they must extend the same authoritative snapshot and fence model.
+- `worldTopology` currently establishes a configuration home for later scope-sensitive actions such as `SHOUT`; it does not implement those actions.
+- Later world-generation stages, delayed repair, richer generation payloads, provenance, and broader editor callers may extend the existing workflow and mutation contracts. They must not create parallel lifecycle or Draft-mutation paths.
+- The current `R-...` runtime room identity is safe at public and cross-service boundaries, but the broader model still carries two meanings under the `roomInstanceId` name: an opaque gameplay routing identifier and a numeric World Management row identity. A future canonical room-id contract must deliberately converge that semantic split rather than preserving it as permanent dual meaning.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is recorded for the current runtime-room identity, same-fence `LOOK`, directional movement, lifecycle, or Draft-mutation boundaries. Future work should enter this tracker only when it needs a decision about:
+
+- a new room-view overlay or visibility fact that changes the authoritative `LookResult` composition contract;
+- new topology-sensitive player actions beyond the settings homes already in place;
+- travel or pathfinding semantics that cannot be expressed as an ordinary authoritative exit transition; or
+- a new generation or repair phase that materially changes the durable world-lifecycle workflow; or
+- canonical room-id convergence, including the replacement of the current routing-token versus numeric-row-id dual meaning.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Public or shared contract | Evidence focus |
+| --- | --- | --- | --- |
+| World Management | Runtime room mapping, topology, location mutation, lifecycle, and Draft world mutation | `RoomInstanceRef`, room snapshot/read APIs, lifecycle control-plane reads, `ApplyWorldDesignMutation`, `GetDraftDesignDigest` | Runtime-id rejection and mapping, exit resolution, lifecycle fencing, mutation idempotency, scope epochs, digest coverage |
+| Game Logic | Same-fence room/entity aggregation and movement resolution | Structured `LookResult`, read-fence errors, movement result | Equal-fence composition, legacy-room rejection, valid and invalid exit handling |
+| Entity Management | Visible room-ground state and room-scoped containment | Room-scoped entity and inventory reads | Canonical runtime-room ingress, room-ground scope, matching entity read fence |
+| Game Session | Text command ingress, gameplay room binding, rendering, replay, and post-move refresh | `LOOK`, `QUICKLOOK`, `MOVE` / `GO`, session routing and attestation inputs | WebSocket/Telnet parity, fresh room read after movement or reconnect, malformed-room rejection before transport |
+| Game Design and shared platform contracts | Settings publication and Draft-world callers | `movement.*`, `worldTopology.*`, scoped settings, revision caller path | Effective settings resolution and caller proof without alternate write paths |
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used to audit the consolidated implementation record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-12-task-list-movement-and-topology-settings-vertical-slice-1-19-31-55-65-69
 

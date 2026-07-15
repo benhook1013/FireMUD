@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates player-facing command, presentation, communication, presence, and client behavior by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -49,27 +49,85 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Player command model](../../architecture/system-architecture-player-command-model.md) defines command interpretation, stage behavior, typed metadata, and dispatch policy.
+- [Input, output, and presentation](../../architecture/system-architecture-input-output-and-presentation.md) defines structured output, rendering, replay, prompts, localization, and protocol framing.
+- [Authentication and authorization](../../architecture/system-architecture-authentication.md) defines gameplay presence, privacy, elevated actor policy, and admission stages.
+- [Reconnection](../../architecture/system-architecture-reconnection.md) defines bounded replay and redraw behavior.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [Social Groups Service](../../architecture/microservices/social-groups-service/README.md) define the owning service boundaries for player-facing behavior.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Admission and Core Text Commands
+
+Telnet and WebSocket share the same stage-aware text command flow. `WORLDS`, `LOGIN`, and `PLAY` form the live admission path, with optional realm and character discovery where the selected game requires it. Stage failures are explicit rather than falling through to gameplay behavior, and trusted transport bootstrap data remains hidden infrastructure metadata rather than a typed player command.
+
+Built-ins are registered and dispatched through the canonical registry. Interpretation is token-first and deterministic: built-in commands take precedence, typed payloads retain the parsed command shape, aliases and movement forms resolve through registry metadata, and unknown or malformed input does not become an implicit best-match command.
+
+### Command Capability, Classification, and Activity
+
+Standard optional command families are governed by one effective tenant/game `commandCapabilities` policy rather than service-local booleans. The current capability domain covers social, presence, inventory, and command history. Game Session stage-gates then capability-gates commands before dispatch, `HELP` hides disabled capabilities, direct disabled invocation returns `FEATURE_UNAVAILABLE`, and Game Logic repeats the social gate at its gRPC ingress.
+
+Command metadata distinguishes accepted command activity from meaningful gameplay activity. That classification drives presence, prompts, replay eligibility, policy checks, and later scripting/action consumers without treating every received line as player progress. More complete normalized envelopes, NPC targeting, ambiguity handling, localized aliases, and broader metadata consumers remain later work.
+
+### Structured Output, Presentation, and Replay
+
+Player-visible results use structured `PlayerOutput` payloads and renderer-owned protocol framing. Text transports receive derived lines and prompts; first-party WebSocket consumers receive structured envelopes. `LOOK`, `QUICKLOOK`, inventory-family views, `WHO`, friends, browse views, prompts, `BRIEF`, color modes, and localization use explicit typed payload or presentation metadata rather than relying on human-facing title inference.
+
+Reconnect output is bounded and durable. Structured transcript entries are the source of truth; rendered text is derived compatibility/cache data. Durable storage and a Redis hot cache support recent-output replay, ordering, retention, and expiry without turning reconnect replay into a full player archive. Fresh room reads remain authoritative rather than serving stale rendered snapshots.
+
+### LOOK, Localization, and Room Presentation
+
+`LOOK` and `QUICKLOOK` produce structured room views from current World Management state, with renderer-owned long-description suppression for quick look. Built-in text uses stable keys and structured variables, while authored room and exit content supports stored localized variants with locale fallback. Runtime presentation uses stored templates and content; it does not depend on live translation.
+
+Effective presentation settings provide platform defaults plus tenant/game overrides for room refresh, `BRIEF`, color, and prompt policy. Reconnection retention remains an operator-visible runtime policy at the current boundary. Broader localized item, lore, and world-content adoption, plus final combat-aware refresh policy, remain separate follow-through.
+
+### Communication and Recipient Delivery
+
+`SAY`, `WHISPER`, and online `TELL` use the shared Game Session to Game Logic to Social Groups path. Game Logic owns command intent, target and scope resolution, perception, and outcome assembly. Social Groups owns applicable membership, moderation, history, and fanout. Game Session renders and delivers recipient output across generic WebSocket and Telnet transports.
+
+The live boundary includes same-room `WHISPER` validation, metadata-only whisper observers, recipient delivery, speech normalization, and moderation policy enforcement at admission and send paths. Rich observer/interceptor views, configurable propagation, offline tell, `SHOUT`, first-party/MCP-aware recipient presentation, and a final raw-versus-rendered transcript policy remain future work.
+
+### Presence, Friends, Privacy, and Elevated Visibility
+
+Gameplay presence is a Redis-backed runtime authority distinct from authenticated session context. `WHO` reads live current-game presence, groups gods before players, and surfaces canonical `ACTIVE`, automatic-AFK, and explicit-AFK state. The lifecycle coordinator updates live and bounded recent presence through `PLAY`, accepted command activity, disconnect, reconnect, takeover, and `LOGOUT`, preserving disposition rather than flattening all departures to one timestamp.
+
+Friendship is account-scoped while live identity remains character-shaped. Friends reads, filters, detail, summaries, and mutations consume canonical account presence and privacy rules. `PUBLIC`, `FRIENDS_ONLY`, `PRIVATE`, and `HIDDEN_STAFF` are policy values. Elevated actors remain ordinary player actors with capabilities, not a separate identity species; the detailed staff capability and hidden-mode implementation is deliberately still future work.
+
+### Help and First-Party Client Baseline
+
+The current `HELP` surface is code-backed platform help, filtered by command capability. A React/Vite client baseline with MUI and TanStack Query exists, and the first-party client consumes structured WebSocket output. A dedicated web application service and browser asset-hosting boundary remain planned rather than implied by the present frontend baseline.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Command interpretation needs later work for a full normalized staged envelope, NPC targeting, explicit ambiguity outcomes, localized aliases, a discoverable active registry, and broader metadata/policy consumers.
+- The reconnect transcript is intentionally a bounded recent-output facility. Complete durable player history, archive/export, and any player-controlled export destination are separate future capabilities.
+- Communication has no offline tell, `SHOUT`, richer interception, configurable propagation, or first-party/MCP-specific recipient rendering at the current boundary.
+- Presence has bounded current and recent state, but broader activity-engine consumers, richer recent-presence policy, and operational hidden-staff capability enforcement remain future work.
+- `HELP` lacks editable game-specific content, canonical corpus storage, alias/tag lookup, stage-aware indexing, and settled content ownership/override precedence.
+- The dedicated first-party web-app service and deployment/hosting model remain planned.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+Future design discussion is required before changing help-content authority, help alias and related-topic rules, stage-aware help discovery, durable player archive/export retention, staff visibility capability bundles, or adaptive presentation behavior. The existing source evidence retains detailed historical scope and follow-up context; no competing current behavior is introduced here.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| TCP Proxy and Gateway | Transport bridge, public edge, authentication/bootstrap propagation | Telnet bridge, gameplay WebSocket route, trusted ingress |
+| Game Session | Command parsing/registry, stage and capability checks, presence, structured output, rendering, prompt/replay, recipient push | Text command interpreter, WebSocket ingress, Game Session gRPC |
+| Game Logic | Gameplay command application, action classification, communication intent, target/scope resolution, perception | Gameplay and communication gRPC contracts |
+| Social Groups | Friends, applicable social policy, moderation, communication history and fanout | Friend REST/gRPC APIs and communication delivery contracts |
+| World Management | Current room snapshots and localized room/exit source content | LOOK/world-read contracts |
+| Game Design and settings authority | Effective command capability, presentation, communication, and prompt policy | Shared settings precedence and Game Session effective-settings readback |
+| Logging & Admin | Privileged built-in alias validation and operator diagnostics | Canonical control-plane readback |
+| First-party frontend | Current structured WebSocket consumer and server-state baseline | Web client; dedicated web-app service remains planned |
+
+Focused parser, registry, WebSocket/Telnet, presentation, transcript, communication, social-presence, and policy proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against every allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-1-3-task-list-session-activity-and-who-presence-vertical-slice-1-241
 

@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates shared time semantics, service contracts, orchestration boundaries, persistence, and workflow infrastructure by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -40,27 +40,77 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [gRPC](../../architecture/system-architecture-grpc.md) defines authenticated internal transport and normal-response application errors.
+- [Database migrations](../../architecture/system-architecture-database-migrations.md) defines Flyway history and relational persistence conventions.
+- [Temporal workflows](../../architecture/system-architecture-temporal-workflows.md) defines durable workflow boundaries and operator truth.
+- [Scripting runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md) and [scheduler/timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) consume the shared timing and workflow model.
+- [Logging and monitoring](../../architecture/system-architecture-logging-monitoring.md) defines audit, failure, and observability expectations at service boundaries.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Explicit Time Domains and Contract Naming
+
+FireMUD uses two declared time domains: wall-clock time for auth, session, operator, and expiry behavior; gameplay-clock time for cooldowns, conditions, temporary action state, and later scheduled mechanics. Cross-boundary fields must declare their domain and unit. The repository guard rejects ambiguous proto names such as bare `timeout`, `expires`, `expiry`, `duration`, or `cooldown`; accepted names encode a timestamp, duration unit, or gameplay tick domain.
+
+The current implementation is a contract guardrail, not a central timing platform. Authored actions carry tick-relative cooldown metadata, while runtime cooldown state, shared scheduled-effect execution, and broader timing adoption proceed only as concrete consumers become real.
+
+### Authenticated, Fail-Closed Service Boundaries
+
+Internal blocking gRPC clients use the shared auth-attaching stub customization seam when downstream RPCs are secured; deliberate raw-stub exceptions are documented rather than accidental. World Management and Entity Management enforce baseline JWT and tenant access at their exposed edges. Internal delegated gameplay calls use service identity and session attestation, preserving caller/gameplay identity without treating transport errors as ordinary application outcomes.
+
+Application failures are normal `ErrorDetail` responses: they log warnings, increment bounded `grpc.app_error` metrics, and tag spans. They do not use gRPC transport errors for routine authorization, validation, or business outcomes. Routing, service identity, and session attestation fail closed before protected domain work continues.
+
+### Audit, Moderation, and Operator Authority
+
+Non-destructive audit/logging traffic uses dedicated log-event paths rather than moderation mutation RPCs. Moderation definition, enforcement, and audit are separated by owning authority: policy lives where it is authored, runtime enforcement occurs at the relevant admission/send boundary, and Logging & Admin remains privileged ingress/audit rather than a duplicate persistence owner.
+
+Operator facades and control-plane read models delegate to owning services. They preserve app-error, tenant/scope, and audit contracts instead of reaching into private storage or recreating authoritative state in a second service.
+
+### Transaction, Saga, and Control-Plane Boundaries
+
+Audited workflows no longer keep local database transactions open across remote side effects. Local durable state commits before outbound effects, or the work uses an explicit after-commit/outbox/workflow seam. Game Session lifecycle writes fail before committing a durable `RUNNING` or `STOPPED` state that cannot be reconciled with required runtime/Redis work.
+
+Shared saga repositories have one owner, and control-plane gRPC facades are thinned to transport/auth/error delegation over owning collaborators. This pre-v1 convergence removed obsolete HTTP shims and constructor/orchestration tangles rather than maintaining compatibility scaffolding.
+
+### jOOQ, Flyway, and Relational Persistence
+
+The relational persistence substrate has converged on shared jOOQ build/codegen/runtime conventions and Flyway-managed schemas. Hibernate/JPA runtime paths were removed. Account, Automation, Game Session, Game Design, Entity Management, Logging & Admin, Social Groups, and World Management use the shared persistence model with canonical migration history and validation.
+
+Persistence contract and saga topology cleanup removed duplicate or ambiguous database ownership. New relational work should use the same generated types, migration discipline, SQL validation, and owning-service schema boundaries rather than reintroducing ORM or unmanaged JDBC patterns.
+
+### Temporal Workflow Foundation and Operator Truth
+
+Temporal provides the shared foundation for genuinely long-lived control-plane workflows. Publish and script-patch readiness use durable workflow identity and business-step idempotency; operator surfaces project canonical workflow state instead of inventing a parallel lifecycle. The repo distinguishes publication, activation, readiness, cancellation, and runtime execution truth rather than collapsing them into one status field.
+
+Temporal is not a blanket replacement for every local synchronous operation. A workflow is introduced only for a concrete durable business process; short validation/saga seams remain explicit and bounded. Operator truthfulness work keeps workflow summaries aligned with the real Temporal execution and owning-domain state.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- The time contract guard is live, but broader runtime adoption for cooldowns, buffs, conditions, scheduled effects, and richer gameplay-clock APIs remains future consumer-driven work.
+- New secured services and new gRPC surfaces must adopt the existing app-error/auth/attestation conventions; the current work does not claim every hypothetical future endpoint is already audited.
+- New workflow families require a concrete long-lived business process and an owning-domain state model; Temporal is not a generic substitute for every transaction or queue.
+- Future persistence changes must continue the jOOQ/Flyway model and service-local ownership; no remaining ORM/JPA migration lane is intended.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for time-domain naming, normal-response gRPC application errors, non-destructive audit boundaries, jOOQ/Flyway persistence, or deliberately bounded Temporal use. Future design discussion is required before defining a central gameplay clock API, a new workflow family, cross-domain compensation semantics, or a new shared persistence abstraction. The unchanged source evidence retains detailed historical hardening and migration context.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Common libraries/platform core | Shared auth propagation, error representation, observability, time-field guards | Shared Java modules, Gradle verification, gRPC helpers |
+| Owning domain services | Domain authority, transaction boundary, durable local state, app-error mapping | Service REST/gRPC APIs and service-local relational schema |
+| Logging & Admin | Non-destructive audit ingress and operator read/write projection | Audit/log-event and control-plane REST/gRPC contracts |
+| Game Session | Session attestation, lifecycle convergence, durable gameplay control-plane delegation | Gameplay/session gRPC and durable runtime records |
+| jOOQ and Flyway tooling | Generated relational access and canonical migration history | Build/codegen tasks, Flyway migrations, validation scripts |
+| Temporal | Durable long-lived workflow execution and canonical workflow status | Workflow/activity contracts and operator projections |
+
+Focused contract, auth, audit, transaction, persistence, migration, and workflow proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-13-11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice-1-99
 

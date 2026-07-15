@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates realm catalog, admission, routing freshness, and playable-state policy by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -64,27 +64,78 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Multi-tenancy](../../architecture/system-architecture-multi-tenancy.md) defines the distinction between global account identity, tenant membership, visible realms, admission, and realm-scoped gameplay state.
+- [Authentication and authorization](../../architecture/system-architecture-authentication.md) defines bootstrap, connect-token, gameplay admission, and reconnect authority.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns the current realm catalog, admission pointers, and runtime routing read/control-plane contracts.
+- [Account Service](../../architecture/microservices/account-service/README.md) owns account membership, grants, bootstrap discovery, and connect-token issuance over Game Session authority.
+- [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) owns scoped playable-state resolution for character and stateful gameplay records.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Canonical Realm Catalog and Admission Pointer
+
+Players address a visible `{tenantId, worldSlug, realmSlug}` realm, not a raw `gameInstanceId`. Game Session persists the canonical gameplay world/realm catalog and one current admission pointer for each player-addressable realm. The pointer resolves exactly one admissible runtime target and carries `pointerVersion` as its freshness token. Bootstrap, text lobby commands, `PLAY`, connect-token issuance, reconnect validation, control-plane reads, and cutover writes consume that same authority.
+
+Admission-pointer updates are persisted, audited, and compare-and-set guarded. Startup configuration only seeds an empty pointer store; it is not a continuing alternate catalog. Account Service no longer retains a local gameplay catalog fallback, and cached projections are only explicit caches of Game Session authority that fail closed when stale or unavailable.
+
+### Complete Routing Bundles and Freshness
+
+The admitted routing bundle is inseparable: `tenantId`, `worldSlug`, `realmSlug`, resolved `gameInstanceId`, and `pointerVersion` travel together with the resolved playable-state scope where applicable. Partial, blank, non-positive, stale, or selector-inconsistent bundles are invalid. Canonical helper convergence has removed duplicate local matching, parsing, and normalization from session, websocket bootstrap, command staging, remote control-plane, disconnect, and operator read paths.
+
+Sessions persist the admitted bundle and normalize it against current pointer authority before preserving or reusing gameplay state. A stale pointer collapses the session back to an authenticated bootstrap shell rather than letting a later login, command, recipient delivery, replay, settings read, or lifecycle event keep an obsolete in-world binding alive. Control-plane selectors are singular and scope-qualified; no caller can weaken a world-qualified current-pointer read into a tenant-plus-realm shortcut.
+
+### Admission, Membership, and Realm Visibility
+
+The public default production realm is the only v1 public first-admission path. Account Service creates first-join membership through the explicit idempotent `EnsurePublicProductionPlayerMembership` boundary, and both connect-token issuance and text `PLAY` use it. Non-public and non-production realms require the appropriate existing membership or explicit Account-owned realm grant; they do not inherit public discovery as an access shortcut.
+
+Realm visibility, entitlement, membership/grant, and current-pointer truth are checked at admission time. Failed or stale selection attempts do not retain an earlier binding, and public membership creation is auditable, request-idempotent, and immediately authoritative for subsequent runtime reads.
+
+### Bootstrap and Text-Client Selection Parity
+
+First-party bootstrap is a client-facing projection of the same catalog and admission policy as `WORLDS`, `REALMS`, `CHARS`, and `PLAY`. Discovery returns the pointer freshness bundle plus short-lived opaque `connectScopeId`; connect-token issuance revalidates that selector against current authority and treats `requestId` as a real idempotency key. Expired or cutover-mismatched selectors return explicit rerun-discovery errors instead of allowing client-local target fallback.
+
+Gateway and Game Session preserve `connectScopeId`, `connectRequestId`, routing slugs, pointer version, and resolved target through the first-party connect context. The durable bootstrap shell retains the same selector identity for reconnect-style recovery when transient registry state is absent, so first-party and text paths cannot diverge into separate selection models.
+
+### Realm-Scoped Playable State
+
+Tenant identity and character ownership do not imply one shared gameplay-state namespace. Each admitted realm publishes `playableStateScope` and character-creation policy. Shared-state realms resolve the tenant-live namespace; isolated realms, including playtest forks, resolve an instance-local namespace and must not mutate tenant production state through a family-specific shortcut.
+
+The resolved `{tenantId, gameInstanceId, playableStateScope}` target now governs roster, `CHARS`, `PLAY`, character lookup, inventory, equipment, containers, room-ground items, progression, actor resources and conditions, faction standing, scripting work, presence, and friend joins. Entity Management provides shared scoped-character and playable-state-key resolvers, returns the resolved scope to callers, and validates gameplay session attestations against it. Automation and Social Groups preserve the same scope in durable work and presence paths.
+
+### Runtime and Operator Projection
+
+Runtime-state, tick, command-staging, remote handoff, communication availability, disconnect callbacks, and logout-stop flows all reuse current routing/session authority. Durable commands and remote follow-ups carry their admitted routing rather than reconstructing it from a partial scope or payload. Game Logic outbound attestation and Game Session control-plane readers use the same complete-pointer normalization, making stale or partial routing a fail-closed application error rather than a widened tenant/runtime query.
+
+Operator and control-plane pointer, audit, catalog, and runtime-state reads preserve canonical key shape and validate returned tenant/scope identity. They are read projections of Game Session authority, not a second routing model.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Later gameplay-state families, especially loadouts, abilities, authored effects, richer resource tables, and any new character-creation or social/runtime consumer, must adopt the existing playable-state namespace before becoming live. They must not reopen tenant-wide or bare-character shortcuts.
+- The current parent routing family retains future runtime/control-plane expansion work, but the catalog, pointer, bootstrap/connect-scope, and present playable-state boundaries are complete. New consumers need explicit proof rather than broad re-audit of closed `09.1` seams.
+- True region-partitioned runtime ownership is tracked separately from admission routing. Current routing supplies the required scope facts but does not claim to implement the final execution-partition topology.
+- Full replacement-instance migration/remap mechanics and domain-specific carry-forward rules remain future design; the live contract establishes the namespace and freshness fences those migrations must respect.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for visible realm addressing, admission-pointer authority, or shared-versus-isolated playable state. Future design discussion is required before changing public admission policy, introducing a new isolated-state mode, defining replacement-instance migration, or adding a new gameplay-state family with different carry-forward semantics. The detailed source evidence retains the individual historical follow-through rationale.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Game Session | Canonical catalog, admission pointer, pointer audit/cutover, routing normalization, session authority, runtime/control-plane projections | Realm/catalog and admission-pointer gRPC/control-plane APIs; persisted pointer authority |
+| Account Service | Bootstrap discovery, connect-token issuance, public membership creation, non-public grant/membership reads | Bootstrap and auth REST/gRPC APIs; `EnsurePublicProductionPlayerMembership` |
+| Gateway and TCP Proxy | Trusted first-party and transport routing context propagation | Connect context and trusted ingress headers |
+| Entity Management | Scoped character resolution and playable-state persistence for owning families | `{tenantId, gameInstanceId, playableStateScope}` gameplay APIs |
+| Automation Scripting and Social Groups | Preserve resolved scope in durable work, social/presence, and cross-service reads | Scripting handoff and account-presence/friend contracts |
+| Game Logic | Preserve complete routing and attestation when issuing gameplay calls | Outbound gameplay gRPC attestation |
+| Logging & Admin | Read canonical routing/runtime projection for operators | Tenant-guarded REST over Game Session control-plane reads |
+
+Focused catalog, cutover, bootstrap, reconnect, session-normalization, command, disconnect, remote-handoff, and scoped-state proof remains recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-09-task-list-multi-tenancy-realm-routing-and-runtime-boundaries-vertical-slice-1-72
 

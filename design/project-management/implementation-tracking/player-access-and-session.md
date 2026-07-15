@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates the implemented player-access and session boundary by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -31,27 +31,70 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Authentication and authorization](../../architecture/system-architecture-authentication.md) defines global account identity, tenant membership and authorization, access grants, credentials, and gameplay admission.
+- [Reconnection](../../architecture/system-architecture-reconnection.md) defines reconnect eligibility, transcript replay, takeover, and the bounded continuity envelope.
+- [Account Service](../../architecture/microservices/account-service/README.md) owns account identity, credential policy, membership, and non-public realm grants.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns text-command lifecycle, session context, gameplay binding, and reconnect redraw orchestration.
+- [TCP Proxy Service](../../architecture/microservices/tcp-proxy-service/README.md) and [Spring Cloud Gateway](../../architecture/microservices/spring-cloud-gateway/README.md) own trusted transport ingress and the stable edge bridge.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Global Account Identity and Scoped Access
+
+Platform accounts are global identities. Tenant membership, tenant-scoped roles, and non-public realm access grants are separate Account-owned authorities rather than alternative names for the same record. Bootstrap authenticates the account first; gameplay admission later verifies the selected tenant, realm, current routing target, entitlement, and any required membership or grant.
+
+Account lifecycle operations remain account-scoped. Tenant export is a deliberately narrower route and does not redefine account export, deletion, recovery, or credential ownership. Shared authorization uses the canonical tenant role vocabulary, and runtime consumers reuse Account and Common Security checks rather than locally deriving equivalent authority.
+
+### Text Authentication and Credential Policy
+
+Both Telnet and WebSocket use the Game Session text-command path. `LOGIN <email>` can initiate the neutral email-code challenge flow; `LOGIN <email> <secret>` forwards one opaque secret to Account Service, which interprets it according to the account's enabled login modes. The currently live account policy supports password and email OTP, defaults new accounts to the compatible mixed set, hashes and bounds single-use email challenges, and keeps credential material redacted in transport logs.
+
+Game Session creates authenticated session state only after Account Service succeeds. Prompt and help text expose the compact grammar without turning text clients into a separate authentication system. Signup-mode selection and authenticator-app TOTP enrollment remain future work; no dormant TOTP field or parallel text-login secret contract is retained.
+
+### Trusted Ingress, Admission, and Gameplay Binding
+
+Trusted proxy and first-party connect inputs are parsed fail-closed before they can establish or preserve routing state. Canonical helpers reject malformed JWT claims, non-positive identifiers, blank slugs, partial routing bundles, stale runtime pointers, and replay identity mismatches. Game Session normalizes admitted runtime routing through `GameplayAdmissionPointerSnapshots`; Gateway and TCP Proxy apply equivalent trust-boundary checks rather than accepting partial header pairs.
+
+`PLAY` turns an authenticated session into a gameplay-bound session only after current admission, entitlement, membership or grant, and runtime-target checks pass. First public admission to a visible default production realm uses the explicit idempotent `EnsurePublicProductionPlayerMembership` boundary. Non-public and non-production realms do not inherit that public path.
+
+### Session Termination, Takeover, and Recovery
+
+The runtime has three distinct lifecycle outcomes. Unexpected transport loss may preserve reconnect-eligible session and transcript state. Takeover terminates the losing gameplay binding with an explicit reason. Deliberate `LOGOUT` terminates rather than suspends: it clears authenticated and gameplay context, presence, reconnect/replay state, and the active World-owned runtime binding, then closes the transport after its canonical result.
+
+Gateway owns the downstream gameplay socket and stable edge transport identifier. It can rebind an upstream Game Session connection after bounded loss without immediately dropping the player socket. Focused proofs cover upstream rebind, a Game Session-like process bounce, and post-restart Game Logic commands against shared state. This is continuity through bounded stall and redraw, not a promise to replay arbitrary in-flight commands or transport bytes.
+
+### Fail-Closed Boundary Convergence
+
+The standing guardrail work has converged reusable positive-ID, token-claim, routing-bundle, session-attestation, and application-error helpers across Account, Common Security, Gateway, Game Session, Logging & Admin, Automation, Entity Management, Social Groups, and World Management entry seams. The intended rule is consistent: malformed external or persisted identity data must reject, terminalize only the affected durable work item where appropriate, or surface a canonical application error; it must not silently broaden scope, select a fallback identity, or continue with a partial routing bundle.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Authenticator-app TOTP enrollment and signup-time login-mode selection are not implemented; the live credential contract remains password plus email OTP policy.
+- The focused reconnect and restart proofs are complete, but manual end-to-end verification of real upstream loss, Game Session restart, and Game Logic restart remains outstanding.
+- The continuity contract intentionally excludes generalized chaos testing, arbitrary command replay, and transport-byte replay. Queue/tick ownership reconstruction becomes a separate concern if Game Logic later owns more durable execution.
+- Broader account-switching, multi-session controls, global sign-out, and richer first-party logout UX remain later player-experience work.
+- The guardrail tracker is implementation-complete at its current seams, but it remains the standing home for the next concrete fail-closed auth, session, or routing invariant rather than a claim that every future ingress path has been audited.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for this domain. Future work should be raised here before implementation when it changes credential modes, admission authority, reconnect guarantees, or the account-versus-tenant ownership model. The existing source evidence retains the detailed follow-up ideas and historical task context.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Account Service | Global accounts, credentials, challenges, memberships, tenant roles, grants, account lifecycle | Account REST/gRPC APIs; runtime membership and realm-grant reads; `EnsurePublicProductionPlayerMembership` |
+| Common Security | Claims, session attestation, caller-bound account and tenant authorization | JWT/session helpers and shared authorization checks |
+| TCP Proxy and Gateway | Trusted transport admission, header trust, stable edge socket, upstream rebind | Telnet bridge, `/ws/game/**`, trusted proxy and connect-token inputs |
+| Game Session | Text login/play/logout, session context, admission normalization, gameplay presence, redraw orchestration | Text-command interpreter, WebSocket ingress, Game Session gRPC/control plane |
+| World Management and Entity Management | Gameplay runtime teardown and presence cleanup after deliberate termination | Termination and runtime cleanup seams called from Game Session |
+| Game Logic | Stateless current-state command resolution after recovery | Post-restart `LOOK`, movement, and communication execution paths |
+
+Focused unit, controller, gRPC, websocket, cross-service, and restart/rebind proofs are preserved with their exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-01-task-list-telnet-to-gameplay-vertical-slice-1-99
 

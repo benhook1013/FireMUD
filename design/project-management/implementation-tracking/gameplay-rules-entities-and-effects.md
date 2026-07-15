@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates the live gameplay rules, entity, transfer, action, and effect boundaries by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -29,27 +29,86 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) and its [runtime/data model](../../architecture/microservices/entity-management-service/runtime-and-data.md) define entity ownership, items, actor state, conditions, and transfer semantics.
+- [Game Design ability and action tools](../../architecture/microservices/game-design-service/ability-action-tools.md) and [item/equipment balancing](../../architecture/microservices/game-design-service/item-equipment-balancing.md) define versioned authored definitions.
+- [Player command model](../../architecture/system-architecture-player-command-model.md) defines action invocation, targeting, and outcome policy.
+- [Tick concepts and invariants](../../architecture/system-architecture-tick-concepts-and-invariants.md) defines durable effect identity, replay, and ownership constraints.
+- [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) owns orchestration and rule evaluation over the authoritative domain state.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Visible World Facts and Room-Ground State
+
+World Management owns room identity, location, exits, and occupancy. Entity Management owns room-ground items through room-attached container instances. Game Logic resolves the current `LOOK` projection from those authorities; ordinary `LOOK` remains room prose, while `INV HERE` is the explicit room-ground inventory management view. Nested container contents are not expanded implicitly in room presentation.
+
+The present live room/entity view is intentionally bounded. Richer prose, combat/effect annotations, NPC response, localized listening, and broader non-fixture room/entity context remain later gameplay presentation work.
+
+### Items, Containers, Equipment, and Guarded Transfers
+
+The live command surface includes `INVENTORY`, `INV HERE`, `GET`, `DROP`, `CONTAINER`, `PUT`, `TAKE`, `EQUIPMENT`, `WEAR`, and `REMOVE`. Physical items are persisted distinct `item_instances`; containers have their own instance identity; inventory, equipped slots, room ground, and containers use one direct-holder-field model. A transfer is one guarded source-to-destination mutation with audit facts, not a remove/add sequence that can expose a transient duplicate or disappearance.
+
+Current transfer validation fails explicitly for stale, missing, moved, or incompatible source state. Later holder families such as banks, vendors, mail, crafting, and richer nested-container UX must reuse this holder and guarded-handoff model rather than introducing parallel item ownership.
+
+### Item Identity, Visible References, and Stackability
+
+Definition equality does not imply fungibility. Each physical item remains a distinct instance with a durable compact visible reference on explicit management and targeting surfaces; ordinary prose does not expose those refs by default. Authored `stackable`, `stackCompatibilityMode`, and `stackVariantKey` determine whether compatible physical items can merge into a holder-local stack. Quantity belongs to stack records, not to the ordinary instance identity.
+
+Stack merge is eager within the holder and preserves the stack family through transfers. Ambiguous selections reject rather than guessing. More sophisticated authored compatibility inputs and any non-merging escape hatch require a real product consumer before the current direct model broadens.
+
+### Actor State, Conditions, and Evaluated Effects
+
+Entity Management persists actor resources and active conditions. `QueryActorState` evaluates the current view by overlaying release-pinned baseline stats, resources, non-expired conditions, equipped-item contributions, and replay-guarded transient action state. `STATUS` and `STAT` expose that evaluated state. `BLOCK` and `GUARD` prove the first bounded transient `blocking` condition through the shared actor-state/effect seam.
+
+The first evaluator is deterministic and in-process. Game-authored release-pinned definitions own named stats and conditions; continuous sources contribute during evaluation, while instant effects mutate durable state. Disposition is separate from resource floors, conditions, and transport/session presence.
+
+### Authored Actions, Targeting, and Outcomes
+
+Admitted release bundles provide the current runtime declaration authority. An authored command snapshots its release bundle, version, canonical command, and declared effect on the durable command before enqueue; execution validates that immutable snapshot and current gameplay identity before replay lookup. The live v1 executor supports only a self-targeted `APPLY_ACTION_STATE` declaration and forwards the declared payload to Game Logic rather than substituting a built-in action payload. Missing, mismatched, malformed, effectless, or unsupported declarations fail closed.
+
+The designed target model is broader but intentionally not claimed live: actions declare target sets, source/target semantics, selection policy, required versus optional outcomes, costs, cooldowns, durations, and shared effect execution. `EXACTLY_ONE`, bounded `UP_TO_N`, operator-capped `ALL_ELIGIBLE`, player-selected, canonical-order, typed ranked, and deterministic seeded-random selection are the target policy vocabulary. Required unresolved selection rejects before commit; optional unresolved selection has an explicit no-mutation outcome.
+
+### Durable Effects, Replay, and Idempotency
+
+Durable `effectId` derives deterministically from `tickBatchId` and a stable same-batch-unique `effectKey`. Game Session records durable `APPLIED`, `REPLAY_NOOP`, and `REJECTED` outcomes after ownership fence checks. Mutating services own duplicate application: movement, Game Session communication/activity/action-state/authored-action execution, Entity Management item/equipment/container/condition mutation, and Social Groups message persistence each return stored or no-op outcomes instead of applying a second consequence.
+
+There is no misleading global guard table. The canonical pattern is durable identity plus an owning-domain uniqueness/replay boundary and observability. Future mutating families must adopt this contract before they become authoritative; transfer replay remains an explicit caller contract rather than an accidental side effect of holder mutation.
+
+### Unified Actors and Combat Direction
+
+The repository does not yet have a general persisted actor runtime model. Current `WHO` is player-presence oriented, and god/admin behavior is a player role/presentation overlay. The locked direction is one opaque actor core shared by `PLAYER` and `NPC`, with World Management owning location, Entity Management owning actor identity and durable actor state, and Game Session owning the session projection. Presence and disposition remain separate concerns.
+
+Damage, mitigation, combat timing, body regions, defeat, corpses, loot, respawn, and revival are not implemented. Future combat consumes the shared actor/effect model; resource floors cannot become a hidden death or victory system, and Game Session cannot become combat-state authority.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Generic authored actions, multi-effect execution, costs, cooldown lifecycle, cross-actor targeting, target-resolution evidence, and structured general action outcomes remain future work.
+- The generic authored stat/condition runtime, resource-cost mutation, wider effect catalog, and combat consumption remain beyond the first evaluated actor-state seam.
+- A unified persisted actor model, NPC runtime instances, actor-state linkage, and generic targeting/communication adoption are designed but not implemented.
+- Combat design is locked at the architectural level but has no damage/mitigation implementation yet.
+- Future holder families and new gameplay mutations must adopt the direct-holder, scoped-playable-state, durable-effect, and owning-domain replay contracts rather than introducing shortcuts.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for direct item holders, authored-definition snapshots, owning-domain replay guards, or the future actor/effect/combat direction. Future work needs design discussion before expanding action targeting semantics, adding a new stack-compatibility source, defining cross-domain transfer replay, or implementing combat timing and defeat lifecycle. The exact historical detail remains in the source evidence.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Game Design | Versioned DML definitions, release bundles, action/state/equipment/targeting policy | Game Design release and definition contracts |
+| Game Session | Command ingress, durable command/tick execution, effect identity, player-facing delivery | Durable command/effect records and gameplay command contracts |
+| Game Logic | Gameplay orchestration, selector/target resolution, rule evaluation, structured outcomes | Gameplay/action gRPC contracts |
+| Entity Management | Items, holders, containers, equipment, actor resources/conditions, transfer audit, idempotent mutations | Entity REST/gRPC and durable mutation replay records |
+| World Management | Rooms, locations, occupancy, spatial facts | World/read and movement contracts |
+| Social Groups | Durable communication mutation replay | Communication persistence and fanout contracts |
+| Account and Common Security | Account identity, caller scope, gameplay attestation | Auth/session and gameplay-attestation helpers |
+| Automation Scripting | Future effect-producing automation, never a substitute for owning-domain mutation authority | Script/event handoff contracts |
+
+Focused item, transfer, stackability, actor-state, action-state, authored-action, effect-idempotency, and replay proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-13-9-task-list-authored-action-definition-and-execution-model-vertical-slice-38-42-50-89-98-99
 

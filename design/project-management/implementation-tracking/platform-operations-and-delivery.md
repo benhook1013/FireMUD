@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates runtime observability, delivery, public-edge policy, operational proof, and recovery tooling by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -52,27 +52,85 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Logging and monitoring](../../architecture/system-architecture-logging-monitoring.md) and [tracing](../../architecture/system-architecture-tracing.md) define runtime identity, correlation, and bounded metrics policy.
+- [Testing](../../architecture/system-architecture-testing.md), the [player-experience incident runbook](../../architecture/system-architecture-player-experience-incident-runbook.md), and [backup/recovery evidence](../../architecture/system-architecture-backup-recovery-evidence-and-compliance.md) define operational player-facing proof.
+- [Deployment environments](../../architecture/infrastructure/deployment-environments.md), the [deployment runbook](../../architecture/system-architecture-deployment-runbook.md), and [CI/CD](../../architecture/system-architecture-cicd.md) define environment delivery.
+- [Gateway](../../architecture/system-architecture-gateway.md), the [authorization route matrix](../../architecture/system-architecture-authz-route-matrix.md), [gRPC](../../architecture/system-architecture-grpc.md), and [protocol bridging](../../architecture/system-architecture-protocol-bridging.md) define edge and transport policy.
+- [Deploy preflight policy](../../architecture/system-architecture-deploy-preflight-policy.md), the [environment/secrets catalog](../../architecture/infrastructure/environment-and-secrets-catalog.md), and [JWT/token contracts](../../architecture/system-architecture-jwt-and-token-contracts.md) define deployment binding and credential rules.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Runtime Identity, Logging, and Metrics Discipline
+
+`common-platform-core` supplies one runtime `serviceInstanceId`; startup, HTTP, gRPC, WebSocket, and Telnet paths carry stable service, instance, trace, and correlation context. `/actuator/runtime` exposes runtime identity and build metadata. Game Session and Game Logic add gameplay context when it is already known rather than inventing scope data for logs.
+
+Prometheus metrics use bounded semantic labels. Raw tenant, session, player, version, and per-instance identifiers are prohibited as labels, and a new bounded-scope exception requires an architecture update rather than a local workaround. `regionId` logging remains deferred until an authoritative current-region source exists; broader reactive MDC propagation is optional follow-through, not a silent correctness gap.
+
+### Player-Experience Smoke, Canaries, and Evidence
+
+The canonical smoke runner proves public bootstrap, connect-token admission, WebSocket `LOGIN -> PLAY -> LOOK`, Telnet `WORLDS`, and the current real-stack transport path. It uses a synthetic non-player identity per environment, emits canary metrics, supports independent entry probes and failure injection, validates retained evidence freshness, and feeds alert/deadman behavior. `LOOK` is the first gameplay command canary.
+
+Deadman authority remains external to Prometheus or in-cluster evaluation. First-live or reopen proof still requires current retained evidence produced by operators or automation; the implementation provides the mechanism and validation, not fictional evidence for an environment that has not been exercised.
+
+### Hosted Preview and Environment Delivery
+
+Hosted preview deploys real Helm releases, exposes preview TCP, supports hosted smoke, carries fixed develop dev-demo support, and has rollout diagnostics, internal gRPC transport alignment, TLS bundle handling, and NetworkPolicy parity. Player-facing staging/production Kustomize remains canonical; preview is a prod-like environment, not a separate gameplay architecture. TCP-first manual proof precedes browser UX proof.
+
+The remaining preview work is clean-redeploy lifecycle and documentation convergence. Preview TCP admission still has temporary bootstrap glue scheduled for deliberate cleanup, rather than a hidden permanent exception to the public admission model.
+
+### Curated Public Edge and Transport Contracts
+
+Gateway is an explicit public edge, not permissive service fan-out. Public routes have an allowlisted inventory, internal subtrees are blocked, and session/admin authorization converges at the owning service. `/api/session/**`, `/api/admin/**`, `/assets/**`, WebSocket, Telnet, and `gateway.v1` management routes remain explicit contracts. gRPC transport/TLS configuration is validated against the deployment contract.
+
+Future public routes must be added through the same inventory and owner-side enforcement model. No new edge route may rely on broad proxy exposure or Gateway-local replication of service authorization policy.
+
+### Preflight, Secrets, and Deployment Bindings
+
+Expected-binding manifests drive deployment preflight. Required policy ids, `expectedBindingsRef`, exact Secret and image-pull bindings, canonical binding-reference syntax, external-binding isolation, and explicit service-discovery overrides are validated before deploy. JWT signing/JWKS material mounts through the declared binding model, and preview renders unique credential material rather than accidentally reusing an unrelated environment.
+
+Environment manifests own binding identity. External bindings are unique by default and shared only with matching rationale. The current proof is stronger configuration and rendered-manifest validation; richer Kubernetes live-state validation, traffic-open evidence, and automated JWT/JWKS rotation are still separate operational work.
+
+### Reset, Bootstrap, Persistence, and Recovery Tooling
+
+Service-scoped database reset, Flyway hygiene and history checks, image-freshness controls, fresh-bootstrap/restart proof, locked Gradle validation, and repair-oriented demo/runtime seeders are implemented. The canonical Redis coordination reset/recovery sequence is the only normative reset path. Fresh proof scripts rebuild/boot current artifacts rather than relying on stale containers or images.
+
+These tools provide the bounded reset and recovery foundation. Future smoke/bootstrap improvements should extend the canonical scripts and runbooks rather than adding ad hoc Compose loops or service-specific reset folklore.
+
+### Gameplay Proof, Operator Control, and Scale Boundary
+
+Shared WebSocket/Telnet gameplay drivers, cross-service fixtures, fresh baselines, transcript-block assertions, Account runtime fakes, and bounded ten-player concurrency proof are live. Game Session owns persisted runtime feature-flag truth; Logging & Admin is privileged ingress/audit and forwards to the owner. Moderation policy definition and runtime enforcement are similarly split by owner, and cutover compatibility readback consumes the canonical Game Session result.
+
+The current scale claim is intentionally bounded. Higher-volume load/soak, combat, inventory, and broad fanout proof remain future work. New gameplay suites should reuse the shared reconnect/takeover and transport helpers rather than rebuilding fragile local fixtures.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Preview clean-redeploy lifecycle/doc convergence and the planned preview TCP admission cleanup remain open.
+- Deployment preflight does not yet replace richer live-cluster validation, real traffic-open evidence, or automated JWT/JWKS rotation proof.
+- Runtime logging awaits a canonical current-region source before attaching `regionId` broadly; any expanded reactive MDC work remains optional and bounded.
+- Player-experience evidence must still be produced and retained for actual first-live/reopen environments; freshness validation cannot create a real proof run by itself.
+- High-volume load, soak, combat, inventory, and broad-fanout proof remain beyond the current ten-player concurrency boundary.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for bounded metrics, curated edge routing, external deadman authority, manifest-owned deployment binding, or canonical reset tooling. Future design discussion is required before allowing a metrics-label exception, adding a public route class, creating an environment-specific transport exception, or defining credential rotation automation. The source evidence preserves detailed operational rationale and completed sub-slices.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Common Platform Core | Runtime identity, shared logging/metrics policy | Shared observability components and `/actuator/runtime` |
+| Gateway, TCP Proxy, Account, Game Session | Public admission, transport bridging, smoke-visible gameplay entry | HTTP, WebSocket, Telnet, and internal gRPC contracts |
+| Helm, Kustomize, CI workflows | Preview/dev-demo/staging/prod delivery and rendered deployment policy | Helm releases, Kustomize environments, GitHub Actions |
+| Deploy preflight tooling | Binding, secret, discovery, and policy validation | `dev-tools/deploy/preflight.py` and manifest contracts |
+| PostgreSQL, Flyway, Redis, Docker tooling | Reset, migration, bootstrap, and recovery proof | Canonical scripts, migrations, Redis reset runbook |
+| Logging & Admin | Privileged operator ingress, audit, remediation/readback projection | REST/OpenAPI over owner-side runtime contracts |
+| External monitor and observability tooling | Deadman authority, canary evidence, alerts, retained proof | Smoke/canary metrics and external liveness signal |
+
+Focused observability, smoke, preview, preflight, deployment, reset, fixture, and scale-proof commands remain recorded in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-14-task-list-runtime-identity-and-structured-logging-consistency-vertical-slice-1-76
 

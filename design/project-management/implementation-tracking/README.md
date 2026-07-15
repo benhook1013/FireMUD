@@ -2,18 +2,18 @@
 
 These files are the current domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
 
-Each tracker is scan-first: its `Implementation Record Index` names the domain capabilities, source-declared state, and direct evidence link before the detailed material. The tracker then retains exact source evidence in the same file, so readers can audit a claim without searching a separate ledger or depending on a remembered slice number.
+Each tracker is scan-first. Its `Consolidated Implementation Record` describes the current domain capability, authority boundaries, active gaps, and future decisions in domain language. The `Implementation Record Index` maps those claims to source-declared delivery records, and the source-evidence appendix retains exact transposed material in the same file for lossless audit.
 
-During migration, each tracker contains:
+Each tracker contains:
 
 - canonical design-source links;
-- a named implementation-record index;
-- source-backed implementation state, active gaps, and items still to discuss; and
+- a reader-facing consolidated implementation record, active gaps, and items still to discuss;
+- a named implementation-record index; and
 - lossless source evidence linked to the relevant legacy delivery records.
 
 Existing files under [`../vertical-slices`](../vertical-slices/README.md) remain historical delivery records. Do not delete, rename, or rewrite them as part of this refactor. The implementation trackers preserve exact allocated source ranges and the migration validator verifies that preservation.
 
-Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md). Each allocated legacy source range must be migrated or have an explicit retained/superseded disposition before a tracker can claim migration completion.
+Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md). The mechanical evidence layer and semantic consolidation layer are both required before a tracker can claim migration completion; Spark then audits coverage and semantic fidelity.
 
 ## Trackers
 

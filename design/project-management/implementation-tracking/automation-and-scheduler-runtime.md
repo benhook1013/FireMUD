@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates automation ingress, scheduling, execution, handoff, and runtime/operator projection by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -32,27 +32,76 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Scripting overview](../../architecture/system-architecture-scripting.md), [runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md), and [scheduler and timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) define the canonical runtime model.
+- [Scripting event registry](../../architecture/system-architecture-scripting-event-registry.md) defines built-in event ownership, binding scopes, identity, and payload schemas.
+- [Scripting quotas and operations](../../architecture/system-architecture-scripting-quotas-and-operations.md) and the [observability contract](../../architecture/system-architecture-scripting-observability-contract.md) define execution limits and operator signals.
+- [Automation Scripting Service](../../architecture/microservices/automation-scripting-service/README.md) owns ingress, durable work, scheduling, runtime activation, and execution state.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns admitted gameplay command execution and durable remote handoff targets.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Manifest-Backed Event Ingress and Handler Resolution
+
+Script event ingress is one application-level runtime contract. The checked-in built-in event manifest is the authority for producer, identity, payload schema, snapshot-token, and allowed binding scopes; script-definition writes validate against it before runtime work exists. Ingress admission, handler resolution, ingress audit, and handler audit are separate durable facts. One admitted event may have mixed handler outcomes without making the transport response ambiguous.
+
+The live producer surface includes gameplay `onCommand`, fresh-play `onSpawn`, movement `onEnterRegion`/`onLeaveRegion`, deliberate logout and forced exit, scheduler `onInterval` and `onTimerExpire`, and readiness `onLoad`. Gameplay events preserve the complete admitted routing bundle, playable-state scope, and current runtime region/epoch. Stale or incomplete scope fails before durable work materialization.
+
+### Runtime Activation, Script Patches, and Readiness
+
+Plugin bindings resolve against canonical runtime activation state for the current scope rather than optional request identity. Resolved plugin ownership persists on work items and handler audit records. `NotifyScriptVersionUpdate` retains its bounded synchronous validation/seed path but starts or reuses a durable Temporal-backed script-patch readiness workflow; `onLoad` progresses through explicit readiness outcomes without allowing late superseded work to revive an older patch.
+
+Publication/readiness state and runtime activation/event chronology are distinct. Operator patch-status reads expose durable workflow identity and execution status through canonical control-plane surfaces instead of inventing a parallel workflow API.
+
+### Durable Work, Timers, and Scheduler Ownership
+
+Matched handlers materialize durable work items with ingress, handler, plugin, source, routing, and scope provenance. Pending work has explicit cancellation and dead-letter lifecycle rather than relying on in-memory queues. Scheduler-owned interval and wall-clock timer work preserves the same admitted routing, runtime pin, schedule-instance, source ordering, and skipped-audit truth as gameplay-originated work.
+
+The first scheduler ownership model is live. Timer and scheduled follow-up execution are bounded by the same current runtime scope, durable state, and activation/pin rules. Future source families must enter through the selected-work and durable provenance contracts; no new timer or event path should infer scope from payload JSON or service-local state.
+
+### Budgets, Quotas, Isolation, and Readiness Capacity
+
+Script execution has a current bounded budget and quota model with durable quota class, source-aware charging, capacity/readiness checks, and explicit isolation outcomes. Execution and queueing pressure are surfaced through operator metrics, alerting, and read models; readiness cancellation has a separate taxonomy from runtime execution outcomes. Publication cannot be treated as ready merely because a patch is present when current execution capacity or readiness work says otherwise.
+
+The current policy provides enforceable bounded runtime limits and observable rejection/pressure. It is not a claim that every future sandbox, graph evaluator, or arbitrary user-script execution model is implemented.
+
+### Gameplay Command and Remote Handoff
+
+Automation emits gameplay work only through the canonical Game Session handoff. Local scope commands use the ordinary admitted command path; cross-scope commands create durable remote follow-ups with target routing and provenance rather than flattening work into the local queue. Handoff history, command ledger entries, and remote rows preserve command, script, plugin, dispatch, target scope, and follow-up identity.
+
+`onCommand` follows durable execution truth. Session enqueue, direct gameplay reads, communication, `PLAY`, `LOGOUT`, authored actions, automation handoff, and remote target execution publish through canonical producer paths without waking replay/no-op execution. Alias, action-category, and action-tag binding scopes use normalized command classification rather than producer-only metadata.
+
+### Runtime and Operator Projection
+
+Automation control-plane reads expose durable dead letters, handoff events, schedules, pins, runtime activation, readiness, and execution outcomes with the same scope/provenance facts used by runtime enforcement. Game Session pin and runtime status readback uses the canonical current ownership surface. Operator visibility is a projection of durable runtime and publication/readiness facts, not a second scripting state machine.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Richer graph/runtime evaluation, compiled artifacts, and the full sandbox execution seam require their own implementation slice once the supporting design/runtime boundary is ready.
+- New custom event families and future gameplay lifecycle producers must extend the manifest and existing ingress contract rather than create local ingress semantics.
+- Future timer, retry, remote, and script-generated work sources must preserve the current selected-work, region fence, routing, quota, and durable-result contracts.
+- Broader Temporalization is not assumed. A new durable workflow is justified only when a concrete long-lived business process needs it; surviving short synchronous sagas stay explicitly scoped.
+- The current quota/isolation model is bounded. Any broader untrusted-code execution or adaptive fairness policy needs separate design and operating evidence.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+No competing target state is currently recorded for manifest-backed ingress, runtime activation, durable work identity, source-aware quotas, or Game Session handoff. Future design discussion is required before adding a new sandbox/compiled-artifact model, a new persistent workflow family, a custom event class, an adaptive scheduler policy, or a new cross-scope producer. The source evidence retains the exact child-slice history and detailed continuation notes.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Automation Scripting | Event manifest and ingress, bindings, work/audit records, timers, activation, quotas, readiness, runtime reads | Automation gRPC/control-plane APIs, durable work and schedule records |
+| Game Design | Script definitions, release/publish truth, versioned authored inputs | Release and script-definition contracts |
+| Game Session | Admitted gameplay command execution, current runtime owner, local/remote command target | Automation handoff and Game Session command/remote APIs |
+| Logging & Admin | Operator visibility and remediation projection | Tenant-guarded REST over canonical Automation/Game Session reads |
+| Temporal | Durable long-lived publish and patch-readiness workflows | Workflow identity and execution state exposed by canonical control-plane reads |
+| Game Logic and domain services | Execute resulting admitted gameplay effects in owning domains | Durable command/effect contracts, never a scripting-owned mutation shortcut |
+
+Focused ingress, binding, activation, timer, quota, readiness, handoff, remote-trigger, and operator readback proof remains recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-20-3-task-list-publish-and-script-patch-temporal-migration-vertical-slice-20-36
 

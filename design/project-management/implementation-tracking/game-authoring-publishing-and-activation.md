@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Lossless domain transposition is complete. The implementation claims, open gaps, and discussion items below remain source-backed until the required Spark coverage audit verifies each migrated range.
+The lossless source transposition is complete. This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
 
 ## Implementation Record Index
 
@@ -29,27 +29,77 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 ## Canonical Design Sources
 
-Canonical target-state design remains under [design/architecture](../../architecture/README.md). The migrated evidence links to the exact source records that previously carried implementation-tracking detail.
+- [Settings model](../../architecture/system-architecture-settings-model.md) defines layered operator defaults, tenant/game overrides, effective resolution, and generated reference contracts.
+- [Runtime versioning](../../architecture/system-architecture-versioning-runtime.md) defines versioned definitions, immutable publication, release admission, and runtime activation.
+- [Game Design Service](../../architecture/microservices/game-design-service/README.md) owns authored definitions, version control, settings authority, releases, and activation inputs.
+- [Game Design ability and action tools](../../architecture/microservices/game-design-service/ability-action-tools.md) defines authored command/action data and targeting/effect policy.
+- [World Management Service](../../architecture/microservices/world-management-service/README.md) owns version-scoped world mutation and consumes publication handoff.
 
-## Verified Live Implementation
+## Consolidated Implementation Record
 
-The source-backed claims are indexed above. Spark coverage review is pending before they are promoted from migrated evidence to independently verified live status.
+### Layered Settings Authority and Effective Resolution
+
+Game Design is the shared authority for tenant and game overrides. Typed operator defaults remain the platform baseline; shared settings domains resolve through the standard precedence chain and expose effective values to runtime consumers. Movement, topology, presentation, prompts, command capability, inventory/equipment, and related settings use this pattern rather than isolated per-service booleans.
+
+Runtime consumers receive normalized effective settings, and Game Session exposes bounded effective-settings inspection for a persisted session or synthesized tenant/game scope. Generated settings schema and Markdown reference derive from the typed metadata so configuration docs do not drift from runtime contract.
+
+### Defaults, Presets, and Authoring Baselines
+
+The platform supplies sane operator defaults so a new game can be playable without exhaustive per-game DML. The planned settings-preset layer remains the authoring bridge for deliberately selecting, composing, or unselecting reusable default experiences before overriding individual settings. Presets are not a replacement for the canonical layered settings model; they are structured inputs into it.
+
+The current implementation does not yet claim a completed preset authoring workflow. New defaults, preset composition, and operator caps must continue to use typed settings domains and generated schema/reference rather than hidden code branches.
+
+### Versioned Definitions and Immutable Release Bundles
+
+Authoring revisions are version-scoped and immutable after publication. Full-version publication validates and snapshots ordered authored definitions into an immutable release bundle, includes them in the control-plane digest, and provides the exact admitted bundle to runtime consumers. Runtime does not reread a mutable configuration catalog or use test-profile fallback authority after admission.
+
+The current release bundle carries command definitions, aliases, stage/prompt/category/admission metadata, authored action target-selection data, and the first typed effect declaration. Duplicate command or alias ownership fails at aggregation rather than silently shadowing a built-in or another author’s definition.
+
+### Authored Commands and Actions
+
+Built-in and authored commands share one provider-backed registry and dispatcher. Authored definitions are keyed by canonical `commandId`, parsed into typed invocations, visible to `HELP`, and admitted from the published release bundle for the current runtime. The first live executor supports only release-admitted self-targeted `APPLY_ACTION_STATE` v1 declarations with bounded duration and shared-effect-engine modifier grammar; malformed, unsupported, or stale snapshots fail closed before durable execution.
+
+The broader action model remains designed but unfinished. Future targeting, costs, cooldowns, durations, ordered multi-effect steps, optional/required target outcomes, and cross-region compensation must use the same admitted definition snapshot and durable effect boundary. They must not return to per-command scripts or mutable runtime registry reads.
+
+### Publication, Attestation, and Activation
+
+Publish, launch, activation, and repair use digest-gated release attestation rather than caller-provided mutable design state. The current boundary includes published asset manifests and purge lifecycle, launch descriptors and activation preflight, script patch/plugin publication boundaries, and version-scoped World Design mutation APIs. Runtime activation consumes validated release/pin truth; publication and readiness are distinct states.
+
+Durable Temporal workflows cover publish and script-patch readiness where a long-lived business process exists. Their canonical control-plane reads expose workflow identity/status without creating a separate operator truth. Short synchronous validation/saga seams remain bounded and explicitly scoped until a concrete workflow need warrants migration.
+
+### Game-Authored Help and Content Layering
+
+The current source record describes game-authored help storage and layering as implementation-complete pending its final CI/review checkpoint. The intended authority is layered authored content over platform help, not per-command hardcoded help growth. That implementation state remains subject to the evidence and review record rather than being promoted beyond its declared checkpoint here.
 
 ## Active Gaps
 
-Source-declared active gaps remain in the detailed evidence below. The post-transposition review will extract any live gaps into this section without losing their original context.
+- Settings presets and authoring baselines are planned but not yet a completed authoring workflow. They must compose with typed defaults/overrides rather than become another settings authority.
+- Broader authored action execution remains unfinished: generic target sets, costs, cooldowns, timing, ordered multi-effect actions, and explicit cross-region compensation policy need their own implementation follow-through.
+- A full authoring UI, broader game-editing UX, and richer game-authored help discovery/content management remain future product work.
+- New persistent workflows require a concrete long-lived business need; publication/activation must not be Temporalized mechanically.
+- The parent publishing family still has later implementation work, but the current digest, asset, launch, patch, and mutation boundaries are complete at their recorded scope.
 
 ## To Discuss
 
-Source-declared unresolved design or implementation questions remain in the detailed evidence below until they are consolidated into this domain tracker.
+Future design discussion is required before defining preset composition/removal semantics, multi-effect action ordering and atomicity, cross-region compensation/refund behavior, a new authored-effect kind, or a new long-lived publication workflow. No competing current authority exists for settings, versioned release bundles, or digest-gated runtime admission. The unchanged evidence retains the detailed source decisions and follow-ups.
 
 ## Service and Contract Map
 
-The detailed evidence identifies the public contracts, owning services, and focused proof for each capability. The Spark review produces the service-level audit queue for this tracker.
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Game Design | Typed settings, override persistence, generated schema, revisions, published releases, asset manifests, action definitions | Settings APIs, release bundle, digest/attestation, publication control plane |
+| Common Platform Core | Shared settings domain metadata and precedence resolution | Typed settings contracts consumed by runtime services |
+| World Management | Version-scoped world design mutation and published-world activation inputs | World design mutation and publication handoff APIs |
+| Game Session | Consume effective settings and admitted release definitions at runtime | Effective-settings readback and active command registry |
+| Automation Scripting | Script patch readiness and runtime activation, distinct from publication truth | Patch/readiness workflows and runtime pin contracts |
+| Logging & Admin | Operator-facing control-plane read/write ingress | Canonical Game Design and runtime projections |
+| Temporal | Durable publish/readiness workflow execution where warranted | Workflow identity/status surfaced through canonical reads |
+
+Focused settings, generated-reference, release, digest, asset lifecycle, launch, patch, world mutation, and authored-command proofs remain recorded with exact commands in the source evidence. Spark coverage review will verify the consolidated statements against each allocated range before this tracker is marked fully reviewed.
 
 ## Source Evidence
 
-The following records are a line-preserving transposition. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
+The following records are the unchanged line-preserving transposition used as the audit backstop for the consolidated record above. Heading depth is shifted by three levels and same-directory Markdown links are rebased only so the combined tracker remains valid and navigable.
 
 ### source-02-12-task-list-movement-and-topology-settings-vertical-slice-20-30-56-64
 
