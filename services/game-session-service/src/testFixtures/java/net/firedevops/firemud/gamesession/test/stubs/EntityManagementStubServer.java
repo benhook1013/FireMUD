@@ -26,6 +26,8 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
@@ -57,6 +59,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
   private final int port;
   private final AtomicReference<ListRoomEntitiesResponse> roomEntities =
       new AtomicReference<>(LookTestFixtures.sampleEntities());
+  private final AtomicReference<QueryActorStateResponse> actorState =
+      new AtomicReference<>(QueryActorStateResponse.getDefaultInstance());
   private boolean torchOnGround = true;
   private boolean torchInBackpack;
   private boolean capCarried = true;
@@ -110,6 +114,14 @@ public final class EntityManagementStubServer implements AutoCloseable {
                       QueryInventoryRequest request,
                       StreamObserver<QueryInventoryResponse> responseObserver) {
                     responseObserver.onNext(queryInventoryResponse());
+                    responseObserver.onCompleted();
+                  }
+
+                  @Override
+                  public void queryActorState(
+                      QueryActorStateRequest request,
+                      StreamObserver<QueryActorStateResponse> responseObserver) {
+                    responseObserver.onNext(actorState.get());
                     responseObserver.onCompleted();
                   }
 
@@ -196,6 +208,14 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   public void resetRoomEntities() {
     roomEntities.set(LookTestFixtures.sampleEntities());
+  }
+
+  public void setActorState(QueryActorStateResponse response) {
+    actorState.set(response == null ? QueryActorStateResponse.getDefaultInstance() : response);
+  }
+
+  public void resetActorState() {
+    actorState.set(QueryActorStateResponse.getDefaultInstance());
   }
 
   public synchronized void resetItemState() {

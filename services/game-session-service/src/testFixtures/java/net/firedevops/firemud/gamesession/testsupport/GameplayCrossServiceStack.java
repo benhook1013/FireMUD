@@ -135,6 +135,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     } else {
       entityStub.setRoomEntities(baselineRoomEntities);
     }
+    entityStub.resetActorState();
     entityStub.resetItemState();
     if (socialStub != null) {
       socialStub.resetState();

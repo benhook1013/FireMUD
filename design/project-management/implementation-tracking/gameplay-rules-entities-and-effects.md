@@ -61,6 +61,8 @@ Entity Management persists actor resources and active conditions. `QueryActorSta
 
 The first evaluator is deterministic and in-process. Game-authored release-pinned definitions own named stats and conditions; continuous sources contribute during evaluation, while instant effects mutate durable state. Disposition is separate from resource floors, conditions, and transport/session presence.
 
+Focused proof covers one effective resource composed from a persisted override, a non-expired condition, and equipped-item contribution in Entity Management, plus the `STATUS` transport path through the live Game Session and Game Logic applications to the Entity Management gRPC contract. The transport fixture controls the Entity Management response; it does not substitute for the owning-service evaluator proof.
+
 ### Authored Actions, Targeting, and Outcomes
 
 Admitted release bundles provide the current runtime declaration authority. An authored command snapshots its release bundle, version, canonical command, and declared effect on the durable command before enqueue; execution validates that immutable snapshot and current gameplay identity before replay lookup. The live v1 executor supports only a self-targeted `APPLY_ACTION_STATE` declaration and forwards the declared payload to Game Logic rather than substituting a built-in action payload. Missing, mismatched, malformed, effectless, or unsupported declarations fail closed.
