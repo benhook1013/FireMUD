@@ -19,7 +19,7 @@ Required setup:
 Recommended execution model:
 
 - Run a small number of parallel review lanes instead of one lane per prompt.
-- Let each lane review a cohesive architecture slice that already shares contracts and likely blockers.
+- Let each lane review a cohesive architecture domain that already shares contracts and likely blockers.
 - Use one coordinating reviewer to merge duplicate findings, detect cross-lane contradictions, and decide whether another pass or a service deep dive is needed.
 - After a batch of doc updates, send `00-fresh-reread-issue-only-preamble.md` together with the lane's original domain prompt set to force a fresh issue-only reread from disk.
 - Prefer keeping the same lane reviewers alive across multiple convergence rounds so each lane retains its working context while still being forced to restart reasoning from disk by the reread preamble.
@@ -69,7 +69,7 @@ Recommended lane lifecycle:
 3. Optional final confirmation
    Repeat the reread pattern only if the previous pass still found meaningful blockers or if the scope changed materially.
 4. Lane reuse policy
-   Keep the same lane reviewer session alive for 3-4 convergence rounds when the scope is stable. Close and respawn only when the review slice changes materially or the lane starts producing low-value/stale feedback despite the reread preamble.
+   Keep the same lane reviewer session alive for 3-4 convergence rounds when the scope is stable. Close and respawn only when the review domain changes materially or the lane starts producing low-value/stale feedback despite the reread preamble.
 
 Coordinator responsibilities:
 
@@ -92,7 +92,7 @@ Suggested final synthesis format:
 1. Canonical blocking issues
    One merged list across all lanes, ordered by implementation impact
 2. Cross-lane contradictions to resolve
-   Only items where different architecture slices currently imply incompatible implementations
+   Only items where different architecture domains currently imply incompatible implementations
 3. Suggested follow-ups
    High-value non-blocking clarifications, cleanup, examples, or refactors
 

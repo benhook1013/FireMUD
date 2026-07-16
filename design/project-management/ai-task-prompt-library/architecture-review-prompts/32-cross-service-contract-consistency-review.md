@@ -37,7 +37,7 @@ What to look for:
 - REST and gRPC surfaces that represent the same workflow differently without an intentional reason
 - Redis/runtime handoff contracts that are only implicitly agreed rather than explicitly modeled
 - places where docs, service-status notes, and implementation disagree about which service owns a boundary
-- nearby related inconsistencies that would cause different teams or future slices to implement different behavior
+- nearby related inconsistencies that would cause different teams or future implementation work to implement different behavior
 
 What I want in the output:
 
@@ -61,7 +61,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining already accepted slice docs unless it directly supports a finding
+- Do not spend time re-explaining already accepted tracker records unless it directly supports a finding
 - Keep the review focused on service boundaries rather than generic local code hygiene
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 
@@ -69,5 +69,5 @@ Helpful framing:
 
 - Assume the goal is one canonical contract per cross-service seam, not “close enough” parallel interpretations
 - Be skeptical of integrations that currently work only because both sides happen to share undocumented assumptions
-- Prefer findings that would otherwise cause future slices, services, or operators to rely on the wrong source of truth
+- Prefer findings that would otherwise cause future capabilities, services, or operators to rely on the wrong source of truth
 - Review across multiple services and their shared docs, not just one service in isolation

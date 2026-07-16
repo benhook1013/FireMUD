@@ -26,7 +26,7 @@ Context:
 - Prefer FireMUD-specific test infrastructure over generic abstraction for its own sake.
 - Focus especially on chained gameplay flow tests, cross-service tests, transport-edge tests, and smoke-adjacent proof patterns.
 - Recent known context:
-  - slice `02.18.17 Gameplay Transport Test Harness Convergence` was completed at the current boundary
+  - The gameplay transport test harness capability is recorded as implemented at its current boundary in `design/project-management/implementation-tracking/platform-operations-and-delivery.md`.
   - shared websocket gameplay driver and readiness helpers were introduced and relevant websocket suites were migrated
   - shared telnet gameplay driver and readiness helpers were introduced and relevant telnet suites were migrated
   - shared backend assertion helpers were added for repeated gameplay entity and social request checks
@@ -88,7 +88,7 @@ What I want in the output:
    - high-value immediate follow-up
    - medium-priority cleanup
    - lower-priority polish
-   - whether another dedicated slice or task doc is warranted
+   - whether another dedicated capability or task doc is warranted
 8. In `Final judgment`, explicitly classify the current state as one of:
    - `coherent and mostly converged`
    - `improved but still materially inconsistent`

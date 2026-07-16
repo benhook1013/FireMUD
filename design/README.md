@@ -12,8 +12,8 @@ Suggested reading order:
 4. [**project-management/implementation-tracking/README.md**](./project-management/implementation-tracking/README.md) for domain capability status, active gaps, and remaining implementation decisions.
 
 - [**architecture/**](./architecture/) – Infrastructure, microservice designs, and system overviews.
-- [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key vertical slices.
-- [**project-management/**](./project-management/) – Requirements, slice planning, and AI rule sets.
+- [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key platform capabilities.
+- [**project-management/**](./project-management/) – Requirements, domain implementation tracking, and AI rule sets.
 - [**user-guides/**](./user-guides/) – Documentation for game creators and integration testing.
 
 Additional generated documentation lives in:

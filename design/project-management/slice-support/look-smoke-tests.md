@@ -1,6 +1,6 @@
 # LOOK Smoke Tests
 
-These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the vertical slice alongside the now-wired automated cross-service tests and canonical smoke helpers.
+These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and canonical smoke helpers. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
 
 ## 1. WebSocket smoke script
 
@@ -14,7 +14,7 @@ Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
 
 2. Continue with the normal flow; typed attach metadata is not part of the player-facing protocol.
 3. Send `LOGIN demo@example.com swordfish` and expect `OK LOGIN Logged in as demo@example.com`.
-4. Send `LOOK`. The response should match the canonical transcript in `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md#1-protocol-ux-and-design-alignment-for-look` (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
+4. Send `LOOK`. The response should match the canonical Game Session protocol and the current LOOK implementation record (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
 5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
 6. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
 
@@ -35,7 +35,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
 5. To test failure handling, request `LOOK` with a missing room id (by instructing Game Logic to look at a non seeded room). The proxy should relay `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection. Include the final transcript as `look-telnet-<timestamp>.log`.
 
-Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the expected formatting in `03-task-list-data-driven-look-vertical-slice.md` and the canonical smoke scripts under `dev-tools/` as the current source of truth rather than committed transcript artifacts.
+Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the canonical smoke scripts under `dev-tools/` as the current source of truth rather than committed transcript artifacts.
 
 For a non-interactive Telnet smoke check that performs `LOGIN` + `LOOK` via the TCP Proxy and asserts `OK LOGIN` / `OK LOOK` appear in the responses, use the helper script in `services/tcp-proxy-service/telnet-login-look-smoke.sh`. This script is designed to complement the manual steps above and can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
 

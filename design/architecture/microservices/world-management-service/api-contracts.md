@@ -196,4 +196,4 @@ Telnet and WebSocket clients both route through the `/ws/game/**` gameplay path,
 - Game Session renders the `LookResult` returned by Game Logic, which already includes both world and entity projections, into the textual transcript via `LookResultRenderer`.
 - Error responses emit `ERROR <CODE> <message>` covering `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`, `LOOK_UNAVAILABLE`, and `NOT_AUTHENTICATED`.
 
-The sample rooms referenced by the LOOK lifecycle are provided by the test fixtures described in the LOOK vertical slice so integration tests and transcript examples remain stable.
+The sample rooms referenced by the LOOK lifecycle are provided by the canonical LOOK cross-service fixtures so integration tests and transcript examples remain stable.

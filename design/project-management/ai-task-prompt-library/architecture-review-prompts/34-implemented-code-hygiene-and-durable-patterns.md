@@ -23,7 +23,7 @@ Context:
 - Repo: `/home/ben/src/FireMUD-wsl-copy`
 - Read `AGENTS.md` first and follow it as canonical instructions.
 - FireMUD is still in initial development.
-- Many documented slices have now been implemented.
+- Many documented capabilities have now been implemented.
 - I want review attention on cleanup, correctness, maintainability, and pattern quality before the codebase gets larger.
 
 What to look for:
@@ -61,7 +61,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining implemented slice docs unless it directly supports a finding
+- Do not spend time re-explaining implemented tracker records unless it directly supports a finding
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 
 Helpful framing:

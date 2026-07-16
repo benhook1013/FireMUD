@@ -71,10 +71,10 @@ Initial-slice rule:
 Implementation notes:
 
 - The cutover-validation RPC now exists as `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`.
-- The first live implementation slice enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
-- `character` and `character_friend` rows are supported `S1` survivor state in the current slice. Their presence does not require a remap set by itself.
+- The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
+- `character` and `character_friend` rows are supported `S1` survivor state at the current boundary. Their presence does not require a remap set by itself.
 - `inventory` and `character_equipment` rows are treated as current `S2` template-bound survivor state. If either family has rows and no approved `remapSetId` was frozen by launch resolution, validation returns `result=INCOMPATIBLE`, `hasS2Rows=true`, `remapSetRequired=true`, and `ENTITY_REMAP_REQUIRED`.
-- When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current slice reports `COMPATIBLE` and echoes that id. Entity Management does not infer remaps and does not create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
+- When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current implementation reports `COMPATIBLE` and echoes that id. Entity Management does not infer remaps and does not create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
 
 Entity upgrade validation minimum contract:
 

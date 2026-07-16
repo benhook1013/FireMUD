@@ -29,7 +29,7 @@ Every published game version includes a versioned actor-state catalog. It is DML
 
 Game Design validates every reference and effect declaration at publish time, includes the immutable catalog in the release bundle, and records its digest with the release. Runtime services resolve definitions only from the game instance's pinned release catalog; unknown or stale keys fail closed. Entity Management stores active runtime state separately, but an active condition retains its source, definition key, release identity, and immutable applied-effect snapshot so a later publish cannot rewrite an effect that is already running.
 
-This provides a fully game-authored, scriptable design surface while keeping enough platform type information for deterministic validation and evaluation. See [Entity Stats and Conditions](../../../project-management/vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md) for the runtime ownership and evaluation contract.
+This provides a fully game-authored, scriptable design surface while keeping enough platform type information for deterministic validation and evaluation. See [Gameplay Rules, Entities, and Effects](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md) for the runtime ownership and evaluation contract.
 
 ## Actor Disposition and Continuous Overlay Policy
 

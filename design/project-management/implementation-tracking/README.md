@@ -1,19 +1,18 @@
 # Domain Implementation Tracking
 
-These files are the current domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
+These files are the permanent domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
 
-Each tracker is scan-first. Its `Consolidated Implementation Record` describes the current domain capability, authority boundaries, active gaps, and future decisions in domain language. During the migration audit, the `Implementation Record Index` and source-evidence appendix map those claims to exact legacy material so reviewers can prove that consolidation is lossless.
+Each tracker is scan-first. Its `Consolidated Implementation Record` describes current domain capabilities, authority boundaries, active gaps, and future decisions in reader-facing domain language.
 
 Each tracker contains:
 
 - canonical design-source links;
-- a reader-facing consolidated implementation record, active gaps, and items still to discuss;
-- a named implementation-record index; and
-- lossless source evidence linked to the relevant legacy delivery records.
+- a consolidated implementation record organized by capability and ownership;
+- validation and operational proof for the implemented boundaries;
+- active gaps and follow-up work; and
+- decisions and service-map context where the domain boundary requires them.
 
-Files under [`../vertical-slices`](../vertical-slices/README.md), the generated evidence appendices, migration ledgers, and the standalone `service-status-*.md` snapshots are temporary or competing audit inputs. Keep them until independent coverage, semantic-fidelity, and supplementary legacy-status review is complete. Once all findings are resolved, remove that temporary material and repair links so these domain trackers are the sole implementation-tracking source.
-
-Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the [migration ledgers](./migration-ledgers/README.md) while migration is active. The mechanical evidence layer, exhaustive semantic consolidation, and supplementary status reconciliation are required before Spark audits coverage and fidelity; migration completes only after audit findings are fixed and the temporary evidence/source scaffolding is removed.
+Use the relevant tracker as the reader-facing account of implementation status. Keep its status, implementation record, validation, gaps, decisions, and service-map sections aligned when a domain boundary changes, while keeping target-state design in the canonical architecture documents.
 
 ## Trackers
 

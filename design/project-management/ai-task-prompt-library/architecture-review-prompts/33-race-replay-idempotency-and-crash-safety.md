@@ -62,7 +62,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining already accepted slice docs unless it directly supports a finding
+- Do not spend time re-explaining already accepted tracker records unless it directly supports a finding
 - Keep the review grounded in protecting operator time and hosted game data
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 

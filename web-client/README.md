@@ -19,7 +19,7 @@ The repo's canonical frontend direction is:
 See:
 
 - [Frontend Architecture](../design/architecture/system-architecture-frontend.md)
-- [02.21 Frontend Server-State Baseline and Query Convergence](../design/project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md)
+- [Player Experience, Commands, and Communication implementation tracker](../design/project-management/implementation-tracking/player-experience-commands-and-communication.md)
 
 ## Local Development
 
