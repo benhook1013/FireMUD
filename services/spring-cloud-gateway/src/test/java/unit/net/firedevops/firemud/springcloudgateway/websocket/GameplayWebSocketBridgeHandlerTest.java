@@ -131,7 +131,7 @@ class GameplayWebSocketBridgeHandlerTest {
   }
 
   @Test
-  void closeWriteFailureDoesNotRecordPlannedDrainAndStillCompletesStopCallback() {
+  void closeWriteFailureRecordsUnattributedClassificationAndCompletesStopCallback() {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameplayWebSocketObservability observability =
         new GameplayWebSocketObservability(meterRegistry);
@@ -176,7 +176,83 @@ class GameplayWebSocketBridgeHandlerTest {
         .verify();
 
     assertThat(shutdownComplete).isTrue();
-    assertThat(meterRegistry.getMeters()).isEmpty();
+    assertThat(
+            meterRegistry
+                .get("gateway.websocket.closes")
+                .tags(
+                    "reason",
+                    "logout",
+                    "subreason",
+                    "gateway_restart",
+                    "bridge_shutdown_class",
+                    "unattributed_failure")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    assertThat(meterRegistry.find("gateway.websocket.closes").counters()).hasSize(1);
+    verify(downstream).close(any(CloseStatus.class));
+  }
+
+  @Test
+  void neverCompletingCloseIsBoundedAndRecordsUnattributedClassification() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameplayWebSocketObservability observability =
+        new GameplayWebSocketObservability(meterRegistry);
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    WebSocketSession upstream = mock(WebSocketSession.class);
+    HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+
+    when(downstream.getId()).thenReturn("downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
+    when(handshakeInfo.getHeaders()).thenReturn(headers);
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(Flux.never());
+    when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.never());
+    when(upstream.send(any())).thenReturn(Mono.never());
+    when(upstream.receive()).thenReturn(Flux.never());
+    when(upstream.closeStatus()).thenReturn(Mono.empty());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              WebSocketHandler upstreamHandler = invocation.getArgument(2);
+              return upstreamHandler.handle(upstream);
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 0, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            observability);
+    AtomicBoolean shutdownComplete = new AtomicBoolean();
+
+    StepVerifier.create(handler.handle(downstream))
+        .expectSubscription()
+        .thenAwait(Duration.ofMillis(100))
+        .then(() -> handler.stop(() -> shutdownComplete.set(true)))
+        .thenAwait(Duration.ofSeconds(2))
+        .thenCancel()
+        .verify();
+
+    assertThat(shutdownComplete).isTrue();
+    assertThat(
+            meterRegistry
+                .get("gateway.websocket.closes")
+                .tags(
+                    "reason",
+                    "logout",
+                    "subreason",
+                    "gateway_restart",
+                    "bridge_shutdown_class",
+                    "unattributed_failure")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    assertThat(meterRegistry.find("gateway.websocket.closes").counters()).hasSize(1);
     verify(downstream).close(any(CloseStatus.class));
   }
 

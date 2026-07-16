@@ -33,6 +33,7 @@ import reactor.core.publisher.Sinks;
 public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLifecycle {
   private static final Logger LOG = LoggerFactory.getLogger(GameplayWebSocketBridgeHandler.class);
   private static final Duration UPSTREAM_CONNECT_TIMEOUT = Duration.ofSeconds(1);
+  private static final Duration DOWNSTREAM_CLOSE_TIMEOUT = UPSTREAM_CONNECT_TIMEOUT;
   private static final CloseStatus PLANNED_DRAIN =
       new CloseStatus(1000, "logout;subreason=gateway_restart");
   private static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
@@ -336,10 +337,11 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                   state.inboundToUpstream.tryEmitComplete();
                   state.outboundToClient.tryEmitComplete();
                   return Mono.defer(() -> state.downstream.close(closeClassification.status()))
+                      .timeout(DOWNSTREAM_CLOSE_TIMEOUT)
                       .doOnSuccess(
-                          ignored -> {
+                          unused -> {
                             gameplayWebSocketObservability.recordClose(closeClassification);
-                            try (RuntimeLoggingContext context =
+                            try (RuntimeLoggingContext ignored =
                                 openLoggingContext(state.downstream)) {
                               LOG.info(
                                   "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
@@ -351,14 +353,18 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                           })
                       .doOnError(
                           error -> {
-                            try (RuntimeLoggingContext context =
+                            GameplayWebSocketObservability.CloseClassification failedClose =
+                                closeClassification.asUnattributedFailure();
+                            gameplayWebSocketObservability.recordClose(failedClose);
+                            try (RuntimeLoggingContext ignored =
                                 openLoggingContext(state.downstream)) {
                               LOG.warn(
-                                  "Gameplay websocket close failed reason={} subreason={} bridge_shutdown_class={} code={}",
-                                  closeClassification.reason(),
-                                  closeClassification.subreason(),
-                                  closeClassification.bridgeShutdownClass(),
-                                  closeClassification.status().getCode(),
+                                  "Gameplay websocket close failed reason={} subreason={} bridge_shutdown_class={} code={} error={}",
+                                  failedClose.reason(),
+                                  failedClose.subreason(),
+                                  failedClose.bridgeShutdownClass(),
+                                  failedClose.status().getCode(),
+                                  error.getMessage(),
                                   error);
                             }
                           });
