@@ -28,20 +28,32 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
 
   @Override
   @Timed(value = "loggingadmin.gameplayCommandStatus.getGameplayCommandStatus")
-  public GameplayCommandStatusDto getGameplayCommandStatus(long tenantId, String commandId) {
+  public GameplayCommandStatusDto getGameplayCommandStatus(
+      long tenantId, long gameInstanceId, String commandId) {
     SessionContext.requireTenantAccess(tenantId);
     GetGameplayCommandStatusResponse response =
-        gameSessionControlPlaneClient.getGameplayCommandStatus(commandId);
+        gameSessionControlPlaneClient.getGameplayCommandStatus(tenantId, gameInstanceId, commandId);
     requireNoError(response.getError());
     GameplayCommandStatus command = response.getCommand();
     if (command.getCommandId().isBlank()) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Gameplay command not found");
+    }
+    if (!command.getCommandId().equals(commandId)) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane gameplay command response did not match requested command_id");
     }
     long responseTenantId = parseLong(command.getTenantId(), "tenant_id");
     if (responseTenantId != tenantId) {
       throw new ResponseStatusException(
           HttpStatus.INTERNAL_SERVER_ERROR,
           "control-plane gameplay command response did not match requested tenant_id");
+    }
+    long responseGameInstanceId = parseLong(command.getGameInstanceId(), "game_instance_id");
+    if (responseGameInstanceId != gameInstanceId) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          "control-plane gameplay command response did not match requested game_instance_id");
     }
     return toDto(command);
   }

@@ -43,14 +43,14 @@ class GameplayCommandControllerTest {
 
   @Test
   void getGameplayCommandStatusReturnsCanonicalStatus() throws Exception {
-    when(gameplayCommandStatusService.getGameplayCommandStatus(2L, "cmd-123"))
+    when(gameplayCommandStatusService.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(gameplayCommandStatusDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            get("/gameplay-commands/2/cmd-123")
+            get("/gameplay-commands/2/7/cmd-123")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.commandId").value("cmd-123"))
@@ -67,7 +67,7 @@ class GameplayCommandControllerTest {
 
     mockMvc
         .perform(
-            get("/gameplay-commands/2/cmd-123")
+            get("/gameplay-commands/2/7/cmd-123")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
   }
@@ -79,11 +79,27 @@ class GameplayCommandControllerTest {
 
     mockMvc
         .perform(
-            get("/gameplay-commands/0/cmd-123")
+            get("/gameplay-commands/0/7/cmd-123")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+
+    verifyNoInteractions(gameplayCommandStatusService);
+  }
+
+  @Test
+  void getGameplayCommandStatusRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/gameplay-commands/2/0/cmd-123")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("gameInstanceId must be positive"));
 
     verifyNoInteractions(gameplayCommandStatusService);
   }
