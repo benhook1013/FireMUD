@@ -127,7 +127,7 @@ World Management is a required publish-gate participant and maintains a stable d
 
 Implementation Notes:
 
-- The current implementation computes the digest from version-scoped world-template rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
+- The applied-revision ledger is implemented and records successful Draft mutations transactionally. The current digest still returns synthetic `appliedCommitId = "version:<versionId>"`; the remaining gap is deriving a commit-level token only after that commit's complete revision set is durably applied. Revision-ledger identities remain replay and idempotency evidence rather than the publish-convergence token.
 - Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, `generation_rule`, and `world_entity_spawn_binding`; later topology and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 - Current concrete `region` digest fields include `id`, `shardId`, `name`, `weather`, `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier`.
 - Current concrete `zone` digest fields include `id`, `regionId`, and `name`.
