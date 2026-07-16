@@ -248,9 +248,10 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
         () -> {
           try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
             LOG.info(
-                "Gameplay websocket closed reason={} subreason={} code={}",
+                "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
                 closeClassification.reason(),
                 closeClassification.subreason(),
+                closeClassification.bridgeShutdownClass(),
                 closeClassification.status().getCode());
           }
           gameplayWebSocketObservability.recordClose(closeClassification);

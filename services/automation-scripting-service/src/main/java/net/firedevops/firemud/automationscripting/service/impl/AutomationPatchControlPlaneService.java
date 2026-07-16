@@ -923,11 +923,14 @@ final class AutomationPatchControlPlaneService {
     Map<String, GameplayCommandStatusView> statuses = new LinkedHashMap<>();
     for (ScriptWorkItemService.HandoffEventSummary summary : summaries) {
       String commandId = AutomationControlPlaneSupport.emptyIfNull(summary.gameSessionCommandId());
-      if (commandId.isBlank() || statuses.containsKey(commandId)) {
+      String gameInstanceId =
+          AutomationControlPlaneSupport.emptyIfNull(summary.targetGameInstanceId());
+      if (commandId.isBlank() || gameInstanceId.isBlank() || statuses.containsKey(commandId)) {
         continue;
       }
       GetGameplayCommandStatusResponse response =
-          gameSessionControlPlaneClient.getGameplayCommandStatus(tenantId, commandId);
+          gameSessionControlPlaneClient.getGameplayCommandStatus(
+              tenantId, gameInstanceId, commandId);
       if (response == null
           || response.hasError()
           || AutomationControlPlaneSupport.emptyIfNull(response.getCommand().getCommandId())

@@ -1160,7 +1160,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         .setPointerVersion(99L)
                         .build())
                 .build());
-    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "command-1"))
+    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "game-2", "command-1"))
         .thenReturn(
             GetGameplayCommandStatusResponse.newBuilder()
                 .setCommand(

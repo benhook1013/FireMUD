@@ -13,16 +13,21 @@ class GameplayWebSocketObservabilityTest {
     GameplayWebSocketObservability observability =
         new GameplayWebSocketObservability(new SimpleMeterRegistry());
 
+    var plannedDrain =
+        observability.classify(new CloseStatus(1000, "logout;subreason=gateway_restart"));
     var logout = observability.classify(new CloseStatus(1000, "logout;subreason=takeover"));
     var unexpected = observability.classify(new CloseStatus(3999, "unbounded-peer-reason"));
 
+    assertThat(plannedDrain.bridgeShutdownClass()).isEqualTo("planned_drain");
     assertThat(logout.status().getCode()).isEqualTo(1000);
     assertThat(logout.status().getReason()).isEqualTo("logout;subreason=takeover");
     assertThat(logout.reason()).isEqualTo("logout");
     assertThat(logout.subreason()).isEqualTo("takeover");
+    assertThat(logout.bridgeShutdownClass()).isEqualTo("upstream_logout");
     assertThat(unexpected.status().getCode()).isEqualTo(1011);
     assertThat(unexpected.status().getReason()).isEqualTo("internal_error");
     assertThat(unexpected.subreason()).isEqualTo("none");
+    assertThat(unexpected.bridgeShutdownClass()).isEqualTo("unattributed_failure");
   }
 
   @Test
@@ -40,7 +45,13 @@ class GameplayWebSocketObservabilityTest {
     assertThat(
             meterRegistry
                 .get("gateway.websocket.closes")
-                .tags("reason", "policy_violation", "subreason", "edge_backpressure")
+                .tags(
+                    "reason",
+                    "policy_violation",
+                    "subreason",
+                    "edge_backpressure",
+                    "bridge_shutdown_class",
+                    "unattributed_failure")
                 .counter()
                 .count())
         .isEqualTo(1.0);
