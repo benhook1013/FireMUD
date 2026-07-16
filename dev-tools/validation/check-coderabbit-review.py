@@ -366,7 +366,11 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if created_at_dt is None:
             continue
         body = comment.get("body", "")
-        if REVIEW_LIMIT_MARKER not in body and REVIEW_LIMIT_MESSAGE not in body:
+        if (
+            REVIEW_LIMIT_MARKER not in body
+            and REVIEW_LIMIT_MESSAGE not in body
+            and REVIEW_LIMIT_WINDOW_PATTERN.search(body) is None
+        ):
             continue
         if latest_review_trigger_dt is not None and created_at_dt < latest_review_trigger_dt:
             continue

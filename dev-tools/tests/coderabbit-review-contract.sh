@@ -461,6 +461,24 @@ cat >"$TMP_DIR/review-full-command-rate-limited.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/review-next-window-hours.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {"nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]},
+        "reviewThreads": {"nodes": []},
+        "comments": {"nodes": [
+          {"author": {"login": "benhook1013"}, "body": "@coderabbitai full review", "createdAt": "2099-07-03T02:40:00Z", "url": "https://example.test/full-review"},
+          {"author": {"login": "coderabbitai"}, "body": "Next review available in: **2 hours**", "createdAt": "2099-07-03T02:40:05Z", "url": "https://example.test/next-review-window"}
+        ]}
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/superseded-review-outcome.json" <<'JSON'
 {
   "data": {
@@ -664,6 +682,12 @@ grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-full-command-
 grep -q "review_rate_limit_until=2099-07-03T03:37:05+00:00" "$TMP_DIR/review-full-command-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-full-command-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-full-command-rate-limited.out"
+
+expect_failure_output "$TMP_DIR/review-next-window-hours.json" "$TMP_DIR/review-next-window-hours.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-next-window-hours.out"
+grep -q "review_rate_limit_until=2099-07-03T04:40:05+00:00" "$TMP_DIR/review-next-window-hours.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-next-window-hours.out"
 
 expect_failure_output "$TMP_DIR/review-rate-limit-expired.json" "$TMP_DIR/review-rate-limit-expired.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

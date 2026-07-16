@@ -115,7 +115,7 @@ public class ResumeTranscriptEntryRepository {
         .execute();
   }
 
-  /** Refreshes the one inactivity expiry shared by every retained entry in a transcript scope. */
+  /** Sets or clears the one inactivity expiry shared by every retained entry in a scope. */
   public int updateExpiryByScope(
       long tenantId, long gameInstanceId, long characterId, Instant expiresAt) {
     return dsl.update(RESUME_TRANSCRIPT_ENTRY)

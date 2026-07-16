@@ -9,12 +9,16 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Defines the deterministic envelope used by every reconnect transcript storage tier. */
 public final class ResumeTranscriptCanonicalizer {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper STRICT_OBJECT_MAPPER =
+      JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
   private static final DateTimeFormatter TIMESTAMP_FORMAT =
       DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
@@ -98,9 +102,14 @@ public final class ResumeTranscriptCanonicalizer {
       return "null";
     }
     try {
-      return canonicalizeNode(OBJECT_MAPPER.readTree(rawJson));
-    } catch (JacksonException ex) {
-      return quote(rawJson);
+      return canonicalizeNode(STRICT_OBJECT_MAPPER.readTree(rawJson));
+    } catch (JacksonException strictFailure) {
+      try {
+        OBJECT_MAPPER.readTree(rawJson);
+      } catch (JacksonException legacyInput) {
+        return quote(rawJson);
+      }
+      throw new IllegalArgumentException("JSON payload contains duplicate keys", strictFailure);
     }
   }
 

@@ -6,10 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python3 - <<'PY' "$ROOT_DIR"
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
+import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
 
 
@@ -37,6 +39,20 @@ class FakeSession:
 
     def close(self):
         self.closed = True
+
+
+class CommandResponseSession(FakeSession):
+    def __init__(self, responses):
+        super().__init__()
+        self.responses = list(responses)
+
+    def sendall(self, payload):
+        super().sendall(payload)
+        self.chunks = [self.responses.pop(0)]
+
+    def send(self, payload):
+        super().send(payload)
+        self.chunks = [self.responses.pop(0)]
 
 
 opened = []
@@ -101,6 +117,36 @@ assert isinstance(result, FakeSession)
 assert attempts["count"] == 2
 
 
+for transient_failure in (True, False):
+    deadline_attempts = {"count": 0}
+
+    def open_until_deadline():
+        deadline_attempts["count"] += 1
+        if transient_failure:
+            return FakeSession()
+        raise OSError("temporary failure")
+
+    def fail_until_deadline(_session):
+        raise smoke_common.TransientUpstreamSmokeFailure("temporary upstream failure")
+
+    with patch("smoke_common.time.time", side_effect=[0, 0, 1]), patch(
+        "smoke_common.time.sleep"
+    ) as sleep:
+        try:
+            run_transport_session(
+                open_until_deadline,
+                fail_until_deadline,
+                "deadline-bound session",
+                retry_window_seconds=1,
+                retry_interval_seconds=2,
+            )
+            raise AssertionError("deadline-bound retry unexpectedly opened another session")
+        except (smoke_common.TransientUpstreamSmokeFailure, RuntimeError):
+            pass
+    sleep.assert_called_once_with(1)
+    assert deadline_attempts["count"] == 1
+
+
 upstream_attempts = []
 
 
@@ -127,6 +173,47 @@ upstream_responses = run_telnet_smoke_session(
 assert upstream_responses == ["OK LOGIN"]
 assert len(upstream_attempts) == 2
 assert all(session.closed for session in upstream_attempts)
+
+
+for transport in ("telnet", "websocket"):
+    later_failure_attempts = []
+
+    def open_later_failure():
+        session = CommandResponseSession(
+            ["OK LOGIN", "ERROR UPSTREAM_FAILURE Gameplay unavailable."]
+        )
+        later_failure_attempts.append(session)
+        return session
+
+    try:
+        steps = [
+            ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+            ("LOOK", ["A room"], "LOOK"),
+        ]
+        if transport == "telnet":
+            run_telnet_smoke_session(
+                "example.test",
+                2323,
+                steps,
+                1,
+                open_session=open_later_failure,
+                retry_window_seconds=1,
+                retry_interval_seconds=0,
+            )
+        else:
+            run_websocket_smoke_session(
+                open_later_failure,
+                steps,
+                1,
+                retry_window_seconds=1,
+                retry_interval_seconds=0,
+            )
+        raise AssertionError(f"{transport} later-step failure unexpectedly retried")
+    except RuntimeError as exc:
+        assert not isinstance(exc, smoke_common.TransientUpstreamSmokeFailure)
+        assert "ERROR UPSTREAM_FAILURE" in str(exc)
+    assert len(later_failure_attempts) == 1
+    assert later_failure_attempts[0].closed is True
 
 print("smoke transport contract checks passed")
 PY

@@ -130,6 +130,40 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
+  void switchingToTtlZeroClearsExistingScopeExpiryBeforeItsOldDeadline() {
+    ReconnectionSettingsResolver expiringSettings =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 1, 1, 1_000, 2_000));
+    DurableScreenBufferService expiringService =
+        new DurableScreenBufferService(
+            repository, expiringSettings, emptyHotCache(), new SimpleMeterRegistry());
+    expiringService.append(
+        22L,
+        7L,
+        13L,
+        List.of(ScreenBufferService.BufferedEntry.fromText("Retained after policy change\n")));
+    Instant oldExpiry = repository.findByScope(22L, 7L, 13L).getFirst().getExpiresAt();
+
+    ReconnectionSettingsResolver ttlZeroSettings =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(0L, 256, 1, 1, 1_000, 2_000));
+    DurableScreenBufferService ttlZeroService =
+        new DurableScreenBufferService(
+            repository, ttlZeroSettings, emptyHotCache(), new SimpleMeterRegistry());
+
+    assertThat(ttlZeroService.get(22L, 7L, 13L)).isPresent();
+    assertThat(repository.findByScope(22L, 7L, 13L).getFirst().getExpiresAt()).isNull();
+    assertThat(repository.deleteExpiredBefore(oldExpiry.plusMillis(1), 10)).isZero();
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Retained after policy change\n");
+  }
+
+  @Test
   void deletesExpiredEntriesGloballyAtTheirExactExpiryWithoutRemovingTtlZeroRows() {
     Instant cutoff = Instant.parse("2026-07-12T01:02:00Z");
     ResumeTranscriptEntry expiredInPrimaryScope = entry("Primary\n", cutoff.minusSeconds(20));

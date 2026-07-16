@@ -89,8 +89,7 @@ class DurableScreenBufferServiceTest {
     assertThat(persisted.getExpiresAt()).isNull();
     verify(repository, never())
         .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
-    verify(repository, never())
-        .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
     verify(repository, never()).updateByteSizes(any());
 
     ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries =
@@ -123,6 +122,7 @@ class DurableScreenBufferServiceTest {
     verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
     verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
     verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
   }
 
   @Test
@@ -243,8 +243,7 @@ class DurableScreenBufferServiceTest {
     service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(oversized));
 
     verify(repository, never()).saveAll(any());
-    verify(repository, never())
-        .updateExpiryByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
     verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
     verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
   }
