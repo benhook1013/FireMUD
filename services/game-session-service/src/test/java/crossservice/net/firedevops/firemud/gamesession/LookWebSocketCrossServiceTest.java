@@ -6,6 +6,9 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import javax.sql.DataSource;
+import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
+import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
+import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
@@ -99,6 +102,43 @@ class LookWebSocketCrossServiceTest {
                     && response.contains("Short:")
                     && !response.contains("Long:")
                     && response.endsWith("demo> "));
+  }
+
+  @Test
+  void websocketStatusProjectsAuthoritativeActorStateThroughGameLogic() throws Exception {
+    ensureTestServicesStarted();
+    accountStub().allowGameplayAdmission();
+    long sessionId = prepareGameInstance();
+    STACK
+        .entityStub()
+        .setActorState(
+            QueryActorStateResponse.newBuilder()
+                .addResources(
+                    ActorResourceValue.newBuilder()
+                        .setStatKey("health")
+                        .setCurrentValue(105)
+                        .setMaxValue(90)
+                        .setBaseValue(80))
+                .addResources(
+                    ActorResourceValue.newBuilder().setStatKey("armour_value").setCurrentValue(12))
+                .addActiveConditions(
+                    ActorConditionState.newBuilder()
+                        .setConditionKey("blessed")
+                        .setStackCount(1)
+                        .setExpiresAt("2026-07-15T00:01:00Z"))
+                .build());
+
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
+      client.clearResponses();
+      client.send("STATUS");
+      client.awaitStartsWith("OK STATUS");
+
+      assertThat(client.responses())
+          .anyMatch(
+              response ->
+                  response.contains("Status:\n- armour_value: 12\n- health: 105/90")
+                      && response.contains("Conditions:\n- blessed"));
+    }
   }
 
   @Test
