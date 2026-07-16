@@ -8,9 +8,10 @@ Key files include:
 - [**core-requirements.md**](./core-requirements.md) – High-level feature requirements.
 - [**vertical-slices/00-slice-progress.md**](./vertical-slices/00-slice-progress.md) – Short queue view of active slice maturity and remaining work.
 - [**vertical-slices/**](./vertical-slices/) – Active working task lists for implementation slices.
-- [**service-status-*.md**](./service-status-account-service.md) – High-level per-service implementation summaries.
+- [**implementation-tracking/**](./implementation-tracking/README.md) – Domain-centric implementation status and the active migration protocol for retiring older slice and service-status records.
 - [**slice-support/**](./slice-support/README.md) – Slice-specific developer workflows, regression notes, instrumentation references, and playtesting support docs.
-  Includes the high-level [player-playtest-checklist.md](./slice-support/player-playtest-checklist.md) for manual player-facing feature verification.
+- [**player-playtest-checklist.md**](../developer-workflows/player-playtest-checklist.md) – High-level manual player-facing feature verification workflow.
 - [**ai-task-prompt-library/**](./ai-task-prompt-library/) – Reusable prompt material for architecture and implementation review workflows.
+- [**recurring-code-review-sweeps.md**](./recurring-code-review-sweeps.md) – Reusable convergence and safety sweep patterns distilled from recurring review findings.
 - [**design-assumptions.md**](./design-assumptions.md) – Product and implementation assumptions that inform planning.
 - [**testing-focus-areas.md**](./testing-focus-areas.md) – Testing priorities and quality-risk areas.
