@@ -8,12 +8,15 @@ This protocol moves current implementation facts from vertical-slice delivery re
 2. Use a fresh, independent Luna pass to audit the completed map by disjoint domain. It must find unallocated ranges, overlapping tracker ownership, and incorrect boundaries before any tracker migration begins. It does not make design decisions.
 3. Run the deterministic transposition tool on the main thread after the map has passed its audit. It generates every affected domain tracker and supporting ledger from the exact allocation map; the map records allocation and the ledger records completed source-to-destination transposition. This is the lossless evidence layer, not the final reader-facing implementation record.
 4. Author the semantic consolidation on the main thread. Each tracker must replace placeholder status text with a concise domain capability record, canonical design sources, active gaps, decisions still to discuss, and a service/contract map. It must preserve the source evidence appendix unchanged and may not silently omit a current fact merely because several source records repeat it.
-5. Run independent review after the semantic consolidation. Spark performs the primary source-to-destination coverage and semantic-fidelity audit and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful. Spark is not an allocation prerequisite.
-6. Resolve every review finding in the standardized tracker body, rerun the affected audit, then delete the source-evidence appendices, legacy vertical-slice records, generated allocation/coverage ledgers, and migration-only tooling. Repair all links and indexes so the standardized domain trackers are the only implementation-tracking surface.
+5. Reconcile supplementary legacy status surfaces that were not allocation-map inputs. Read the twelve `service-status-*.md` snapshots and `vertical-slices/00-design-area-slice-coverage.md`, move every unique current implementation, maturity, gap, ownership, and future-decision fact into the owning domain tracker or canonical architecture, and record its destination or explicit obsolete/superseded disposition in the [supplementary status reconciliation ledger](./migration-ledgers/SUPPLEMENTARY_STATUS_RECONCILIATION.md). This is migration work and must be complete before independent review.
+6. Run independent review after all semantic consolidation, including supplementary status reconciliation. Spark performs source-to-destination coverage and semantic-fidelity audits and returns the implicated service audit queue. A separate higher-capability review may be added for final sign-off when useful. Review verifies completed migration records; it is not the mechanism for building them.
+7. Resolve every review finding in the standardized tracker body, rerun the affected audit, then delete the source-evidence appendices, legacy vertical-slice records, standalone service-status snapshots, generated allocation/coverage ledgers, and migration-only tooling. Repair all links and indexes so the standardized domain trackers are the only implementation-tracking surface.
 
 ## Unit Of Work
 
 The source map is the migration unit. A source slice may contribute to more than one tracker, but every source range must appear in the global allocation map and have one explicit ledger disposition in the relevant tracker ledger. Do not assign work by service alone: a slice often crosses service boundaries, while the tracker owns the domain fact.
+
+The supplementary status reconciliation ledger is the migration unit for the thirteen later-admitted status and coverage sources. It must be authored during semantic consolidation, before Audit 12, using the same explicit-destination and no-silent-loss rules.
 
 ## Required Process
 
@@ -46,9 +49,13 @@ A tracker is ready for independent verification when:
 - its consolidated record, index, and evidence appendix agree on the current domain boundary; and
 - the standardized body is self-sufficient, with the appendix needed only to detect omissions or drift.
 
+The repository is ready for supplementary status verification only when every row in `SUPPLEMENTARY_STATUS_RECONCILIATION.md` has been completed and every required tracker or architecture edit has already been made.
+
 A tracker is independently verified when the Spark domain review reports no unaddressed loss or semantic drift and the resulting service-level audit queue is recorded in the tracker or explicitly scheduled as follow-through.
 
 The repository-wide migration is complete only when every tracker has passed that gate and the temporary evidence appendices, legacy slice records, migration ledgers, and migration-only tooling have been removed without leaving broken links or unique implementation facts behind.
+
+The repository-wide migration also requires an independently verified supplementary legacy-status reconciliation: every `service-status-*.md` fact and every current maturity/coverage fact in `vertical-slices/00-design-area-slice-coverage.md` must have a named destination or an explicit obsolete/superseded disposition before those competing status surfaces are removed.
 
 ## Service Audits
 

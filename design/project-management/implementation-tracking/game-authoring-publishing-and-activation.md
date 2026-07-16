@@ -2,7 +2,7 @@
 
 ## Current Status
 
-The lossless source transposition is complete. This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation.
+The lossless source transposition is complete. This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability; the unchanged source evidence remains the audit backstop while Spark coverage review verifies every allocation. The live implementation is strongest in control-plane publication, release attestation, launch preflight, and the first typed World authoring handoff; broader creator/editor UX and downstream ownership synchronization remain incomplete.
 
 ## Implementation Record Index
 
@@ -62,6 +62,8 @@ The settings-preset slice is planned, not implemented. A preset is intended to b
 The current inventory settings surface is exactly tenant/game `commandCapabilities.inventoryEnabled`, which controls standard `INVENTORY`, room-ground, container, and equipment command availability. `INVENTORY`, `GET`, `DROP`, selector grammar, visible-item reference semantics, and room-ground transcript semantics remain one shared platform command contract, not per-game settings. No current operator-only inventory tuning field or operator cap has a demonstrated need.
 
 Versioned game-authored DML, not settings, owns equipment slot definitions, slot-group compatibility, body-layout membership, character body-layout keys, item equipment compatibility, and stackability/fungibility. The published game version supplies that data; Entity Management persists and validates runtime bindings against release-owned data. Selector, transfer, audit, and holder-ownership rules remain canonical platform contracts. A future `inventory.*` or `equipment.*` setting is warranted only for a concrete runtime policy that is neither authored content nor a protocol/invariant.
+
+The current creator-facing item/equipment surface is not a complete editor: the versioned DML, Game Design revision/publish control-plane substrate, and Entity Management runtime validation for slots, body layouts, compatibility, and stackability are present, while item-stat editing, equipment curves, economy-impact views, and the broader web editor remain future application work.
 
 ### Authored Help Storage and Layering
 
@@ -133,6 +135,7 @@ Game Design owns revision history, commits, version state, and publish orchestra
 - The broader authored-action model remains incomplete: generic target selection, costs, cooldowns, timing, ordered multi-effect steps, additional effect kinds, required/optional outcomes, and explicit cross-region compensation/refund behavior are not live.
 - Rich help-authoring UI, localization-aware authored help, fuzzy or semantic search, related-topic graphs, moderation/versioning beyond ordinary authored-content ownership, and dynamic authored-action help integration remain deferred product work.
 - The parent `08` family remains in progress. Future domain-template families must join the existing version-scoped digest gate; future release-bundle consumers must apply missing-attestation, unsupported-schema, and exact-asset-proof hard failures.
+- Publish/version synchronization remains incomplete across downstream domain-owned schemas. Game Design owns revision history, version metadata, and publish orchestration, while Entity Management and World Management retain authoritative entity and world rows; the current participant digests and first World mutation handoff do not yet cover every future editor caller or template family.
 - Asset lifecycle follow-through must widen purge eligibility to future `version_asset`, `revision_asset`, and normalized template/history reference tables, and later derived artifacts must use the same manifest/attestation/repair model.
 - Launch/activation follow-through includes broader cutover and retirement consumers, later runtime-state families, exact Entity target-template validation once version-scoped entity-template tables exist, and replacement of remaining placeholder runtime topology/state rows.
 - World design authoring currently has the first typed revision-to-World handoff, not a complete editor mutation surface. Broader concrete mutation coverage, shared idempotency/epoch/reference validation, and publish-reconciliation replay remain outside the current seam.

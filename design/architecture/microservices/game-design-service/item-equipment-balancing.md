@@ -4,7 +4,7 @@ Game balance relies heavily on item statistics and equipment progression. This d
 
 Balancing records are scoped by `tenantId` so multiple games can maintain independent item definitions. They are stored as versioned template rows keyed by `(tenantId, versionId)` and published alongside other entity definitions so runtime services always load a consistent, immutable template for the active version.
 
-These capabilities are available in the current implementation.
+The capabilities below describe the target creator-facing balancing surface. The current implementation provides version-scoped item/equipment data and the runtime schema substrate, but not the complete editor and visualization experience described here.
 
 ## Features
 
@@ -15,6 +15,8 @@ These capabilities are available in the current implementation.
 - **Web-Based Interface** – edit and visualize stats through the drag‑and‑drop UI described in [Web-Based Visual Design Interface](web-visual-interface.md).
 
 ## Workflow
+
+The workflow below is the target authoring and publication flow. Today, the live substrate is the versioned Entity Management DML plus Game Design revision/publish orchestration and Entity Management runtime validation; the creator-facing editor, balancing views, and visual web interface remain future application work.
 
 1. Items and equipment are defined through the Entity Designer (see [World Editing & Customization Tools](world-editing-tools.md)).
 2. Balancing views aggregate stats and show graphs for cost vs. power.
@@ -37,7 +39,7 @@ Cross-service references to item and equipment templates follow the normalized i
 Current `06.3` / item-instance note:
 
 - item templates now expose an explicit authored `stackable` capability rather than relying on implicit "same item means same stack" behavior;
-- this only defines author intent for later fungibility work, and does not yet enable runtime stack merge on its own;
+- eligible stackable items now use holder-local `item_stacks` records with compatibility and stack-family validation; non-stackable item-instance identity remains distinct;
 - non-stackable remains the safe default for ordinary physical items, especially equipment, containers, and other stateful items.
 
 Current equipment-schema note:

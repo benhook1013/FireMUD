@@ -11,9 +11,9 @@ Each tracker contains:
 - a named implementation-record index; and
 - lossless source evidence linked to the relevant legacy delivery records.
 
-Files under [`../vertical-slices`](../vertical-slices/README.md), the generated evidence appendices, and migration ledgers are temporary audit inputs. Keep them unchanged until independent coverage and semantic-fidelity review is complete. Once all findings are resolved, remove that temporary material and repair links so these domain trackers are the sole implementation-tracking source.
+Files under [`../vertical-slices`](../vertical-slices/README.md), the generated evidence appendices, migration ledgers, and the standalone `service-status-*.md` snapshots are temporary or competing audit inputs. Keep them until independent coverage, semantic-fidelity, and supplementary legacy-status review is complete. Once all findings are resolved, remove that temporary material and repair links so these domain trackers are the sole implementation-tracking source.
 
-Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the per-domain [coverage ledgers](./migration-ledgers/README.md) while migration is active. The mechanical evidence layer and exhaustive semantic consolidation are required before Spark audits coverage and fidelity; migration completes only after audit findings are fixed and the temporary evidence/source scaffolding is removed.
+Follow the [migration protocol](./MIGRATION_PROTOCOL.md) and the [migration ledgers](./migration-ledgers/README.md) while migration is active. The mechanical evidence layer, exhaustive semantic consolidation, and supplementary status reconciliation are required before Spark audits coverage and fidelity; migration completes only after audit findings are fixed and the temporary evidence/source scaffolding is removed.
 
 ## Trackers
 

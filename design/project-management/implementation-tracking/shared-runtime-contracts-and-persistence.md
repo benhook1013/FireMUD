@@ -66,6 +66,8 @@ Game Session owns the first delegated-gameplay authority seam through `GameplayS
 
 World Management and Entity Management now have service-local auth configuration and JWT interceptors on their gRPC boundaries, baseline auth on exposed REST boundaries, and tenant-access checks on tenant-scoped REST/gRPC operations, including the Entity friend REST path. Tenant failures return normal `PERMISSION_DENIED` `ErrorDetail` payloads rather than becoming `INTERNAL`. Their tests assert auth wiring and tenant enforcement, and protected internal callers use the shared auth propagation seam.
 
+Shared Security provides conditional JWT-secret reload through `ReloadableJwtUtil` and `JwtSecretWatcher` when a service configures `FIREMUD_AUTH_JWT_SECRET_PATH`. This is distinct from JWKS publication and does not provide rotation-job orchestration, key-overlap management, or proof that every deployment hot-reloads validators.
+
 ### gRPC Application Errors and Observability
 
 Application failures use normal response payloads containing `ErrorDetail`; `GrpcAppErrors` logs warnings, increments bounded `grpc.app_error` metrics tagged by error code, and tags spans. Transport `onError` is reserved for transport or infrastructure failure, not routine authorization, validation, or business outcomes. The visible audited service set now follows this contract across Account, Gateway Management, current admin services, Social Groups, Notification, Payment, Virtual Currency, and Game Session, including lifecycle failures caused by runtime-state/dependency validation. The obsolete transport-error admin aspect was removed in favor of explicit in-band admin-role guards.
@@ -75,6 +77,8 @@ Application failures use normal response payloads containing `ErrorDetail`; `Grp
 Logging & Admin exposes dedicated non-destructive `CreateLogEvent` ingress. Account logging for creation and payment uses that RPC and the `LogEvent` persistence path; it does not fabricate moderation fields, delete accounts, or stop sessions. Moderation mutation remains a separate explicit operator/admin operation. Focused tests prove both the log-event behavior and the absence of destructive account/session effects.
 
 Logging & Admin records moderation policy actions and exposes internal `EvaluateModerationPolicy`. Game Session owns enforcement of `GAMEPLAY_ADMISSION` during `PLAY`; Social & Groups owns `CHAT_SEND` enforcement before chat persistence or publication. Policy definition, distribution/evaluation, runtime enforcement, and audit are therefore separate authorities. Broader staff capability/RBAC redesign, appeals/case-management UX, and durable moderation UI are not implemented by this boundary.
+
+Those shared audit and moderation-policy seams do not constitute a complete Account security-lock, ban, suspension, operator-recovery, or appeal workflow. Account owns its security-state transitions and enforcement; the unfinished cross-service operator flow remains explicit rather than being attributed to Logging & Admin.
 
 ### Transactions, Saga Ownership, and Runtime Truth
 
@@ -106,6 +110,8 @@ All current SQL-backed business services have no Spring Data JPA repository surf
 - Logging & Admin: moderation actions, player reports, log events, and moderation-policy reads; its log-event, moderation, and report repositories use shared timestamp helpers.
 - World Management: generation rules, authored topology and exits, design scope/epoch/revision ledger, spawn bindings, runtime world/region/zone/room instances and exits, and world-event history.
 - Social & Groups: account-scoped friends, guilds/members/storage/alliances, chat persistence and effect-id replay lookup, and mail messages.
+
+The Account rows and entrypoints for profiles, external links, recovery/verification, payments, subscriptions, notifications, and virtual currency are live foundations. They do not imply completion of Account lifecycle transitions, purchased-entitlement fulfillment, or complete billing/subscription enforcement.
 
 Repo-wide Hibernate/JPA build/runtime support, ORM configuration, and dead helpers have been removed. Common data runtime owns the JDBC/Flyway/Postgres contract without Hibernate default-schema assumptions; common saga uses explicit jOOQ repositories; shared Postgres-backed test support expresses service-schema boot once, including former H2-backed Game Session seams. `PostgresBackedServiceTestSupport` uses an explicit schema-to-module map rather than guessing module directories from schema names, matching reset-tooling truth. Logging & Admin saga dashboard availability is conditional on saga beans and fails closed when absent; Game Session no-database bootstrap/recovery beans are explicitly gated. Service boot, hosted manifests, Compose, and reset tooling use `flyway_schema_history_<service_schema>` consistently. Saga migration resources are bundled from `common-saga` and applied alongside service-local migrations in the owning service schema, not in a dedicated saga schema or separate common-library Flyway pass. Shared Gradle conventions now use SQL-era names (`sql-postgres-conventions` and `secured-sql-aop-service-conventions`). Logging & Admin and Social & Groups test profiles normalize H2 identifier casing where generated metadata needs it, while World Management's leftover H2 test dependency tail is removed. Social guild-member/storage/alliance migrations were also aligned with the current surrogate-id, tenant, and `Long`-identifier model rather than relying on JPA to mask drift.
 
@@ -141,6 +147,7 @@ The evidence records focused and repository-level proof for the implemented seam
 - Future SQL work must use jOOQ/Flyway and owning service schemas; there is no intended remaining ORM/JPA migration lane. A new shared persistence abstraction would require an explicit design decision.
 - New Temporal workflow families require a concrete long-lived business process, owning-domain state, and a reason to need durable waits/resume/operator control. Gameplay/tick runtime and small CRUD orchestration remain outside Temporal.
 - Destructive pre-v1 Flyway baseline restatement is owned by the separate migration-squash/reset slice; this tracker records the ownership boundary but does not claim that follow-up as part of the runtime-contract implementation.
+- Account lifecycle transitions, purchased-entitlement fulfillment, complete billing/subscription enforcement, and the end-to-end account security-lock/appeal workflow remain Account-owned follow-through rather than shared-runtime completion claims.
 
 ## To Discuss
 

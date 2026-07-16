@@ -7,6 +7,7 @@ Keep source and destination open side by side while filling a row. The legacy sl
 ## Ledgers
 
 - [Global Source Allocation Map](./SOURCE_ALLOCATION_MAP.md)
+- [Supplementary Status Reconciliation](./SUPPLEMENTARY_STATUS_RECONCILIATION.md)
 
 - [Player Access and Session](./player-access-and-session.md)
 - [Player Experience, Commands, and Communication](./player-experience-commands-and-communication.md)

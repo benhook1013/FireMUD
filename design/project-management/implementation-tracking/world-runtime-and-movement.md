@@ -54,7 +54,7 @@ Use this index to locate the current domain capability. The detailed evidence pr
 
 - The directional `MOVE`/`GO` loop is live over both WebSocket and Telnet. Game Session accepts the authenticated gameplay command, Game Logic normalizes and resolves the requested direction against authoritative World Management exit data, World Management validates the exit and owns the location mutation, and Game Session updates the session room binding before emitting the destination `LOOK`.
 - The movement result is structured and includes enough destination context for Game Session to refresh without guessing from cached state. Invalid directions, missing exits or rooms, and downstream failures remain stable application errors and do not disconnect the client.
-- Movement uses existing primitives only for this directional step; it does not implement broader travel or full pathfinding. Durable movement idempotency validates expected, current, replayed, and destination room state against the canonical runtime-room contract before replay or write-through.
+- Game Logic has a named `MovementTravelService` pathfinding/travel substrate, with World Management supplying authoritative geometry and versioned navmesh/path-graph artifacts. The live command still uses existing primitives only for the directional step; broader travel and full pathfinding behavior are not implemented. Durable movement idempotency validates expected, current, replayed, and destination room state against the canonical runtime-room contract before replay or write-through.
 - Game Session records `gamesession.command.move.invocations` and `gamesession.command.move.failures` with high-level error categories, and the cross-service path is covered for success, invalid exit, unauthenticated input, backend failure, and reconnect after movement.
 
 ### Movement and Topology Settings
@@ -69,6 +69,7 @@ Use this index to locate the current domain capability. The detailed evidence pr
 - When Temporal is not enabled, `WorldInstanceActivationService` delegates to the same extracted command service so local non-Temporal application contexts still boot and use the same lifecycle commands.
 - `GetWorldInstanceLifecycle` exposes deterministic workflow identity and Temporal execution status to operators through the control-plane read surface. The existing class-A pre-activation versus class-B gameplay boundary is preserved; gameplay runtime, tick execution, and live in-world mutation remain outside the Temporal path.
 - Lifecycle orchestration preserves business idempotency keys and activation fencing, and fences current epoch/version/lifecycle validation, activation validation, and remote cleanup ordering. Local transactions do not remain open across blocking gRPC calls where a staged or fenced flow is possible.
+- World Management owns world-change notification production for Game Session and Automation, while Game Session owns gameplay-session/tick sharding, leases, and coordination. The current notification path and broader shard/load-balancing behavior are not a completed substitute for those ownership boundaries.
 
 ### Draft World Topology, Generation, and Mutation Authority
 
@@ -79,6 +80,8 @@ Use this index to locate the current domain capability. The detailed evidence pr
 - `SEED_APPEND_ONLY` fails closed when a revision would delete or rewrite existing authored rows, including spawn bindings. Topology mutations must prove that changed rows belong to the declared region or zone subtree; generation-rule mutations persist and validate their declared scope and participate in digest hashing.
 - `WORLD_GENERATION_SUBTREE` applies generated rooms, exits, generation rules, and spawn bindings in one declared subtree request. Entity references for spawn bindings are validated through the canonical Entity Management RPC. Design-time population writes World-owned declarative bindings only; Automation and Scripting cannot author template topology, bindings, or live entities as a generation side effect.
 - `GetDraftDesignDigest(versionId)` includes version-scoped spawn bindings and every row family that affects publish semantics, including scoped generation-rule metadata. Missing applicable families block publish gating.
+- World room and topology caches are derived, versioned Class A state: room/world mutations and activation changes require explicit invalidation or refresh of affected keys, and reset/rebuild behavior must recompute from authoritative storage rather than treating TTL as correctness. The current implementation still has cache-hardening work around reset tolerance and complete event-driven invalidation.
+- The current World digest read computes version-scoped template inputs and uses synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger exists. Publish convergence therefore remains an obligation: newly introduced topology/generation families and separately exported navmesh/path-graph artifacts must join the appropriate digest or attested manifest before a version is considered publishable.
 
 ### Validation and Proof
 

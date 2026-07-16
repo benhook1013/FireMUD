@@ -53,6 +53,8 @@ The current command lifecycle is explicit: `ACCEPTED` means durable identity exi
 
 `commandId` is carried in enqueue responses, Redis tick payloads, logs/MDC, batch manifests, effect rows, retries, and remote execution. `GetGameplayCommandStatus` is the current canonical Game Session read by `(tenantId, gameInstanceId, commandId)` and exposes `enqueueSeq`, the latest selected queue-source kind/state/ordinal and due-point tuple, lifecycle and routing data, and remote correlation/result fields. The richer older `ackLevel`/`ingressStatus` and bound-tick `GetCommandStatus` vocabulary is not implemented. Logging & Admin exposes the tenant-qualified `GET /gameplay-commands/{tenantId}/{commandId}` read and validates tenant identity before trusting the response.
 
+Rollback queue purge controls cover script-patch and plugin-version scopes. They remove matching not-yet-drained Redis queue entries and terminal-mark each corresponding durable gameplay command with `executionOutcome=PURGED`, `gameplayResult=NOT_APPLIED`, failure code `ROLLBACK_PURGED`, the operator-supplied reason as failure message, and `completedAt`; already-drained or applied work is outside this queue-purge terminalization path.
+
 ### Scheduler and Queue Pressure
 
 The scheduler has bounded fan-out: one runtime scope can have at most one pending or running tick. Overlapping pulses merge instead of accumulating debt, executor rejection is observable, and gameplay and automation/script ticks use disjoint Redis key namespaces. The scheduler records scheduled, merged, rejected, and paused-cycle counters, queue-depth signals, pressure summaries, and conservative consecutive-cycle thresholds for sustained rejection, elevated merging, and high executor queue depth. Threshold crossings produce alert counters and consecutive-cycle gauges, and canonical alert rules consume the exported gauges.
@@ -81,6 +83,8 @@ Built-in movement no longer uses the old synchronous mutation handler. It enqueu
 
 `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` use the same durable ingress, effect executor, downstream `effectId` propagation, and asynchronous output shape for Entity Management mutations. `SAY`, `WHISPER`, `TELL`, and `AFK` also enqueue durably; authoritative mutation or downstream RPC and actor-visible output occur after durable execution, replay uses a Game Session-owned guard rather than reinvoking the handler, and the same `effectId` reaches Game Logic and Social Groups persistence. `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct read-only views.
 
+The item command handler records `gamesession.command.item.*` invocation and failure metrics with bounded `type` and `error` tags across inventory, equipment, and container verbs.
+
 ### Ownership, Epochs, and Fencing
 
 `runtime_region_status` is the current durable owner-of-record keyed by the live tenant/game boundary. It stores explicit `regionId`, `regionEpoch`, opaque `executorFence`, owner service and instance identity, paused state, `lastCommittedTickBatchId`, and backlog truth. Tick processing observes this row and refreshes owner identity from the shared runtime identity. Pause, resume, and recovery advance the durable epoch/fence timeline; the fence is an opaque generation token and is compared for equality/freshness rather than treated as a numeric sequence.
@@ -105,7 +109,7 @@ Automation emits local same-scope commands through `EnqueueAutomationCommandIfAb
 
 ### Operator Readback and Facade Boundaries
 
-Game Session control-plane reads are canonical and bounded. `GameSessionControlPlaneGrpcService` is the transport, authorization, and application-error delegation layer; `GameSessionCommandControlPlaneService` owns gameplay-command status projection, staged automation-command admission, alias validation, remote-result/status mapping, and publication lookup helpers. The remaining remote runtime read/delegation collaborators keep the facade from carrying a second domain implementation. Application failures stay in normal responses for the existing control-plane mapping rather than being reconstructed by callers.
+Game Session control-plane reads are canonical and bounded. The runtime-state read for `(tenantId, gameInstanceId)` returns the current runtime version plus the resolved launch descriptor, version/release identifiers, and script-patch pin metadata including the persisted pin `controlPlaneRequestId`; `GetGameSessionPinConvergence` provides the direct pin-convergence read used by rollback/promotion orchestration. `GameSessionControlPlaneGrpcService` is the transport, authorization, and application-error delegation layer; `GameSessionCommandControlPlaneService` owns gameplay-command status projection, staged automation-command admission, alias validation, remote-result/status mapping, and publication lookup helpers. The remaining remote runtime read/delegation collaborators keep the facade from carrying a second domain implementation. Application failures stay in normal responses for the existing control-plane mapping rather than being reconstructed by callers.
 
 Logging & Admin consumes Game Session directly and has no parallel command, ownership, coordinator, follow-up, or result database. Current REST surfaces are `GET /gameplay-commands/{tenantId}/{commandId}`, `GET /remote-command-coordinators/{tenantId}/{coordinatorId}`, `GET /remote-command-coordinators/{tenantId}`, `GET /remote-followups/{tenantId}/{followupId}`, `GET /remote-followups/{tenantId}`, `GET /remote-followup-results/{tenantId}/{resultId}`, `GET /remote-followup-results/{tenantId}`, and `GET /tick-remediation/status/{tenantId}`. Every route is tenant-guarded; point reads validate tenant and exact id, list reads validate every returned row, invalid enum filters fail closed, and control-plane scope mismatches are rejected.
 
@@ -115,7 +119,7 @@ Coordinator listing has a bounded REST filter set of origin/target game instance
 
 Game Session `GameInstance` and World Management `WorldInstance` rows use optimistic-lock row versions. Redis session-context writes use watched multi-key retries across canonical session, identity, and name indexes. World termination does not hold a database transaction open across Entity Management cleanup, and same-request retries continue from `TERMINATING` without requiring callers to discover a changed lifecycle epoch. The hardening deliberately avoids long-lived transactions across blocking RPCs and avoids relying on in-process compensation as the only safety mechanism.
 
-Runtime feature-flag writes enter through Logging & Admin but persist with Game Session, the runtime owner. Consumers read that one canonical authority; the former split Logging & Admin persistence path is retired. Static build-time flags, deployment-only toggles, moderation, entitlement, and unrelated operator-control policy are outside this runtime authority boundary.
+Runtime feature-flag writes enter through Logging & Admin but persist with Game Session, the runtime owner. Consumers read that one canonical authority; the former split Logging & Admin persistence path is retired. This authority convergence does not mean that all feature-controlled behavior is applied: richer runtime feature application and broader consumer coverage remain future work beyond the current toggle/persistence/read seam. Static build-time flags, deployment-only toggles, moderation, entitlement, and unrelated operator-control policy are outside this runtime authority boundary.
 
 ### Validation and Proof
 
@@ -133,6 +137,7 @@ The recorded Markdown and contract checks for these slices include `./gradlew li
 - Timer, retry, remote-follow-up, and the three current remote payload families are live, but any new work-source or payload family still needs explicit durable source, ordering, ownership, fence, replay, result, and operator-read contracts. No side channel is part of the current implementation.
 - The bounded operator readback family does not include historical dashboards, pagination/sorting, full region-level UI, or a generalized gameplay-command history surface.
 - Downstream/domain-specific effect ledgers and replay/idempotency consumers beyond the migrated families remain future implementation work.
+- Runtime feature-flag authority is canonical, but richer runtime feature application and complete consumer coverage remain unimplemented.
 
 ## To Discuss
 
