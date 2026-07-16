@@ -60,7 +60,7 @@ The proto files in this directory define several RPCs consumed by domain service
   - It exposes script event-registry reads (`GetScriptEventDefinition`, `ListScriptEventDefinitions`) so design-time and operator tooling can consume the same canonical event definitions used by ingress admission.
   - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `ListPluginRuntimeEvents`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
-  - `UpdateScript` – uploads or replaces a script definition and its event bindings for later use as part of the Game Design → Automation & Scripting publish Saga.
+  - `UpdateScript` – uploads or replaces a script definition and its event bindings for the Game Design → Automation & Scripting publication handoff. Durable patch readiness is tracked by the Temporal `script-patch-readiness` workflow rather than a publish Saga.
   - `ScriptEventBinding.priorityTag` accepts the bounded tenant-budget tiers `high`, `normal`, and `background`; omitted values default to `normal`, and persisted handler work uses this tag when reserving live tenant execution budget.
   - `GetScriptStatus` – queries whether a script has queued or running work in the durable script work-item outbox.
   - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available; the service reloads affected scripts, executes any required `onLoad` initialization, updates its runtime registry, and starts or reuses the durable Temporal `script-patch-readiness` workflow that tracks the patch to terminal readiness.

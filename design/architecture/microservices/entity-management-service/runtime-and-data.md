@@ -294,7 +294,7 @@ Operators and later fraud/dupe-detection tooling should also be able to derive l
 
 ### Instance Termination Cleanup Contract
 
-Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the cross-service `InstanceTermination` Saga described in World Management docs:
+Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the durable Temporal `world-lifecycle` termination flow described in World Management docs:
 
 - Game Session must already have closed admissions for the target instance before cleanup starts.
 - Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.

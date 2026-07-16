@@ -174,9 +174,9 @@ Illustrative `GetRoomSnapshot` fragments:
 World Management owns the lifecycle of `gameInstanceId` rows, but teardown is cross-service:
 
 - Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
-- Expiry or operator shutdown transitions the instance to `TERMINATING` and starts an `InstanceTermination` Saga.
+- Expiry or operator shutdown transitions the instance to `TERMINATING` through the durable Temporal `world-lifecycle` workflow.
 - Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
-- Scheduled expiry jobs must enqueue the Saga and must not directly delete world rows for a still-unconfirmed termination.
+- Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.
 - Lifecycle fencing is mandatory. Termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened and `ACTIVE` is committed.
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
 
