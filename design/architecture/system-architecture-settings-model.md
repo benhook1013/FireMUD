@@ -128,26 +128,24 @@ Internal transport/framework constants should not be promoted into this model un
 Today, operator defaults still come from service-local typed properties, while tenant/game overrides for the surfaced pre-`06` domains are persisted in the shared Game Design authority. The agreed scope for live domains and the locked target scope for the next domains is:
 
 - `reconnection.policy`
-  - operator-only today
-  - later tenant/game-configurable within operator caps for resume windows and stale-resume fallback
+  - tenant/game-configurable today for resume windows and stale-resume fallback over service-local operator defaults
+  - operator caps remain future work
 - `reconnection.buffer`
-  - operator-only today
-  - later tenant/game-configurable within operator caps for transcript retention bounds
+  - tenant/game-configurable today for durable transcript retention bounds over service-local operator defaults
+  - operator caps remain future work
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
   - standard communication availability is owned by `commandCapabilities.availability`, not mode-specific communication settings
 - `prompts.coalescing` and `prompts.transportPresentation`
-  - operator-only today through Game Session prompt defaults plus shared persisted presentation/prompt overrides
-  - later tenant/game-configurable for game-defined prompt behavior and player-facing transport defaults
+  - tenant/game-configurable today through shared persisted presentation/prompt overrides over Game Session defaults
+  - richer game-defined prompt composition remains future work
 - `transcript.rendering`
-  - operator-only today
-  - later tenant/game-configurable for room-view and transcript presentation defaults such as briefness and color policy
+  - tenant/game-configurable today for room-view and transcript presentation defaults such as briefness and color policy
 - `movement.postMoveView`
-  - operator-only today
-  - later tenant/game-configurable within operator caps
+  - tenant/game-configurable today over service-local operator defaults
+  - operator caps remain future work
 - `worldTopology.scopeModel` and `worldTopology.regionBehavior`
-  - operator-only today
-  - later tenant/game-configurable when topology becomes part of per-game design state
+  - tenant/game-configurable today over service-local operator defaults
 - `commandHistory.retention`
   - operator defaults provide the initial bounded maximum
   - tenant/game overrides control the retained/displayable accepted-command bound within the platform maximum

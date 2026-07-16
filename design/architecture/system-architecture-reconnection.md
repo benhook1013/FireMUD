@@ -9,7 +9,7 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
-- **Remaining work** – Durable resume-transcript persistence is planned. Current replay uses the hot reconnect buffer, which stores structured metadata for new replayable outputs, remains able to read legacy text-only entries, and ends with fresh authoritative redraw. Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
+- **Remaining work** – Durable bounded resume-transcript persistence is live through ordered `resume_transcript_entry` rows, with Redis as a best-effort hot cache and fresh authoritative redraw after replay. Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current durable-transcript-plus-fresh-redraw contract.
 
 ## Reconnection Layers
 
@@ -204,7 +204,7 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
-The current hot-cache reconnect settings are exposed through:
+The current reconnect and durable-context settings are exposed through:
 
 - `firemud.reconnection.policy.resume-window-ms`
 - `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
@@ -214,7 +214,7 @@ The current hot-cache reconnect settings are exposed through:
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-These remain implementation-level operator/file-env defaults today. They will converge on the durable resume-transcript policy below; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+Service-local typed properties provide operator defaults, and Game Design persists optional tenant/game overrides that Game Session merges into the effective reconnection policy. Operator caps and presets remain future work. Prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Canonical durable resume-transcript policy
 
