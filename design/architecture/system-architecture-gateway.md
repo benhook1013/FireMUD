@@ -437,7 +437,7 @@ If the implementation cannot meet these lifecycle rules yet, the Gateway documen
 ## Observability
 
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
-WebSocket traffic is tracked using the `ConnectionMetricsFilter`. By default, tracing for WebSocket sessions records **connection-level metadata only** (for example, route ID, tenant, session identifiers, and basic timing) without full text payloads.
+Gameplay WebSocket handshake and bridge paths emit the bounded connection metrics described below. By default, tracing for WebSocket sessions records **connection-level metadata only** (for example, route ID, tenant, session identifiers, and basic timing) without full text payloads.
 Full request/response payload tracing for WebSocket sessions is treated as an **opt‑in diagnostic mode**: it is disabled in player‑facing environments and, when enabled for debugging, must use aggressive sampling and redaction as described in [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 Gateway must expose a small set of low-cardinality WebSocket meters so incidents can be triaged without relying on logs alone:

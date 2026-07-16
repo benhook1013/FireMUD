@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.Map;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
+import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,8 +33,10 @@ public class GameplayWebSocketBridgeConfig {
   GameplayWebSocketBridgeHandler gameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient gameplayWebSocketClient,
       GameplayWebSocketBridgeProperties properties,
-      RuntimeIdentity runtimeIdentity) {
-    return new GameplayWebSocketBridgeHandler(gameplayWebSocketClient, properties, runtimeIdentity);
+      RuntimeIdentity runtimeIdentity,
+      GameplayWebSocketObservability gameplayWebSocketObservability) {
+    return new GameplayWebSocketBridgeHandler(
+        gameplayWebSocketClient, properties, runtimeIdentity, gameplayWebSocketObservability);
   }
 
   @Bean

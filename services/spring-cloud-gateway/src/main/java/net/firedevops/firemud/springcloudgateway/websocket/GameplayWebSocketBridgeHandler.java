@@ -36,7 +36,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private static final String REALM_SLUG_HEADER = "X-Realm-Slug";
   private static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
   private static final CloseStatus BACKEND_UNAVAILABLE =
-      new CloseStatus(1011, "backend_unavailable");
+      new CloseStatus(1013, "backend_unavailable");
   private static final List<String> FORWARDED_HEADERS =
       List.of(
           "X-Game-Instance-Id",
@@ -53,6 +53,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private final ReactorNettyWebSocketClient client;
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
+  private final GameplayWebSocketObservability gameplayWebSocketObservability;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -60,10 +61,19 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,
-      RuntimeIdentity runtimeIdentity) {
+      RuntimeIdentity runtimeIdentity,
+      GameplayWebSocketObservability gameplayWebSocketObservability) {
     this.client = client;
     this.properties = properties;
     this.runtimeIdentity = runtimeIdentity;
+    this.gameplayWebSocketObservability = gameplayWebSocketObservability;
+  }
+
+  GameplayWebSocketBridgeHandler(
+      ReactorNettyWebSocketClient client,
+      GameplayWebSocketBridgeProperties properties,
+      RuntimeIdentity runtimeIdentity) {
+    this(client, properties, runtimeIdentity, GameplayWebSocketObservability.disabled());
   }
 
   @Override
@@ -108,7 +118,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
             upstreamHeaders,
             upstream -> {
               connected.tryEmitEmpty();
-              return bridgeUpstreamSession(upstream, state);
+              return bridgeUpstreamSession(downstream, upstream, state);
             });
     return Mono.when(connected.asMono().timeout(UPSTREAM_CONNECT_TIMEOUT), sessionLifecycle)
         .onErrorResume(
@@ -124,7 +134,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
                       attempt + 1,
                       downstream.getId());
                 }
-                return downstream.close(BACKEND_UNAVAILABLE);
+                return closeDownstream(
+                    downstream, gameplayWebSocketObservability.classify(BACKEND_UNAVAILABLE));
               }
               try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
                 LOG.info(
@@ -143,7 +154,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
               if (state.downstreamClosed.get()) {
                 return Mono.empty();
               }
-              return downstream.close(terminal.status());
+              return closeDownstream(
+                  downstream, gameplayWebSocketObservability.classify(terminal.status()));
             })
         .onErrorResume(
             transportError ->
@@ -166,7 +178,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
             attempt + 1,
             downstream.getId());
       }
-      return downstream.close(BACKEND_UNAVAILABLE);
+      return closeDownstream(
+          downstream, gameplayWebSocketObservability.classify(BACKEND_UNAVAILABLE));
     }
     try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
       LOG.info(
@@ -178,7 +191,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
         .then(connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, attempt + 1));
   }
 
-  private Mono<Void> bridgeUpstreamSession(WebSocketSession upstream, BridgeState state) {
+  private Mono<Void> bridgeUpstreamSession(
+      WebSocketSession downstream, WebSocketSession upstream, BridgeState state) {
     state.upstreamConnected.set(true);
     Mono<Void> send =
         upstream.send(
@@ -191,18 +205,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
         upstream
             .receive()
             .map(WebSocketMessage::getPayloadAsText)
-            .doOnNext(
-                payload -> {
-                  Sinks.EmitResult result = state.outboundToClient.tryEmitNext(payload);
-                  if (result.isFailure()) {
-                    try (RuntimeLoggingContext ignored = openLoggingContext(upstream)) {
-                      LOG.warn(
-                          "Failed to emit gameplay bridge payload '{}' to downstream: {}",
-                          payload,
-                          result);
-                    }
-                  }
-                })
+            .doOnNext(payload -> emitToDownstream(downstream, state, payload))
             .then();
 
     return Mono.firstWithSignal(send, receive)
@@ -221,13 +224,38 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
     if (status == null) {
       return true;
     }
-    if (status.getCode() == 1000 && "logout;subreason=gateway_restart".equals(status.getReason())) {
-      return false;
+    return status.getCode() != 1000
+        && status.getCode() != 1001
+        && status.getCode() != 1008
+        && status.getCode() != 1011;
+  }
+
+  private void emitToDownstream(WebSocketSession downstream, BridgeState state, String payload) {
+    Sinks.EmitResult result = state.outboundToClient.tryEmitNext(payload);
+    if (result.isFailure()) {
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+        LOG.warn("Gameplay downstream buffer overflow result={}", result);
+      }
+      throw new GameplayBridgeTerminalCloseException(
+          gameplayWebSocketObservability.slowClientClose().status());
     }
-    if (status.getCode() == 1011 && "internal_error".equals(status.getReason())) {
-      return false;
-    }
-    return status.getCode() != 1008;
+  }
+
+  private Mono<Void> closeDownstream(
+      WebSocketSession downstream,
+      GameplayWebSocketObservability.CloseClassification closeClassification) {
+    return Mono.defer(
+        () -> {
+          try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+            LOG.info(
+                "Gameplay websocket closed reason={} subreason={} code={}",
+                closeClassification.reason(),
+                closeClassification.subreason(),
+                closeClassification.status().getCode());
+          }
+          gameplayWebSocketObservability.recordClose(closeClassification);
+          return downstream.close(closeClassification.status());
+        });
   }
 
   private void emitIfConnected(WebSocketSession downstream, BridgeState state, String payload) {

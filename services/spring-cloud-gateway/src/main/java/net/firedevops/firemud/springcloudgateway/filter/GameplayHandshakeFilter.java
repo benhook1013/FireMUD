@@ -19,8 +19,10 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
@@ -68,25 +70,44 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   private final JwtUtil jwtUtil;
   private final RuntimeIdentity runtimeIdentity;
   @Nullable private final ReactiveStringRedisTemplate replayRedisTemplate;
+  private final GameplayWebSocketObservability gameplayWebSocketObservability;
   private final boolean allowLocalReplayFallback;
   private final ConcurrentHashMap<String, Long> replayCache = new ConcurrentHashMap<>();
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Injected collaborators remain internal filter dependencies.")
+  @Autowired
   public GameplayHandshakeFilter(
       JwtUtil jwtUtil,
       RuntimeIdentity runtimeIdentity,
       @Nullable ReactiveStringRedisTemplate replayRedisTemplate,
-      Environment environment) {
+      Environment environment,
+      GameplayWebSocketObservability gameplayWebSocketObservability) {
     this.jwtUtil = Objects.requireNonNull(jwtUtil, "jwtUtil must not be null");
     this.runtimeIdentity =
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity must not be null");
     this.replayRedisTemplate = replayRedisTemplate;
+    this.gameplayWebSocketObservability =
+        Objects.requireNonNull(
+            gameplayWebSocketObservability, "gameplayWebSocketObservability must not be null");
     this.allowLocalReplayFallback =
         Arrays.stream(environment.getActiveProfiles())
             .map(String::toLowerCase)
             .anyMatch(profile -> profile.equals("test"));
+  }
+
+  GameplayHandshakeFilter(
+      JwtUtil jwtUtil,
+      RuntimeIdentity runtimeIdentity,
+      @Nullable ReactiveStringRedisTemplate replayRedisTemplate,
+      Environment environment) {
+    this(
+        jwtUtil,
+        runtimeIdentity,
+        replayRedisTemplate,
+        environment,
+        GameplayWebSocketObservability.disabled());
   }
 
   @Override
@@ -194,19 +215,11 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
           .onErrorResume(
               ReplayRejectedException.class,
               ex -> {
-                logRejectedHandshake(
-                    exchange,
-                    "Rejected replayed first-party gameplay handshake: {}",
-                    ex.getMessage());
                 return reject(exchange, CONNECT_TOKEN_REPLAYED, "connect token replayed");
               })
           .onErrorResume(
               ReplayProtectionUnavailableException.class,
               ex -> {
-                logRejectedHandshake(
-                    exchange,
-                    "Rejected first-party gameplay handshake due to missing replay protection: {}",
-                    ex.getMessage());
                 return reject(
                     exchange,
                     CONNECT_REPLAY_PROTECTION_UNAVAILABLE,
@@ -215,21 +228,13 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
           .onErrorResume(
               IllegalArgumentException.class,
               ex -> {
-                logRejectedHandshake(
-                    exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
                 return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
               });
     } catch (ExpiredJwtException ex) {
-      logRejectedHandshake(
-          exchange, "Rejected expired first-party gameplay handshake: {}", ex.getMessage());
       return reject(exchange, CONNECT_TOKEN_EXPIRED, "connect token expired");
     } catch (JwtException ex) {
-      logRejectedHandshake(
-          exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
       return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
     } catch (IllegalArgumentException ex) {
-      logRejectedHandshake(
-          exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
       return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
     }
   }
@@ -339,13 +344,21 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
   }
 
-  private void logRejectedHandshake(ServerWebExchange exchange, String message, String detail) {
+  private void logRejectedHandshake(ServerWebExchange exchange, String errorClass, String message) {
     try (RuntimeLoggingContext ignored = openLoggingContext(exchange)) {
-      logger.debug(message, detail);
+      logger.warn(
+          "Gameplay handshake rejected route={} status={} errorClass={} message={}",
+          GameplayWebSocketObservability.GAMEPLAY_ROUTE,
+          HttpStatus.FORBIDDEN.value(),
+          errorClass,
+          message);
     }
   }
 
   private Mono<Void> reject(ServerWebExchange exchange, String errorClass, String message) {
+    gameplayWebSocketObservability.recordHandshakeRejection(
+        HttpStatus.FORBIDDEN.value(), errorClass);
+    logRejectedHandshake(exchange, errorClass, message);
     exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
     exchange.getResponse().getHeaders().set(HANDSHAKE_ERROR_CLASS_HEADER, errorClass);
     return exchange.getResponse().setComplete();
