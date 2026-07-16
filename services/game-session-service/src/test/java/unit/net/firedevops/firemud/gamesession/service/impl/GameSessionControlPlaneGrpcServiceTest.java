@@ -1682,7 +1682,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-123")).thenReturn(Optional.of(command));
+    Mockito.when(commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-123"))
+        .thenReturn(Optional.of(command));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
     coordinator.setCommandId("cmd-123");
@@ -1815,7 +1816,11 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
-        GetGameplayCommandStatusRequest.newBuilder().setCommandId("cmd-123").build(),
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("cmd-123")
+            .build(),
         new NoopObserver<>() {
           @Override
           public void onNext(GetGameplayCommandStatusResponse value) {
@@ -1925,7 +1930,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-multi")).thenReturn(Optional.of(command));
+    Mockito.when(commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-multi"))
+        .thenReturn(Optional.of(command));
 
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
@@ -1995,7 +2001,11 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
-        GetGameplayCommandStatusRequest.newBuilder().setCommandId("cmd-multi").build(),
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("cmd-multi")
+            .build(),
         new NoopObserver<>() {
           @Override
           public void onNext(GetGameplayCommandStatusResponse value) {
@@ -2038,7 +2048,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-incomplete"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-incomplete"))
         .thenReturn(Optional.of(command));
 
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -2096,7 +2107,11 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
-        GetGameplayCommandStatusRequest.newBuilder().setCommandId("cmd-incomplete").build(),
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("cmd-incomplete")
+            .build(),
         new NoopObserver<>() {
           @Override
           public void onNext(GetGameplayCommandStatusResponse value) {
@@ -2130,7 +2145,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRealmSlug("production");
     command.setPointerVersion(17L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-missing-runtime-identity"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "cmd-missing-runtime-identity"))
         .thenReturn(Optional.of(command));
 
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -2189,6 +2206,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
         GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
             .setCommandId("cmd-missing-runtime-identity")
             .build(),
         new NoopObserver<>() {
@@ -2235,6 +2254,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         GetGameplayCommandStatusRequest.newBuilder()
             .setTenantId("1")
             .setGameInstanceId("0")
+            .setCommandId("cmd-123")
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setAutomationDispatchId("dispatch-1")
@@ -2254,7 +2274,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void getGameplayCommandStatusRejectsZeroRegionEpoch() {
+  void getGameplayCommandStatusRejectsMissingCommandId() {
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -2292,14 +2312,14 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
-    assertEquals("region_epoch must be positive", responseRef.get().getError().getMessage());
+    assertEquals("command_id is required", responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(commandRepository);
   }
 
   @Test
-  void getGameplayCommandStatusCanResolveAutomationDispatchIdentity() {
+  void getGameplayCommandStatusReadsAutomationCommandByCanonicalIdentity() {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("auto-123");
     command.setTenantId(1L);
@@ -2339,10 +2359,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
-    Mockito.when(
-            commandRepository
-                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-                    1L, 7L, "region-1", 12L, "dispatch-1"))
+    Mockito.when(commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "auto-123"))
         .thenReturn(Optional.of(command));
     RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
     coordinator.setTenantId(1L);
@@ -2453,9 +2470,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         GetGameplayCommandStatusRequest.newBuilder()
             .setTenantId("1")
             .setGameInstanceId("7")
-            .setRegionId("region-1")
-            .setRegionEpoch(12L)
-            .setAutomationDispatchId("dispatch-1")
+            .setCommandId("auto-123")
             .build(),
         new NoopObserver<>() {
           @Override
@@ -2531,7 +2546,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-partial")).thenReturn(Optional.of(command));
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-partial"))
+        .thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -2552,7 +2569,11 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
-        GetGameplayCommandStatusRequest.newBuilder().setCommandId("cmd-partial").build(),
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("cmd-partial")
+            .build(),
         new NoopObserver<>() {
           @Override
           public void onNext(GetGameplayCommandStatusResponse value) {
@@ -2586,7 +2607,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setAttemptCount(1);
     command.setPointerVersion(17L);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("cmd-partial-pointer-only"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "cmd-partial-pointer-only"))
         .thenReturn(Optional.of(command));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -2609,6 +2632,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
         GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
             .setCommandId("cmd-partial-pointer-only")
             .build(),
         new NoopObserver<>() {
@@ -2655,7 +2680,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(RemoteCommandCoordinatorRepository.class);
     RemoteFollowupResultRepository remoteFollowupResultRepository =
         Mockito.mock(RemoteFollowupResultRepository.class);
-    Mockito.when(commandRepository.findByCommandId("rfcmd-followup-2"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "rfcmd-followup-2"))
         .thenReturn(Optional.of(command));
     GameplayCommand targetCommand = new GameplayCommand();
     targetCommand.setCommandId("target-cmd-2");
@@ -2757,7 +2784,11 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
     service.getGameplayCommandStatus(
-        GetGameplayCommandStatusRequest.newBuilder().setCommandId("rfcmd-followup-2").build(),
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("rfcmd-followup-2")
+            .build(),
         new NoopObserver<>() {
           @Override
           public void onNext(GetGameplayCommandStatusResponse value) {

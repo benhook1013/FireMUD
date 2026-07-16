@@ -162,6 +162,45 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void firstCommandFallbackOrdinalIsOneBasedAndSurvivesSealedReplayMismatch() {
+    GameplayCommand command = gameplayCommand("cmd-1");
+    command.setEnqueueSeq(null);
+    command.setOriginSourceKind(null);
+    command.setOriginSourceOrdinal(null);
+    command.setQueueSourceOrdinal(null);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    TickBatch initialBatch =
+        service.createBatch(
+            "FRESH_STAGE",
+            1L,
+            2L,
+            false,
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look")));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        initialBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":1"));
+    initialBatch.setSelectedWorkManifestDigest("stale-digest");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(initialBatch));
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    org.junit.jupiter.api.Assertions.assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        replayBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":1"));
+    org.junit.jupiter.api.Assertions.assertEquals(1L, command.getQueueSourceOrdinal());
+  }
+
+  @Test
   void createBatchDropsPartialRoutingBundleFromGameplayManifest() {
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setWorldSlug("demo");
@@ -214,6 +253,48 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void resolveReplayBatchPreservesTheSealedComparableOrderingTuple() {
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-existing");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    existingBatch.setSelectedWorkManifestJson(
+        "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\",\"items\":[{\"sourceKind\":\"SCHEDULE_TIMER\",\"sourceOrdinal\":5000,\"sourceState\":\"SCHEDULE_DUE_CLAIMED\",\"effectKey\":\"command:cmd-1\",\"commandId\":\"cmd-1\",\"queueSourceDueTickId\":14,\"queueSourceDueAtMs\":9000,\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
+    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    GameplayCommand command = gameplayCommand("cmd-1");
+    command.setEnqueueSeq(null);
+    command.setOriginSourceKind(null);
+    command.setOriginSourceState(null);
+    command.setOriginSourceOrdinal(null);
+    command.setQueueSourceOrdinal(null);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        replayBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"GAMEPLAY_RETRY\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        replayBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":5000"));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        replayBatch.getSelectedWorkManifestJson().contains("\"queueSourceDueAtMs\":9000"));
+    org.junit.jupiter.api.Assertions.assertEquals(5000L, command.getQueueSourceOrdinal());
+  }
+
+  @Test
   void resolveReplayBatchRestoresSealedManifestAndRequeuesRedisOnlyEntries() {
     List<Object> pendingRawEntries = List.of("N|cmd-1|look", "N|cmd-2|wave");
     TickBatch existingBatch = new TickBatch();
@@ -224,11 +305,6 @@ class TickStagingServiceTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
-    existingBatch.setSelectedWorkManifestJson(sealedManifest);
-    existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest(service, List.of("N|cmd-1|look")));
-    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     GameplayCommand first = gameplayCommand("cmd-1");
     first.setEnqueueSeq(5L);
     GameplayCommand second = gameplayCommand("cmd-2");
@@ -236,6 +312,12 @@ class TickStagingServiceTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("AUTOMATION");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     List<GameplayCommand> savedSnapshots = new ArrayList<>();
     doAnswer(
             invocation -> {
@@ -250,7 +332,6 @@ class TickStagingServiceTest {
         .saveAll(any());
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))

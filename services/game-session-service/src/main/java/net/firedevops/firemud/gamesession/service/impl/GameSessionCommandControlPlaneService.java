@@ -130,23 +130,12 @@ public final class GameSessionCommandControlPlaneService {
   }
 
   private GameplayCommand findGameplayCommandStatus(GetGameplayCommandStatusRequest request) {
-    if (!request.getCommandId().isBlank()) {
-      return gameplayCommandRepository
-          .findByCommandId(request.getCommandId())
-          .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
-    }
+    requireText(request.getCommandId(), "command_id is required");
     long tenantId = parseTenantId(request.getTenantId());
     long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
-    requireText(request.getRegionId(), "region_id is required");
-    ControlPlaneRequestParser.requirePositive(request.getRegionEpoch(), "region_epoch");
-    requireText(request.getAutomationDispatchId(), "automation_dispatch_id is required");
     return gameplayCommandRepository
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-            tenantId,
-            gameInstanceId,
-            request.getRegionId(),
-            request.getRegionEpoch(),
-            request.getAutomationDispatchId())
+        .findByTenantIdAndGameInstanceIdAndCommandId(
+            tenantId, gameInstanceId, request.getCommandId())
         .orElseThrow(() -> new IllegalArgumentException("Gameplay command not found"));
   }
 

@@ -1055,15 +1055,16 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setEnqueueSeq(4L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
     String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
         replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
-    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(5L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
-        .thenReturn(List.of(command));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -1096,11 +1097,6 @@ class TickServiceImplTest {
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
     existingBatch.setBatchSource("FRESH_STAGE");
-    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
-    existingBatch.setSelectedWorkManifestJson(sealedManifest);
-    existingBatch.setSelectedWorkManifestDigest(
-        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
-    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
     first.setEnqueueSeq(5L);
     net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
@@ -1127,6 +1123,11 @@ class TickServiceImplTest {
         .thenReturn(List.of(first, second));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));

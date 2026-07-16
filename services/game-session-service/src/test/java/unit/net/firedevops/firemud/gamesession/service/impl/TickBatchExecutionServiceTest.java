@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
+import net.firedevops.firemud.gamesession.entity.TickEffect;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
@@ -127,6 +128,7 @@ class TickBatchExecutionServiceTest {
     assertEquals("PENDING", command.getGameplayResult());
     assertEquals("GAMEPLAY_COMMAND", command.getQueueSourceKind());
     assertEquals("REDIS_PENDING_CLAIMED", command.getQueueSourceState());
+    assertEquals(1L, command.getQueueSourceOrdinal());
   }
 
   @Test
@@ -164,7 +166,13 @@ class TickBatchExecutionServiceTest {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-1");
     batch.setSelectedWorkManifestDigest("expected");
-    TickQueuedCommandEnvelope entry = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope entry =
+        new TickQueuedCommandEnvelope(
+            false,
+            "cmd-1",
+            "look",
+            new TickQueuedCommandEnvelope.SealedQueueSource(
+                "SCHEDULE_TIMER", "SCHEDULE_DUE_CLAIMED", 5000L, 14L, 9000L));
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
@@ -177,7 +185,44 @@ class TickBatchExecutionServiceTest {
     assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
     assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
     assertEquals("REDIS_RETRY_QUEUED", command.getQueueSourceState());
+    assertEquals(5000L, command.getQueueSourceOrdinal());
+    assertEquals(14L, command.getQueueSourceDueTickId());
+    assertEquals(9000L, command.getQueueSourceDueAtMs());
     assertEquals(1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count());
+  }
+
+  @Test
+  void executeDurableEffectsPreservesClaimedDueTupleWhenStaleFenceRequeues() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-stale");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(0L);
+    batch.setExecutorFence("fence-old");
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-stale");
+    effect.setCommandId("cmd-1");
+    GameplayCommand command = gameplayCommand("cmd-1");
+    command.setQueueSourceOrdinal(5000L);
+    command.setQueueSourceDueTickId(14L);
+    command.setQueueSourceDueAtMs(9000L);
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-stale", "DRAINED"))
+        .thenReturn(List.of(effect));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(command));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
+    assertEquals("REDIS_RETRY_QUEUED", command.getQueueSourceState());
+    assertEquals(5000L, command.getQueueSourceOrdinal());
+    assertEquals(14L, command.getQueueSourceDueTickId());
+    assertEquals(9000L, command.getQueueSourceDueAtMs());
   }
 
   @Test

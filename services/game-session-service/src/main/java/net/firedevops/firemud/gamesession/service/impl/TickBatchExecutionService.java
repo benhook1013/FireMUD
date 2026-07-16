@@ -273,7 +273,7 @@ final class TickBatchExecutionService {
     }
     for (GameplayCommand command : commands) {
       command.setExecutionOutcome("RETRY_QUEUED");
-      stampQueueSource(command, "RETRY_QUEUED", 0);
+      stampQueueSource(command, "RETRY_QUEUED", null, 0);
       command.setGameplayResult("PENDING");
       command.setCompletedAt(null);
       command.setLastAttemptAt(now);
@@ -471,15 +471,18 @@ final class TickBatchExecutionService {
       return;
     }
     Map<String, Integer> entryIndexByCommandId = new HashMap<>();
+    Map<String, TickQueuedCommandEnvelope> entriesByCommandId = new HashMap<>();
     for (int index = 0; index < entries.size(); index++) {
       TickQueuedCommandEnvelope entry = entries.get(index);
       if (entry.commandId() != null && !entry.commandId().isBlank()) {
         entryIndexByCommandId.putIfAbsent(entry.commandId(), index);
+        entriesByCommandId.putIfAbsent(entry.commandId(), entry);
       }
     }
     for (GameplayCommand command : commands) {
       int fallbackIndex = entryIndexByCommandId.getOrDefault(command.getCommandId(), 0);
-      stampQueueSource(command, executionOutcome, fallbackIndex);
+      stampQueueSource(
+          command, executionOutcome, entriesByCommandId.get(command.getCommandId()), fallbackIndex);
       command.setExecutionOutcome(executionOutcome);
       command.setGameplayResult(gameplayResult);
       command.setLastAttemptAt(attemptedAt);
@@ -519,15 +522,30 @@ final class TickBatchExecutionService {
   }
 
   private void stampQueueSource(
-      GameplayCommand command, String targetExecutionOutcome, int fallbackIndex) {
+      GameplayCommand command,
+      String targetExecutionOutcome,
+      TickQueuedCommandEnvelope entry,
+      int fallbackIndex) {
     command.setQueueSourceKind(queueSourceKind(command, targetExecutionOutcome));
     command.setQueueSourceState(queueSourceState(command, targetExecutionOutcome));
-    command.setQueueSourceOrdinal(selectionSourceOrdinal(command, fallbackIndex));
-    command.setQueueSourceDueTickId(selectionSourceDueTickId(command));
-    command.setQueueSourceDueAtMs(selectionSourceDueAtMs(command));
+    command.setQueueSourceOrdinal(selectionSourceOrdinal(command, entry, fallbackIndex));
+    command.setQueueSourceDueTickId(
+        selectionSourceDueTickId(command, entry, targetExecutionOutcome));
+    command.setQueueSourceDueAtMs(selectionSourceDueAtMs(command, entry, targetExecutionOutcome));
   }
 
-  private long selectionSourceOrdinal(GameplayCommand command, int fallbackIndex) {
+  private long selectionSourceOrdinal(
+      GameplayCommand command, TickQueuedCommandEnvelope entry, int fallbackIndex) {
+    if (entry != null
+        && entry.sealedQueueSource() != null
+        && entry.sealedQueueSource().sourceOrdinal() > 0) {
+      return entry.sealedQueueSource().sourceOrdinal();
+    }
+    if (command != null
+        && command.getQueueSourceOrdinal() != null
+        && command.getQueueSourceOrdinal() > 0) {
+      return command.getQueueSourceOrdinal();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceOrdinal() != null
         && command.getOriginSourceOrdinal() > 0) {
@@ -536,7 +554,7 @@ final class TickBatchExecutionService {
     if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
       return command.getEnqueueSeq();
     }
-    return fallbackIndex;
+    return fallbackIndex + 1;
   }
 
   private String selectionSourceKind(GameplayCommand command) {
@@ -575,7 +593,20 @@ final class TickBatchExecutionService {
     return selectionSourceState(command);
   }
 
-  private Long selectionSourceDueTickId(GameplayCommand command) {
+  private Long selectionSourceDueTickId(
+      GameplayCommand command, TickQueuedCommandEnvelope entry, String targetExecutionOutcome) {
+    if (entry != null
+        && entry.sealedQueueSource() != null
+        && entry.sealedQueueSource().sourceDueTickId() != null
+        && entry.sealedQueueSource().sourceDueTickId() > 0) {
+      return entry.sealedQueueSource().sourceDueTickId();
+    }
+    if ("RETRY_QUEUED".equals(targetExecutionOutcome)
+        && command != null
+        && command.getQueueSourceDueTickId() != null
+        && command.getQueueSourceDueTickId() > 0) {
+      return command.getQueueSourceDueTickId();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceDueTickId() != null
         && command.getOriginSourceDueTickId() > 0) {
@@ -584,7 +615,20 @@ final class TickBatchExecutionService {
     return command == null ? null : command.getDueTickId();
   }
 
-  private Long selectionSourceDueAtMs(GameplayCommand command) {
+  private Long selectionSourceDueAtMs(
+      GameplayCommand command, TickQueuedCommandEnvelope entry, String targetExecutionOutcome) {
+    if (entry != null
+        && entry.sealedQueueSource() != null
+        && entry.sealedQueueSource().sourceDueAtMs() != null
+        && entry.sealedQueueSource().sourceDueAtMs() > 0) {
+      return entry.sealedQueueSource().sourceDueAtMs();
+    }
+    if ("RETRY_QUEUED".equals(targetExecutionOutcome)
+        && command != null
+        && command.getQueueSourceDueAtMs() != null
+        && command.getQueueSourceDueAtMs() > 0) {
+      return command.getQueueSourceDueAtMs();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceDueAtMs() != null
         && command.getOriginSourceDueAtMs() > 0) {

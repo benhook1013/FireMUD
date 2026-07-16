@@ -85,6 +85,34 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void tenantAndGameQualifiedCommandLookupDoesNotCrossScope() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-qualified");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(11L);
+    command.setCommandName("look");
+    command.setCommandText("look");
+    command.setSanitizedCommandText("look");
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(0);
+    command.setSourceType("PLAYER");
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    repository.save(command);
+
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-qualified"))
+        .isPresent();
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(2L, 7L, "cmd-qualified"))
+        .isEmpty();
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 8L, "cmd-qualified"))
+        .isEmpty();
+  }
+
+  @Test
   void updatePreservesAdmittedAuthoredActionSnapshot() {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("cmd-authored-1");

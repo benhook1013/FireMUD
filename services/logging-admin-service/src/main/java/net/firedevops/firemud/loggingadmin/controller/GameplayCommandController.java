@@ -19,19 +19,24 @@ public class GameplayCommandController {
     this.gameplayCommandStatusService = gameplayCommandStatusService;
   }
 
-  @GetMapping("/{tenantId}/{commandId}")
+  @GetMapping("/{tenantId}/{gameInstanceId}/{commandId}")
   @Timed(
       value = "getGameplayCommandStatus",
-      description = "Read canonical gameplay command status by tenant-qualified command id")
+      description =
+          "Read canonical gameplay command status by tenant and game-qualified command id")
   public ResponseEntity<ApiResponse<GameplayCommandStatusDto>> getGameplayCommandStatus(
-      @PathVariable String tenantId, @PathVariable String commandId) {
+      @PathVariable String tenantId,
+      @PathVariable String gameInstanceId,
+      @PathVariable String commandId) {
     return LoggingAdminRequestReaders.withBadRequest(
         () -> {
           long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+          long parsedGameInstanceId =
+              LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
           return ResponseEntity.ok(
               ApiResponse.success(
                   gameplayCommandStatusService.getGameplayCommandStatus(
-                      parsedTenantId, commandId)));
+                      parsedTenantId, parsedGameInstanceId, commandId)));
         });
   }
 }

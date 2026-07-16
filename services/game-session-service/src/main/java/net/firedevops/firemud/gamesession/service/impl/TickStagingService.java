@@ -204,8 +204,7 @@ final class TickStagingService {
             "Sealed replay manifest is missing item entries for tickBatchId="
                 + batch.getTickBatchId());
       }
-      List<String> commandIds = new ArrayList<>();
-      List<Boolean> requiresSoloTicks = new ArrayList<>();
+      List<SealedReplayCommand> sealedCommands = new ArrayList<>();
       for (JsonNode item : items) {
         String commandId = item.path("commandId").asText("").trim();
         if (commandId.isBlank()) {
@@ -213,16 +212,22 @@ final class TickStagingService {
               "Sealed replay manifest requires commandId for tickBatchId="
                   + batch.getTickBatchId());
         }
-        commandIds.add(commandId);
-        requiresSoloTicks.add(item.path("requiresSoloTick").asBoolean(false));
+        sealedCommands.add(
+            new SealedReplayCommand(
+                commandId,
+                item.path("requiresSoloTick").asBoolean(false),
+                sealedQueueSource(item, batch.getTickBatchId())));
       }
       Map<String, GameplayCommand> commandsById =
-          gameplayCommandRepository.findByCommandIdIn(commandIds).stream()
+          gameplayCommandRepository
+              .findByCommandIdIn(
+                  sealedCommands.stream().map(SealedReplayCommand::commandId).toList())
+              .stream()
               .collect(
                   java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
-      List<TickQueuedCommandEnvelope> entries = new ArrayList<>(commandIds.size());
-      for (int index = 0; index < commandIds.size(); index++) {
-        String commandId = commandIds.get(index);
+      List<TickQueuedCommandEnvelope> entries = new ArrayList<>(sealedCommands.size());
+      for (SealedReplayCommand sealedCommand : sealedCommands) {
+        String commandId = sealedCommand.commandId();
         GameplayCommand command = commandsById.get(commandId);
         if (command == null) {
           throw new IllegalStateException(
@@ -233,7 +238,10 @@ final class TickStagingService {
         }
         entries.add(
             new TickQueuedCommandEnvelope(
-                requiresSoloTicks.get(index), commandId, command.getCommandText()));
+                sealedCommand.requiresSoloTick(),
+                commandId,
+                command.getCommandText(),
+                sealedCommand.sealedQueueSource()));
       }
       return List.copyOf(entries);
     } catch (java.io.IOException ex) {
@@ -378,14 +386,27 @@ final class TickStagingService {
           new CommandSelection(
               entry,
               command,
-              selectionSourceOrdinal(command, index),
+              selectionSourceKind(command, entry),
+              selectionSourceState(command, entry),
+              selectionSourceOrdinal(command, entry, index),
+              selectionSourceDueTickId(command, entry),
+              selectionSourceDueAtMs(command, entry),
               effectKey,
               shortHash(entry.command())));
     }
     return List.copyOf(selections);
   }
 
-  private long selectionSourceOrdinal(GameplayCommand command, int fallbackIndex) {
+  private long selectionSourceOrdinal(
+      GameplayCommand command, TickQueuedCommandEnvelope entry, int fallbackIndex) {
+    if (entry.sealedQueueSource() != null && entry.sealedQueueSource().sourceOrdinal() > 0) {
+      return entry.sealedQueueSource().sourceOrdinal();
+    }
+    if (command != null
+        && command.getQueueSourceOrdinal() != null
+        && command.getQueueSourceOrdinal() > 0) {
+      return command.getQueueSourceOrdinal();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceOrdinal() != null
         && command.getOriginSourceOrdinal() > 0) {
@@ -394,7 +415,7 @@ final class TickStagingService {
     if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
       return command.getEnqueueSeq();
     }
-    return fallbackIndex;
+    return fallbackIndex + 1;
   }
 
   private List<GameplayCommand> loadCommands(List<TickQueuedCommandEnvelope> entries) {
@@ -451,11 +472,11 @@ final class TickStagingService {
       GameplayCommand command = selection.command();
       builder
           .append("{\"sourceKind\":\"")
-          .append(selectionSourceKind(command))
+          .append(selection.sourceKind())
           .append("\",\"sourceOrdinal\":")
           .append(selection.sourceOrdinal())
           .append(",\"sourceState\":\"")
-          .append(selectionSourceState(command))
+          .append(selection.sourceState())
           .append("\"")
           .append(",\"effectKey\":\"")
           .append(jsonEscape(selection.effectKey()))
@@ -489,8 +510,8 @@ final class TickStagingService {
       appendJsonNumberField(
           builder, "enqueueSeq", command == null ? null : command.getEnqueueSeq());
       appendJsonNumberField(builder, "dueTickId", command == null ? null : command.getDueTickId());
-      appendJsonNumberField(builder, "queueSourceDueTickId", selectionSourceDueTickId(command));
-      appendJsonNumberField(builder, "queueSourceDueAtMs", selectionSourceDueAtMs(command));
+      appendJsonNumberField(builder, "queueSourceDueTickId", selection.sourceDueTickId());
+      appendJsonNumberField(builder, "queueSourceDueAtMs", selection.sourceDueAtMs());
       appendJsonStringField(
           builder, "originSourceKind", command == null ? null : command.getOriginSourceKind());
       appendJsonStringField(
@@ -629,9 +650,12 @@ final class TickStagingService {
         : Long.valueOf(followup.getDueTickId());
   }
 
-  private String selectionSourceKind(GameplayCommand command) {
+  private String selectionSourceKind(GameplayCommand command, TickQueuedCommandEnvelope entry) {
     if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
       return "GAMEPLAY_RETRY";
+    }
+    if (entry.sealedQueueSource() != null) {
+      return entry.sealedQueueSource().sourceKind();
     }
     if (timerOriginSelection(command)) {
       return "SCHEDULE_TIMER";
@@ -639,9 +663,12 @@ final class TickStagingService {
     return "GAMEPLAY_COMMAND";
   }
 
-  private String selectionSourceState(GameplayCommand command) {
+  private String selectionSourceState(GameplayCommand command, TickQueuedCommandEnvelope entry) {
     if (command != null && "RETRY_QUEUED".equals(command.getExecutionOutcome())) {
       return "REDIS_RETRY_CLAIMED";
+    }
+    if (entry.sealedQueueSource() != null) {
+      return entry.sealedQueueSource().sourceState();
     }
     if (timerOriginSelection(command)
         && command.getOriginSourceState() != null
@@ -651,7 +678,12 @@ final class TickStagingService {
     return "REDIS_PENDING_CLAIMED";
   }
 
-  private Long selectionSourceDueTickId(GameplayCommand command) {
+  private Long selectionSourceDueTickId(GameplayCommand command, TickQueuedCommandEnvelope entry) {
+    if (entry.sealedQueueSource() != null
+        && entry.sealedQueueSource().sourceDueTickId() != null
+        && entry.sealedQueueSource().sourceDueTickId() > 0) {
+      return entry.sealedQueueSource().sourceDueTickId();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceDueTickId() != null
         && command.getOriginSourceDueTickId() > 0) {
@@ -660,7 +692,12 @@ final class TickStagingService {
     return command == null ? null : command.getDueTickId();
   }
 
-  private Long selectionSourceDueAtMs(GameplayCommand command) {
+  private Long selectionSourceDueAtMs(GameplayCommand command, TickQueuedCommandEnvelope entry) {
+    if (entry.sealedQueueSource() != null
+        && entry.sealedQueueSource().sourceDueAtMs() != null
+        && entry.sealedQueueSource().sourceDueAtMs() > 0) {
+      return entry.sealedQueueSource().sourceDueAtMs();
+    }
     if (timerOriginSelection(command)
         && command.getOriginSourceDueAtMs() != null
         && command.getOriginSourceDueAtMs() > 0) {
@@ -673,6 +710,28 @@ final class TickStagingService {
     return command != null
         && !"RETRY_QUEUED".equals(command.getExecutionOutcome())
         && "SCHEDULE_TIMER".equals(command.getOriginSourceKind());
+  }
+
+  private TickQueuedCommandEnvelope.SealedQueueSource sealedQueueSource(
+      JsonNode item, String tickBatchId) {
+    String sourceKind = item.path("sourceKind").asText("").trim();
+    String sourceState = item.path("sourceState").asText("").trim();
+    long sourceOrdinal = item.path("sourceOrdinal").asLong(0L);
+    if (sourceKind.isBlank() || sourceState.isBlank() || sourceOrdinal <= 0) {
+      throw new IllegalStateException(
+          "Sealed replay manifest is missing queue-source truth for tickBatchId=" + tickBatchId);
+    }
+    return new TickQueuedCommandEnvelope.SealedQueueSource(
+        sourceKind,
+        sourceState,
+        sourceOrdinal,
+        positiveLongOrNull(item, "queueSourceDueTickId"),
+        positiveLongOrNull(item, "queueSourceDueAtMs"));
+  }
+
+  private static Long positiveLongOrNull(JsonNode item, String fieldName) {
+    long value = item.path(fieldName).asLong(0L);
+    return value > 0 ? value : null;
   }
 
   private static void appendJsonStringField(StringBuilder builder, String fieldName, String value) {
@@ -739,7 +798,16 @@ final class TickStagingService {
   private record CommandSelection(
       TickQueuedCommandEnvelope entry,
       GameplayCommand command,
+      String sourceKind,
+      String sourceState,
       long sourceOrdinal,
+      Long sourceDueTickId,
+      Long sourceDueAtMs,
       String effectKey,
       String commandDigest) {}
+
+  private record SealedReplayCommand(
+      String commandId,
+      boolean requiresSoloTick,
+      TickQueuedCommandEnvelope.SealedQueueSource sealedQueueSource) {}
 }

@@ -2138,12 +2138,18 @@ paths:
                     $ref: '#/components/schemas/GameSessionPinConvergenceDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /gameplay-commands/{tenantId}/{commandId}:
+  /gameplay-commands/{tenantId}/{gameInstanceId}/{commandId}:
     get:
-      summary: Read canonical gameplay command status by tenant-qualified command id
+      summary: Read canonical gameplay command status by tenant and game-qualified command id
       operationId: getGameplayCommandStatus
       parameters:
         - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: gameInstanceId
           in: path
           required: true
           schema:

@@ -1,15 +1,14 @@
 package net.firedevops.firemud.springcloudgateway.websocket;
 
-import org.springframework.web.reactive.socket.CloseStatus;
-
 final class GameplayBridgeTerminalCloseException extends RuntimeException {
-  private final CloseStatus status;
+  private final GameplayWebSocketObservability.CloseClassification closeClassification;
 
-  GameplayBridgeTerminalCloseException(CloseStatus status) {
-    this.status = status;
+  GameplayBridgeTerminalCloseException(
+      GameplayWebSocketObservability.CloseClassification closeClassification) {
+    this.closeClassification = closeClassification;
   }
 
-  CloseStatus status() {
-    return status;
+  GameplayWebSocketObservability.CloseClassification closeClassification() {
+    return closeClassification;
   }
 }

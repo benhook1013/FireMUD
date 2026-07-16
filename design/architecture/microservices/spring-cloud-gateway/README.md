@@ -24,7 +24,7 @@ This document describes the behaviour of Spring Cloud Gateway in its target arch
 | Dynamic route management | REST and gRPC route mutation APIs apply in-memory overrides on top of baseline route config, with explicit readiness predicates and fail-closed rules for player-facing environments when persistence, convergence, or auditing controls are absent. | Implemented for dev/test scope only; player-facing enablement still requires the documented safety controls. |
 | Rate limiting and Redis wiring | Gateway rate limiting uses Spring Cloud Gateway `RequestRateLimiter` backed by the Cache/Rate-Limit Redis role, with gameplay abuse policy split across Gateway, TCP Proxy, and Game Session. | Implemented. |
 | TCP Proxy bridge admission | Traffic from the TCP Proxy Service always targets `/ws/game/**`, and the proxy -> gateway hop is mTLS-authenticated in player-facing environments. | Implemented. |
-| WebSocket close and handshake observability | Gateway emits bounded close, handshake-rejection, and slow-client metrics/log classifications so clients and operators can distinguish retry classes and planned vs unattributed loss. | Required parity contract for implementation and operations sign-off. |
+| WebSocket close and handshake observability | Gateway emits bounded close, handshake-rejection, and slow-client metrics/log classifications; bridge closes include `bridge_shutdown_class=planned_drain\|upstream_logout\|unattributed_failure` alongside the bounded reason/subreason fields. | Implemented at the current bridge and first-party handshake boundary; attribution is emitted on each downstream close handled by the bridge. |
 
 ## Responsibilities
 

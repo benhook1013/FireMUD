@@ -2,9 +2,11 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
+import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -20,7 +22,10 @@ class GameplayWebSocketBridgeConfigTest {
               GameplayWebSocketBridgeConfig.class, TestRuntimeIdentityConfig.class)
           .withBean(
               GameplayWebSocketBridgeProperties.class,
-              () -> new GameplayWebSocketBridgeProperties(null, 0, 0, 0));
+              () -> new GameplayWebSocketBridgeProperties(null, 0, 0, 0))
+          .withBean(
+              GameplayWebSocketObservability.class,
+              () -> new GameplayWebSocketObservability(new SimpleMeterRegistry()));
 
   @Test
   void gameplayWebSocketPathIsOwnedByGatewayCode() {
