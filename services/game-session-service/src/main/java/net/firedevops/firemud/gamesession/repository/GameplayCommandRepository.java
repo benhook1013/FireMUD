@@ -34,6 +34,18 @@ public class GameplayCommandRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<GameplayCommand> findByTenantIdAndGameInstanceIdAndCommandId(
+      Long tenantId, Long gameInstanceId, String commandId) {
+    return dsl.selectFrom(GAMEPLAY_COMMAND)
+        .where(
+            GAMEPLAY_COMMAND
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId)))
+        .fetchOptional(this::toEntity);
+  }
+
   public Optional<GameplayCommand>
       findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
           Long tenantId,

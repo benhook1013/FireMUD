@@ -137,10 +137,15 @@ public class GameSessionControlPlaneClient
             ValidateBuiltInCommandAliasRequest.newBuilder().setAlias(alias).build());
   }
 
-  public GetGameplayCommandStatusResponse getGameplayCommandStatus(String commandId) {
+  public GetGameplayCommandStatusResponse getGameplayCommandStatus(
+      long tenantId, long gameInstanceId, String commandId) {
     return stub()
         .getGameplayCommandStatus(
-            GetGameplayCommandStatusRequest.newBuilder().setCommandId(commandId).build());
+            GetGameplayCommandStatusRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameInstanceId(Long.toString(gameInstanceId))
+                .setCommandId(commandId)
+                .build());
   }
 
   public GetRemoteCommandCoordinatorResponse getRemoteCommandCoordinator(

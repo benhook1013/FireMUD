@@ -43,11 +43,11 @@ class GameplayCommandStatusServiceImplTest {
   @Test
   void getGameplayCommandStatusReturnsCanonicalControlPlaneProjection() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
-    when(gameSessionControlPlaneClient.getGameplayCommandStatus("cmd-123"))
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(
             GetGameplayCommandStatusResponse.newBuilder().setCommand(commandStatus("2")).build());
 
-    GameplayCommandStatusDto result = service.getGameplayCommandStatus(2L, "cmd-123");
+    GameplayCommandStatusDto result = service.getGameplayCommandStatus(2L, 7L, "cmd-123");
 
     assertAll(
         () -> assertEquals("cmd-123", result.commandId()),
@@ -184,13 +184,48 @@ class GameplayCommandStatusServiceImplTest {
   @Test
   void getGameplayCommandStatusRejectsMismatchedControlPlaneTenant() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
-    when(gameSessionControlPlaneClient.getGameplayCommandStatus("cmd-123"))
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(
             GetGameplayCommandStatusResponse.newBuilder().setCommand(commandStatus("8")).build());
 
     ResponseStatusException ex =
         assertThrows(
-            ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, "cmd-123"));
+            ResponseStatusException.class,
+            () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getGameplayCommandStatusRejectsMismatchedControlPlaneGameInstance() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(commandStatus("2").toBuilder().setGameInstanceId("8"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
+
+    assertEquals(500, ex.getStatusCode().value());
+  }
+
+  @Test
+  void getGameplayCommandStatusRejectsMismatchedControlPlaneCommandId() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(commandStatus("2").toBuilder().setCommandId("cmd-other"))
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
 
     assertEquals(500, ex.getStatusCode().value());
   }
@@ -198,7 +233,7 @@ class GameplayCommandStatusServiceImplTest {
   @Test
   void getGameplayCommandStatusRejectsZeroSessionIdInResponse() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
-    when(gameSessionControlPlaneClient.getGameplayCommandStatus("cmd-123"))
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(
             GetGameplayCommandStatusResponse.newBuilder()
                 .setCommand(commandStatus("2").toBuilder().setSessionId("0"))
@@ -206,7 +241,8 @@ class GameplayCommandStatusServiceImplTest {
 
     ResponseStatusException ex =
         assertThrows(
-            ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, "cmd-123"));
+            ResponseStatusException.class,
+            () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
 
     assertEquals(500, ex.getStatusCode().value());
   }
@@ -216,7 +252,7 @@ class GameplayCommandStatusServiceImplTest {
     SessionContext.setContext("42", List.of(), Map.of("8", List.of("tenantAdmin")));
 
     assertThrows(
-        ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, "cmd-123"));
+        ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
   }
 
   private GameplayCommandStatus commandStatus(String tenantId) {
