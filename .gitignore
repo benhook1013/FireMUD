@@ -34,7 +34,6 @@ __pycache__/
 design/erd/
 
 # Local PR helper files (not committed)
-pr-summary.md
 
 # Repository-local scratch space
 /tmp/

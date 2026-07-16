@@ -284,6 +284,27 @@ public final class CrossServiceAppHarness {
         }
 
         @Override
+        public void replace(
+            long tenantId,
+            long gameInstanceId,
+            long characterId,
+            java.util.List<BufferedEntry> entries) {
+          String key = tenantId + ":" + gameInstanceId + ":" + characterId;
+          java.util.List<BufferedEntry> filtered =
+              entries == null
+                  ? java.util.List.of()
+                  : entries.stream().filter(entry -> !entry.text().isBlank()).toList();
+          if (filtered.isEmpty()) {
+            buffers.remove(key);
+            return;
+          }
+          int lines = filtered.stream().mapToInt(BufferedEntry::lineCount).sum();
+          buffers.put(
+              key,
+              new BufferedScreen(filtered, filtered.size(), lines, System.currentTimeMillis()));
+        }
+
+        @Override
         public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
           return Optional.ofNullable(
               buffers.get(tenantId + ":" + gameInstanceId + ":" + characterId));

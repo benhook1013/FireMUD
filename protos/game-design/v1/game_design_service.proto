@@ -755,6 +755,7 @@ message ReconnectionBufferOverride {
   optional int32 min_lines = 3;
   optional int32 soft_max_bytes = 4;
   optional int32 hard_max_bytes = 5;
+  optional int32 max_entries = 6;
 }
 
 message CommunicationSettingsOverride {

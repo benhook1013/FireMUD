@@ -120,6 +120,7 @@ public final class GameDesignSettingsProtoMapper {
       ReconnectionBufferOverride source) {
     return new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
         source.hasTtlMs() ? source.getTtlMs() : null,
+        source.hasMaxEntries() ? source.getMaxEntries() : null,
         source.hasMinMessages() ? source.getMinMessages() : null,
         source.hasMinLines() ? source.getMinLines() : null,
         source.hasSoftMaxBytes() ? source.getSoftMaxBytes() : null,
@@ -237,6 +238,9 @@ public final class GameDesignSettingsProtoMapper {
     ReconnectionBufferOverride.Builder builder = ReconnectionBufferOverride.newBuilder();
     if (source.ttlMs() != null) {
       builder.setTtlMs(source.ttlMs());
+    }
+    if (source.maxEntries() != null) {
+      builder.setMaxEntries(source.maxEntries());
     }
     if (source.minMessages() != null) {
       builder.setMinMessages(source.minMessages());

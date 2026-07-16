@@ -15,7 +15,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
-- Repository-local CodeRabbit reviews automatically, then pauses after one reviewed commit. Request another review explicitly with `@coderabbitai review` only after all current and outdated findings are resolved and the PR is at a meaningful checkpoint.
+- Repository-local CodeRabbit reviews newly opened eligible PRs automatically, but does not review later pushes. At a meaningful checkpoint after all current and outdated findings are resolved, request `@coderabbitai full review`; the hourly allowance is per request, so do not spend it on an incremental review.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
 - For recurring local branch/worktree/PR inventory, use `dev-tools/validation/report-worktree-pr-topology.sh` instead of composing ad hoc status commands.
@@ -25,9 +25,9 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Resolve a CodeRabbit thread manually only after verifying its exact finding is fixed in `HEAD`. Never resolve a thread to hide an unresolved issue, and do not spend a fresh review solely to make CodeRabbit self-resolve already-addressed feedback. Do not request a review while one is active or CodeRabbit is rate limited.
 - Keep open PRs meaningful: after that authorized merge threshold, merge rather than leaving completed PRs parked.
 - Prefer one coherent medium-sized slice per PR, normally about 800-2,000 changed lines including required adjacent convergence; use smaller PRs only for isolated fixes and split only independent or genuinely hard-to-review work.
+- Fold slice/project-management documentation into its owning functional PR unless the documentation itself is an explicitly requested, independently reviewable deliverable.
 - Treat a failing Renovate PR as actionable maintenance work. Inspect its CI failure and push the smallest compatible fix to the Renovate branch when possible so Renovate can rebase and complete its own update; otherwise perform the dependency upgrade directly on a replacement branch with the required compatibility changes.
-- After a PR merges, proactively remove its now-defunct local worktree and merged local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
-- If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
+- After a PR merges or its content is folded into another PR, proactively remove its now-defunct local worktree and local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
 ## Required Validation
