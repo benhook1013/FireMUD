@@ -16,18 +16,20 @@ It complements:
 
 ## Implementation Status
 
-This section is a high-level snapshot. For the current implementation summary, use `design/project-management/service-status-automation-scripting-service.md`. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
+This section is a high-level snapshot. For the current implementation record, use `design/project-management/implementation-tracking/automation-and-scheduler-runtime.md`; its canonical service subdocs are linked from `design/architecture/microservices/automation-scripting-service/README.md#document-map`. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
+
+### Implementation Notes
+
+The live Automation runtime is bounded to durable work-item execution, quotas, sandbox resource enforcement, and the current structured command-template evaluator. The broader visual graph DSL, compiled-artifact execution, advanced NPC behavior modules, procedural population, and richer sandbox/runtime seams described below are target-state architecture, not evidence of live end-to-end implementation.
 
 - **Implemented and in active use**
-  - Sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService`, durable work-item execution, and reset-tolerant queue-pointer projection.
+  - Bounded sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService`, durable work-item execution, structured command-template evaluation, and reset-tolerant queue-pointer projection.
   - Hot reloading of scripts published by the Game Design Service and version-aware script execution, aligned with the versioning model in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions).
-  - Visual DSL editor for script creation and testing in the Game Design Service, mapping component graphs to Automation & Scripting Service definitions.
-  - Advanced NPC behavior modules (morale, PvE encounters, formations) and state-driven / event-driven NPC behaviors integrated with the tick system.
 
 - **Implemented and evolving**
   - Script publish lifecycle integrates Game Design publish workflows with Automation runtime reload and readiness gating (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`, with `SUPERSEDED` for older pending patches displaced by newer publishes).
   - The tenant patch-readiness lifecycle is now durably tracked through the Temporal `script-patch-readiness` workflow family after `NotifyScriptVersionUpdate`; the canonical patch-status control-plane reads expose workflow identity and execution status directly rather than relying on process-local orchestration state.
-  - World generation and PvE behavior libraries continue to expand; feature-level progress is tracked in service task lists rather than this hub.
+  - World generation and PvE behavior libraries remain target-state/design areas; feature-level progress is tracked in service task lists rather than this hub.
   - Scheduler leadership leases and per-region tick-stream consumption are implemented; sharding/indexing and long-term retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
 
 Operators looking for **runtime knobs and environment variables** should now primarily consult `design/architecture/system-architecture-scripting-quotas-and-operations.md` and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which are the authoritative sources for current settings and defaults.
@@ -40,7 +42,7 @@ The table below summarizes high-level implementation status categories; verify c
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
+| Script runtime & DSL | Implemented at a bounded runtime boundary | Sandbox execution, core Automation & Scripting Service, structured command-template evaluation, and basic quotas are live; the broader graph DSL/editor runtime remains target-state work. |
 | Automation queues & durable execution | Implemented / evolving | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`), canonical `automation:quota:<tenantId>:<scriptId>` counters, the durable work-item executor, and reset-tolerant queue rebuild are implemented; remaining `10.4` work is richer runtime output and any later queue-consumer evolution, not restoring a separate staging layer. |
 | Integration with tick commands | Implemented / active | Script-generated gameplay commands now hand off to Game Session through the idempotent automation command API and enter the same per-entity tick queues used by player commands; ongoing `10.4` work is about richer runtime output semantics and observability, not a missing bridge. |
 | Scheduler leadership & timers | Implemented / evolving | Scheduler leases and heartbeat-driven interval scheduling are implemented; region-scoped Redis timer/checkpoint coordination (for example `automation:timer:{tenantRegionTag}`) with instance-aware stored identities, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |

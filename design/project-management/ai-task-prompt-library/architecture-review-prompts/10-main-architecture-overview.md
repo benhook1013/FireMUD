@@ -13,10 +13,10 @@ Read the main architecture overview and structure docs below. Follow references 
 Then:
 
 - Evaluate the overall system architecture, service boundaries, and high-level data and traffic flows described in these documents.
-- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
+- Check each finding against the relevant domain tracker and implementation, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize or praise what is already clear or working well.
 - Focus on implementation-blocking issues first: missing decisions, contradictory statements between docs, unclear or overlapping service responsibilities, undocumented assumptions, or architecture choices that would cause different teams to implement different behavior.
-- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
+- If trackers, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not try to exhaustively enumerate every possible improvement while blockers remain. Once blockers are cleared, list the highest-value non-blocking improvements, whether they are minor clarifications or larger refactors.
 - Return at most 5 issues, ordered by severity. If there are more than 5, include only the highest-leverage ones.
 - For each issue, include:

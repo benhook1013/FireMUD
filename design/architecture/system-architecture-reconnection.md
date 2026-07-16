@@ -9,8 +9,7 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
-- **Durable reconnect transcript** – Every admitted gameplay scope retains one bounded durable resume transcript. `resume_transcript_entry` is the source of truth; Redis is a best-effort hot cache of the same trimmed window. Retained entries carry structured replay metadata plus rendered compatibility text, use the sequence-backed row id as their ordering token, and are bounded by entry count, canonical structured-envelope bytes, and optional inactivity expiry before fresh authoritative redraw. Legacy text-only entries remain readable as transcript chunks.
-- **Remaining work** – Player Transcript Archive and Export, admin-driven forced session transfers, and stronger durable coordination for non-edge restart invisibility remain future work. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current durable-transcript-plus-fresh-redraw contract.
+- **Remaining work** – Durable bounded resume-transcript persistence is live through ordered `resume_transcript_entry` rows, with Redis as a best-effort hot cache and fresh authoritative redraw after replay. Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current durable-transcript-plus-fresh-redraw contract.
 
 ## Reconnection Layers
 
@@ -52,7 +51,7 @@ For the **concrete `NotifyDisconnect` message shape and transport behaviour** �
 
 ### Game Session Service
 
-- Uses Redis to store session state such as command queues, tick participation, cooldowns, and retry info. Reconnect logic restores these details.
+- Uses Redis to store session state such as command queues, tick participation, and retry coordination. Reconnect logic restores these details and reattaches the player to the actor's durable gameplay state.
 - On reconnect, rebinds:
   - Socket connection
   - Tick region context
@@ -157,7 +156,7 @@ The active gameplay identity is `characterId`. When a new client successfully is
 - Redis stores:
   - Socket bindings and session metadata
   - Queued commands and tick state
-  - Timers, cooldowns, and retry info
+- Reconstructible timer/retry scheduling metadata; authoritative actor cooldown state remains outside session state
 - Game Session Service governs all reconnection, deduplication, and rebinding
 - Non-edge gameplay services should remain replaceable/stateless workers against shared state; if restarting one of them visibly disconnects clients, the system should treat that as a gap in durable coordination rather than an accepted steady-state behavior
 - The canonical recovery path remains explicit and protocol-visible for all clients
@@ -205,18 +204,17 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
-The current durable reconnect settings are exposed through:
+The current reconnect and durable-context settings are exposed through:
 
 - `firemud.reconnection.policy.resume-window-ms`
 - `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
 - `firemud.reconnection.buffer.ttl-ms`
-- `firemud.reconnection.buffer.max-entries`
 - `firemud.reconnection.buffer.min-messages`
 - `firemud.reconnection.buffer.min-lines`
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-The `firemud.*` values provide platform defaults. Tenant/game overrides from the shared Game Design settings authority already select the effective reconnect policy and transcript retention bounds; prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+Service-local typed properties provide operator defaults, and Game Design persists optional tenant/game overrides that Game Session merges into the effective reconnection policy. Operator caps and presets remain future work. Prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Canonical durable resume-transcript policy
 
@@ -324,7 +322,7 @@ The TCP Proxy Service emits `NotifyDisconnect` events to the Game Session Servic
 - **Retry window** – The proxy retries failed `NotifyDisconnect` calls for a short, bounded window after Telnet socket close (see the TCP Proxy Service design’s **Service Interactions** section and the `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` configuration for exact timing). After this window, the proxy stops retrying and relies on Game Session’s own liveness detection and Redis timeouts to reconcile any missing hints.
 - **Complement to edge delivery guarantees** – `NotifyDisconnect` complements, but does not change, the at-most-once edge delivery model for gameplay commands described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants). Late or duplicate disconnect hints must never cause healthy, newly bound sessions to be torn down; consumers always key decisions off the idempotency key and current Redis state.
 
-Resume does not imply replay of prior outbound transport data. After reconnect, Game Session may replay the bounded durable structured transcript after the new binding is admitted, but it must not replay raw pre-disconnect bytes or frames as if the old transport had continued. Any fresh reconstruction output must be re-derived from current authoritative state, not copied from an old outbound queue.
+Resume does not imply replay of prior outbound transport data. After reconnect, Game Session may emit fresh reconstruction output once the new binding is admitted, but it must not replay pre-disconnect text or MCP frames as if the old transport had continued. Any reconstruction output must be re-derived from current authoritative state, not copied from an old outbound queue.
 
 This section is the canonical behaviour-level summary for `NotifyDisconnect`. The TCP Proxy Service design remains authoritative for message fields, configuration knobs, and implementation details, while [gRPC API Style & Versioning](./system-architecture-grpc.md#event-and-streaming-semantics) defines the general pattern for similar at-least-once event sinks elsewhere in the system.
 

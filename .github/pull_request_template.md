@@ -3,7 +3,7 @@
 ## Summary
 
 - describe the purpose of this PR and the user/operator-visible outcome
-- reference related issues, slices, or design docs
+- reference related issues, capability trackers, or design docs
 
 ## What Changed
 
@@ -26,6 +26,6 @@
 
 - [ ] I have read the contribution guidelines
 - [ ] I have listed the validation I actually ran
-- [ ] I have referenced related issues and design docs where relevant
-- [ ] For architecture or slice-completion changes, I checked the relevant slice docs, proto/API contracts, service implementation, and focused tests before marking work complete or filing blockers
+- [ ] I have referenced related issues, domain implementation trackers, and canonical design docs where relevant
+- [ ] For architecture or capability/tracker completion changes, I checked the relevant domain implementation tracker, canonical design, proto/API contracts, service implementation, and focused tests before marking work complete or filing blockers
 - [ ] For auth/session, scripting, or observability contract changes, I applied the relevant checklist in `design/project-management/review-checklists.md`

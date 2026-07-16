@@ -267,12 +267,12 @@ Two services collaborate to deliver scripting and automation:
   - Owns the **authoring UX**: the visual DSL editor, component palettes, world-generation triggers, and per-tenant configuration screens.
   - Manages **draft and published configurations** for scripts, event bindings, and world-generation presets inside its own schema, including version history and “upgrade available” hints when components change.
   - Controls the **publish lifecycle** for scripts and component graphs: designers edit drafts, run validations, and then publish a new `scriptPatchVersion` tied to a `baseVersionId` as described in [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions).
-  - Drives a **cross-service Saga** when a script version is published:
+  - Drives a **publication and readiness workflow** when a script version is published:
     - Writes the final, validated script graphs and bindings into its own tables.
-    - Validates that referenced runtime assets such as abilities and actions are compatible with the target game version; if mismatches are detected, the Saga marks the publish as `FAILED` and the affected `scriptPatchVersion` is never eligible to become `READY` for that tenant.
-    - Starts a Saga that upserts the compiled script definitions, event bindings, and any world-generation hooks into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
-    - On success, marks the version as `PUBLISHED` and calls `NotifyScriptVersionUpdate` so the Automation & Scripting Service starts tenant-readiness ingestion for that patch.
-    - On failure, rolls back or marks the publish as `FAILED`, keeping the prior `scriptPatchVersion` as the active one for that game.
+    - Validates that referenced runtime assets such as abilities and actions are compatible with the target game version; if mismatches are detected, publication fails and the affected `scriptPatchVersion` is never eligible to become `READY` for that tenant.
+    - Publishes the immutable design-time patch and calls `NotifyScriptVersionUpdate` so Automation & Scripting ingests the compiled definitions, event bindings, and any world-generation hooks for the target `<tenantId, scriptPatchVersion>`.
+    - Automation & Scripting starts or reuses the durable Temporal `script-patch-readiness` workflow, which tracks validation and `onLoad` processing to terminal readiness without conflating publication with runtime admission.
+    - On readiness failure, the patch remains published but ineligible for runtime use, and the prior admitted `scriptPatchVersion` remains active for the game.
 
 - **Automation & Scripting Service**
   - Owns the **compiled graph schema and runtime registry**: it stores compiled DSL graphs, per-tenant script metadata, and runtime flags (`runtimeStatus`, quotas, priorities) in its own database.

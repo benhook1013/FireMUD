@@ -1,0 +1,114 @@
+# World Runtime and Movement
+
+## Current Status
+
+This tracker is the permanent reader-facing implementation record for world runtime, room reads, movement, lifecycle orchestration, and Draft topology mutation. Canonical target-state design remains under [design/architecture](../../architecture/README.md).
+
+## Canonical Design Sources
+
+- [World Management service architecture](../../architecture/microservices/world-management-service/README.md), [API contracts](../../architecture/microservices/world-management-service/api-contracts.md), [runtime and data](../../architecture/microservices/world-management-service/runtime-and-data.md), and [world creation workflow](../../architecture/microservices/world-management-service/world-creation-workflow.md) define world ownership, lifecycle, and topology boundaries.
+- [Game Logic service architecture](../../architecture/microservices/game-logic-service/README.md) and [API contracts](../../architecture/microservices/game-logic-service/api-contracts.md) define authoritative gameplay aggregation over world and entity reads.
+- [Game Session protocols](../../architecture/microservices/game-session-service/protocols.md) and [runtime and data](../../architecture/microservices/game-session-service/runtime-and-data.md) define player command ingress, session binding, and client-facing room refresh.
+- [Entity Management service architecture](../../architecture/microservices/entity-management-service/README.md) defines room-scoped entity and containment reads.
+- The [identifier glossary](../../architecture/system-architecture-identifier-glossary.md) defines the distinction between runtime room identity and World Management storage identity.
+- [System settings model](../../architecture/system-architecture-settings-model.md) remains the target-state authority for configurable movement and topology policy.
+
+## Consolidated Implementation Record
+
+### Runtime Room Identity and Boundary Validation
+
+- `roomInstanceId` is the canonical opaque runtime identity at cross-service boundaries. The current canonical wire examples use `R-<roomInstanceRowId>`, but consumers must not infer World Management storage semantics from the token or treat it as a database key.
+- `RoomInstanceRef` and the room-scoped gameplay context carry the runtime identity as text. World Management owns the mapping from that identity to its internal numeric room row and record references.
+- World Management keeps internal identity names distinct: runtime room values use `roomInstanceId`, room table storage uses `roomInstanceRowId` and `room_instance_row_id`, and exit foreign keys use `from_room_instance_record_id` and `to_room_instance_record_id`. The runtime room bridge resolves exits using the fetched room row key rather than assuming the public runtime value equals the row key.
+- World Management has one runtime-room codec boundary. Public room reads require canonical `R-...` values, emit canonical runtime ids for the current room, exit targets, and the `worldSnapshotId` fence, and fail closed on malformed, bare numeric, or legacy `room-...` values. Its runtime read DTO and gRPC payload are distinct from design-time room DTOs; `GetRoom` returns typed runtime state rather than an opaque `room_json` shim.
+- The correctness-critical World Management room snapshot cache is keyed by `room:<tenantId>:<gameInstanceId>:R-<roomInstanceRowId>`, while internal repository and persistence seams retain row/record terminology.
+- Game Session's `game.logic.default-room-id` defaults to `R-1021` in both bound properties and service configuration, keeping fresh `PLAY`, `LOOK`, movement, and communication fallback paths on the canonical runtime identity family.
+- Shared runtime-room readers are used by World Management, Game Logic, Entity Management, and Game Session. They reject malformed or legacy storage-shaped values before downstream calls, attestation issuance, replay, persistence, or transport dispatch. This covers LOOK, movement, communication, room-ground inventory, session routing, movement idempotency, and automation enter/leave event publication.
+- Gameplay-session and internal-probe attestation issuance and claim validation reject legacy room ids. Persisted legacy gameplay bindings are treated as stale input and cleared by session-routing normalization; they are not silently upgraded. Game Logic maps malformed-room rejection at the `ResolveLook` envelope to `INVALID_ARGUMENT` rather than `LOOK_UNAVAILABLE`.
+
+### Authoritative Room Reads and LOOK
+
+- World Management is authoritative for the runtime room snapshot, room metadata, descriptions, exit topology, and occupant-reference set; Entity Management enriches caller-supplied occupant references and supplies room-ground state from the room-attached ground container. The current initial LOOK path still calls Entity Management directly for configured/ground-derived visible entities because the declared World Management `ListRoomOccupants` seam is not implemented. Nested container contents are not part of the base room view.
+- Game Logic owns the structured `LookResult`. Its composition includes room/world snapshot data, exits, visible occupants, and visible room-ground items. The structured result is the shared source for `LOOK` and `QUICKLOOK`; `QUICKLOOK` omits room-description prose for a faster redraw.
+- World Management and Entity Management stamp LOOK-related responses with the same practical read fence, currently `tenantId:gameInstanceId:roomInstanceId`. Game Logic requires both fences to be present and equal, propagates the component fences into `LookResult`, and returns an explicit read-fence error for missing or mixed fences instead of silently composing inconsistent state. The current `lookSnapshotId` still copies the World component identity rather than combining `worldSnapshotId` and `entitySnapshotId` into the canonical final LOOK identity.
+- `LOOK` requires an authenticated gameplay session. Game Session owns command ingress, transcript replay, final text rendering, and prompt emission; pre-login gameplay-like requests return `ERROR LOGIN_REQUIRED`, while post-login requests made before `PLAY` return `ERROR PLAY_REQUIRED`.
+- Reconnect restoration emits bounded transcript context, then a fresh authoritative `LOOK`, then a fresh prompt. Successful movement likewise performs a fresh destination `LOOK`; rendered-room cache content is never the authority for either refresh.
+- The current renderer defaults are surfaced as settings for color mode, brief mode, prompt enablement, reconnect prompt emission, and prompt coalescing: `firemud.presentation.default-color-mode`, `firemud.presentation.brief-enabled-by-default`, `firemud.presentation.prompt.enabled`, `firemud.presentation.prompt.emit-after-reconnect-restore`, and `firemud.presentation.prompt.coalesce-window-ms`.
+
+### Movement and Location Mutation
+
+- The directional `MOVE`/`GO` loop is live over both WebSocket and Telnet. Game Session accepts the authenticated gameplay command, and Game Logic normalizes the direction, resolves it against authoritative World Management exit data, and prepares the destination `LOOK` before Game Session applies its durable Redis room-binding effect. Game Session emits the prepared output only after that local effect applies. Authoritative World Management character/session location mutation remains an open seam; the target flow must commit the World-owned location/occupancy effect before resolving the authoritative destination view.
+- The movement result is structured and includes enough destination context for Game Session to refresh without guessing from cached state. Invalid directions, missing exits or rooms, and downstream failures remain stable application errors and do not disconnect the client.
+- Game Logic has a named `MovementTravelService` pathfinding/travel substrate, with World Management supplying authoritative geometry and versioned navmesh/path-graph artifacts. The live command still uses existing primitives only for the directional step; broader travel and full pathfinding behavior are not implemented. Durable movement idempotency validates expected, current, replayed, and destination room state against the canonical runtime-room contract before replay or write-through.
+- Game Session records `gamesession.command.move.invocations` and `gamesession.command.move.failures` with high-level error categories, and the cross-service path is covered for success, invalid exit, unauthenticated input, backend failure, and reconnect after movement.
+
+### Movement and Topology Settings
+
+- Game Session owns the first settings seam through `MovementProperties` for post-move redraw and `WorldTopologyProperties` for typed topology configuration. The canonical groups are `movement.postMoveView`, `worldTopology.scopeModel`, and `worldTopology.regionBehavior`.
+- Generation-ready configuration metadata and documented defaults are present for `firemud.movement.post-move-look-enabled`, `firemud.world-topology.scope-model`, and `firemud.world-topology.regions-enabled`. Games with or without explicit regions, areas, or maps express those capabilities through settings rather than hard-coded fallback branches.
+- The settings surface gives future scope-sensitive communication such as `SHOUT` a canonical home, but does not implement that command or otherwise change movement ownership.
+
+### World Lifecycle
+
+- World creation, activation, failure, termination, and the retry/repair lifecycle use the canonical `world-lifecycle` Temporal workflow when Temporal is enabled. The workflow owns prepare, activate, fail, and terminate orchestration and follows the shared `common-temporal` workflow identity and task-queue conventions.
+- When Temporal is not enabled, `WorldInstanceActivationService` delegates to the same extracted command service so local non-Temporal application contexts still boot and use the same lifecycle commands.
+- `GetWorldInstanceLifecycle` exposes deterministic workflow identity and Temporal execution status to operators through the control-plane read surface. The existing class-A pre-activation versus class-B gameplay boundary is preserved; gameplay runtime, tick execution, and live in-world mutation remain outside the Temporal path.
+- Lifecycle orchestration preserves business idempotency keys and activation fencing, and fences current epoch/version/lifecycle validation, activation validation, and remote cleanup ordering. Termination stages local state around remote cleanup, but prepare and activate still perform blocking Game Design attestation calls inside transactional command methods; the no-open-transaction-across-blocking-gRPC invariant remains incomplete there.
+- World Management owns world-change notification production for Game Session and Automation, while Game Session owns gameplay-session/tick sharding, leases, and coordination. The current notification path and broader shard/load-balancing behavior are not a completed substitute for those ownership boundaries.
+
+### Draft World Topology, Generation, and Mutation Authority
+
+- World Management is the canonical owner of version-scoped Draft mutation through typed `ApplyWorldDesignMutation` operations for regions, zones, rooms, room exits, generation rules, world-entity spawn bindings, and generated world subtrees. Runtime instance mutation and live Published-version editing are not routed through this design-time API.
+- Each successful Draft mutation uses an applied-revision ledger or equivalent guard in the same transaction as the write. The idempotency identity includes `(tenantId, versionId, commitId, revisionId, operationType, aggregateType, aggregateId)`. Replaying a `revisionId` is a no-op; stale `expectedDraftRevisionEpoch` or `expectedDraftScopeRevisionEpoch` values fail closed as `DRAFT_WRITE_CONFLICT` rather than being rebased or merged. The contract also exposes typed application outcomes including `APPLIED`, `NO_OP_ALREADY_APPLIED`, `DRAFT_WRITE_CONFLICT`, `UNRESOLVED_REFERENCE`, `OUT_OF_SYNC`, `INVALID_VERSION_STATE`, and `UNSUPPORTED_SCOPE`.
+- Generation targets are typed scope enums: `REGION_SUBTREE`, `ZONE_SUBTREE`, and `NEW_EMPTY_REGION`. Scope epochs are keyed by tenant, version, scope type, and positive scope id. One canonical positive scope-id reader and normalized scope-id representation are used across region, zone, room, room-exit, generation-rule, spawn-binding, and generated-subtree validation; declared scope is validated before topology upserts reach the repository.
+- `REPLACE_SCOPE` deterministically clears and replaces prior generated rooms, exits, generation rules, and spawn bindings within a supported region or zone scope. Generated exits and spawn bindings may target only rooms created by the same payload. Spawn-binding replacement clears prior in-scope bindings, rejects out-of-scope bindings, and rejects unsupported `NEW_EMPTY_REGION` combinations.
+- `SEED_APPEND_ONLY` fails closed when a revision would delete or rewrite existing authored rows, including spawn bindings. Topology mutations must prove that changed rows belong to the declared region or zone subtree; generation-rule mutations persist and validate their declared scope and participate in digest hashing.
+- `WORLD_GENERATION_SUBTREE` applies generated rooms, exits, generation rules, and spawn bindings in one declared subtree request. Entity references for spawn bindings are validated through the canonical Entity Management RPC. Design-time population writes World-owned declarative bindings only; Automation and Scripting cannot author template topology, bindings, or live entities as a generation side effect.
+- `GetDraftDesignDigest(versionId)` currently hashes the six implemented version-scoped families: regions, zones, rooms, room exits, generation rules including scoped metadata, and world-entity spawn bindings. The response does not expose a row-family manifest, so Game Design cannot independently prove that every applicable family was included; fail-closed family-manifest completeness remains a publish-gate requirement rather than a live check.
+- World room and topology caches are derived, versioned Class A state: room/world mutations and activation changes require explicit invalidation or refresh of affected keys, and reset/rebuild behavior must recompute from authoritative storage rather than treating TTL as correctness. The current implementation still has cache-hardening work around reset tolerance and complete event-driven invalidation.
+- The applied-revision ledger now exists and is written transactionally with successful Draft mutations. The current World digest read still computes version-scoped template inputs and emits synthetic `appliedCommitId = "version:<versionId>"`; the digest must derive a commit-level token only after that commit's complete revision set is durably applied. Revision-ledger identities remain replay and idempotency evidence, not the publish-convergence token. World currently emits digest schema `2`, while Game Design's live publish gate accepts only schema `1`, so full-version publish cannot admit the current World digest until coordinated schema adoption lands. Publish convergence also remains an obligation for newly introduced topology/generation families and separately exported navmesh/path-graph artifacts.
+
+### Validation and Proof
+
+- LOOK proof covers deterministic World room snapshots and exits, visible Entity room-ground data, authenticated command behavior, structured same-fence success, stale/mixed-fence rejection, dependency failure propagation, and WebSocket/Telnet rendering parity. Movement proof covers valid directional exits, invalid or missing exits, missing-room behavior, downstream failures, unauthenticated commands, Game Session binding mutation, destination auto-LOOK, non-disconnecting failures, pipeline traversal, and reconnect-after-move; completed manual checks also cover one successful move and one invalid exit on both transports. Authoritative World Management location mutation is not yet proven because that write contract is not implemented.
+- Runtime-room convergence proof covers canonical World Management emission and malformed-id rejection, row/record exit mapping, canonical room cache keys, shared readers at Game Logic and Entity Management ingress, attestation issuance and claims, session-routing scrubbing, movement idempotency, automation event payloads, and Game Session outbound validation before transport dispatch. Ordinary fixtures use `R-...`; legacy `room-...`, bare numeric, uppercase, or malformed forms remain only in negative tests.
+- Lifecycle proof covers the durable world creation, activation, termination, and failure path plus the operator-facing lifecycle read surface; the extracted command path is the local non-Temporal fallback.
+- Draft mutation and digest proof covers first apply, duplicate replay, stale global and scope epochs, unresolved references, `REPLACE_SCOPE`, unsupported scopes, and `SEED_APPEND_ONLY` behavior. Additional focused proof passed for zero declared scope ids on room, room-exit, region, and zone mutations and for generation-rule scope-id normalization; focused Game Design revision and gRPC caller proof also passed. The current World Management module proof passed through `dev-tools/validation/run-locked-gradle.sh :world-management-service:check -PfullCheck`.
+
+## Active Gaps
+
+- Broader travel, pathfinding, combat adjacency, richer movement failure semantics, and additional client polish are outside the completed directional-movement baseline.
+- World Management still needs the authoritative character/session location-transition mutation contract used by live movement; the current Game Session binding update is not a substitute for that ownership boundary.
+- Prepare and activate lifecycle commands still hold local transactions across blocking Game Design attestation reads; they need the same staged/fenced transaction separation already used around termination cleanup.
+- Starter-region preparation still persists hard-coded `SimpleDungeonGenerator` metadata and does not consume the frozen published generation inputs and provenance required by the launch descriptor.
+- Initial world-event scheduling is absent from the current prepare path despite being canonical lifecycle step 2.
+- Omitted optional terrain/population stages have no durable `SKIPPED_NOT_REQUIRED` outcome or operator-facing projection, so current lifecycle status cannot distinguish intentional omission from not-started or failed work.
+- The applied-revision ledger is live, but `GetDraftDesignDigest` still emits a synthetic version-derived `appliedCommitId` instead of deriving the highest commit whose complete revision set is durably applied.
+- World digest schema `2` is not accepted by the current Game Design publish gate, which still accepts only schema `1`.
+- The World digest response has no explicit row-family manifest, so the publish gate cannot independently detect an omitted applicable family even though the six current families are hashed.
+- Game Logic enforces equal World and Entity LOOK fences, but the final `lookSnapshotId` is still the World component identity rather than a combined identity for both component snapshots.
+- The authoritative World occupant-reference read is declared but not implemented; the current LOOK aggregator bypasses it and treats Entity-derived visible rows as the occupant source.
+- Room-view overlays such as hazards or combat state, richer visibility policy, and nested-container inspection remain later work. Any overlay must extend the authoritative `LookResult` and same-fence model rather than introduce an independent room view.
+- `worldTopology` provides the settings home for scope-sensitive actions such as `SHOUT`; those actions are not implemented here.
+- Later world-generation stages, delayed repair, richer generation payloads, generator provenance, and broader editor callers can extend the live lifecycle and Draft contracts. They must not create parallel lifecycle orchestration or Draft mutation paths.
+- The current public runtime encoding is `R-<roomInstanceRowId>` even though consumers must treat it as opaque. Replacing that encoding with a non-storage-derived opaque identifier would be a separate contract decision; no current public/runtime identity drift is recorded at the completed 03.2 boundary.
+
+## To Discuss
+
+No competing implementation state is recorded for the current runtime-room identity, same-fence `LOOK`, directional movement, lifecycle, or Draft-mutation boundaries. Future decisions are limited to:
+
+- a new room-view overlay or visibility fact that changes the authoritative `LookResult` composition contract;
+- new topology-sensitive player actions beyond the settings homes already in place;
+- travel or pathfinding semantics that cannot be expressed as an ordinary authoritative exit transition; or
+- a new generation or repair phase that materially changes the durable world-lifecycle workflow; or
+- whether and how to replace the current `R-<roomInstanceRowId>` encoding while preserving World Management's exclusive mapping authority.
+
+## Service and Contract Map
+
+| Owner | Current responsibility | Public or shared contract | Evidence focus |
+| --- | --- | --- | --- |
+| World Management | Runtime room mapping, topology, lifecycle, and Draft world mutation; authoritative character/session location mutation remains an open contract seam | `RoomInstanceRef`, room snapshot/read APIs, lifecycle control-plane reads, `ApplyWorldDesignMutation`, `GetDraftDesignDigest` | Runtime-id rejection and mapping, exit resolution, missing location-transition contract, lifecycle fencing, mutation idempotency, scope epochs, digest coverage |
+| Game Logic | Same-fence room/entity aggregation and movement resolution | Structured `LookResult`, read-fence errors, movement result | Equal-fence composition, legacy-room rejection, valid and invalid exit handling |
+| Entity Management | Visible room-ground state and room-scoped containment | Room-scoped entity and inventory reads | Canonical runtime-room ingress, room-ground scope, matching entity read fence |
+| Game Session | Text command ingress, gameplay room binding, rendering, replay, and post-move refresh | `LOOK`, `QUICKLOOK`, `MOVE` / `GO`, session routing and attestation inputs | WebSocket/Telnet parity, fresh room read after movement or reconnect, malformed-room rejection before transport |
+| Game Design and shared platform contracts | Settings publication and Draft-world callers | `movement.*`, `worldTopology.*`, scoped settings, revision caller path | Effective settings resolution and caller proof without alternate write paths |

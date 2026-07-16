@@ -55,11 +55,15 @@ require_contains(
 require_contains(
     "design/project-management/review-checklists.md",
     [
-        "Cross-check findings against relevant vertical-slice docs, proto contracts, and current service code",
-        "Auth/session reviews must include the gateway, session-behavior, authz route matrix, Account runtime docs, Game Session runtime docs, and active `09.x` realm-routing/admission slices.",
+        "Cross-check findings against relevant domain implementation trackers, canonical design, proto contracts, and current service code",
+        "Auth/session reviews must include the gateway, session-behavior, authz route matrix, Account runtime docs, Game Session runtime docs, and the `realm-routing-and-playable-state.md` and `player-access-and-session.md` trackers.",
         "Scripting/runtime reviews must treat `system-architecture-scripting-normative-contract-tables.md` as the first update target",
-        "Observability reviews must check architecture docs, reference PromQL, dashboards, and slice-support docs when metric-label policy changes.",
-        "Verify the public API schema or proto method for the exact seam being marked complete.",
+        "Observability reviews must check architecture docs, reference PromQL, dashboards, and the relevant capability-support docs under `slice-support/` when metric-label policy changes.",
+        "## Capability/Tracker Completion Guide",
+        "Verify the claimed capability outcome against every public contract it owns: HTTP/OpenAPI, gRPC/proto, event or outbox, and operator-facing contracts where applicable.",
+        "Confirm that the named canonical owner in the tracker is the owner in code and that no local fallback or competing authority is silently carrying the behavior.",
+        "Prefer narrow unit/integration/cross-service proof over interpreting an unrelated broad test pass as evidence.",
+        "If any answer is no, leave the capability incomplete or complete only at its explicitly bounded current boundary.",
     ],
 )
 canonical_reset_anchor = "[Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence)"

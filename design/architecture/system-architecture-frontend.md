@@ -7,7 +7,7 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 ## Implementation Notes
 
 - The current `web-client` baseline now uses `TanStack Query` plus local feature state rather than Redux starter scaffolding.
-- [02.21 Frontend Server-State Baseline and Query Convergence](../project-management/vertical-slices/02.21-task-list-frontend-server-state-baseline-and-query-convergence-vertical-slice.md) is complete at the current baseline boundary; later frontend/editor slices should treat Redux as an explicit exception rather than silently reintroducing it as default infrastructure.
+- The current frontend baseline and its broader gaps are recorded in [Player Experience, Commands, and Communication implementation tracking](../project-management/implementation-tracking/player-experience-commands-and-communication.md); later frontend/editor work should treat Redux as an explicit exception rather than silently reintroducing it as default infrastructure.
 
 ---
 
@@ -40,14 +40,14 @@ FireMUD's default frontend state model is:
 
 - **TanStack Query** for server state;
 - local component/form/editor state close to the owning feature;
-- shared global client-state layers only when a later slice proves they are needed.
+- shared global client-state layers only when later work proves they are needed.
 
 This is deliberate. Large server-backed world or admin datasets are not automatically "complex client state." They are usually a query/caching concern first. FireMUD should add a richer browser-wide state layer only when the browser truly becomes a stateful editor/runtime that needs long-lived cross-screen draft orchestration, collaborative editing state, undo/redo, or similarly heavy client-owned behavior.
 
 - The canonical shared browser data substrate is a `QueryClient` configured in `src/main.tsx`.
 - Shared API/query helpers live under `src/api/` or feature-local query modules and expose typed hooks for reads and mutations.
 - Cache invalidation, background refetching, retry policy, and mutation lifecycle should be expressed through `TanStack Query` rather than a repo-wide Redux default.
-- Local UI state should stay local until a concrete later slice proves a true shared client-state need.
+- Local UI state should stay local until concrete later work proves a true shared client-state need.
 - Redux Toolkit remains an allowed later tool, but only by explicit exception once a real client-state complexity case exists; it is not the baseline house style.
 
 ## Authentication and Session Handling
@@ -196,7 +196,7 @@ See `web-client/README.md` for additional setup tips.
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
-`TanStack Query` should be the default browser server-state substrate for new frontend work. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing. If a future editor/admin slice truly needs a broader client-state layer, that slice should document why local feature state plus `TanStack Query` is no longer sufficient before introducing Redux or another global state tool.
+`TanStack Query` should be the default browser server-state substrate for new frontend work. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing. If future editor/admin work truly needs a broader client-state layer, that work should document why local feature state plus `TanStack Query` is no longer sufficient before introducing Redux or another global state tool.
 
 ## Game-Specific Customization
 

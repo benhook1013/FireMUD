@@ -34,7 +34,7 @@ Expected response:
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
 - `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
 - `PickupVisibleRoomItem` and `DropCarriedItem` are the player-facing item selector RPCs for the current `GET` and `DROP` command path. Game Session sends the current session/game/room context, raw item reference, and quantity; Game Logic resolves names, visible refs, container identities, and stack-family refs against the appropriate visible holder before delegating the concrete mutation to Entity Management.
-- `ApplyActorCondition` is the gameplay orchestration pass-through for the first actor-state mutation path. Game Session supplies the same gameplay attestation and scoped character context used by item/equipment commands; Game Logic keeps this as the action-state boundary before Entity Management persists the active condition row.
+- `ApplyActorCondition` is the current self-scoped gameplay orchestration path for the first actor-state mutation. It is not the target-state generic cross-actor effect API.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -48,6 +48,40 @@ Expected response:
   "message": "pong"
 }
 ```
+
+## Actor Effect Targeting
+
+The target-state cross-actor effect API is a Game Logic-owned `ResolvedEffectPlan` contract. Game Session provides the authenticated source context and a raw player selector where the command syntax permits one; it must not select final actor ids.
+
+- Game Logic resolves each declared action target set at durable execution time against the source actor, frozen release declaration, Entity Management actor state, and World Management occupancy state. `SOURCE` resolves implicitly; each authored set loads its release-pinned DML `TargetingPolicy`, uses its typed platform candidate selector, evaluates its referenced `ObservationPolicy.observableWhen`, then evaluates `eligibleWhen` for observable candidates. Initial authored sets resolve relative to the action source only.
+- Game Logic compiles the frozen target-set policy predicates into one bounded `TargetingFactSnapshot` request per documented fact owner for the source and bounded candidate sets. A snapshot returns only the referenced facts and its owner-specific version or fence token; it is not a generic entity, relationship, or world-state dump, and resolution must not make per-predicate or per-candidate RPC calls. A provider read failure or unavailable snapshot fails closed.
+- The resulting plan contains the source actor, resolved canonical target actor ids by target-set key, action/release snapshot, idempotent effect id, typed effect declarations bound to those sets, and target-resolution evidence, including frozen policies, fact snapshots, owner tokens, stage results, and decisive predicate evidence. A rejected action outcome retains the same internal policy snapshot, failed stage, and evidence when no plan can be formed.
+- Before any source cost, cooldown, or effect mutation commits, each owner of a material targeting fact validates its recorded version or fence token. A mismatch discards the unresolved plan and re-resolves it under the same effect id; it must not retain a stale selected target or substitute a fallback candidate. Entity Management applies only a validated approved plan and never parses player-facing target text or recreates target policy from a partial request.
+- Required same-region targets are applied atomically as one local Entity Management mutation. Cross-region target legs use durable coordinator/follow-up outcomes; before a remote leg mutates, its region re-reads and validates the facts it owns against current local authority rather than treating origin-side evidence as permanent authorization. The final gameplay outcome reports each leg rather than claiming a distributed transaction.
+- Platform targeting modes are typed candidate-selection grammar. A reusable published `TargetingPolicy` owns its selector, observation-policy reference, and game-specific range/relationship/status/targetability rules; a reusable `TargetSelectionPolicy` owns cardinality and typed selection strategy, while each `ActionTargetSet` owns optional-target handling and optional player-input binding. A game's standard target paths resolve through named release-pinned default target-set bindings. Visibility and targetability are optional game facts, never universal actor fields.
+- A failed observation predicate is always non-disclosing to the player: it has the same safe unavailable outcome as an absent target. A failed eligibility predicate may emit only the policy's approved safe feedback. Internal target-resolution evidence remains available for outcome/audit reasoning and must never be reconstructed from player output.
+- Each authored `ActionTargetSet` or standard-path default target-set binding references a release-pinned `TargetSelectionPolicy` over its targeting policy's eligible candidates. The policy declares `EXACTLY_ONE`, bounded `UP_TO_N`, or `ALL_ELIGIBLE` within an operator ceiling and selects by `PLAYER_SELECTED`, `CANONICAL_ORDER`, typed `RANKED`, or effect-id-seeded `RANDOM_SEEDED` strategy. It must explicitly declare truncation behavior for an `ALL_ELIGIBLE` ceiling. Target-resolution evidence includes each set's policy snapshots, canonical candidate order, selected targets, applied ceiling, and any ranking values or random seed. Effects apply only to their declared resolved target set; a required unresolved set rejects before commit, while an optional unresolved set has an explicit no-mutation outcome.
+
+`ApplyActorCondition` may remain as the narrow self-target compatibility seam until the generic plan is implemented, but new cross-actor action behavior must use the resolved-plan pathway rather than extending that RPC ad hoc.
+
+## Action Cost and Cooldown Lifecycle
+
+Game Logic applies a frozen action declaration only at durable execution time. Text parsing and queue admission do not consume actor resources or start cooldowns.
+
+- The declaration contains typed `costs[]` and `cooldowns[]`, each keyed to the published actor-state catalog and carrying `ON_EXECUTION` or `ON_EFFECT_SUCCESS` commit semantics.
+- Entity Management is authoritative for conditional resource consumption and actor cooldown records. The one idempotent effect id protects costs, cooldown creation, and same-region effect mutation from replay or concurrent double-spend.
+- Game Session maintains only reconstructible region-timer scheduling projections for expiry/wakeup. Reconnect, idle-region recovery, and timer rebuild always consult authoritative actor state before allowing an action.
+- Cross-region legs report durable target outcomes after source commit. They do not silently refund an already committed source cost or cooldown.
+
+## Gameplay Action Outcomes
+
+The target-state effect pathway returns and persists a structured `GameplayActionOutcome`, rather than a single text result or boolean. It contains the action/release/effect identity, source actor, cost/cooldown `commitState`, execution `completionState`, and ordered target-leg outcomes.
+
+- `commitState` distinguishes no source mutation from an idempotently committed source action.
+- `completionState` distinguishes local finality, remote-pending execution, and remote-final completion. A committed action with remote legs must not be flattened to generic success before those legs finish.
+- Each target outcome includes its canonical actor id, required/optional classification, result code, and remote-leg identity where relevant.
+- Game Logic derives idempotent semantic presentation events from the outcome for resolved authorized audiences. Events contain message keys, typed arguments, visibility classification, replay policy, and stable ids derived from the effect lifecycle.
+- Game Session receives those events as presentation data and renders/delivers `PlayerOutput`; it does not recreate outcome semantics from command tables or remote result rows.
 
 Call `ExecuteCommand` with:
 

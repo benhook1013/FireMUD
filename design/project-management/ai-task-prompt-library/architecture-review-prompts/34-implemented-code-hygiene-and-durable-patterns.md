@@ -11,9 +11,10 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/microservices/game-session-service/README.md`
 - `design/architecture/microservices/entity-management-service/README.md`
 - `design/architecture/microservices/world-management-service/README.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-entity-management-service.md`
-- `design/project-management/service-status-world-management-service.md`
+- `design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md`
+- `design/project-management/implementation-tracking/gameplay-rules-entities-and-effects.md`
+- `design/project-management/implementation-tracking/world-runtime-and-movement.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
 
 Review the current FireMUD branch for code hygiene, consistency, and durable implementation patterns, especially in Spring, Spring Boot, Spring Data, and gRPC usage.
 
@@ -22,7 +23,7 @@ Context:
 - Repo: `/home/ben/src/FireMUD-wsl-copy`
 - Read `AGENTS.md` first and follow it as canonical instructions.
 - FireMUD is still in initial development.
-- Many documented slices have now been implemented.
+- Many documented capabilities have now been implemented.
 - I want review attention on cleanup, correctness, maintainability, and pattern quality before the codebase gets larger.
 
 What to look for:
@@ -60,7 +61,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining implemented slice docs unless it directly supports a finding
+- Do not spend time re-explaining implemented tracker records unless it directly supports a finding
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 
 Helpful framing:

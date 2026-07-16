@@ -71,10 +71,10 @@ Initial-slice rule:
 Implementation notes:
 
 - The cutover-validation RPC now exists as `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`.
-- The first live implementation slice enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
-- `character` and `character_friend` rows are supported `S1` survivor state in the current slice. Their presence does not require a remap set by itself.
+- The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
+- `character` and `character_friend` rows are supported `S1` survivor state at the current boundary. Their presence does not require a remap set by itself.
 - `inventory` and `character_equipment` rows are treated as current `S2` template-bound survivor state. If either family has rows and no approved `remapSetId` was frozen by launch resolution, validation returns `result=INCOMPATIBLE`, `hasS2Rows=true`, `remapSetRequired=true`, and `ENTITY_REMAP_REQUIRED`.
-- When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current slice reports `COMPATIBLE` and echoes that id. Entity Management does not infer remaps and does not create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
+- When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current implementation reports `COMPATIBLE` and echoes that id. Entity Management does not infer remaps and does not create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
 
 Entity upgrade validation minimum contract:
 
@@ -196,9 +196,31 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by `(tenantId, gameInstanceId, roomInstanceId)` so limits such as max items on the ground or special container rules can be enforced consistently without cross-instance collisions.
 - Actor gameplay state is persisted separately from the legacy character stat columns. `actor_resource_states` stores current/base/max resource values with source provenance, while `actor_active_conditions` stores active condition keys, stack counts, source provenance, start/expiry timestamps, and effect payload JSON. Reads merge baseline character stat fields with persisted resource rows so later mutation/effect slices can converge on the new state model without removing the bootstrap character fields first.
-- The first shared effect-evaluation seam is an in-process Entity Management service that evaluates typed resource modifiers and granted states deterministically. Active condition payloads and equipped item-template payloads are now wired through it for actor-state reads, and gameplay-attested `ApplyActorCondition` calls can create active condition/action-state rows through the same internal mutation service. A scheduled Entity Management job also expires elapsed active-condition rows on a bounded cadence. Player command wiring remains future work.
+- The first shared effect-evaluation seam is an in-process Entity Management service that evaluates typed resource modifiers and granted states deterministically. Active condition payloads and equipped item-template payloads are `CONTINUOUS` effect sources: they contribute while their source exists and never write derived values into current resources during reads. When an attached source changes a bounded-resource maximum, its attach, detach, refresh, expiry, or replacement mutation performs the one idempotent capacity normalization using the declaration override or resolved tenant/game `actorState.capacityChangePolicy` captured by that mutation. Evaluation reads never normalize current state. Gameplay-attested `ApplyActorCondition` calls are the first `INSTANT` mutation path, creating active condition/action-state rows through the same internal mutation service under an idempotent effect id. A scheduled Entity Management job also expires elapsed active-condition rows on a bounded cadence. Player command wiring remains future work.
+- Target-state active-condition rows are condition instances with stable instance ids, frozen definition/release snapshots, source provenance, stack counts, expiry, and applied-effect snapshots. Condition-definition DML, not source-id coincidence, selects `REPLACE`, `REFRESH`, `STACK`, or `PARALLEL` reapplication behavior and its duration policy. Typed removal resolves exact keys, authored tags, or permitted sources in deterministic definition priority and instance-id order; it must not expose raw row or payload deletion to player-facing callers.
 - Character location and instance membership are stored by the World Management Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
+
+### Runtime Actor Identity
+
+Entity Management owns one persisted runtime actor for every active gameplay being. `actorId` is an opaque canonical gameplay-facing identity; services must not substitute composite reference strings such as `PLAYER:<characterId>` or re-derive different player/NPC identity forms at each boundary.
+
+- The actor core carries `tenantId`, `gameInstanceId`, `actorKind`, display name, and presence state. It does not persist universal targetability or visibility fields.
+- A `PLAYER` actor is unique for its active `{tenantId, gameInstanceId, characterId}` scope and links to the durable account and character records. Disconnect/reconnect changes presence on that actor rather than creating a replacement identity.
+- An `NPC` actor links to one NPC runtime instance. An authored NPC definition may create many concurrent runtime NPC actors and is not itself actor identity.
+- `PET` and `SUMMON` extend the same core when implemented. God/admin behavior is a capability and authorized presentation overlay on a `PLAYER` actor, not a separate actor kind.
+
+Each actor also has one persisted, release-admitted `dispositionKey`: its main gameplay state. The disposition supplies base action-admission through published `ActionAdmissionTag` denials and semantic feedback policy. Conditions and equipment are explicit continuous overlays over that base; they can only add tag denials or otherwise narrow it and never grant behavior denied by the main disposition. They may also contribute ordinary game-authored state facts for later reusable `ObservationPolicy` and `TargetingPolicy` evaluation, but those facts do not bypass action admission or become universal visibility/targetability fields. Recovery, immunity, revival, and other exceptional main-state changes use an idempotent instant condition removal/prevention or disposition transition, so continuous sources do not become competing death/defeat lifecycle owners. Transport/session presence is a separate fact and must not be repurposed as disposition.
+
+The actor is the shared subject for gameplay targeting, effects, stats, conditions, and communication. It does not move other service ownership:
+
+- World Management remains authoritative for an actor's room location and the room occupancy view.
+- Game Session owns only ephemeral session attachment, protocol state, and player-facing presence projection.
+- Account Service remains authoritative for account identity and authorization inputs.
+
+For published targeting predicates whose facts it owns, Entity Management exposes a bounded `TargetingFactSnapshot` for the requested scoped actor ids. The response includes only the requested actor-state facts and an actor-state revision token; it is not a general actor read. Before applying an approved effect plan, Entity Management validates the recorded token for every material Entity-owned fact. If any token is stale, it reports a pre-commit mismatch so Game Logic can discard and re-resolve the plan under the same effect id before any source cost or target mutation commits.
+
+Character and NPC records remain the durable domain records for their respective variants. The runtime actor links those records into one gameplay subject model; it does not replace character progression, authored NPC definitions, or World Management location state.
 
 ### Containment and Equipment Model
 
@@ -272,7 +294,7 @@ Operators and later fraud/dupe-detection tooling should also be able to derive l
 
 ### Instance Termination Cleanup Contract
 
-Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the cross-service `InstanceTermination` Saga described in World Management docs:
+Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the durable Temporal `world-lifecycle` termination flow described in World Management docs:
 
 - Game Session must already have closed admissions for the target instance before cleanup starts.
 - Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.

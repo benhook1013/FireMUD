@@ -40,7 +40,7 @@ The prompt files under `architecture-review-prompts/` are grouped by theme so re
 - [33-race-replay-idempotency-and-crash-safety.md](./architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md) — race, replay, and crash-safety review
 - [34-implemented-code-hygiene-and-durable-patterns.md](./architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md) — implementation-pattern hygiene
 - [35-pre-v1-tech-debt-and-simplification-review.md](./architecture-review-prompts/35-pre-v1-tech-debt-and-simplification-review.md) — pre-v1 simplification, AI-heavy code drift, and unneeded compatibility debt
-- [40-design-to-slice-translation-gap-review.md](./architecture-review-prompts/40-design-to-slice-translation-gap-review.md) — design-to-slice tracking gaps
+- [40-design-to-slice-translation-gap-review.md](./architecture-review-prompts/40-design-to-slice-translation-gap-review.md) — design-to-domain implementation-tracking gaps
 - [41-test-infrastructure-harness-and-proof-convergence-review.md](./architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md) — test/proof infrastructure review
 
 ## Notes

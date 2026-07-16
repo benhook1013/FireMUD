@@ -116,7 +116,7 @@ Redis participates in several layers of the test strategy:
 - **Service-level integration tests** may start a single coordination and cache Redis pair using Testcontainers:
   - Coordination tests use the same prefixes and Lua scripts as production (`tick:*`, `session:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), but run against a disposable coordination instance whose state is reset between tests or suites.
   - Cache/rate-limit tests use a distinct container or logical database for `inventory:*`, `view:room-look:*`, and `ratelimit:*` prefixes so eviction behaviour can be validated independently.
-- **Cross-service integration tests** (for example, Look or Login vertical slices) bring up Redis alongside multiple services and exercise canonical flows:
+- **Cross-service integration tests** (for example, LOOK or LOGIN capability proofs) bring up Redis alongside multiple services and exercise canonical flows:
   - Testcontainers typically start a `redis-coord` and `redis-cache` pair, mirroring the role separation from `docker-compose` and Helm.
   - Tests treat coordination state as reset-tolerant within the suite: they rely on the tick replay and session recovery rules described in [System Architecture: Redis](./system-architecture-redis.md), but do not assume persistence across independent test runs.
 

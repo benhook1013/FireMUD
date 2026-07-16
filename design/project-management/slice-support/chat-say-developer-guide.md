@@ -1,4 +1,4 @@
-# SAY Slice Developer Workflow
+# SAY Capability Developer Workflow
 
 This quick guide shows example commands for both WebSocket and Telnet clients so you can reproduce the canonical communication transcripts used by the regression suites.
 

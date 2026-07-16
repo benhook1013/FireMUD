@@ -4,6 +4,12 @@ This document outlines how FireMUD secures service communication, manages authen
 
 Kubernetes Secrets has been selected as the platform's unified secret storage solution. This keeps credential management simple while working seamlessly with cert-manager for automatic rotation of TLS certificates and with Kubernetes Jobs and utilities that handle JWT signing key rotation and other sensitive credentials. FireMUD applies a tiered governance policy on top of this storage choice: high-impact credentials (JWT keys, DB credentials, object-store credentials, operator credentials) require explicit rotation SLAs, age/missed-rotation alerts, incident runbooks, and measurable compliance evidence even when the underlying store remains Kubernetes Secrets.
 
+## Implementation Notes
+
+- Account Service currently publishes `/.well-known/jwks.json` by reading the configured mounted JWKS file on each request, with a classpath resource fallback for non-mounted environments.
+- Common Security has a live reusable `ReloadableJwtUtil` and `JwtSecretWatcher` path for `FIREMUD_AUTH_JWT_SECRET_PATH`; the watcher reloads the configured JWT signing secret when the mounted file changes. This is a conditional service mechanism, not evidence that all deployments currently hot-reload validators.
+- The rotation workflow, dedicated rotation-job automation, key-overlap/pruning operations, and deployment-wide validator-convergence evidence below remain target/operational design rather than a completed live Account Service capability.
+
 ---
 
 ## Token Issuance & Secret Storage

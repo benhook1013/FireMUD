@@ -26,6 +26,8 @@ World Management is the authoritative owner of character and NPC location for ea
 - Other services, including Entity Management and Game Session, treat these tables as read-only and rely on World Management gRPC APIs or cached projections.
 - Any derived caches or denormalized views of location must be refreshed from World Management rather than persisting independent authoritative location fields.
 
+World Management is the fact owner for targeting predicates over location, occupancy, range, and mutable room state. Its bounded `TargetingFactSnapshot` responses contain only the compiled source/candidate facts for the requested `RoomInstanceRef` scope and a current world version or fence token. Before a plan that materially depends on those facts starts any source or target mutation, World validates that token; a mismatch makes the plan stale and requires Game Logic to re-resolve under the same effect id rather than acting on old occupancy or spatial state.
+
 ### Spatial Effects Contract
 
 Movement, drops, pickups, and room presence are cross-service by design:
@@ -125,7 +127,7 @@ World Management is a required publish-gate participant and maintains a stable d
 
 Implementation Notes:
 
-- The current implementation computes the digest from version-scoped world-template rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
+- The applied-revision ledger is implemented and records successful Draft mutations transactionally. The current digest still returns synthetic `appliedCommitId = "version:<versionId>"`; the remaining gap is deriving a commit-level token only after that commit's complete revision set is durably applied. Revision-ledger identities remain replay and idempotency evidence rather than the publish-convergence token.
 - Current version-scoped digest inputs include `region`, `zone`, `room`, `room_exit`, `generation_rule`, and `world_entity_spawn_binding`; later topology and generation-template families must join this same `(tenantId, versionId)` digest contract when introduced.
 - Current concrete `region` digest fields include `id`, `shardId`, `name`, `weather`, `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier`.
 - Current concrete `zone` digest fields include `id`, `regionId`, and `name`.

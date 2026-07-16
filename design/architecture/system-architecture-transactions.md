@@ -196,9 +196,9 @@ If a workflow needs restart-safe continuation, durable waits/timers, or operator
 
 Cross-service workflows must explicitly choose one of the following rollback classes before implementation:
 
-- **Class A (Pre-Activation Saga Rollback):**
+- **Class A (Pre-Activation Compensating Workflow):**
   - Scope: publish-time and pre-runtime workflows where outputs are not yet active for gameplay (for example `PublishVersion` before a version is activated, or world-creation before admission opens).
-  - Contract: compensating actions are allowed; saga failure may roll back durable writes or mark the target version/workflow as `FAILED` with deterministic retry/repair.
+  - Contract: compensating actions are allowed; workflow failure may roll back durable writes or mark the target version/workflow as `FAILED` with deterministic retry/repair. The implementation may use short synchronous Saga orchestration or an owning Temporal workflow according to the durable-wait and recovery requirements above.
 - **Class B (Post-Activation Runtime Convergence):**
   - Scope: tick-driven gameplay and any mutation visible to live players (movement, containment, ambient mutations, live script-trigger side effects).
   - Contract: no destructive cross-service rollback. Effects are retried with the same `EffectId` until convergence; partial success is resolved by reconciliation, not compensation deletes.

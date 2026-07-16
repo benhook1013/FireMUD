@@ -15,7 +15,7 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - For heavier local Gradle tasks, run from WSL in this repo path to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - Do not create, merge, or close PRs unless explicitly asked.
-- Repository-local CodeRabbit reviews newly opened eligible PRs automatically, but does not review later pushes. At a meaningful checkpoint after all current and outdated findings are resolved, request `@coderabbitai full review`; the hourly allowance is per request, so do not spend it on an incremental review.
+- Repository-local CodeRabbit reviews automatically, then pauses after one reviewed commit. Request another review explicitly with `@coderabbitai review` only after all current and outdated findings are resolved and the PR is at a meaningful checkpoint.
 - For PR status checks, treat unresolved non-outdated review threads as the primary truth for review completeness. Do not treat a green top-level CodeRabbit status, passing GitHub checks, or mergeability alone as meaning the PR is review-complete.
 - When asked to "check PR", "check review", or determine whether a PR is done, inspect unresolved review threads first, then check GitHub Actions status and mergeability second.
 - For recurring local branch/worktree/PR inventory, use `dev-tools/validation/report-worktree-pr-topology.sh` instead of composing ad hoc status commands.
@@ -25,9 +25,9 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 - Resolve a CodeRabbit thread manually only after verifying its exact finding is fixed in `HEAD`. Never resolve a thread to hide an unresolved issue, and do not spend a fresh review solely to make CodeRabbit self-resolve already-addressed feedback. Do not request a review while one is active or CodeRabbit is rate limited.
 - Keep open PRs meaningful: after that authorized merge threshold, merge rather than leaving completed PRs parked.
 - Prefer one coherent medium-sized slice per PR, normally about 800-2,000 changed lines including required adjacent convergence; use smaller PRs only for isolated fixes and split only independent or genuinely hard-to-review work.
-- Fold slice/project-management documentation into its owning functional PR unless the documentation itself is an explicitly requested, independently reviewable deliverable.
 - Treat a failing Renovate PR as actionable maintenance work. Inspect its CI failure and push the smallest compatible fix to the Renovate branch when possible so Renovate can rebase and complete its own update; otherwise perform the dependency upgrade directly on a replacement branch with the required compatibility changes.
-- After a PR merges or its content is folded into another PR, proactively remove its now-defunct local worktree and local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
+- After a PR merges, proactively remove its now-defunct local worktree and merged local/remote branch once no open PR or active stacked branch depends on it. Preserve unmerged branches and their worktrees, and verify dependency/merge state before cleanup rather than deleting by name alone.
+- If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
 
 ## Required Validation
@@ -55,19 +55,23 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 ## Subagent Models
 
-Subagents share the main weekly allowance. Use them only for bounded parallel work that preserves main-thread context or clearly improves turnaround.
+The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design discussion with the human, task decomposition, integration, validation, and final repository decisions. Use subagents heavily for bounded bulk work so Sol context and usage stay focused on orchestration.
 
-- `gpt-5.6-luna`: Default for repository searches, focused investigation, narrow test work, and mechanical local fixes. Do not use Luna as independent review evidence.
-- `gpt-5.6-terra`: Use for bounded implementation that Luna cannot handle reliably, and for every independent review that substitutes for CodeRabbit on a tiny PR.
+- `gpt-5.6-luna`: Default for bulk repository reading, exhaustive inventories, mechanical or well-specified edits, focused investigation, and targeted test work. Prefer maximum effort for exhaustive bounded audits or difficult well-specified work; current Luna maximum-effort runs can provide Terra-class depth more economically. Sol must define the boundary and review the result. Do not use Luna as independent final-review evidence.
+- `gpt-5.6-terra`: Reserve for adversarial independent verification, ambiguous cross-contract reasoning, or recovery when Luna fails a declared coverage gate. Do not delegate product or architecture design decisions.
+- If answering a bounded repository question would likely require several exploratory tool calls, delegate that investigation to Luna and wait for its result instead of spending Sol context on the search.
+- Subagents must not run Gradle, Docker, smoke, or repository-wide validation commands unless the main thread explicitly delegates one specific command. Sol runs consolidated formatting and validation after integrating delegated work so parallel agents do not compete for local resources or corrupt shared results.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
-- Write every human-dispatched Codex Spark handover prompt or review brief to `C:\\temp\\firemud-spark-reviews` (`/mnt/c/temp/firemud-spark-reviews` from WSL) so it is ready to pick up without chat copy/paste. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
+- Write every human-dispatched Codex Spark handover prompt or review brief to the ignored repo-local `tmp/firemud-spark-reviews/` directory so it is ready to pick up without chat copy/paste and stays with the workspace context. Spark responses are normally appended to the same prompt file, so inspect that file for the complete handover record.
+- For an exhaustive Spark audit, require an explicit per-item coverage ledger, named source/design documents read, and an incomplete-review gate; do not accept an unsupported `No findings` summary as evidence of full coverage.
+- Treat Spark as opportunistic defect discovery using its separate allowance. If it does not satisfy the declared coverage gate, use Luna for exhaustive bounded checking and Terra for independent final verification rather than treating the Spark run as review completion.
 
 ## Execution Style
 
 - Prefer a single main-thread workflow on the active branch and in the current working tree unless a human explicitly asks otherwise.
 - Keep orchestration, integration, end-to-end reasoning, and final verification on the main thread.
-- Use subagents only for bounded parallelizable work that preserves main-thread context or clearly improves turnaround.
-- When delegating, prefer `gpt-5.6-luna` for bounded work and `gpt-5.6-terra` for bounded implementation or independent tiny-PR review; give each subagent a narrowly scoped task with explicit success conditions.
+- Delegate bounded bulk work proactively when it preserves Sol context or materially reduces orchestration cost. Prefer `gpt-5.6-luna`; reserve `gpt-5.6-terra` for tasks that need stronger independent reasoning.
+- Give each subagent a disjoint write scope, explicit success conditions, and enough canonical context to execute without making design decisions.
 - Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
 - For slice or branch reconciliation, read the owning vertical-slice doc first and use its declared scope, proof, and status before interpreting branch names, commit messages, or raw diffs.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.

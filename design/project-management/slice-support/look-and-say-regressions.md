@@ -17,8 +17,8 @@ This document centralizes the cross-service regression plans for the `LOOK` and 
 - Issue `SAY`, `WHISPER`, and `TELL` from one client and verify that:
   - the initiating player receives the canonical actor transcript;
   - downstream services record deterministic type and recipient metadata;
-  - `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` metrics are emitted as described in `design/project-management/vertical-slices/04-task-list-chat-and-social-vertical-slice.md`.
-- Capture both success and failure-mode transcripts (for example, Social/Groups unavailable) and keep them in sync with the Chat & SAY vertical slice so Telnet and WebSocket behave consistently.
+    - `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` metrics are emitted as described in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`.
+- Capture both success and failure-mode transcripts (for example, Social/Groups unavailable) and keep them in sync with the Chat & SAY capability record so Telnet and WebSocket behave consistently.
 
 ## Gradle Integration
 

@@ -10,7 +10,7 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/service-responsibility-matrix.md`
 - `design/architecture/repository-structure.md`
 - `design/architecture/microservices/README.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
+- `design/project-management/implementation-tracking/README.md` and the relevant domain trackers
 
 Review the current FireMUD branch for high-leverage architectural debt, unneeded backwards-compatibility, and pre-v1 simplification opportunities.
 

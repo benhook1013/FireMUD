@@ -108,11 +108,11 @@ The shared foundation does not impose a speculative universal workflow interface
 - Updates are the canonical path for validated in-workflow mutations that need request/response semantics.
 - Service-owned operator APIs remain the external read surface. They may project Temporal workflow status into existing control-plane DTOs, but they must not invent independent workflow identity rules.
 
-Required mapping discipline for adopter slices:
+Required mapping discipline for adopting services:
 
 - operator-facing status rows or read APIs must carry the same `workflowId` and `workflowFamily` that Temporal uses;
 - business-step idempotency inside activities must use the same `businessStepKey` convention documented here;
-- adopter slices must document their exact query/signal/update names in their owning service docs instead of inventing hidden names in code only.
+- adopting services must document their exact query/signal/update names in their owning service docs and implementation tracker instead of inventing hidden names in code only.
 
 ## Configuration Contract
 
@@ -142,4 +142,4 @@ Each adopting service should:
 - [Transaction Strategies](./system-architecture-transactions.md)
 - [Shared Libraries Overview](./system-architecture-shared-libraries.md)
 - [Identifier Glossary](./system-architecture-identifier-glossary.md)
-- [Temporal Control-Plane Workflow Convergence Slice](../project-management/vertical-slices/02.20-task-list-temporal-control-plane-workflow-convergence-vertical-slice.md)
+- [Shared Runtime, Service Contracts, and Persistence implementation tracking](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md)

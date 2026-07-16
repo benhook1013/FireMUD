@@ -168,7 +168,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - All tick queues, locks, timers, and pending sets for that region live in a single hash‑slot‑compatible keyspace (see [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)).
 
 - **Session binding**
-  - Session keys in Redis bind player connections, tick participation, and cooldown state to authenticated platform identities.
+  - Session keys in Redis bind player connections and tick participation to authenticated platform identities. They do not own actor cooldown state.
   - Session binding is monotonic: once a session is rebound or terminated, old bindings are not resurrected, even under replay or tail‑loss.
 - Session keys are **not** the authoritative runtime record for region-local gameplay participation. To preserve shard locality in Redis Cluster:
   - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` remains the authoritative record for connection identity, reconnect eligibility, auth/session CAS fields, and desired gameplay attachment generation.
@@ -250,7 +250,7 @@ Session and region participation updates are intentionally **two-phase and monot
 
 This contract keeps region-local correctness shard-safe while still letting reconnect and takeover flows carry session-wide intent. It also means the system tolerates brief mismatches between `session:game:*` and region-local bindings: the region-local binding key is authoritative for gameplay, while `session:game:*` remains authoritative for reconnect semantics.
 
-Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) are not “session state”: they are region/entity gameplay state and must be driven by the tick timer system and/or authoritative domain state so they continue to progress correctly in idle regions and across reconnects.
+Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) are not “session state”: they are region/entity gameplay state. Durable actor timed-state records are authoritative; tick timer keys are reconstructible scheduling projections used to wake expiry or retry work. This lets cooldowns continue correctly in idle regions and across reconnects without treating Redis session keys as their source of truth.
 
 Key properties:
 
@@ -334,7 +334,7 @@ Redis is used **exclusively** for non‑authoritative, transient data, including
 
 - In‑flight command queues and tick staging structures.
 - Tick locks and executor leases.
-- Timers, cooldowns, and retry metadata (stored in milliseconds).
+- Reconstructible timer, cooldown-expiry, and retry scheduling metadata (stored in milliseconds).
 - Gameplay session state and live coordination (session bindings, queue participation).
 - Best‑effort caches for hot‑path aggregates and chat history in Cache/Rate‑Limit Redis.
 - Automation queues and coordination hints that can be reconstructed from durable domain state.
