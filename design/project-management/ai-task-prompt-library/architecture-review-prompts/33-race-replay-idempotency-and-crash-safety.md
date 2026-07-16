@@ -11,13 +11,10 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-redis.md`
 - `design/architecture/system-architecture-tick-failures-and-operations.md`
 - `design/architecture/system-architecture-backup-recovery.md`
-- `design/project-management/vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md`
-- `design/project-management/vertical-slices/02.18.7-task-list-durable-command-ingress-and-status-ledger-vertical-slice.md`
-- `design/project-management/vertical-slices/02.18.8-task-list-tick-batch-and-effect-ledger-hardening-vertical-slice.md`
-- `design/project-management/vertical-slices/02.18.9-task-list-region-epoch-fencing-and-runtime-ownership-vertical-slice.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-entity-management-service.md`
-- `design/project-management/service-status-automation-scripting-service.md`
+- `design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md`
+- `design/project-management/implementation-tracking/gameplay-rules-entities-and-effects.md`
+- `design/project-management/implementation-tracking/automation-and-scheduler-runtime.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
 
 Discuss and review FireMUD's protections related to race conditions, replayability, idempotency, atomicity, and any other behavior that could result in data corruption or operator-hostile recovery work.
 
@@ -65,7 +62,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining already accepted slice docs unless it directly supports a finding
+- Do not spend time re-explaining already accepted tracker records unless it directly supports a finding
 - Keep the review grounded in protecting operator time and hosted game data
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 

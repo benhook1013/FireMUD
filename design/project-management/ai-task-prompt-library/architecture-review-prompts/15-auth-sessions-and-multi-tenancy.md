@@ -15,16 +15,16 @@ Read the following documents. Follow references and read nearby related files as
 - `design/architecture/microservices/account-service/subscription-management.md`
 - `design/architecture/microservices/game-session-service/README.md`
 - `design/architecture/microservices/game-session-service/protocols.md`
-- `design/project-management/vertical-slices/02.4-task-list-first-party-reconnect-parity-vertical-slice.md` (for current first-party `/ws/game/**` implementation status)
-- `design/project-management/vertical-slices/09.2-task-list-public-production-admission-and-membership-creation-vertical-slice.md` (for current first-join membership status)
-- `design/project-management/vertical-slices/09.4-task-list-bootstrap-discovery-and-connect-scope-resolution-vertical-slice.md` (for current bootstrap/connect-token status)
+- `design/project-management/implementation-tracking/player-access-and-session.md` (for current first-party `/ws/game/**` implementation status)
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md` (for current first-join membership status)
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md` (for current bootstrap/connect-token status)
 
 Then:
 
 - Review authentication, session management, and multi-tenancy as a single, end-to-end design (identity, authentication and authorization, session lifecycle, tenant scoping, and subscription or entitlement checks).
 - Do not summarize behavior or highlight what is already good.
 - Focus on issues that would create ambiguous trust boundaries, incompatible identity/session handling, or unsafe tenant isolation in the first implementation.
-- Before classifying a finding as an open blocker, cross-check the relevant slice notes, proto/API contract, and current implementation status when the listed docs indicate that the behavior has already landed or is in progress. If code or slice notes already resolve the seam but a higher-level doc is stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
+- Before classifying a finding as an open blocker, cross-check the relevant domain tracker, proto/API contract, and current implementation status when the listed docs indicate that the behavior has already landed or is in progress. If code or tracker notes already resolve the seam but a higher-level doc is stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not let non-blocking UX refinements and future policy sophistication crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve clarity, safety, or maintainability.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:

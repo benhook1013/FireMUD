@@ -3,7 +3,7 @@
 ## Readiness and Liveness
 
 - `liveness` is local-only and indicates that the process is alive and not wedged.
-- `readiness` is gameplay admission safety for the commands this service currently exposes at the session front door. For the currently implemented slice, Game Session is ready only when:
+- `readiness` is gameplay admission safety for the commands this service currently exposes at the session front door. For the current implementation boundary, Game Session is ready only when:
   - local persistence required for login/session state is usable;
   - required Redis-backed session and tick infrastructure is usable;
   - the readiness-only local round-trip canaries for session-context storage and command-queue storage both succeed;
@@ -31,7 +31,7 @@
 ## Local Development Path
 
 - Use the normal runtime configuration with the real local Postgres, Redis, Gateway, Account, and downstream gameplay-service topology.
-- The maintained integration and ingress coverage now targets the real login/session flow described in [`02.1-task-list-login-session-hardening-vertical-slice.md`](../../../project-management/vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md), and the canonical operator proof remains the repo smoke scripts under `dev-tools/`.
+- The maintained integration and ingress coverage now targets the real login/session flow described in [Player Access and Session implementation tracking](../../../project-management/implementation-tracking/player-access-and-session.md), and the canonical operator proof remains the repo smoke scripts under `dev-tools/`.
 
 ## Cross-Service Integration Tests
 
@@ -39,15 +39,15 @@ The maintained cross-service coverage for Game Session is now the current WebSoc
 
 See [System Architecture Testing](../../system-architecture-testing.md) for the shared testing approach.
 
-## Slice Status Notes
+## Current Runtime Status
 
-### Chat slice status
+### Communication status
 
 - **Live:** `SAY`, `WHISPER`, and `TELL` route through `CommunicationCommandHandler`, which enforces the shared session guard, forwards normalized payloads and target metadata to Game Logic's `SendCommunication`, and renders the canonical actor transcript while emitting `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` meters documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
 - **Stubbed:** Delivery still relies on the Social & Groups Service regression stub used by the suites, which records `SendMessage` calls and returns success so WebSocket and Telnet regression runs observe deterministic sender-side transcripts and explicit recipient metadata.
-- **Deferred:** First-party/MCP-aware recipient presentation, richer NPC roleplay responses, listening-area heuristics, and localized channel filters remain future slices once the shared communication path proves stable and well instrumented.
+- **Deferred:** First-party/MCP-aware recipient presentation, richer NPC roleplay responses, listening-area heuristics, and localized channel filters remain future work once the shared communication path proves stable and well instrumented.
 
-### LOOK slice status
+### LOOK status
 
 - **Live:** Data-driven `LOOK` flows route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md) before replying over Telnet or WebSocket.
 - **Stubbed:** Room/exit metadata and visible entities still derive from the deterministic LOOK test fixtures and the `firemud.look.rooms` entries so transcripts and regression tests stay stable while the cross-service WebSocket and Telnet flows rely on the shared stub utilities.

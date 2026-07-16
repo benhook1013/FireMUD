@@ -9,17 +9,18 @@ Read the following sources first. Follow references and read nearby related file
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/service-responsibility-matrix.md`
 - `design/architecture/repository-structure.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
+- `design/project-management/implementation-tracking/README.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
 
-Review the current FireMUD branch for system cohesion, canonical-substrate quality, and "proper implementation first" alignment across recently implemented slices.
+Review the current FireMUD branch for system cohesion, canonical-substrate quality, and "proper implementation first" alignment across recently implemented capabilities.
 
 Context:
 
 - Repo: `/home/ben/src/FireMUD-wsl-copy`
 - Read `AGENTS.md` first and follow it as canonical instructions.
 - FireMUD is in initial development.
-- Many design slices have now been implemented, especially around bootstrap, gameplay routing, account/auth, gateway, and game-session flows.
+- Many designed capabilities have now been implemented, especially around bootstrap, gameplay routing, account/auth, gateway, and game-session flows.
 - The goal is not just bug-finding. The goal is to detect where implemented systems may technically work but are still composed from local glue, duplicated authority, transitional thinking, or mismatched seams.
 
 What to look for:
@@ -54,7 +55,7 @@ Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining slice docs unless it directly supports a finding
+- Do not spend time re-explaining tracker records unless it directly supports a finding
 - Keep a working tracking doc under `design/project-management/` if needed
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 

@@ -7,7 +7,7 @@ This document is the short catalog of the testing areas that most often deserve 
 - Treat each numbered section as a living list of recurring regression risks.
 - When fixing a bug, add a short note under the relevant section with links to the tests or smoke proof that now cover it.
 - Prefer linking to the canonical suite, harness, or proof doc rather than copying command transcripts or Gradle invocations into this file.
-- For current slice priority, use `design/project-management/vertical-slices/00-slice-progress.md` rather than this file.
+- For current capability priorities and implementation status, use `design/project-management/implementation-tracking/README.md` and the relevant domain tracker rather than this file.
 
 ## 1. Admission, Authentication, and Session Binding
 
@@ -28,7 +28,7 @@ This document is the short catalog of the testing areas that most often deserve 
 - WebSocket and Telnet should agree on the admitted gameplay flow for the same user-visible action unless the protocol intentionally differs.
 - Transcript-oriented tests should wait for the concrete canonical message they care about rather than depending on incidental ordering.
 - Telnet transcript helpers must preserve multiline blocks, prompt-tolerant reads, and timeout-returned partial output where that is the real contract under test.
-- For LOOK, SAY, and related transport-sensitive proof, use the slice-support docs as the canonical entrypoint:
+- For LOOK, SAY, and related transport-sensitive proof, use the capability-support docs under `slice-support/` as the canonical entrypoint:
   - `design/project-management/slice-support/look-and-say-regressions.md`
   - `design/project-management/slice-support/look-cross-service-tests.md`
   - `design/project-management/slice-support/look-smoke-tests.md`

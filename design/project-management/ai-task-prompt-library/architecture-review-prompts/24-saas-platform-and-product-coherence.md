@@ -4,7 +4,7 @@ Best used for:
 
 - reviewing whether FireMUD's current architecture, product model, and implementation direction actually hang together as a hosted multi-tenant platform rather than only as a single-game runtime
 
-Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths, API surfaces, and slice docs implicated by the docs and current branch state.
+Read the following sources first. Follow references only when a listed doc clearly delegates a canonical contract needed to judge a finding. Then inspect the concrete code paths, API surfaces, and domain implementation trackers implicated by the docs and current branch state.
 
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/service-responsibility-matrix.md`
@@ -15,13 +15,11 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-security.md`
 - `design/architecture/system-architecture-game-customization.md`
 - `design/architecture/system-architecture-promotion-attestation.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
-- `design/project-management/service-status-account-service.md`
-- `design/project-management/service-status-game-design-service.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-logging-admin-service.md`
-- `design/project-management/service-status-spring-cloud-gateway.md`
+- `design/project-management/implementation-tracking/README.md`
+- `design/project-management/implementation-tracking/player-access-and-session.md`
+- `design/project-management/implementation-tracking/game-authoring-publishing-and-activation.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
+- `design/project-management/implementation-tracking/platform-operations-and-delivery.md`
 
 Review the current FireMUD branch for SaaS/platform compatibility: whether the product, tenancy, identity, entitlement, publishing, operator, and lifecycle model coherently supports FireMUD as a hosted multi-tenant platform.
 
@@ -43,7 +41,7 @@ What to look for:
 - operator/support/admin assumptions that would break down in a multi-customer hosted environment
 - missing or weak handling for tenant suspension, realm visibility, product plan enforcement, export/deletion boundaries, backup ownership, or support investigation surfaces
 - places where creator tooling or branding/customization is treated as if it were only a local content concern rather than a hosted platform contract
-- areas where docs, slice tracking, and current code imply different answers to "what is the actual product model here?"
+- areas where docs, domain tracking, and current code imply different answers to "what is the actual product model here?"
 - nearby related issues that would cause future implementation to build the wrong SaaS/product substrate
 
 What I want in the output:
@@ -61,14 +59,14 @@ What I want in the output:
    - entitlement or billing-lifecycle mismatch
    - operator/support-model weakness
    - hosted-platform assumption gap
-   - slice/design tracking gap
+   - domain/design tracking gap
 6. Prefer high-signal findings over broad summaries
 
 Constraints:
 
 - Default to static review unless a small targeted test/run materially helps confirm a concern
 - Do not make code changes unless explicitly asked
-- Do not spend time re-explaining accepted slice docs unless it directly supports a finding
+- Do not spend time re-explaining accepted tracker records unless it directly supports a finding
 - Keep the review at the product/platform/system level, not generic framework or style cleanup
 - Record reusable lessons in `design/project-management/ai-observations.md` if you discover them
 

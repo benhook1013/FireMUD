@@ -1,8 +1,8 @@
-# Slice Support Docs
+# Capability Support Docs
 
-This directory contains slice-specific implementation support material that is useful while a slice is being built, debugged, or stabilized.
+This directory contains capability-specific implementation support material for reproducing, debugging, and stabilizing cross-service behavior.
 
-These docs are not the primary planning index. Use [`../vertical-slices/00-slice-progress.md`](../vertical-slices/00-slice-progress.md) and [`../vertical-slices/`](../vertical-slices/) for active planning, and use service architecture docs for long-lived canonical behavior once a slice is fully absorbed into the permanent design set.
+These docs are not the primary planning index. Use [`../implementation-tracking/README.md`](../implementation-tracking/README.md) for current domain status and use the linked architecture docs for long-lived canonical behavior. Update the owning domain tracker when support work changes the recorded implementation boundary or remaining work.
 
 Current contents include:
 
@@ -10,6 +10,5 @@ Current contents include:
 - [`look-and-say-regressions.md`](./look-and-say-regressions.md) – Shared LOOK/SAY regression checklist and expected assertions.
 - [`look-cross-service-tests.md`](./look-cross-service-tests.md) – Cross-service LOOK test wiring and automation notes.
 - [`look-instrumentation.md`](./look-instrumentation.md) – Metrics, logs, and tracing references for the LOOK/SAY work.
-- [`look-smoke-tests.md`](./look-smoke-tests.md) – Manual smoke steps and expected outputs for the LOOK slice.
+- [`look-smoke-tests.md`](./look-smoke-tests.md) – Manual smoke steps and expected outputs for the LOOK capability.
 - [`playtesting-feedback.md`](./playtesting-feedback.md) – Playtesting and feedback collection support material.
-- [`slice-completion-proof-checklist.md`](./slice-completion-proof-checklist.md) – Required verification checklist before a slice is marked complete.

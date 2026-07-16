@@ -4,7 +4,7 @@ This document defines the Account Service runtime model, persistent data ownersh
 
 ## Implementation Notes
 
-The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has partial foundations for payments, virtual currency, and tenant membership, but still needs schema/API/service follow-through for these lifecycle and purchased-entitlement contracts.
+The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has live identity/authentication, profile, external-link, recovery/verification, payment, subscription, notification, and virtual-currency foundations, but lifecycle state transitions, purchased-entitlement fulfillment, and complete billing/subscription follow-through remain partial.
 
 ## Architecture and Runtime Notes
 
@@ -12,7 +12,7 @@ The account lifecycle state machine, global deletion preconditions, full-account
   - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, with a frontend-oriented audience and short lifetime.
   - Service JWTs for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
   Gameplay protocol clients (Telnet and WebSocket) never see or transmit these tokens.
-- The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
+- The live service hashes and verifies raw passwords with `argon2-jvm` Argon2 using `iterations=2`, `memory=65536 KiB`, and `parallelism=1`, with unique salts before PostgreSQL storage.
 - Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.

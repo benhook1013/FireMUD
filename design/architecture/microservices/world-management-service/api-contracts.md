@@ -174,9 +174,9 @@ Illustrative `GetRoomSnapshot` fragments:
 World Management owns the lifecycle of `gameInstanceId` rows, but teardown is cross-service:
 
 - Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
-- Expiry or operator shutdown transitions the instance to `TERMINATING` and starts an `InstanceTermination` Saga.
+- Expiry or operator shutdown transitions the instance to `TERMINATING` through the durable Temporal `world-lifecycle` workflow.
 - Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
-- Scheduled expiry jobs must enqueue the Saga and must not directly delete world rows for a still-unconfirmed termination.
+- Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.
 - Lifecycle fencing is mandatory. Termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened and `ACTIVE` is committed.
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
 
@@ -196,4 +196,4 @@ Telnet and WebSocket clients both route through the `/ws/game/**` gameplay path,
 - Game Session renders the `LookResult` returned by Game Logic, which already includes both world and entity projections, into the textual transcript via `LookResultRenderer`.
 - Error responses emit `ERROR <CODE> <message>` covering `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`, `LOOK_UNAVAILABLE`, and `NOT_AUTHENTICATED`.
 
-The sample rooms referenced by the LOOK lifecycle are provided by the test fixtures described in the LOOK vertical slice so integration tests and transcript examples remain stable.
+The sample rooms referenced by the LOOK lifecycle are provided by the canonical LOOK cross-service fixtures so integration tests and transcript examples remain stable.

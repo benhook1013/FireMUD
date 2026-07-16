@@ -349,9 +349,9 @@ Required cutover workflow additions:
   - `S1` rows that survive by default,
   - `S2` rows that survive only with a validated remap,
   - `S3` rows that never survive cutover.
-  Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current slice.
+  Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current supported boundary.
 
-Initial-slice row-family references used by preflight:
+Current row-family references used by preflight:
 
 - World Management:
   - `region_instance`, `zone_instance`, `room_instance`, `character_location`, `npc_location`, instance-scoped `world_event`, and instance-scoped population-materialization tables are `S3`.

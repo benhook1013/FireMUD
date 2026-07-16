@@ -28,8 +28,8 @@ This document collects common questions and answers about the FireMUD Game Platf
 - **Where are the API schemas defined?**
   gRPC protobuf files live under the [`protos/`](protos) directory. Each microservice README links to its versioned schemas.
 
-- **Where can I find the roadmap?**
-  The active slice queue is in [design/project-management/vertical-slices/00-slice-progress.md](design/project-management/vertical-slices/00-slice-progress.md).
+- **Where can I find current implementation status?**
+  Domain capability status, active gaps, and remaining decisions are in [design/project-management/implementation-tracking](design/project-management/implementation-tracking/README.md).
 
 ---
 

@@ -1,0 +1,132 @@
+# Game Session Runtime and Tick Coordination
+
+## Current Status
+
+This tracker consolidates the live Game Session execution substrate by capability. The recorded boundaries describe current implementation status and bounded follow-up work.
+
+## Canonical Design Sources
+
+- [Tick concepts and invariants](../../architecture/system-architecture-tick-concepts-and-invariants.md) defines durable execution identity, ordering, ownership, and replay boundaries.
+- [Tick execution flows](../../architecture/system-architecture-tick-execution-flows.md) defines ingress, staging, batch drain, effect application, and recovery.
+- [Tick failures and operations](../../architecture/system-architecture-tick-failures-and-operations.md) and the [tick incident runbook](../../architecture/system-architecture-tick-incident-runbook.md) define pressure, failure, and operator response.
+- [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns the live command, batch, effect, and runtime ownership records.
+- [Automation Scripting Service](../../architecture/microservices/automation-scripting-service/README.md), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) consume or expose the canonical runtime seams rather than duplicating their truth.
+
+## Consolidated Implementation Record
+
+### Authority and Scope
+
+Game Session is the durable owner of gameplay command, tick batch, tick effect, runtime ownership, remote coordinator, remote follow-up, and remote result records. PostgreSQL is the recovery and execution-truth store. Redis remains the fast coordination plane for locks, queues, pending state, wake-up hints, and scheduling cadence; Redis residue is never treated as the sole durable execution record.
+
+The live queue and ownership boundary is still `(tenantId, gameInstanceId)`. The owner row and every current batch also carry an explicit `regionId`, currently bootstrapped from that game-instance boundary, so readers and replay do not infer scope from key names. Region-aware callers must provide the admitted `regionId` and may retain `gameInstanceId` for identity; disagreement, missing ownership, stale same-instance scope, and mismatched returned identity fail closed.
+
+### Durable Command Ingress
+
+After ingress validation, rate and queue-target resolution, Game Session writes one `gameplay_command` row before Redis staging and assigns a stable `commandId`. The row includes tenant/game/session/actor identity, sanitized command text, admitted routing and runtime scope, timestamps and failure information, comparable `enqueueSeq`, automation/script/plugin provenance where applicable, and the latest origin/queue source tuple. Credential-bearing input is sanitized before persistence, so passwords and OTPs do not become durable command history.
+
+The current command lifecycle is explicit: `ACCEPTED` means durable identity exists but staging has not succeeded; `STAGED` means Redis staging succeeded; `DRAINED` means a durable tick batch consumed the staged command; `RETRY_QUEUED` means an abandoned attempt was returned for another attempt; `FAILED` means staging failed before gameplay application; and `LOST_BEFORE_STAGING` is the terminal recovery state for accepted work that never reached staging. Startup recovery converges accepted-but-never-staged rows to that terminal state. Batch drain and abandonment update command rows, so status is not ingress-only.
+
+`commandId` is carried in enqueue responses, Redis tick payloads, logs/MDC, batch manifests, effect rows, retries, and remote execution. `GetGameplayCommandStatus` is the current canonical Game Session read by `(tenantId, gameInstanceId, commandId)` and exposes `enqueueSeq`, the latest selected queue-source kind/state/ordinal and due-point tuple, lifecycle and routing data, and remote correlation/result fields. The richer older `ackLevel`/`ingressStatus` and bound-tick `GetCommandStatus` vocabulary is not implemented. Logging & Admin exposes the tenant-qualified `GET /gameplay-commands/{tenantId}/{gameInstanceId}/{commandId}` read and validates tenant and game-instance identity before trusting the response.
+
+Rollback queue purge controls cover script-patch and plugin-version scopes. They remove matching not-yet-drained Redis queue entries and terminal-mark each corresponding durable gameplay command with `executionOutcome=PURGED`, `gameplayResult=NOT_APPLIED`, failure code `ROLLBACK_PURGED`, the operator-supplied reason as failure message, and `completedAt`; already-drained or applied work is outside this queue-purge terminalization path.
+
+### Scheduler and Queue Pressure
+
+The scheduler has bounded fan-out: one runtime scope can have at most one pending or running tick. Overlapping pulses merge instead of accumulating debt, executor rejection is observable, and gameplay and automation/script ticks use disjoint Redis key namespaces. The scheduler records scheduled, merged, rejected, and paused-cycle counters, queue-depth signals, pressure summaries, and conservative consecutive-cycle thresholds for sustained rejection, elevated merging, and high executor queue depth. Threshold crossings produce alert counters and consecutive-cycle gauges, and canonical alert rules consume the exported gauges.
+
+The policy is observability-first. Pressure is an operator alert/input and does not automatically change gameplay timing. The tick incident runbook has a dedicated scheduler-pressure flow. There is no dedicated queue/lease scheduler or broader game-logic action scheduler at this boundary.
+
+### Durable Batches, Effects, and Source Contracts
+
+Redis queue-to-pending staging creates one durable `tick_batch` with `tickBatchId`, tenant/game scope, `batchSource`, status, solo-tick requirement, command count, expected effect count, selected-work manifest JSON and digest, ownership snapshot, and timestamps. Each selected gameplay command creates one durable `tick_effect` with stable `effectId`, batch and command links, effect key/type, target aggregate, status, failure code/message, and timestamps. Target aggregates narrow to the known character or entity when the command provides one instead of always using the game instance.
+
+Batch states are `STAGED`, `DRAINED`, `APPLIED`, and `ABANDONED`. Effect states are `STAGED`, `DRAINED`, `APPLIED`, `REPLAY_NOOP`, `REJECTED`, and `ABANDONED`. Existing pending work is correlated to an older staged batch or to a bounded `PENDING_REPLAY` batch created during recovery. The current tick boundary requires durable command identity; it does not retain a no-`commandId` recovery path.
+
+The sealed selected-work manifest is the replay contract. It records explicit `regionId`, `enqueueSeq`/comparable source ordering, source kind/type and state, due tick/point, target and routing facts, automation dispatch/work-item identity, script/plugin provenance, and source-state metadata. `enqueueSeq` is used as `sourceOrdinal` where available instead of a transient batch slot. Durable command and remote-follow-up rows also persist their latest origin-source and queue-source tuples so status and operator reads do not need to parse manifests or payload JSON.
+
+Timer-origin work preserves `SCHEDULE_TIMER` and its due/order tuple through stage, drain, replay, requeue, and readback unless it intentionally becomes explicit retry work. First attempts use `GAMEPLAY_COMMAND`/`REDIS_PENDING_CLAIMED`; retries use `GAMEPLAY_RETRY`, with `REDIS_RETRY_QUEUED` at requeue and `REDIS_RETRY_CLAIMED` at claim. Automation work items, ingress/handler audits, and handoff events persist `sourceKind`, `sourceState`, `sourceOrdinal`, `sourceDueTickId`, and `sourceDueAtMs`. Fair-selected timer, retry, and remote-follow-up candidates persist one comparable claim-time ordering fact on both durable rows and the sealed manifest; replay and operator reads do not reconstruct it from timestamps, payloads, or incidental iteration order.
+
+### Replay, Drain, and Effect Execution
+
+After Redis drain commit, Game Session executes `DRAINED` effects from the durable ledger. A restart between drain and application resumes from durable batch/effect rows. Replay rebuilds from the sealed manifest and command ledger, rewrites Redis pending to that projection, and returns Redis-only residue to the queue. A pending manifest digest mismatch is recorded as `MANIFEST_MISMATCH` and forced through a fresh replay batch rather than mutating the old batch contract.
+
+Stale drain, fresh-stage rollback, and manifest-mismatch repair requeue actual commands, advance their queue-source state deliberately, and increment `tick_requeued_action_total` by action count and durable source (`player`, `automation`, or `unknown`). Requeue preserves sealed source identity, comparable ordinal, due point, and source state; mutable command-row state cannot replace the sealed ordering facts. Only the first current migrated command families consume the post-drain effect seam, while pure views remain direct reads.
+
+### Gameplay Mutation Consumers
+
+Built-in movement no longer uses the old synchronous mutation handler. It enqueues durably, drains into batch/effect rows, applies the authoritative room mutation through the idempotent durable effect seam, and delivers player-visible output asynchronously through the websocket/screen-buffer-aware output service. `MoveCommandHandler` remains planning-only; its former public synchronous result path is removed.
+
+`GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` use the same durable ingress, effect executor, downstream `effectId` propagation, and asynchronous output shape for Entity Management mutations. `SAY`, `WHISPER`, `TELL`, and `AFK` also enqueue durably; authoritative mutation or downstream RPC and actor-visible output occur after durable execution, replay uses a Game Session-owned guard rather than reinvoking the handler, and the same `effectId` reaches Game Logic and Social Groups persistence. `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct read-only views.
+
+The item command handler records `gamesession.command.item.*` invocation and failure metrics with bounded `type` and `error` tags across inventory, equipment, and container verbs.
+
+### Ownership, Epochs, and Fencing
+
+`runtime_region_status` is the current durable owner-of-record keyed by the live tenant/game boundary. It stores explicit `regionId`, `regionEpoch`, opaque `executorFence`, owner service and instance identity, paused state, `lastCommittedTickBatchId`, and backlog truth. Tick processing observes this row and refreshes owner identity from the shared runtime identity. Pause, resume, and recovery advance the durable epoch/fence timeline; the fence is an opaque generation token and is compared for equality/freshness rather than treated as a numeric sequence.
+
+Batch creation seals the owner `regionEpoch`/`executorFence` and `regionId`. Drain/finalization rejects a changed owner, rolls pending work back to the queue, and abandons the batch with `STALE_EXECUTOR_FENCE`. Before applying `DRAINED` effects, the executor checks the same snapshot again; stale effects are not sent to domain handlers, are abandoned, and their commands are requeued for a fresh fenced batch. `lastCommittedTickBatchId` advances only on durable batch drain.
+
+The canonical `GetRuntimeOwnershipStatus` read returns owner, scope, epoch/fence, last committed batch, pending gameplay-command count, due remote-follow-up count, oldest due remote-follow-up tick, and remote follow-up drain lag. Logging & Admin exposes it at `GET /tick-remediation/status/{tenantId}` with exactly one `gameInstanceId` or `regionId` selector. Automation admission and cross-service runtime-state consumers use the same explicit current scope, including activation, schedule reconciliation, script-patch projection, event ingress, work-item handoff, and operator reads; stale region scope is rejected or cancelled before it can flatten into the local queue.
+
+### Cross-Region Remote Runtime
+
+Origin scheduling and target execution are Game Session-owned durable work. `remote_command_coordinator`, `remote_followup`, and origin-addressed `remote_followup_result` rows preserve origin/target tenant, game-instance and region scope, epochs, routing bundle (`playableStateScope`, `worldSlug`, `realmSlug`, `pointerVersion`), payload summary, due/deadline policy, source and queue tuples, target entity/effect identity, command identity, and script/plugin/publication/dispatch/work-item provenance. Remote rows remain self-describing even when the original command row is absent; persisted row fields are canonical and payload JSON is optional enrichment.
+
+The live payload families are `enqueue_automation_command`, `enqueue_gameplay_command`, and `trigger_script_event`. Schedule requests carry explicit payload kind, requested command, solo-tick policy, routing/provenance, origin-source tuple, and for script events `eventType`, `eventSchemaVersion`, `scriptEventId`, `triggerMode`, `readSnapshotToken`, and `eventPayloadJson`. JSON must parse and agree with explicit contract fields when supplied. Unsupported, invalid, command-less, snapshot-incomplete, or malformed boolean, numeric, or textual fields fail closed before durable schedule writes, and older rows with unsupported kinds fail closed at target execution.
+
+Scheduling writes an explicit coordinator-to-follow-up `followupId` link and a bounded best-effort `remote:<tenantId>:<entityId>` wake-up hint. Target execution fairly selects due work, claims at most one follow-up per concrete `targetEntityId` in a batch, pages past duplicate-heavy candidate windows when needed, records `claimOrdinal`, and stages selected rows as `tick_batch`/`tick_effect` work with `batchSource=REMOTE_FOLLOWUP_DRAIN`. The follow-up row itself advances `queueSourceKind=REMOTE_FOLLOWUP` and its scheduled/claimed/applied/abandoned states, preserves one source-local `queueSourceOrdinal` across release/reclaim cycles, and clears stale release failure metadata when reclaimed. Shared rollback and stale-fence paths explicitly release claimed follow-ups.
+
+Target execution terminalizes the target follow-up and writes exactly one deterministic result identity, `remote-result:<followupId>`, per follow-up. Replays of the same result must agree with immutable `resultId` and do not rewrite the original `observedAt`; conflicting outcome or payload is rejected. Result rows persist `resultCommandId`, `resultErrorCode`, and `resultMessage`, and target follow-ups mirror concrete failure code/message. Missing-coordinator failures explicitly abandon and unclaim the target row rather than stranding it as `CLAIMED`.
+
+Origin tick reconciliation is the only path that advances coordinator state from `PENDING_REMOTE` or `REMOTE_TIMEOUT_ABANDONED`. It reconciles durable result-inbox rows before deadline timeout evaluation from committed tick progress, requires matching origin/target epoch and scope, waits for linked target gameplay-command convergence after mere remote admission, and fails closed when the target command is missing for supported payloads. Target terminal failure is mirrored with its concrete failure taxonomy. Late results cannot overwrite the original timeout/abandon cause, and paused origins still reconcile results without advancing timeout or tick progression. Remote due/backlog gauges (`remote_followups_due_total` and `remote_followups_drain_lag_ms`) use durable owned-region truth without tenant/region metric labels.
+
+Automation emits local same-scope commands through `EnqueueAutomationCommandIfAbsent` and cross-scope commands through durable `enqueue_automation_command` follow-ups. The internal Game Session scheduling API accepts canonical remote requests and returns durable coordinator/follow-up ids plus created-versus-reused idempotency truth. Durable `script_handoff_events` and `ListScriptHandoffEvents` preserve target scope and remote ids with script/plugin/dispatch identity. Remote-admitted target commands persist `remoteCoordinatorId` and `remoteFollowupId` and are idempotent by durable follow-up identity; command status and remote reads expose the linked target command's execution/gameplay outcome rather than relying on payload summaries.
+
+### Operator Readback and Facade Boundaries
+
+Game Session control-plane reads are canonical and bounded. The runtime-state read for `(tenantId, gameInstanceId)` returns the current runtime version plus the resolved launch descriptor, version/release identifiers, and script-patch pin metadata including the persisted pin `controlPlaneRequestId`; `GetGameSessionPinConvergence` provides the direct pin-convergence read used by rollback/promotion orchestration. `GameSessionControlPlaneGrpcService` is the transport, authorization, and application-error delegation layer; `GameSessionCommandControlPlaneService` owns gameplay-command status projection, staged automation-command admission, alias validation, remote-result/status mapping, and publication lookup helpers. The remaining remote runtime read/delegation collaborators keep the facade from carrying a second domain implementation. Application failures stay in normal responses for the existing control-plane mapping rather than being reconstructed by callers.
+
+Logging & Admin consumes Game Session directly and has no parallel command, ownership, coordinator, follow-up, or result database. Current REST surfaces are `GET /gameplay-commands/{tenantId}/{gameInstanceId}/{commandId}`, `GET /remote-command-coordinators/{tenantId}/{coordinatorId}`, `GET /remote-command-coordinators/{tenantId}`, `GET /remote-followups/{tenantId}/{followupId}`, `GET /remote-followups/{tenantId}`, `GET /remote-followup-results/{tenantId}/{resultId}`, `GET /remote-followup-results/{tenantId}`, and `GET /tick-remediation/status/{tenantId}`. Every route is tenant-guarded; point reads validate tenant and exact id, list reads validate every returned row, invalid enum filters fail closed, and control-plane scope mismatches are rejected.
+
+Coordinator listing has a bounded REST filter set of origin/target game instance and region, state, follow-up id, command id, and limit. Upstream coordinator, follow-up, and result reads also expose first-class filters across scope and epochs, routing bundle, script/plugin/dispatch provenance, payload/source/queue/claim state, target entity/effect and target-command identity/outcomes, deadlines and late-result policy, script-event identity, and result error/message/outcomes. Rich list hydration is bounded in bulk rather than issuing one point lookup per row. Point and list DTOs preserve linked follow-up, result, target-command, publication, event, source, deadline, and current runtime comparison fields.
+
+### Lifecycle and Feature Authority
+
+Game Session `GameInstance` and World Management `WorldInstance` rows use optimistic-lock row versions. Redis session-context writes use watched multi-key retries across canonical session, identity, and name indexes. World termination does not hold a database transaction open across Entity Management cleanup, and same-request retries continue from `TERMINATING` without requiring callers to discover a changed lifecycle epoch. The hardening deliberately avoids long-lived transactions across blocking RPCs and avoids relying on in-process compensation as the only safety mechanism.
+
+Runtime feature-flag writes enter through Logging & Admin but persist with Game Session, the runtime owner. Consumers read that one canonical authority; the former split Logging & Admin persistence path is retired. This authority convergence does not mean that all feature-controlled behavior is applied: richer runtime feature application and broader consumer coverage remain future work beyond the current toggle/persistence/read seam. Static build-time flags, deployment-only toggles, moderation, entitlement, and unrelated operator-control policy are outside this runtime authority boundary.
+
+### Validation and Proof
+
+The recorded proof covers durable command identity and sanitized persistence, restart/Redis-loss recovery at the ingress and ownership boundaries, accepted-but-never-staged convergence, single-record retry/replay updates, command correlation, batch/effect creation, manifest-digest replay repair, stale drain and post-drain fence rejection, durable `DRAINED` resumption, source-tuple preservation through timer/retry/remote claim-release transitions, fair selection, deterministic remote-result replay, paused-origin and late-result reconciliation, payload validation, target-command convergence, tenant/scope/id guards, and operator DTO/request mapping.
+
+The focused validation commands recorded for the live slices are `./gradlew :game-session-service:test --tests 'net.firedevops.firemud.gamesession.service.impl.TickStagingServiceTest' --tests 'net.firedevops.firemud.gamesession.service.impl.TickBatchExecutionServiceTest' --tests 'net.firedevops.firemud.gamesession.service.impl.TickServiceImplTest'`, the corresponding `RemoteFollowupRuntimeServiceImplTest` and `DefaultDurableRemoteFollowupExecutionServiceTest`, `dev-tools/validation/run-locked-gradle.sh :game-session-service:check -PfullCheck`, and `dev-tools/validation/run-locked-gradle.sh :logging-admin-service:check -PfullCheck`. Logging & Admin point/list/status controller and service tests cover successful reads, tenant guards, invalid enums, and fail-closed response mismatches; Game Session control-plane contract tests cover the upstream reads and fencing. The scheduler has a real bounded `ThreadPoolTaskExecutor` pressure proof including threshold trip and recovery reset. Lifecycle, feature-authority, and migrated command suites provide the corresponding focused proofs.
+
+The recorded Markdown and contract checks for these slices include `./gradlew linkCheck lintMarkdown`; this consolidation pass also passed both checks.
+
+## Active Gaps
+
+- Ownership is durable only at the current game-instance queue boundary. True region-partitioned execution, a cluster scheduler, and lease-owner forwarding from session front ends are not implemented.
+- The scheduler has no adaptive gameplay-timing feedback loop. Pressure remains observable and operator-driven; changing gameplay timing requires preview or production-like data and a deliberate decision.
+- Only the current built-in state-changing command families consume the durable effect path. Later authored or game-defined authoritative mutations must use it; read-only views remain direct by design.
+- Timer, retry, remote-follow-up, and the three current remote payload families are live, but any new work-source or payload family still needs explicit durable source, ordering, ownership, fence, replay, result, and operator-read contracts. No side channel is part of the current implementation.
+- The bounded operator readback family does not include historical dashboards, pagination/sorting, full region-level UI, or a generalized gameplay-command history surface.
+- Downstream/domain-specific effect ledgers and replay/idempotency consumers beyond the migrated families remain future implementation work.
+- Runtime feature-flag authority is canonical, but richer runtime feature application and complete consumer coverage remain unimplemented.
+
+## To Discuss
+
+No competing target state is currently recorded. Sol must decide the policy and evidence required before adaptive scheduling, true region partitioning, lease-owner forwarding, a new durable work-source or payload family, or a new authoritative gameplay mutation path is introduced. The current contract also leaves the older richer command acknowledgement vocabulary intentionally unresolved because `GetGameplayCommandStatus` is the live canonical read.
+
+## Service and Contract Map
+
+| Owner | Current responsibility | Primary contract boundary |
+| --- | --- | --- |
+| Game Session | Command ledger, queue staging, ticks, durable batches/effects, ownership, remote runtime, and canonical control-plane projection | Game Session gRPC/control plane; durable PostgreSQL records; Redis coordination |
+| Automation Scripting | Timer/origin work, local same-scope command admission, cross-scope durable follow-up handoff, and script-event production | Automation ingress and Game Session command/follow-up APIs |
+| Game Logic, Entity Management, Social Groups, and other domain services | Execute admitted durable effects and apply domain-owned idempotency/replay guards | Durable effect ids, command provenance, downstream owner-fence and replay contracts |
+| Logging & Admin | Tenant-guarded operator ingress/readback and pause/resume remediation without parallel runtime truth | REST/OpenAPI over canonical Game Session control-plane reads |
+| World Management | Lifecycle orchestration and cleanup invoked through non-transaction-spanning RPC boundaries | Optimistic lifecycle rows and termination/cleanup contracts |
+| Redis and PostgreSQL | Fast coordination versus durable execution, ordering, recovery, and ownership truth | Queue/lock/pending/wake-up keys; command, batch, effect, ownership, and remote ledgers |
+
+Focused scheduler, durable-ledger, remote-runtime, operator-readback, lifecycle, and fencing proof remains maintained in the owning test suites and validation paths named above.

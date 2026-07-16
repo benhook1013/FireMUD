@@ -11,10 +11,10 @@ Read the following documents. Follow references and read nearby related files as
 Then:
 
 - Review environment structure and secrets handling as a single end-to-end design.
-- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
+- Check each finding against the relevant domain tracker and implementation, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize the environment matrix or restate how secrets handling is generally supposed to work.
 - Focus on gaps that would block safe first deployment, secret handling, or environment isolation.
-- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
+- If trackers, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not let non-blocking process refinement, future compliance enhancements, and optional platform hardening crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:

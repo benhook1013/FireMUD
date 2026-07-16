@@ -13,10 +13,10 @@ Read the following documents. Follow references and read nearby related files as
 Then:
 
 - Review Redis usage as a single runtime and data-contract design across caches, ownership, mutation patterns, and Lua usage.
-- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
+- Check each finding against the relevant domain tracker and implementation, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize the intended behavior or describe what is already good.
 - Focus on issues that would block safe implementation of Redis ownership, mutation semantics, concurrency control, or data lifecycle.
-- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
+- If trackers, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not attempt to list every theoretical scaling or failure concern while blockers remain. Once blockers are cleared, list the highest-value non-blocking improvements, including optimizations or refactors if they would materially strengthen the design.
 - Return at most 5 issues, ordered by severity. If more exist, keep only the most implementation-relevant ones.
 - For each issue, include:

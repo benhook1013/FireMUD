@@ -9,12 +9,11 @@ Suggested reading order:
 1. [**architecture/system-architecture-overview.md**](./architecture/system-architecture-overview.md) for the canonical platform model.
 2. [**architecture/service-responsibility-matrix.md**](./architecture/service-responsibility-matrix.md) for service ownership boundaries.
 3. [**architecture/user-journeys.md**](./architecture/user-journeys.md) for player, creator, and operator flows.
-4. [**project-management/vertical-slices/00-design-area-slice-coverage.md**](./project-management/vertical-slices/00-design-area-slice-coverage.md) for design-area to slice coverage.
-5. [**project-management/vertical-slices/00-slice-progress.md**](./project-management/vertical-slices/00-slice-progress.md) for current slice maturity and remaining work.
+4. [**project-management/implementation-tracking/README.md**](./project-management/implementation-tracking/README.md) for domain capability status, active gaps, and remaining implementation decisions.
 
 - [**architecture/**](./architecture/) – Infrastructure, microservice designs, and system overviews.
-- [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key vertical slices.
-- [**project-management/**](./project-management/) – Requirements, slice planning, and AI rule sets.
+- [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key platform capabilities.
+- [**project-management/**](./project-management/) – Requirements, domain implementation tracking, and AI rule sets.
 - [**user-guides/**](./user-guides/) – Documentation for game creators and integration testing.
 
 Additional generated documentation lives in:

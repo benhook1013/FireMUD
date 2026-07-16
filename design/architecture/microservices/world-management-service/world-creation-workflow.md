@@ -25,7 +25,7 @@ World creation consumes a previously resolved immutable launch descriptor for th
 
 For replacement-instance launches, World Management now persists the frozen `remapSetId` on `world_instance` so later cutover/termination consumers can prove they are still operating on the same approved cross-version remap identity that launch resolution selected.
 
-The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Temporal workflow and its activities:
+The target workflow uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Temporal workflow and its activities:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, or authored generation metadata); and
 - Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `zone_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
@@ -81,11 +81,13 @@ Initial NPC and item presence is modeled declaratively:
 Initial-slice delivery expectation:
 
 - The first live implementation cut now uses `PrepareWorldInstance`, `ActivatePreparedWorldInstance`, and `FailPreparedWorldInstance` to persist `world_instance`, starter `region_instance`, and runtime `zone_instance` / `room_instance` / `room_instance_exit` rows with fenced `lifecycle_epoch` transitions.
+- Current starter-region preparation still stores hard-coded `SimpleDungeonGenerator` metadata rather than resolving the frozen published generator inputs and provenance required above.
+- Initial event scheduling is not present in the current prepare path, and the lifecycle snapshot has no durable per-stage outcome projection.
 - Broader activation/cutover consumers and later runtime world-state families remain follow-on work on the same lifecycle seam rather than a separate activation model.
 
-- The current live implementation cut implements steps 1, 2, and 4 through the activation lifecycle seam; future work should extend the same workflow-state model rather than introducing a second activation path.
+- The current live implementation cut implements the structural part of step 1 and the lifecycle transition in step 4. Step 2 and published generation-input convergence for step 1 remain incomplete; future work must extend the same workflow-state model rather than introducing a second activation path.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
-- When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply; the workflow simply records that no runtime generation/materialization step was required for that `gameInstanceId`.
+- When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply. The current implementation does not yet record that omission; the durable outcome below remains required before operators can distinguish intentional omission from not-started or failed work.
 
 Required audit/output shape when optional step 3 is skipped:
 

@@ -83,6 +83,7 @@ The current settings domains are:
 
 The next expected gameplay-facing domains are:
 
+- `actorState`
 - `inventory`
 - `equipment`
 - later combat or transcript-overlay policy if those become explicit platform-level settings
@@ -109,6 +110,8 @@ The currently surfaced subgroup names are:
 
 These group names are the canonical behavior buckets even when the first live file/env-backed properties are still split across service-local configuration classes. Service-local property classes must map back into one shared settings model rather than becoming unrelated permanent config blobs.
 
+The next locked actor-state grouping is `actorState.capacityChangePolicy`. It is not surfaced by the current implementation yet, so it must not be represented as a live generated setting until its owning runtime implementation exists.
+
 ## Supported Scopes
 
 Each surfaced setting should declare one of these scopes:
@@ -120,37 +123,39 @@ Each surfaced setting should declare one of these scopes:
 
 Internal transport/framework constants should not be promoted into this model unless they are deliberately meant to be operator- or game-facing.
 
-## Current Practical Scope Examples
+## Current and Planned Scope Examples
 
-Today, operator defaults still come from service-local typed properties, while tenant/game overrides for the surfaced pre-`06` domains are persisted in the shared Game Design authority. The agreed target scope for the current domains is:
+Today, operator defaults still come from service-local typed properties, while tenant/game overrides for the surfaced pre-`06` domains are persisted in the shared Game Design authority. The agreed scope for live domains and the locked target scope for the next domains is:
 
 - `reconnection.policy`
-  - operator defaults seed the resume window and stale-resume fallback
-  - tenant/game overrides currently select the effective reconnect-admission policy
+  - tenant/game-configurable today for resume windows and stale-resume fallback over service-local operator defaults
+  - operator caps remain future work
 - `reconnection.buffer`
-  - operator defaults seed bounded reconnect-transcript retention defaults
-  - tenant/game overrides currently control inactivity expiry, maximum retained entries, minimum retained message/line floors, and byte bounds
+  - tenant/game-configurable today for durable transcript retention bounds over service-local operator defaults
+  - operator caps remain future work
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
   - standard communication availability is owned by `commandCapabilities.availability`, not mode-specific communication settings
 - `prompts.coalescing` and `prompts.transportPresentation`
-  - operator-only today through Game Session prompt defaults plus shared persisted presentation/prompt overrides
-  - later tenant/game-configurable for game-defined prompt behavior and player-facing transport defaults
+  - tenant/game-configurable today through shared persisted presentation/prompt overrides over Game Session defaults
+  - richer game-defined prompt composition remains future work
 - `transcript.rendering`
-  - operator-only today
-  - later tenant/game-configurable for room-view and transcript presentation defaults such as briefness and color policy
+  - tenant/game-configurable today for room-view and transcript presentation defaults such as briefness and color policy
 - `movement.postMoveView`
-  - operator-only today
-  - later tenant/game-configurable within operator caps
+  - tenant/game-configurable today over service-local operator defaults
+  - operator caps remain future work
 - `worldTopology.scopeModel` and `worldTopology.regionBehavior`
-  - operator-only today
-  - later tenant/game-configurable when topology becomes part of per-game design state
+  - tenant/game-configurable today over service-local operator defaults
 - `commandHistory.retention`
   - operator defaults provide the initial bounded maximum
   - tenant/game overrides control the retained/displayable accepted-command bound within the platform maximum
 - `commandCapabilities.availability`
   - operator defaults seed standard social, presence, inventory, and command-history availability
   - tenant/game overrides control those standard command families through one persisted DML-backed policy
+- `actorState.capacityChangePolicy`
+  - operator defaults establish the initial safe capacity-normalization policy
+  - tenant/game overrides select the default policy used when a continuous source changes a bounded resource maximum
+  - a published continuous effect declaration may carry a more-specific override for the maximum change caused by that source; it does not replace the effective setting for other sources
 
 ## Schema Metadata
 

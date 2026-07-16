@@ -13,6 +13,20 @@ creators can quickly spin up new projects without starting from scratch.
   template.
 - **Admin Accounts** – initial administrators configured at template creation.
 
+## Starter Experience Profiles
+
+Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, and feedback declaration. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
+
+A game selects one optional base profile and zero or more optional extension packs while building a Draft version. Game Design materializes their content into that Draft version as ordinary versioned DML; profiles never remain as live runtime inheritance.
+
+- Imported definitions are game-owned after application and may be edited, replaced, or removed. A creator may select no profile.
+- A base profile and optional packs compose in explicitly declared order. Duplicate definition keys are rejected unless the later pack records an explicit override of the earlier definition; implicit last-writer-wins merging is prohibited.
+- Game Design records every selected pack's identity, revision, hash, application order, and explicit overrides as Draft provenance. Publishing freezes only the resulting single game version and release bundle.
+- Profiles are not runtime settings and provide no hidden fallback behavior. Removing an imported definition removes it from that game's published design; runtime services must not substitute a platform default.
+- A profile may seed recommended ordinary tenant/game setting values, such as the default bounded-resource capacity-change policy, during creation. The seed is written as an editable scoped setting, is not inherited from the profile at runtime, and may be changed or removed independently of the imported DML.
+
+This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below.
+
 `GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
 the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
 database when the template is saved. The `config` field uses a structured

@@ -17,10 +17,10 @@ Read the following documents. Follow references and read nearby related files as
 Then:
 
 - Review the scripting DSL and runtime as a single end-to-end system from authoring and validation through deployment, execution, and rollback.
-- Check each finding against any already created slices or implementation that are clearly relevant, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
+- Check each finding against the relevant domain tracker and implementation, in case the issue has already been resolved in code or tracking and the design now needs to import that decision back into the docs.
 - Do not summarize behavior or call out what is already good.
 - Focus on gaps that would force implementers to invent lifecycle semantics, sandbox boundaries, quota policy, rollback behavior, or observability contracts.
-- If slices, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
+- If trackers, protos, or current implementation already resolve the seam but the design docs are stale, classify the issue as "import resolved decision back into design" rather than as an unresolved architecture blocker.
 - Do not let nice-to-have DSL ergonomics and future expansion ideas crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
