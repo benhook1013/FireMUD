@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
@@ -42,6 +43,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
   private static final CloseStatus BACKEND_UNAVAILABLE =
       new CloseStatus(1013, "backend_unavailable");
+  private static final CloseStatus INTERNAL_ERROR = new CloseStatus(1011, "internal_error");
   private static final List<String> FORWARDED_HEADERS =
       List.of(
           "X-Game-Instance-Id",
@@ -61,6 +63,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private final GameplayWebSocketObservability gameplayWebSocketObservability;
   private final Set<BridgeState> activeBridges = ConcurrentHashMap.newKeySet();
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
+  private final Object lifecycleMonitor = new Object();
+  private volatile Mono<Void> shutdownCompletion;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -86,10 +90,12 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   @Override
   public Mono<Void> handle(WebSocketSession downstream) {
     BridgeState state = new BridgeState(downstream, properties.bufferCapacity());
-    activeBridges.add(state);
-    if (shuttingDown.get()) {
-      return closeDownstream(state, plannedDrainClassification())
-          .doFinally(signal -> activeBridges.remove(state));
+    synchronized (lifecycleMonitor) {
+      activeBridges.add(state);
+      if (shuttingDown.get()) {
+        return closeDownstream(state, plannedDrainClassification())
+            .doFinally(signal -> activeBridges.remove(state));
+      }
     }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
     URI upstreamUri = URI.create(properties.upstreamUrl());
@@ -118,7 +124,10 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
 
   @Override
   public void start() {
-    shuttingDown.set(false);
+    synchronized (lifecycleMonitor) {
+      shuttingDown.set(false);
+      shutdownCompletion = null;
+    }
   }
 
   @Override
@@ -128,18 +137,11 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
 
   @Override
   public void stop(Runnable callback) {
-    if (!shuttingDown.compareAndSet(false, true)) {
-      callback.run();
-      return;
-    }
-    GameplayWebSocketObservability.CloseClassification plannedDrain = plannedDrainClassification();
-    List<Mono<Void>> closeOperations =
-        activeBridges.stream().map(state -> closeDownstream(state, plannedDrain)).toList();
-    if (closeOperations.isEmpty()) {
-      callback.run();
-      return;
-    }
-    Mono.whenDelayError(closeOperations).doFinally(signal -> callback.run()).subscribe();
+    getOrCreateShutdownCompletion()
+        .doFinally(signal -> callback.run())
+        .subscribe(
+            ignored -> {},
+            error -> LOG.warn("Gameplay websocket shutdown encountered a close failure", error));
   }
 
   @Override
@@ -150,6 +152,20 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   @Override
   public int getPhase() {
     return Integer.MAX_VALUE;
+  }
+
+  private Mono<Void> getOrCreateShutdownCompletion() {
+    synchronized (lifecycleMonitor) {
+      if (shutdownCompletion == null) {
+        shuttingDown.set(true);
+        GameplayWebSocketObservability.CloseClassification plannedDrain =
+            plannedDrainClassification();
+        List<Mono<Void>> closeOperations =
+            activeBridges.stream().map(state -> closeDownstream(state, plannedDrain)).toList();
+        shutdownCompletion = Mono.whenDelayError(closeOperations).cache();
+      }
+      return shutdownCompletion;
+    }
   }
 
   private Mono<Void> connectWithRetry(
@@ -281,7 +297,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
 
   private void emitToDownstream(WebSocketSession downstream, BridgeState state, String payload) {
     Sinks.EmitResult result = state.outboundToClient.tryEmitNext(payload);
-    if (result.isFailure()) {
+    if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
       try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
         LOG.warn("Gameplay downstream buffer overflow result={}", result);
       }
@@ -289,28 +305,69 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           gameplayWebSocketObservability.slowClientClose();
       throw new GameplayBridgeTerminalCloseException(slowClientClose);
     }
+    if (!result.isFailure()) {
+      return;
+    }
+    if (state.downstreamClosed.get()) {
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+        LOG.debug("Ignoring gameplay downstream emission during closure result={}", result);
+      }
+      return;
+    }
+    try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+      LOG.warn("Gameplay downstream emission failed result={}", result);
+    }
+    throw new GameplayBridgeTerminalCloseException(
+        gameplayWebSocketObservability.classify(INTERNAL_ERROR));
   }
 
   private Mono<Void> closeDownstream(
       BridgeState state, GameplayWebSocketObservability.CloseClassification closeClassification) {
-    return Mono.defer(
-        () -> {
-          if (!state.downstreamClosed.compareAndSet(false, true)) {
-            return Mono.empty();
-          }
-          state.inboundToUpstream.tryEmitComplete();
-          state.outboundToClient.tryEmitComplete();
-          try (RuntimeLoggingContext ignored = openLoggingContext(state.downstream)) {
-            LOG.info(
-                "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
-                closeClassification.reason(),
-                closeClassification.subreason(),
-                closeClassification.bridgeShutdownClass(),
-                closeClassification.status().getCode());
-          }
-          gameplayWebSocketObservability.recordClose(closeClassification);
-          return state.downstream.close(closeClassification.status());
-        });
+    Mono<Void> existing = state.closeOperation.get();
+    if (existing != null) {
+      return existing;
+    }
+    Mono<Void> closeOperation =
+        Mono.defer(
+                () -> {
+                  if (!state.downstreamClosed.compareAndSet(false, true)) {
+                    return Mono.empty();
+                  }
+                  state.inboundToUpstream.tryEmitComplete();
+                  state.outboundToClient.tryEmitComplete();
+                  return Mono.defer(() -> state.downstream.close(closeClassification.status()))
+                      .doOnSuccess(
+                          ignored -> {
+                            gameplayWebSocketObservability.recordClose(closeClassification);
+                            try (RuntimeLoggingContext context =
+                                openLoggingContext(state.downstream)) {
+                              LOG.info(
+                                  "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
+                                  closeClassification.reason(),
+                                  closeClassification.subreason(),
+                                  closeClassification.bridgeShutdownClass(),
+                                  closeClassification.status().getCode());
+                            }
+                          })
+                      .doOnError(
+                          error -> {
+                            try (RuntimeLoggingContext context =
+                                openLoggingContext(state.downstream)) {
+                              LOG.warn(
+                                  "Gameplay websocket close failed reason={} subreason={} bridge_shutdown_class={} code={}",
+                                  closeClassification.reason(),
+                                  closeClassification.subreason(),
+                                  closeClassification.bridgeShutdownClass(),
+                                  closeClassification.status().getCode(),
+                                  error);
+                            }
+                          });
+                })
+            .cache();
+    if (state.closeOperation.compareAndSet(null, closeOperation)) {
+      return closeOperation;
+    }
+    return state.closeOperation.get();
   }
 
   private GameplayWebSocketObservability.CloseClassification plannedDrainClassification() {
@@ -375,6 +432,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
     private final WebSocketSession downstream;
     private final Sinks.Many<String> inboundToUpstream;
     private final Sinks.Many<String> outboundToClient;
+    private final AtomicReference<Mono<Void>> closeOperation = new AtomicReference<>();
     private final AtomicBoolean upstreamConnected = new AtomicBoolean(false);
     private final AtomicBoolean downstreamClosed = new AtomicBoolean(false);
 
