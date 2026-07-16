@@ -9,8 +9,9 @@ Read the following sources first. Follow references and read nearby related file
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/service-responsibility-matrix.md`
 - `design/architecture/repository-structure.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
+- `design/project-management/implementation-tracking/README.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
 
 Review the current FireMUD branch for system cohesion, canonical-substrate quality, and "proper implementation first" alignment across recently implemented slices.
 

@@ -8,12 +8,9 @@ Read the following sources first. Follow references only when a listed doc clear
 
 - `AGENTS.md`
 - `design/project-management/testing-focus-areas.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-tcp-proxy-service.md`
-- `design/project-management/service-status-spring-cloud-gateway.md`
-- `design/project-management/vertical-slices/02.18.16-task-list-cross-service-test-fixtures-and-shutdown-noise-vertical-slice.md`
-- `design/project-management/vertical-slices/02.18.17-task-list-gameplay-transport-test-harness-convergence-vertical-slice.md`
-- `design/project-management/vertical-slices/02.18.18-task-list-gameplay-proof-and-cross-service-fixture-convergence-vertical-slice.md`
+- `design/project-management/implementation-tracking/platform-operations-and-delivery.md`
+- `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`
+- `design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md`
 - `design/project-management/slice-support/look-cross-service-tests.md`
 - `design/project-management/slice-support/look-smoke-tests.md`
 - `design/developer-workflows/login-session-smoke-tests.md`

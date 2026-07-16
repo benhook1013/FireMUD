@@ -11,9 +11,10 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/microservices/game-session-service/README.md`
 - `design/architecture/microservices/entity-management-service/README.md`
 - `design/architecture/microservices/world-management-service/README.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-entity-management-service.md`
-- `design/project-management/service-status-world-management-service.md`
+- `design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md`
+- `design/project-management/implementation-tracking/gameplay-rules-entities-and-effects.md`
+- `design/project-management/implementation-tracking/world-runtime-and-movement.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
 
 Review the current FireMUD branch for code hygiene, consistency, and durable implementation patterns, especially in Spring, Spring Boot, Spring Data, and gRPC usage.
 

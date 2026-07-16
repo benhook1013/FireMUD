@@ -13,7 +13,7 @@ This document describes the **target-state architecture** for script sandboxing 
 
 For the latest progress and implementation notes, see:
 
-- `design/project-management/service-status-automation-scripting-service.md`
+- `design/project-management/implementation-tracking/automation-and-scheduler-runtime.md`
 - `design/architecture/system-architecture-scripting.md#sandboxing--security`
 
 Implementation-progress tracking policy:

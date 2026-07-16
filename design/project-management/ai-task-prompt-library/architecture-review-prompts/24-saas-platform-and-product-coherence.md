@@ -15,13 +15,11 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-security.md`
 - `design/architecture/system-architecture-game-customization.md`
 - `design/architecture/system-architecture-promotion-attestation.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
-- `design/project-management/service-status-account-service.md`
-- `design/project-management/service-status-game-design-service.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-logging-admin-service.md`
-- `design/project-management/service-status-spring-cloud-gateway.md`
+- `design/project-management/implementation-tracking/README.md`
+- `design/project-management/implementation-tracking/player-access-and-session.md`
+- `design/project-management/implementation-tracking/game-authoring-publishing-and-activation.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
+- `design/project-management/implementation-tracking/platform-operations-and-delivery.md`
 
 Review the current FireMUD branch for SaaS/platform compatibility: whether the product, tenancy, identity, entitlement, publishing, operator, and lifecycle model coherently supports FireMUD as a hosted multi-tenant platform.
 

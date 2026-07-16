@@ -8,7 +8,7 @@ For each source, every distinct implementation, maturity, active-gap, ownership,
 
 Source: `design/project-management/service-status-account-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/README.md:11`; `design/project-management/vertical-slices/00-design-area-slice-coverage.md:33`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:20`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:15`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/README.md:11`; `design/project-management/vertical-slices/00-design-area-slice-coverage.md:33`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:20`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:15`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -40,7 +40,7 @@ Inbound links to repair on retirement: `design/project-management/README.md:11`;
 
 Source: `design/project-management/service-status-automation-scripting-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:42`; `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:20`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:42`; `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:20`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -93,7 +93,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-entity-management-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:37`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:18`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:15`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:37`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:18`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:15`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-game-design-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:35`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:21`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:35`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:21`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -185,7 +185,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-game-logic-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:37`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:37`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -214,7 +214,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-game-session-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:38-39,41`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:25`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:20`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:11`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:38-39,41`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:25`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/33-race-replay-idempotency-and-crash-safety.md:20`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:16`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:11`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -261,14 +261,14 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 | 34 | Login/session and gameplay ingress have real integration and cross-service tests. | `player-access-and-session.md` -> `## Validation and Proof`; `player-experience-commands-and-communication.md` -> `## Validation and Proof` | covered | Repair every inbound link listed above; replace status-summary references with the tracker or canonical architecture. |
 | 34 | Remaining ingress hardening is cleanup of developer shortcuts and deeper runtime polish. | `player-access-and-session.md` -> `## Active Gaps`; `game-session-runtime-and-tick-coordination.md` -> `## Active Gaps` | consolidated | Repair every inbound link listed above; replace status-summary references with the tracker or canonical architecture. |
 | 35 | Cross-region handoff, advanced tick hardening, and richer runtime feature application remain future work. | `game-session-runtime-and-tick-coordination.md` -> `## Active Gaps` | consolidated | Repair every inbound link listed above; replace status-summary references with the tracker or canonical architecture. |
-| 36 | `regionId` gameplay-log enrichment is deferred pending one canonical current-region source. | `platform-operations-and-delivery.md` -> `## Active Gaps`; `game-session-runtime-and-tick-coordination.md` -> `## Active Gaps` | design-decision-required | Repair every inbound link listed above; replace the deferred source note with the tracker decision record. |
+| 36 | `regionId` gameplay-log enrichment is deferred pending one canonical current-region source. | `platform-operations-and-delivery.md` -> `## Active Gaps`; `## To Discuss`; `game-session-runtime-and-tick-coordination.md` -> `## Active Gaps` | consolidated | The unresolved choice is durably tracked without inventing a current-region authority. |
 | 40-41 | The status file is not a second checklist; active work belongs in vertical slices and hardening phase docs. | `MIGRATION_PROTOCOL.md` -> `## Workflow`; `implementation-tracking/README.md` -> `## Trackers` | superseded | Repair every inbound link listed above; remove the retired summary from indexes, task notes, and review prompts. |
 
 ## Logging and Admin Service
 
 Source: `design/project-management/service-status-logging-admin-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:44`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:23`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:44`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:23`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -298,7 +298,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-social-groups-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:39`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:39`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -316,13 +316,13 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 | 18 | Gameplay-connected chat is an early slice, not a complete social platform. | `player-experience-commands-and-communication.md` -> `## Active Gaps` | consolidated | Repair every inbound link listed above; replace status-summary references with the tracker or canonical architecture. |
 | 19 | Integration confidence for richer social behavior is lighter than the core CRUD/domain model. | `player-experience-commands-and-communication.md` -> `## Active Gaps` | consolidated | Repair every inbound link listed above; replace status-summary references with the tracker or canonical architecture. |
 | 23 | Future Social & Groups work was directed to follow-on slices after more of the core play loop. | `player-experience-commands-and-communication.md` -> `## To Discuss` | superseded | Repair every inbound link listed above; replace the dated sequencing instruction with tracker status. |
-| 24 | A later communication slice was proposed for speech mode and audience scope across tells, whispers, shouts, and map/region propagation. | `player-experience-commands-and-communication.md` -> `## To Discuss`; `system-architecture-overview.md` -> `### Moderation Policy Distribution and Enforcement Contract` | design-decision-required | Repair every inbound link listed above; retain only the canonical unresolved decision. |
+| 24 | A later communication slice was proposed for speech mode and audience scope across tells, whispers, shouts, and map/region propagation. | `player-experience-commands-and-communication.md` -> `## To Discuss`; `system-architecture-overview.md` -> `### Moderation Policy Distribution and Enforcement Contract` | consolidated | The unresolved communication-policy choice is durably tracked without selecting a target in the migration. |
 
 ## Spring Cloud Gateway
 
 Source: `design/project-management/service-status-spring-cloud-gateway.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:43,45`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:24`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:13`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:43,45`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:24`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:13`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -348,7 +348,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-tcp-proxy-service.md`.
 
-Inbound links to repair on retirement: `design/architecture/microservices/tcp-proxy-service/README.md:21,28-31`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:12`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/architecture/microservices/tcp-proxy-service/README.md:21,28-31`; `design/project-management/vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md:93`; `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md:63`; `design/project-management/implementation-tracking/player-access-and-session.md:268,346`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/41-test-infrastructure-harness-and-proof-convergence-review.md:12`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -373,7 +373,7 @@ Inbound links to repair on retirement: `design/architecture/microservices/tcp-pr
 
 Source: `design/project-management/service-status-web-client.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:43`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:43`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -392,7 +392,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/service-status-world-management-service.md`.
 
-Inbound links to repair on retirement: `design/project-management/vertical-slices/00-design-area-slice-coverage.md:36`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:17`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:16`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/project-management/vertical-slices/00-design-area-slice-coverage.md:36`; `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md:106`; `design/project-management/implementation-tracking/player-experience-commands-and-communication.md:3045`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/32-cross-service-contract-consistency-review.md:17`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/34-implemented-code-hygiene-and-durable-patterns.md:16`.
 
 | Source lines | Fact | Destination or evidence | Disposition | Inbound links / retirement work |
 | --- | --- | --- | --- | --- |
@@ -421,7 +421,7 @@ Inbound links to repair on retirement: `design/project-management/vertical-slice
 
 Source: `design/project-management/vertical-slices/00-design-area-slice-coverage.md`.
 
-Inbound links to repair on retirement: `design/README.md:12`; `design/project-management/README.md:11`; `design/project-management/implementation-tracking/MIGRATION_PROTOCOL.md:11,58`; `design/project-management/implementation-tracking/migration-ledgers/README.md:10`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/31-system-cohesion-and-canonical-substrates.md:13`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/40-design-to-slice-translation-gap-review.md:29`.
+Original inbound-link inventory (living consumers repointed; remaining entries are co-retired migration evidence): `design/README.md:12`; `design/project-management/README.md:11`; `design/project-management/implementation-tracking/MIGRATION_PROTOCOL.md:11,58`; `design/project-management/implementation-tracking/migration-ledgers/README.md:10`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/24-saas-platform-and-product-coherence.md:19`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/31-system-cohesion-and-canonical-substrates.md:13`; `design/project-management/ai-task-prompt-library/architecture-review-prompts/40-design-to-slice-translation-gap-review.md:29`.
 
 The matrix's `Strong`, `Moderate`, and `Weak` ratings are historical project-management judgments, not current tracker facts. Every rating row below is therefore explicitly superseded or obsolete and is not copied into a tracker. The matrix's primary-family and next-action sequencing is treated the same way; current implementation and gap prose is reconciled separately.
 

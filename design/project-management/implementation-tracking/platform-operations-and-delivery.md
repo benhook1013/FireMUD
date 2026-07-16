@@ -175,7 +175,7 @@ These are repository-recorded proofs, not a claim that this consolidation pass r
 
 ## To Discuss
 
-No competing target state is recorded for bounded metrics, curated edge routing, external deadman authority, manifest-owned binding identity, or canonical reset tooling. Design decisions remain required before: choosing between retaining the preview-only bootstrap session and replacing it with a first-party TCP admission path; defining richer Kubernetes live-state preflight; defining automated JWT/JWKS rotation; approving any metrics-label exception; or adding a new public route class. The opaque external-monitor `evidenceRef`/`checkRef` contract also leaves contemporaneous evidence selection with the environment/operator boundary.
+No competing target state is recorded for bounded metrics, curated edge routing, external deadman authority, manifest-owned binding identity, or canonical reset tooling. Design decisions remain required before: choosing between retaining the preview-only bootstrap session and replacing it with a first-party TCP admission path; defining richer Kubernetes live-state preflight; defining automated JWT/JWKS rotation; selecting one canonical current-region source for broad `regionId` gameplay-log enrichment; approving any metrics-label exception; or adding a new public route class. The opaque external-monitor `evidenceRef`/`checkRef` contract also leaves contemporaneous evidence selection with the environment/operator boundary.
 
 ## Service and Contract Map
 

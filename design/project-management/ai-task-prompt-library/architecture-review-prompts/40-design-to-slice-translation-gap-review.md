@@ -24,9 +24,8 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-scripting.md`
 - `design/architecture/system-architecture-security.md`
 - `design/architecture/system-architecture-backup-recovery.md`
-- `design/project-management/service-status-*.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/vertical-slices/00-design-area-slice-coverage.md`
+- `design/project-management/implementation-tracking/README.md`
+- all ten domain trackers listed by that index
 
 What to look for:
 

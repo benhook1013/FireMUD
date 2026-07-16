@@ -11,12 +11,11 @@ Read the following sources first. Follow references only when a listed doc clear
 - `design/architecture/system-architecture-jwt-and-token-contracts.md`
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-multi-tenancy.md`
-- `design/project-management/vertical-slices/00-slice-progress.md`
-- `design/project-management/service-status-account-service.md`
-- `design/project-management/service-status-game-session-service.md`
-- `design/project-management/service-status-world-management-service.md`
-- `design/project-management/service-status-entity-management-service.md`
-- `design/project-management/service-status-spring-cloud-gateway.md`
+- `design/project-management/implementation-tracking/player-access-and-session.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
+- `design/project-management/implementation-tracking/world-runtime-and-movement.md`
+- `design/project-management/implementation-tracking/gameplay-rules-entities-and-effects.md`
+- `design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md`
 
 Review the current FireMUD branch for cross-service contract consistency across gRPC, REST, events, Redis-backed runtime handoff, and shared identity or ownership seams.
 
