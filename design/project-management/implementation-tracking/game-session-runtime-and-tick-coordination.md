@@ -129,4 +129,4 @@ No competing target state is currently recorded. Sol must decide the policy and 
 | World Management | Lifecycle orchestration and cleanup invoked through non-transaction-spanning RPC boundaries | Optimistic lifecycle rows and termination/cleanup contracts |
 | Redis and PostgreSQL | Fast coordination versus durable execution, ordering, recovery, and ownership truth | Queue/lock/pending/wake-up keys; command, batch, effect, ownership, and remote ledgers |
 
-Focused scheduler, durable-ledger, remote-runtime, operator-readback, lifecycle, and fencing proofs remain recorded with exact commands in the source evidence.
+Focused scheduler, durable-ledger, remote-runtime, operator-readback, lifecycle, and fencing proof remains maintained in the owning test suites and validation paths named above.

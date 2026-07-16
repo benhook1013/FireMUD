@@ -112,7 +112,7 @@ The current `web-client` baseline is React, Vite, MUI, and TanStack Query. It us
 
 The target first-party browser boundary consumes the admitted published runtime bundle: `PLAY`/reconnect/realm-switch responses provide the resolved `versionId`, optional `scriptPatchVersion`, and manifest location/hash or equivalent; the React app then fetches the manifest from the CDN or Gateway `/assets/**` route and applies branding/theme assets without querying Game Design during gameplay. The current frontend baseline does not yet prove this complete asset-bootstrap flow.
 
-A dedicated first-party web application service is planned as the long-term home for browser assets and browser bootstrap/product orchestration. Spring Cloud Gateway remains the public API/gameplay edge; the dedicated service, permanent browser asset-hosting/bootstrap boundary, and richer browser UX are not implemented by the current frontend baseline. The specific remaining frontend gaps are richer gameplay/product UX and stronger client data integration in `web-client`, expansion of the admin UI, expansion/integration of the Game Design visual editor, and end-to-end browser automation; the current baseline is not evidence that those admin, design-tool, or Playwright/browser-product surfaces are complete.
+A dedicated first-party web application service is planned as the long-term home for browser assets and browser bootstrap/product orchestration. Spring Cloud Gateway remains the public API/gameplay edge; the dedicated service, permanent browser asset-hosting/bootstrap boundary, and richer browser UX are not implemented by the current frontend baseline. The planned browser bootstrap uses the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; arbitrary custom WebSocket headers remain reserved for non-browser clients. The specific remaining frontend gaps are richer gameplay/product UX and stronger client data integration in `web-client`, expansion of the admin UI, expansion/integration of the Game Design visual editor, and end-to-end browser automation; the current baseline is not evidence that those admin, design-tool, or Playwright/browser-product surfaces are complete.
 
 ### Validation and Proof
 
@@ -138,14 +138,17 @@ The recorded validation includes `./gradlew spotlessApply`, `./gradlew linkCheck
 - Presentation still lacks combat-state-driven brief-on-move behavior, richer configurable prompt composition, broader prompt scheduling, and broader smart-client presentation policy.
 - Presence and social surfaces have a bounded canonical runtime/read model, but broader activity-engine consumers, richer recent-presence policy, broader social consumers, and operational hidden-staff capability enforcement remain incomplete.
 - The dedicated first-party web application service, permanent browser asset-hosting boundary, and richer browser product surface remain planned.
+- Manual QA still needs to confirm that normal Telnet and generic WebSocket clients follow the same optional-browse, `LOGIN`, `PLAY`, in-game progression and that the first-party browser reaches the same gameplay binding semantics.
 
 ## To Discuss
 
 Resolve the remaining design choices in the canonical [player command model](../../architecture/system-architecture-player-command-model.md), [input/output and presentation model](../../architecture/system-architecture-input-output-and-presentation.md), and [settings model](../../architecture/system-architecture-settings-model.md):
 
 - Rich HELP authoring UI, localization-aware content, fuzzy or semantic search, stage-aware discovery, related-topic graphs, moderation/versioning, and dynamic command-discovery integration.
+- The canonical storage home for built-in HELP topics and the exact precedence by which game-authored topics override or extend built-ins.
+- Game-configurable `WHO` grouping and styling, AFK tags, recent-player display and hidden-recent-player behavior, and any later per-player overrides.
 - Creator-authored command representation, namespace and precedence, localized aliases, explicit ambiguity behavior, and active-registry discovery.
-- Raw versus normalized speech retention, terminal-punctuation rules, locale-specific sentence behavior, and opt-out channels.
+- Whether speech normalization occurs before structured communication events are emitted or only at render time, plus raw versus normalized retention, terminal-punctuation rules, locale-specific sentence behavior, and opt-out channels.
 - Archive/export retention and the boundary between recent output, history, and moderation or search.
 - Hidden staff modes, capability bundles, operator visibility, and their consumers.
 - Communication scope and topology, speech-mode and audience-scope policy across tells, whispers, shouts, and map or region propagation, observer persistence and policy, offline messaging, and first-party recipient presentation.
@@ -164,4 +167,4 @@ Resolve the remaining design choices in the canonical [player command model](../
 | Logging & Admin | Privileged built-in alias validation and operator diagnostics | Canonical control-plane readback |
 | First-party frontend | Current structured WebSocket consumer and server-state baseline | Web client; dedicated web-app service remains planned |
 
-The service boundaries above are the current ownership contract. Game Session is the player-facing policy/rendering and runtime-presence owner; Game Logic is the gameplay/action and communication-resolution owner; Social Groups is the social policy/history/fanout owner; World Management is the authoritative room-content owner; Account is the profile-policy source; and Logging & Admin consumes canonical control-plane diagnostics. Focused proof is summarized above, with exact source allocations retained below for audit.
+The service boundaries above are the current ownership contract. Game Session is the player-facing policy/rendering and runtime-presence owner; Game Logic is the gameplay/action and communication-resolution owner; Social Groups is the social policy/history/fanout owner; World Management is the authoritative room-content owner; Account is the profile-policy source; and Logging & Admin consumes canonical control-plane diagnostics.

@@ -104,7 +104,7 @@ The current TCP Proxy hardening boundary is intentionally separate from Telnet p
 
 ### Validation and Proof Ledger
 
-The source records the following meaningful passing or implemented contract proofs. They are grouped here so the reader does not need the appendix to find the operational proof boundary. The Game Session ledger includes a June 2026 full-check attempt affected by overlapping-run result corruption and a then-failing multiplayer assertion; later July unit, integration, cross-service, multiplayer-load, and Checkstyle artifacts are green, although this consolidation did not rerun the aggregate task.
+The following passing or implemented contract proofs define the operational proof boundary. The Game Session record includes a June 2026 full-check attempt affected by overlapping-run result corruption and a then-failing multiplayer assertion; later July unit, integration, cross-service, multiplayer-load, and Checkstyle artifacts are green, although the tracker consolidation did not rerun the aggregate task.
 
 - Repository/document policy: `./gradlew check`, `./gradlew linkCheck lintMarkdown`, `./gradlew spotlessApply`, `python3 dev-tools/observability/check-metrics-cardinality.py`, `bash dev-tools/tests/player-experience-smoke-runner-contract.sh`, `bash dev-tools/tests/player-experience-smoke-evidence-contract.sh`, and `bash dev-tools/tests/architecture-doc-contracts.sh`.
 - Transport and edge: `./gradlew checkGrpcTransportConfig`, `bash dev-tools/validation/check-grpc-transport-config.sh --enforce`, Gateway/Game Session full checks through `dev-tools/validation/run-locked-gradle.sh`, focused route/owner tests, and `bash dev-tools/verify-fresh-bootstrap.sh`.
@@ -113,7 +113,7 @@ The source records the following meaningful passing or implemented contract proo
 - Local smoke and image proof: `bash dev-tools/tests/smoke-transport-contract.sh`, `bash dev-tools/tests/gradle-proof-tooling-contract.sh`, `bash dev-tools/verify-fresh-bootstrap.sh`, restart proof, and the targeted image-tag smoke entrypoint. The current fresh-bootstrap validation note records end-to-end success after correcting native WSL Docker selection and boot-jar ownership/mode.
 - Gameplay proof: repository-recorded Game Session full-check and later green component artifacts, `./gradlew :tcp-proxy-service:check -PfullCheck`, `./gradlew :common-test-support:check`, focused WebSocket/Telnet integration proofs, the deterministic ten-client concurrency suites, and the Logging & Admin compatibility-readback focused tests plus locked full check.
 
-These are repository-recorded proofs, not a claim that this consolidation pass reran them. The unchanged source evidence remains available for exact test names, file-level completion evidence, and the original allocation ranges.
+These are repository-recorded proofs, not a claim that the tracker consolidation reran them. The original gameplay-context logging batch did not record its aggregate `./gradlew check` or `./gradlew linkCheck lintMarkdown` items as complete; later repository-level proof covers those commands but does not retroactively establish that batch-local checkpoint.
 
 ## Active Gaps
 
@@ -143,5 +143,3 @@ No competing target state is recorded for bounded metrics, curated edge routing,
 | `common-test-support` and gameplay test fixtures | Account runtime authority fakes, shared stack/baseline setup, transport drivers, transcript and eventual assertions | WebSocket/Telnet scenario helpers and cross-service proof contracts |
 | Logging & Admin | Privileged operator ingress, audit, feature-flag forwarding, moderation policy input, and compatibility readback | REST/OpenAPI over owner-side runtime/control-plane contracts |
 | External monitor and observability tooling | Deadman authority, canary/blackbox evidence, alerts, and retained proof | Smoke signals, opaque external check references, and external liveness signal |
-
-The appendix preserves the exact source allocations and original evidence. This main record is intended to be sufficient for implementation status, authority boundaries, active capabilities, proof limits, gaps, and design questions without consulting the appendix.
