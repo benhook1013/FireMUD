@@ -57,8 +57,8 @@ Use this file as the entrypoint for AI work in this repository. Treat repo docs 
 
 The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design discussion with the human, task decomposition, integration, validation, and final repository decisions. Use subagents heavily for bounded bulk work so Sol context and usage stay focused on orchestration.
 
-- `gpt-5.6-luna`: Default for bulk repository reading, exhaustive inventories, mechanical or well-specified edits, focused investigation, and targeted test work. Sol must define the boundary and review the result. Do not use Luna as independent final-review evidence.
-- `gpt-5.6-terra`: Use selectively for difficult bounded work or independent verification where Luna is not reliable enough. Do not delegate product or architecture design decisions.
+- `gpt-5.6-luna`: Default for bulk repository reading, exhaustive inventories, mechanical or well-specified edits, focused investigation, and targeted test work. Prefer maximum effort for exhaustive bounded audits or difficult well-specified work; current Luna maximum-effort runs can provide Terra-class depth more economically. Sol must define the boundary and review the result. Do not use Luna as independent final-review evidence.
+- `gpt-5.6-terra`: Reserve for adversarial independent verification, ambiguous cross-contract reasoning, or recovery when Luna fails a declared coverage gate. Do not delegate product or architecture design decisions.
 - If answering a bounded repository question would likely require several exploratory tool calls, delegate that investigation to Luna and wait for its result instead of spending Sol context on the search.
 - Subagents must not run Gradle, Docker, smoke, or repository-wide validation commands unless the main thread explicitly delegates one specific command. Sol runs consolidated formatting and validation after integrating delegated work so parallel agents do not compete for local resources or corrupt shared results.
 - Do not delegate design decisions. Main thread owns design reasoning with the human, slice boundaries, integration, validation, and PR decisions.
