@@ -4,17 +4,17 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Current phase: the first three automated phases are complete and ready for the human-led adversarial decision review.
+Current phase: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, and independent validation are complete. Human-led adversarial decision review remains deliberately unstarted.
 
 | Phase | Status | Output |
 | --- | --- | --- |
 | Product capability taxonomy | Complete | [`product-capability-taxonomy.md`](../../architecture/product-capability-taxonomy.md) |
 | Canonical design allocation | Complete and independently coverage-audited | [`design-capability-allocation.md`](./design-capability-allocation.md) |
 | Consequential-decision inventory | Complete and independently coverage/fidelity-audited | [`consequential-decision-inventory.md`](./consequential-decision-inventory.md) |
-| Human-led adversarial decision review | Not started; outside the automated completion of the first three phases | Accepted decisions and canonical design updates |
-| Implementation tracker reshaping | Not started | Final domain overview and capability trackers |
-| Code and proof reconciliation | Not started | Current implementation and verification status per capability |
-| Cross-domain convergence | Not started | Reconciled authority, handoffs, terminology, and active gaps |
+| Implementation tracker reshaping | Complete | [Capability allocation](../implementation-tracking/capability-allocation.md) and ten permanent domain trackers |
+| Code and proof reconciliation | Complete and independently validated | Per-capability implementation/verification states and evidence anchors in the domain trackers |
+| Cross-domain convergence | Complete and independently validated | [Capability implementation reconciliation](./capability-implementation-reconciliation.md) |
+| Human-led adversarial decision review | Not started; explicitly outside automated completion | Human decisions and later canonical design/ADR updates |
 
 ## Authority Boundaries
 
@@ -39,14 +39,15 @@ Current phase: the first three automated phases are complete and ready for the h
 1. Finalize the complete product capability taxonomy.
 2. Allocate every canonical design source to a primary capability and explicit secondary handoffs.
 3. Inventory consequential explicit and implicit decisions against that allocation.
-4. The human decision owner manually runs adversarial decision review against the completed register and resolves genuine product or architecture questions.
-5. Update canonical design and create or supersede ADRs for accepted consequential decisions.
-6. Reshape implementation tracking around the accepted capability taxonomy.
-7. Reconcile code, contracts, schemas, configuration, tests, and operational proof against every designed capability.
+4. Resolve only direct canonical contradictions that block trustworthy implementation classification.
+5. Allocate every leaf capability to one primary implementation tracker and explicit secondary handoffs.
+6. Reconcile code, contracts, schemas, configuration, tests, and operational proof against every capability, then validate cross-domain authority and gaps.
+7. The human decision owner manually runs adversarial review against the completed register and chooses whether to accept, revise, defer, withdraw, or supersede each consequential decision.
+8. Apply human-accepted decisions to canonical design and create, amend, or supersede ADRs where warranted.
 
-## Completed Automated Gate
+## Automated Gates
 
-The first three phases were completed against these gates:
+The design-allocation and decision-inventory phases were completed against these gates:
 
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
 - every Markdown source under `design/architecture/**` is present in the allocation ledger or explicitly classified as non-allocatable generated/index material;
@@ -55,3 +56,12 @@ The first three phases were completed against these gates:
 - existing ADRs are mapped, including superseded and withdrawn records;
 - conflicts, unsupported assumptions, missing rationale, and human-review questions are visible rather than silently normalized; and
 - an independent exhaustive review finds no unallocated canonical design or unexplained decision-bearing claim.
+
+The capability implementation reconciliation additionally requires:
+
+- every taxonomy leaf appears exactly once in the primary-tracker allocation and exactly once in a tracker status table;
+- implementation and verification are represented independently with approved states;
+- each capability names canonical design, production evidence, focused proof, handoffs, and its remaining gap or decision;
+- cross-domain ownership and terminology are consistent with canonical design rather than inferred from implementation convenience;
+- direct canonical contradictions are resolved before status is claimed; and
+- the structural contract and independent evidence-quality review both pass before this automated phase is called complete.

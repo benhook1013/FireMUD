@@ -79,7 +79,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 - **Gameplay session bindings**
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.
   - Purpose: bind a connected socket or reconnect token to a character in a specific tenant, enforce one session per character, and support reconnect flows.
-  - Lifetime: sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+  - Lifetime: the storage TTL may refresh while the player remains active, but the binding remains bounded by current authentication validity. After disconnect or suspension, resume is admitted only within the effective `firemud.reconnection.policy.resume-window-ms` and before the absolute derived session lifetime expires. Redis key presence and transcript retention are not sufficient authority to resume.
 
 - **Bootstrap/pre-auth session contexts**
   - Keys: current implementation-local `sessionctx:*` entries described in the Game Session runtime docs.

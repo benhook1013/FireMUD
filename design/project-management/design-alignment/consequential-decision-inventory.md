@@ -78,11 +78,11 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 
 | Decision key | Conflict or missing decision |
 | --- | --- |
-| `AUTO-01` | ADR 0001's accepted automation trigger identity omits current canonical `gameInstanceId`, `playableStateScope`, and `isDryRun` identity fields. |
+| `AUTO-01` | Resolved baseline: ADR 0001 now delegates the endpoint-specific identity matrix to the canonical scripting contract table and includes runtime scope plus dry-run separation. |
 | `SET-01` | The target settings precedence includes presets and caps that the current effective-settings implementation does not yet resolve. |
-| `CONTENT-05` | Canonical sources disagree on whether creator JSON import is a supported capability or a deferred non-canonical path. |
+| `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
 | `SESSION-04` | The invisible non-edge reconnect target and current visible restart/reconnect behavior are not one testable promise. |
-| `SESSION-08` | Generated three-minute resume eligibility and the derived 65-minute JWT/session lifetime lack an explicit precedence and fallback contract. |
+| `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
 | `SEC-02` | JWT rotation, overlap, pruning, and hot reload are target design while implementation readiness remains incomplete. |
 | `OPS-04` | Player-facing restore requires coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
 | `CMD-STATUS-01` | The current narrower gameplay-command status API and target terminal command-lifecycle surface do not yet converge. |

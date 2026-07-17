@@ -90,3 +90,5 @@ if missing_steps:
 
 print("architecture doc contracts passed")
 PY
+
+python3 dev-tools/validation/check-implementation-capability-tracking.py

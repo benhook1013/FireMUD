@@ -39,7 +39,7 @@ Example `manifest.json`:
 
 ## World Configuration
 
-- A default world is available, but creators can define custom worlds entirely through the **Game Design Service**. They may add rooms, items and NPCs using the [world editing tools](./microservices/game-design-service/world-editing-tools.md) or by importing JSON files.
+- A default world is available, but creators can define custom worlds entirely through the **Game Design Service**. They add rooms, items, and NPCs through the [world editing tools](./microservices/game-design-service/world-editing-tools.md) and canonical service-owned design APIs. Bulk JSON import/export is deferred; any future package transport must validate and apply through the same versioned authoring contracts rather than becoming a filesystem or second data authority.
 - Additional design-time utilities like the [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md) help tune gameplay without code changes.
 - When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure. Minor fixes can be rolled out as **script-only patch versions** linked to a `baseVersionId` so worlds do not need to restart. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
 

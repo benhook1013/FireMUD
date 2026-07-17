@@ -10,7 +10,7 @@ Design assets are versioned to enable rollback and collaborative workflows. This
   automation updates can go live without republishing all assets.
 - To provide Git-style history, revisions are grouped under branches and commits stored in the database.
 - The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics are deferred until explicitly specified; the first-slice model is optimistic concurrency plus deterministic replay order.
-- External Git repositories can be synchronized using webhook triggers for advanced workflows.
+- External Git synchronization is deferred until a validated package and conflict contract exists. Any future webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
 
 ### History and Provenance Across Services
 

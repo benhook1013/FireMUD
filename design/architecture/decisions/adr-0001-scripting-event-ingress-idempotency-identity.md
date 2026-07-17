@@ -10,19 +10,19 @@ Event-ingress RPCs into the Automation & Scripting Service must be idempotent un
 
 ## Decision
 
-Automation & Scripting treats event ingress as at-most-once per **Trigger Identity**:
+Automation & Scripting treats event ingress as at-most-once per **Trigger Identity**. The exact endpoint-specific field matrix is owned by [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) so the ADR and runtime contract cannot evolve as competing tuples.
 
-- For entity-scoped external events:
-  - `<tenantId, regionId, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>`
-- For scheduler/timer events (tick-aligned):
-  - `<tenantId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>`
-  - `scriptEventId` must be deterministic for scheduler-originated triggers and must include the due point (for example `dueTickId` or `dueAt`) in its derivation.
+- Gameplay/runtime handler identity includes the applicable `tenantId`, `gameInstanceId`, resolved `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun` fields.
+- `isDryRun` is always an identity dimension so live and test execution cannot collide.
+- Scheduler/timer identity additionally carries its due point and trigger mode; its deterministic `scriptEventId` is derived from the due point and required Trigger Identity fields.
+- Tenant-readiness `onLoad` follows the explicit non-runtime exception in the normative table and does not invent sentinel runtime, region, or entity identity.
+- Plugin-trigger identity additionally carries plugin and binding identity where the invocation unit is plugin- or binding-scoped.
 
 Callers must reuse the same `scriptEventId` when retrying a logically identical trigger.
 
 ## Consequences
 
-- Protos and service contracts must carry enough fields to represent Trigger Identity (including `entityId`, `eventType`, and `scriptPatchVersion`; tick-aligned scheduling must also carry `regionEpoch` and a due point).
+- Protos and service contracts must carry enough fields to represent the endpoint-specific Trigger Identity, including runtime scope, dry-run namespace, and due-point or plugin dimensions where applicable.
 - Audit records (`script_event_audit`) must be keyed by Trigger Identity, not by `scriptEventId` alone.
 
 ## References
