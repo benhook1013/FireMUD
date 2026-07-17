@@ -547,6 +547,8 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
+    assertThat(workItem.getScriptEventId())
+        .isEqualTo("timer-e3569701c50434a939b1f581caa278940acb56f49c6d9e54beaeb26b2fda");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -563,6 +565,32 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueTickId()).isEqualTo(160L);
               assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
             });
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesTimerIdentityByPlayableStateScope() {
+    ScriptScheduleInstance shared =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance isolated =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    isolated.setPlayableStateScope("ISOLATED");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(shared, isolated));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    service.observeRuntimeTickProgress(
+        new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+            "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2)).saveAndFlush(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates()
+        .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
   }
 
   @Test

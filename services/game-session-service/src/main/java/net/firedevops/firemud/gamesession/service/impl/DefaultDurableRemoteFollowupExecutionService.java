@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 public final class DefaultDurableRemoteFollowupExecutionService
     implements DurableRemoteFollowupExecutionService {
   private static final String CLAIMED_STATUS = RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED;
+  private static final String TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND = "trigger_script_event";
 
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
@@ -142,6 +143,11 @@ public final class DefaultDurableRemoteFollowupExecutionService
       try {
         root = objectMapper.readTree(payloadJson);
       } catch (IOException ex) {
+        if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(followup.getPayloadKind())) {
+          return failure(
+              "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
+              "Target-side remote followup payload is not valid JSON");
+        }
         if ((followup.getPayloadKind() == null || followup.getPayloadKind().isBlank())
             && (followup.getRequestedCommand() == null
                 || followup.getRequestedCommand().isBlank())) {
@@ -183,7 +189,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return executeEnqueueAutomationCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
-    if ("trigger_script_event".equals(payloadKind)) {
+    if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
       return executeTriggerScriptEvent(root, coordinator, followup);
     }
     return failure(
@@ -353,6 +359,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private PayloadExecution executeTriggerScriptEvent(
       JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
     try {
+      if (root != null && !root.isMissingNode() && !root.isObject()) {
+        throw new IllegalArgumentException("payload must be a JSON object");
+      }
       String scriptId = authoritativeText(coordinator.getScriptId(), root, "scriptId");
       String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
       String pluginVersionId =

@@ -1,5 +1,9 @@
 # Automation and Scheduler Runtime
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for automation and scheduler runtime. Canonical target-state automation, scheduling, execution, handoff, readiness, and runtime/operator contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
 The bounded implementation slices recorded here are complete at their stated boundaries. This tracker is the permanent reader-facing implementation record for the live automation ingress, scheduling, execution, handoff, readiness, and runtime/operator projection contracts.

@@ -19,6 +19,97 @@ SYSTEM_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-system.md"
 MICROSERVICE_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-microservices.md"
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 GROUP_ID_RE = re.compile(r"[A-Z]{2}-\d+")
+SYSTEM_CLASSIFICATIONS = {"normative design", "runbook", "reference", "index"}
+MICROSERVICE_STANDARD_CLASSIFICATIONS = {
+    "README.md": "Service overview",
+    "api-contracts.md": "API contract",
+    "configuration.md": "Configuration contract",
+    "operations.md": "Operations contract",
+    "runtime-and-data.md": "Runtime/data contract",
+}
+MICROSERVICE_STANDARD_OVERRIDES = {
+    "design/architecture/microservices/game-logic-service/configuration.md": (
+        "AR-2",
+        "Runtime-policy/configuration contract",
+    ),
+}
+MICROSERVICE_SERVICE_PRIMARY = {
+    "account-service": "AA-1",
+    "automation-scripting-service": "AS-1",
+    "entity-management-service": "GR-3",
+    "game-design-service": "AR-1",
+    "game-logic-service": "GR-4",
+    "game-session-service": "AA-2",
+    "logging-admin-service": "PO-1",
+    "social-groups-service": "EA-2",
+    "spring-cloud-gateway": "PO-2",
+    "tcp-proxy-service": "PO-2",
+    "world-management-service": "GR-2",
+}
+MICROSERVICE_APPENDIX_ALLOCATIONS = {
+    "design/architecture/microservices/account-service/stripe-integration.md": ("AA-1", "Commerce design"),
+    "design/architecture/microservices/account-service/subscription-management.md": ("AA-1", "Entitlement design"),
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md": (
+        "AS-1",
+        "Sandbox/runtime design",
+    ),
+    "design/architecture/microservices/game-design-service/ability-action-tools.md": ("AR-1", "Authoring design"),
+    "design/architecture/microservices/game-design-service/asset-storage.md": ("AR-1", "Release-asset design"),
+    "design/architecture/microservices/game-design-service/feature-flags.md": ("AR-2", "Runtime-policy design"),
+    "design/architecture/microservices/game-design-service/game-templates.md": ("AR-1", "Template/launch design"),
+    "design/architecture/microservices/game-design-service/item-equipment-balancing.md": (
+        "AR-1",
+        "Authoring design",
+    ),
+    "design/architecture/microservices/game-design-service/modding-framework.md": ("AR-1", "Plugin/mod design"),
+    "design/architecture/microservices/game-design-service/version-control.md": ("AR-1", "Version/publish design"),
+    "design/architecture/microservices/game-design-service/web-visual-interface.md": (
+        "EA-3",
+        "First-party creator UX",
+    ),
+    "design/architecture/microservices/game-design-service/world-editing-tools.md": ("AR-1", "Authoring workflow"),
+    "design/architecture/microservices/game-session-service/protocols.md": (
+        "EA-1",
+        "Gameplay protocol contract",
+    ),
+    "design/architecture/microservices/logging-admin-service/admin-ui.md": ("EA-3", "First-party operator UX"),
+    "design/architecture/microservices/logging-admin-service/analytics-dashboards.md": (
+        "PO-4",
+        "Observability design",
+    ),
+    "design/architecture/microservices/logging-admin-service/moderation-policies.md": (
+        "PO-1",
+        "Moderation-policy design",
+    ),
+    "design/architecture/microservices/spring-cloud-gateway/client-behavior.md": (
+        "PO-2",
+        "Edge client-behavior contract",
+    ),
+    "design/architecture/microservices/tcp-proxy-service/protocols.md": ("PO-2", "Edge protocol contract"),
+    "design/architecture/microservices/world-management-service/procedural-generation-control.md": (
+        "AR-1",
+        "Procedural-authoring design",
+    ),
+    "design/architecture/microservices/world-management-service/world-creation-workflow.md": (
+        "AR-3",
+        "Activation workflow",
+    ),
+}
+MICROSERVICE_EXEMPT_ALLOCATIONS = {
+    "design/architecture/microservices/service-documentation-structure.md": ("Exempt", "Governance guide"),
+    "design/architecture/microservices/service-template.md": ("Exempt", "Template"),
+}
+TOP_ALLOCATION_ROWS = {
+    "design/project-management/design-alignment/design-capability-allocation-microservices.md": (
+        "All 76 files under `design/architecture/microservices/**`",
+        "Per-source allocation",
+    ),
+    "design/architecture/decisions/README.md": ("Registry plus 11 ADRs", "Per-record allocation"),
+    "design/project-management/design-alignment/design-capability-allocation-system.md": (
+        "All 89 direct architecture, 6 infrastructure, and 1 generated source",
+        "Per-source allocation",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -183,18 +274,45 @@ def primary_from_cell(owner: Path, cell: str, groups: set[str], root: Path) -> s
     return primary
 
 
+def expected_microservice_allocation(source_path: str) -> tuple[str, str]:
+    if source_path in MICROSERVICE_EXEMPT_ALLOCATIONS:
+        return MICROSERVICE_EXEMPT_ALLOCATIONS[source_path]
+    if source_path in MICROSERVICE_APPENDIX_ALLOCATIONS:
+        return MICROSERVICE_APPENDIX_ALLOCATIONS[source_path]
+    if source_path in MICROSERVICE_STANDARD_OVERRIDES:
+        return MICROSERVICE_STANDARD_OVERRIDES[source_path]
+
+    path = Path(source_path)
+    if path.parent.name == "microservices" and path.name == "README.md":
+        return "PO-2", MICROSERVICE_STANDARD_CLASSIFICATIONS[path.name]
+    if path.parent.name not in MICROSERVICE_SERVICE_PRIMARY:
+        fail(f"{source_path}: no expected microservice allocation")
+    if path.name not in MICROSERVICE_STANDARD_CLASSIFICATIONS:
+        fail(f"{source_path}: no expected microservice allocation")
+
+    primary = MICROSERVICE_SERVICE_PRIMARY[path.parent.name]
+    if path.name == "configuration.md":
+        primary = "AR-2" if path.parent.name == "game-logic-service" else "PO-3"
+    elif path.name == "operations.md":
+        primary = "PO-4"
+    elif path.name == "runtime-and-data.md" and path.parent.name == "game-session-service":
+        primary = "GR-1"
+    return primary, MICROSERVICE_STANDARD_CLASSIFICATIONS[path.name]
+
+
 def parse_linked_ledger(
     root: Path,
     document: Path,
     heading: str,
     expected_paths: set[str],
     groups: set[str],
+    allowed_classifications: set[str],
 ) -> list[LedgerRow]:
     text = document.read_text(encoding="utf-8")
-    headers, rows = table_in_section(text, heading, {"Path", "Primary"})
+    headers, rows = table_in_section(text, heading, {"Path", "Primary", "Classification"})
     path_index = headers.index("Path")
     primary_index = headers.index("Primary")
-    classification_index = headers.index("Classification") if "Classification" in headers else None
+    classification_index = headers.index("Classification")
     parsed: list[LedgerRow] = []
     for row in rows:
         path_cell = row[path_index]
@@ -203,7 +321,12 @@ def parse_linked_ledger(
             fail(f"{document.relative_to(root)}: path cell must contain one local link: {path_cell!r}")
         source_path = relative_target(document, targets[0], root)
         primary = primary_from_cell(document, row[primary_index], groups, root)
-        classification = row[classification_index].strip() if classification_index is not None else ""
+        classification = row[classification_index].strip()
+        if classification not in allowed_classifications:
+            fail(
+                f"{document.relative_to(root)}:{source_path}: invalid source classification "
+                f"{classification!r}; expected one of {sorted(allowed_classifications)}"
+            )
         parsed.append(LedgerRow(source_path, primary, classification))
     paths = [row.path for row in parsed]
     if len(paths) != len(set(paths)):
@@ -235,7 +358,19 @@ def parse_microservice_ledger(root: Path, groups: set[str], expected_paths: set[
                 primary = primary_cell
             else:
                 primary = primary_from_cell(document, row[primary_index], groups, root)
-            parsed.append(LedgerRow(source_path, primary, row[classification_index].strip()))
+            classification = row[classification_index].strip()
+            expected_primary, expected_classification = expected_microservice_allocation(source_path)
+            if primary != expected_primary:
+                fail(
+                    f"{document.relative_to(root)}:{source_path}: unexpected primary capability "
+                    f"{primary!r}; expected {expected_primary!r}"
+                )
+            if classification != expected_classification:
+                fail(
+                    f"{document.relative_to(root)}:{source_path}: unexpected source classification "
+                    f"{classification!r}; expected {expected_classification!r}"
+                )
+            parsed.append(LedgerRow(source_path, primary, classification))
     if not parsed:
         fail(f"{document.relative_to(root)}: no allocation rows found")
     paths = [row.path for row in parsed]
@@ -253,9 +388,30 @@ def parse_microservice_ledger(root: Path, groups: set[str], expected_paths: set[
 
 def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[str]) -> list[LedgerRow]:
     document = root / SYSTEM_ALLOCATION
-    direct = parse_linked_ledger(root, document, "Direct Architecture Ledger", source_sets["Top-level architecture"], groups)
-    infrastructure = parse_linked_ledger(root, document, "Infrastructure Ledger", source_sets["Infrastructure"], groups)
-    generated = parse_linked_ledger(root, document, "Generated Ledger", source_sets["Generated references"], groups)
+    direct = parse_linked_ledger(
+        root,
+        document,
+        "Direct Architecture Ledger",
+        source_sets["Top-level architecture"],
+        groups,
+        SYSTEM_CLASSIFICATIONS,
+    )
+    infrastructure = parse_linked_ledger(
+        root,
+        document,
+        "Infrastructure Ledger",
+        source_sets["Infrastructure"],
+        groups,
+        SYSTEM_CLASSIFICATIONS,
+    )
+    generated = parse_linked_ledger(
+        root,
+        document,
+        "Generated Ledger",
+        source_sets["Generated references"],
+        groups,
+        {"generated"},
+    )
     rows_by_name = {
         "Direct architecture": direct,
         "Infrastructure": infrastructure,
@@ -303,8 +459,22 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
         fail(f"{document.relative_to(root)}: missing primary allocation count claim")
     claimed_pairs = {capability: int(count) for capability, count in re.findall(r"([A-Z]{2}-\d+)\s+(\d+)", primary_claim.group(1))}
     expected_primary_counts = {group: primary_counts.get(group, 0) for group in groups}
-    if claimed_pairs != expected_primary_counts:
+    sum_match = re.search(r"These sum to\s+(\d+)", text)
+    if claimed_pairs != expected_primary_counts or sum(claimed_pairs.values()) != total or not sum_match or int(sum_match.group(1)) != total:
         fail(f"{document.relative_to(root)}: primary allocation count claim does not match ledger rows")
+
+    classification_claim = re.search(r"Classification counts are:\s*(.*?)\.\s+Primary allocation", text, re.DOTALL)
+    if not classification_claim:
+        fail(f"{document.relative_to(root)}: missing classification count claim")
+    claimed_classifications = {
+        label.strip().removeprefix("and "): int(count)
+        for count, label in re.findall(r"`(\d+)`\s+([^,]+)", classification_claim.group(1))
+    }
+    actual_classifications = Counter(
+        row.classification for ledger_rows in rows_by_name.values() for row in ledger_rows
+    )
+    if claimed_classifications != dict(actual_classifications):
+        fail(f"{document.relative_to(root)}: classification count claim does not match ledger rows")
     return [*direct, *infrastructure, *generated]
 
 
@@ -391,20 +561,28 @@ def validate_microservice_summary(root: Path, rows: list[LedgerRow], expected_pa
 def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisions: set[str]) -> list[LedgerRow]:
     document = root / TOP_ALLOCATION
     text = document.read_text(encoding="utf-8")
-    headers, rows = table_in_section(text, "Allocation Ledger", {"Design source", "Primary capability"})
+    headers, rows = table_in_section(text, "Allocation Ledger", {"Design source", "Heading or scope", "Primary capability"})
     source_index = headers.index("Design source")
-    expected_links = {
-        (root / MICROSERVICE_ALLOCATION).resolve().relative_to(root).as_posix(),
-        (root / SYSTEM_ALLOCATION).resolve().relative_to(root).as_posix(),
-        "design/architecture/decisions/README.md",
-    }
-    actual_links: set[str] = set()
+    heading_index = headers.index("Heading or scope")
+    primary_index = headers.index("Primary capability")
+    identities: list[str] = []
     for row in rows:
         targets = MARKDOWN_LINK_RE.findall(row[source_index])
         if len(targets) != 1:
             fail(f"{document.relative_to(root)}: allocation ledger source must have one link")
-        actual_links.add(relative_target(document, targets[0], root))
-    if actual_links != expected_links:
+        source_path = relative_target(document, targets[0], root)
+        if source_path in identities:
+            fail(f"{document.relative_to(root)}: duplicate allocation ledger row {source_path}")
+        identities.append(source_path)
+        expected = TOP_ALLOCATION_ROWS.get(source_path)
+        if expected is None:
+            fail(f"{document.relative_to(root)}: unexpected allocation ledger row {source_path}")
+        if (row[heading_index].strip(), clean_cell(row[primary_index])) != expected:
+            fail(
+                f"{document.relative_to(root)}:{source_path}: allocation row drift; "
+                f"expected heading/primary {expected!r}"
+            )
+    if set(identities) != set(TOP_ALLOCATION_ROWS) or len(identities) != len(TOP_ALLOCATION_ROWS):
         fail(f"{document.relative_to(root)}: allocation ledger references drifted")
 
     headers, rows = table_in_section(text, "Architecture Decision Allocation", {"Design source", "Primary capability"})

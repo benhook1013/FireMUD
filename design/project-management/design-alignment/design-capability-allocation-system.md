@@ -21,7 +21,7 @@ The path cells in the ledgers below are the complete source manifest, not exampl
 
 Classification counts are: `56` normative design, `17` runbook, `14` reference, `8` index, and `1` generated.
 
-Primary allocation counts are: `AA-1 0`, `AA-2 4`, `AA-3 1`, `EA-1 2`, `EA-2 0`, `EA-3 2`, `GR-1 3`, `GR-2 1`, `GR-3 0`, `GR-4 0`, `AR-1 6`, `AR-2 2`, `AR-3 3`, `AS-1 10`, `SF-1 19`, `SF-2 13`, `PO-1 3`, `PO-2 4`, `PO-3 11`, and `PO-4 12`. These sum to 96. Secondary handoffs intentionally overlap and therefore do not form a partition.
+Primary allocation counts are: `AA-1 0`, `AA-2 4`, `AA-3 1`, `EA-1 2`, `EA-2 0`, `EA-3 2`, `GR-1 3`, `GR-2 1`, `GR-3 0`, `GR-4 0`, `AR-1 6`, `AR-2 2`, `AR-3 3`, `AS-1 10`, `SF-1 19`, `SF-2 13`, `PO-1 3`, `PO-2 4`, `PO-3 11`, and `PO-4 12`. These sum to 96 (`89` direct + `6` infrastructure + `1` generated). Secondary handoffs intentionally overlap and therefore do not form a partition.
 
 ## Direct Architecture Ledger
 

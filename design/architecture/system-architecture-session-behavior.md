@@ -79,7 +79,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 - **Gameplay session bindings**
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.
   - Purpose: bind a connected socket or reconnect token to a character in a specific tenant, enforce one session per character, and support reconnect flows.
-  - Lifetime: the storage TTL may refresh while the player remains active, but the binding remains bounded by current authentication validity. After disconnect or suspension, resume is admitted only within the effective `firemud.reconnection.policy.resume-window-ms` and before the absolute derived session lifetime expires. Redis key presence and transcript retention are not sufficient authority to resume.
+  - Lifetime: on successful gameplay admission at `admissionAt`, Game Session stores the immutable logical anchor `gameplaySessionExpiresAt = admissionAt + session_expiration_ms`. The Redis TTL is physical cleanup/storage metadata and may refresh while the binding is active, but it must never move that anchor. After disconnect or suspension at `disconnectAt`, resume is admitted only before `resumeDeadline = min(gameplaySessionExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`. Redis key presence and transcript retention are not sufficient authority to resume.
 
 - **Bootstrap/pre-auth session contexts**
   - Keys: current implementation-local `sessionctx:*` entries described in the Game Session runtime docs.
@@ -111,10 +111,10 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 
 - The newly authenticated caller `accountId` matches the stored gameplay binding subject.
 - Current tenant membership and role authority still permits gameplay admission for the target tenant and is not older than the stored `membershipVersion`.
-- The gameplay session key remains logically resumable (key present, logical expiry valid, uniqueness key unchanged).
+- The gameplay session key remains logically resumable (key present, `gameplaySessionExpiresAt` has not passed, the current `resumeDeadline` has not passed, and the uniqueness key is unchanged).
 - Current revocation state does not block the account or tenant for gameplay admission.
 
-Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, and then resume the gameplay binding. Resume is rejected only for subject mismatch, expired or non-resumable gameplay state, expired resume window, revoked account or tenant state, or lost gameplay membership.
+Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, and then resume the gameplay binding. Resume is rejected only for subject mismatch, expired or non-resumable gameplay state, expired resume window, revoked account or tenant state, or lost gameplay membership. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `gameplaySessionExpiresAt` or `resumeDeadline`.
 
 ### Active Session Token Refresh (Required)
 
@@ -122,7 +122,7 @@ Long-lived gameplay sessions require periodic service-token rotation, independen
 
 1. Refresh session service JWTs on a bounded cadence (recommended at 50% of JWT lifetime with random jitter and a hard floor of 60 seconds between refresh attempts).
 2. Refresh immediately when an internal backend call fails with auth-expired or auth-revoked semantics.
-3. On successful refresh, atomically update gameplay session binding fields `authTokenHash` and `authTokenIssuedAt` before using the new token for subsequent backend calls.
+3. On successful refresh, atomically update gameplay session binding fields `authTokenHash` and `authTokenIssuedAt` before using the new token for subsequent backend calls. Do not rewrite the immutable `gameplaySessionExpiresAt` anchor or the disconnected `resumeDeadline`.
 4. If refresh fails and the existing token is expired or revoked, fail closed for gameplay actions that require backend auth and return a canonical session-expired error, forcing re-login.
 
 Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:

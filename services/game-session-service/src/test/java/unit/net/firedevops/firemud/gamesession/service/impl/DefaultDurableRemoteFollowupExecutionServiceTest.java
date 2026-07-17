@@ -603,6 +603,43 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
+  void executeRejectsMalformedTriggerScriptEventPayloadBeforeRequestConstruction() {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup = triggerScriptEventFollowup("{not-json");
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_FOLLOWUP_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("Target-side remote followup payload is not valid JSON", result.failureMessage());
+    verifyNoInteractions(automationScriptingClient);
+  }
+
+  @Test
+  void executeRejectsUnreadableTriggerScriptEventDryRunValueBeforeRequestConstruction() {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup =
+        triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\",\"isDryRun\":\"false\"}");
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
+    assertEquals("isDryRun must be boolean", result.failureMessage());
+    verifyNoInteractions(automationScriptingClient);
+  }
+
+  @Test
   void executeRejectsConflictingDurableGameplayRowAndPayloadJson() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
@@ -1005,5 +1042,50 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
+  }
+
+  private static TickEffect triggerScriptEventEffect() {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-1");
+    effect.setEffectKey("followup-1");
+    return effect;
+  }
+
+  private static RemoteFollowup triggerScriptEventFollowup(String payloadJson) {
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("followup-1");
+    followup.setTenantId(1L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(8L);
+    followup.setTargetEntityId("321");
+    followup.setDueTickId(55L);
+    followup.setPlayableStateScope("SHARED");
+    followup.setWorldSlug("demo");
+    followup.setRealmSlug("production");
+    followup.setPointerVersion(17L);
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setPayloadJson(payloadJson);
+    followup.setPayloadKind("trigger_script_event");
+    followup.setEventType("onEnterRegion");
+    followup.setEventSchemaVersion("v1");
+    followup.setScriptEventId("remote-enter-1");
+    followup.setTriggerMode("TRIGGER_MODE_NORMAL");
+    followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
+    followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
+    return followup;
+  }
+
+  private static RemoteCommandCoordinator triggerScriptEventCoordinator() {
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setCoordinatorId("coord-1");
+    coordinator.setTenantId(1L);
+    coordinator.setFollowupId("followup-1");
+    coordinator.setOriginRegionId("region-a");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setScriptId("script-1");
+    coordinator.setScriptPatchVersion("patch-1");
+    return coordinator;
   }
 }

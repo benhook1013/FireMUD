@@ -40,6 +40,13 @@ def expect_failure(label: str, validator, root: Path, expected: str) -> None:
         raise AssertionError(f"{label}: mutated fixture unexpectedly passed")
 
 
+def replace_once(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    if text.count(old) != 1:
+        raise AssertionError(f"expected exactly one mutation target in {path}: {old!r}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
 def main() -> None:
     validator = load_validator()
     with fixture_root() as directory:
@@ -56,9 +63,52 @@ def main() -> None:
 
     with fixture_root() as directory:
         path = Path(directory) / validator.TOP_ALLOCATION
-        text = path.read_text(encoding="utf-8")
-        path.write_text(text.replace("| **Total** | **184** |", "| **Total** | **183** |", 1), encoding="utf-8")
+        replace_once(path, "| **Total** | **184** |", "| **Total** | **183** |")
         expect_failure("architecture summary drift", validator.validate, Path(directory), "total discovered summary drift")
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.MICROSERVICE_ALLOCATION
+        replace_once(
+            path,
+            "| Runtime-policy/configuration contract | Substantive settings authority",
+            "| Invalid classification | Substantive settings authority",
+        )
+        expect_failure(
+            "microservice classification drift",
+            validator.validate,
+            Path(directory),
+            "unexpected source classification",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.MICROSERVICE_ALLOCATION
+        replace_once(
+            path,
+            "`design/architecture/microservices/account-service/README.md` | `AA-1`",
+            "`design/architecture/microservices/account-service/README.md` | `AA-2`",
+        )
+        expect_failure(
+            "microservice primary drift",
+            validator.validate,
+            Path(directory),
+            "unexpected primary capability",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.TOP_ALLOCATION
+        text = path.read_text(encoding="utf-8")
+        row = next(
+            line
+            for line in text.splitlines()
+            if "design-capability-allocation-microservices.md" in line
+        )
+        replace_once(path, row, f"{row}\n{row}")
+        expect_failure(
+            "duplicate top-level allocation row",
+            validator.validate,
+            Path(directory),
+            "duplicate allocation ledger row",
+        )
 
     print("design capability allocation regression tests passed")
 

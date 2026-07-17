@@ -1,5 +1,9 @@
 # Game Authoring, Publishing, and Activation
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for game authoring, publishing, and activation. Canonical target-state authoring, settings, publication, release, and runtime-activation contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
 This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability. The live implementation is strongest in control-plane publication, release attestation, launch preflight, and the first typed World authoring handoff; broader creator/editor UX and downstream ownership synchronization remain incomplete.

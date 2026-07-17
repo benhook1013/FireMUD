@@ -1,5 +1,9 @@
 # Realm Routing and Playable State
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for realm routing and playable state. Canonical target-state realm visibility, admission pointers, playable-state projection, runtime target identity, and freshness contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
 The bounded realm catalog, admission-pointer, bootstrap/connect-scope, session-freshness, runtime-projection, and currently live playable-state boundaries are implemented. The complete routing boundary is also partial where the persisted pointer key is not tenant-qualified, and public/grant policy remains partial because designed grant expiry and tenant-admin management are absent. Additional recorded work covers later gameplay-state consumers, region-partitioned runtime ownership, and replacement-instance migration semantics.

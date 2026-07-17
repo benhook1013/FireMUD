@@ -193,4 +193,4 @@ These rows are deliberately not duplicated in the decision ledger. The specializ
 
 ## Handoff Summary
 
-The existing cross-cutting inventory remains the authoritative non-duplicated home for `AUTH-*`, `SESSION-*`, `TICK-01..07`, `REDIS-01..03`, `AUTO-01..03`, `CONTENT-*`, `SEC-*`, `OPS-*`, and gRPC decisions. This file contains 54 specialized rows, including `SCRIPT-15`, `SCRIPT-16`, and `TICK-16` through `TICK-19`, and explicitly points stronger evidence back to those keys. No Gradle or Docker commands were run; edits were limited to the three inventory files.
+The existing cross-cutting inventory remains the authoritative non-duplicated home for `AUTH-*`, `SESSION-*`, `TICK-01..07`, `REDIS-01..03`, `AUTO-01..03`, `CONTENT-*`, `SEC-*`, `OPS-*`, and gRPC decisions. This file contains 54 specialized rows, including `SCRIPT-15`, `SCRIPT-16`, and `TICK-16` through `TICK-19`, and explicitly points stronger evidence back to those keys.
