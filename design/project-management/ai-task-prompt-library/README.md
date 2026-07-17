@@ -4,6 +4,24 @@ This directory is the index for reusable FireMUD AI review prompts.
 
 The prompt files under `architecture-review-prompts/` are grouped by theme so related reviews sort together.
 
+## Audit Suite Review Status
+
+Status: deferred and not started. The prompts are individually reusable, but the library has not yet been coverage-verified as one deliberate whole-application audit suite.
+
+The future review must be run with the human to decide which suites cover architecture convergence, design-to-implementation alignment, code correctness, operational readiness, security, and product/user journeys. It must also decide whether exhaustive execution uses domain, service, invariant, or staged lanes; which prompts are periodic rather than one-time convergence tools; and what evidence, rereview, synthesis, and completion gates make a whole-app pass trustworthy.
+
+Review work:
+
+1. Inventory all 27 prompts and the orchestration plan by purpose, source documents, systems covered, and expected findings.
+2. Map coverage across every service, frontend, shared module, protocol, persistence boundary, infrastructure surface, operator workflow, user journey, and cross-cutting invariant.
+3. Find omissions, duplicate or contradictory scopes, stale links and terminology, and prompts that are too broad or narrow to execute reliably. Known cleanup candidates include the legacy `40-design-to-slice-translation-gap-review.md` filename and remaining `service-status` wording.
+4. Verify that target-state design review and implementation/proof review remain distinct review modes.
+5. Define the whole-app execution order, per-prompt coverage evidence, cross-lane reconciliation, rereview behavior, and incomplete-review gate.
+6. Define how opportunistic discovery, exhaustive bounded review, independent verification, and main-thread synthesis divide across available agent roles without delegating human design decisions.
+7. Run an independent coverage review before treating the revised library as the standard whole-app audit suite.
+
+Completion requires every meaningful application and platform domain, service, and major cross-service boundary to have an explicit review home without unexplained duplication; current canonical sources throughout; distinct architecture, implementation, proof, operations, security, and product outcomes; and an orchestration plan that can produce one reconciled whole-app result.
+
 ## Review Setup
 
 - [00-fresh-reread-issue-only-preamble.md](./architecture-review-prompts/00-fresh-reread-issue-only-preamble.md) — issue-only review preamble
