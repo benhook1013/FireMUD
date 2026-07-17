@@ -13,7 +13,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 - Expect concurrent and dirty worktrees. Preserve unrelated edits and work in scope; do not stop merely because unrelated files changed.
 - Do not run `git restore`, `git checkout`, `git reset`, `git clean`, or `git stash` unless a human explicitly requests that action. Delete an untracked file only when it is unquestionably disposable and in scope; temporary-looking names or lint failures are not sufficient.
-- Edit a modified target in place. If overlapping changes make intent unclear or risky, ask the human. Never revert, clean up, or reformat unrelated work.
+- Edit a modified target in place. If overlapping changes make intent unclear or risky, ask the human. Never revert or clean up unrelated work; changes produced by the repository's canonical automatic formatters are allowed, but preserve unrelated semantic edits.
 - Open and update coherent pull requests autonomously for active implementation work so CI and review can run; use clearly based stacked PRs when that keeps work moving without mixing unrelated changes. Merge or close pull requests only with explicit human authorization.
 
 ## Development And Documentation

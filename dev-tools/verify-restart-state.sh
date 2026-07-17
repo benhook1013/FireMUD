@@ -19,7 +19,7 @@ echo "Local volumes are left intact."
 bash "$ENSURE_ENV_SCRIPT"
 bash "$ENSURE_CERTS_SCRIPT"
 "$BUILD_JARS_SCRIPT"
-docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
+docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
 docker compose "${COMPOSE_FILES[@]}" restart
 
 "$HEALTH_SCRIPT"
