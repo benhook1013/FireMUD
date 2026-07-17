@@ -34,10 +34,10 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 ## Conditional Workflows
 
-- For PR status, CodeRabbit, CI, Renovate, merge authorization, branch topology, and post-merge cleanup, use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
-- For every code or documentation change, use [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
-- For subagent selection, delegation boundaries, independent review, or Codex Spark handovers, use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md).
-- For PR or review status, inspect unresolved non-outdated review threads first, report outdated unresolved threads separately, and check CI and mergeability second. Before calling a review complete or merge-ready, use `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>`; request a full CodeRabbit review at meaningful checkpoints only after current findings are resolved and no review is active or rate limited.
+- PR status, CodeRabbit, CI, Renovate, merge authorization, branch topology, and post-merge cleanup use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
+- Every code or documentation change uses [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
+- Subagent selection, delegation boundaries, independent review, or Codex Spark handovers use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md).
+- PR or review status handling starts with unresolved non-outdated review threads, reports outdated unresolved threads separately, and checks CI and mergeability second. Before calling a review complete or merge-ready, use `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>`; request a full CodeRabbit review at meaningful checkpoints only after current findings are resolved and no review is active or rate limited.
 
 ## Orchestration
 

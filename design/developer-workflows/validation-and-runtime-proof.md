@@ -4,9 +4,9 @@ Use this guide when selecting or reporting formatting, checks, documentation val
 
 ## Code And Documentation
 
-- For code changes, run `./gradlew spotlessApply` and `./gradlew check` before hand-off. If formatting-sensitive files changed, run the relevant `spotlessCheck` or `spotlessJavaCheck` for touched services.
-- For service changes, prefer the CI-equivalent `./gradlew :<service>:check -PfullCheck`. For heavy local service checks, use `dev-tools/validation/run-locked-gradle.sh` to avoid concurrent result corruption.
-- For Markdown or design documentation changes, run `./gradlew linkCheck lintMarkdown` and fix hygiene failures, including pre-existing failures in the changed scope.
+- Code changes require `./gradlew spotlessApply` and `./gradlew check` before hand-off. If formatting-sensitive files changed, run the relevant `spotlessCheck` or `spotlessJavaCheck` for touched services.
+- Service changes should prefer the CI-equivalent `./gradlew :<service>:check -PfullCheck`. Heavy local service checks should use `dev-tools/validation/run-locked-gradle.sh` to avoid concurrent result corruption.
+- Markdown or design documentation changes require `./gradlew linkCheck lintMarkdown` and fixes for hygiene failures, including pre-existing failures in the changed scope.
 - If CI exposes multiple failures in one area, stop relying on incremental remote feedback and run the fuller local proof. If broad migration/build changes or multiple branch lanes are in flight, rerun repository-wide validation before hand-off.
 
 ## Runtime And Smoke Changes

@@ -114,7 +114,7 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 - The gameplay session key remains logically resumable (key present, logical expiry valid, uniqueness key unchanged).
 - Current revocation state does not block the account or tenant for gameplay admission.
 
-Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, and then resume the gameplay binding. Resume is rejected only for subject mismatch, expired or non-resumable gameplay state, revoked account or tenant state, or lost gameplay membership.
+Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, and then resume the gameplay binding. Resume is rejected only for subject mismatch, expired or non-resumable gameplay state, expired resume window, revoked account or tenant state, or lost gameplay membership.
 
 ### Active Session Token Refresh (Required)
 

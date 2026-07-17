@@ -2,11 +2,16 @@
 
 Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative. It records consequential decisions found in the assigned product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources. It does not replace the canonical architecture or cross-cutting inventories.
 
-This inventory contains 38 decision rows. Its assigned source set is the exact 35-path product/operations partition in the disjoint `22 + 39 + 35` allocation; counts and capability coverage below are derived from the rows in this file.
+This inventory contains 38 decision rows. Its assigned source set is the exact 35-path product/operations partition in the disjoint `22 + 39 + 35 = 96` allocation: 22 counted cross-cutting paths, 39 additional specialized runtime/support paths, and 35 product/operations paths. Counts and capability coverage below are derived from the rows in this file.
+
+## Implementation Status
+
+- **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 96-path allocation is accounted for by the 22 cross-cutting, 39 specialized runtime/support, and 35 assigned paths.
+- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity only. It does not mean that every decision is implemented or approved; each row's status and human-consultation field record the current state.
 
 ## Scope And Method
 
-The allocation source set contains 96 Markdown paths: 89 direct architecture sources, 6 infrastructure sources, and 1 generated source. The 22 allocation paths already owned by `decision-inventory-cross-cutting.md` were excluded from this scan:
+The 96-path allocation universe contains 89 direct architecture sources, 6 infrastructure sources, and 1 generated source. The 22 paths already counted by `decision-inventory-cross-cutting.md` were excluded from this scan:
 
 - `design/architecture/README.md`
 - `design/architecture/system-architecture-overview.md`
@@ -31,7 +36,7 @@ The allocation source set contains 96 Markdown paths: 89 direct architecture sou
 - `design/architecture/system-architecture-backup-recovery.md`
 - `design/architecture/service-responsibility-matrix.md`
 
-The specialized runtime set was also excluded exactly as requested: all `system-architecture-redis*.md`, `system-architecture-scripting*.md`, and `system-architecture-tick*.md` files, plus `system-architecture-spatial-and-ambient-effects-catalog.md`, `system-architecture-identifier-glossary.md`, `system-architecture-authz-route-matrix.md`, `system-architecture-jwt-and-token-contracts.md`, `system-architecture-shared-libraries.md`, `system-architecture-database-migrations.md`, and `system-architecture-tracing.md`. The resulting assigned set is the 35 paths in the coverage ledger below.
+The specialized runtime/support exclusion contains 42 named or pattern-matched paths, but three (`system-architecture-redis.md`, `system-architecture-scripting.md`, and `system-architecture-ticks.md`) are already in the counted cross-cutting partition. The disjoint specialized set therefore contributes 39 additional paths: all remaining `system-architecture-redis*.md`, `system-architecture-scripting*.md`, and `system-architecture-tick*.md` files, plus `system-architecture-spatial-and-ambient-effects-catalog.md`, `system-architecture-identifier-glossary.md`, `system-architecture-authz-route-matrix.md`, `system-architecture-jwt-and-token-contracts.md`, `system-architecture-shared-libraries.md`, `system-architecture-database-migrations.md`, and `system-architecture-tracing.md`. The resulting assigned set is the 35 paths in the coverage ledger below.
 
 The scan used the threshold in [consequential-decision-inventory.md](consequential-decision-inventory.md): a choice is recorded only when it crosses a service or product boundary, affects security, tenant isolation, durability, consistency, recovery, operational safety, cost, or player/creator experience, constrains extensibility, has a credible alternative, or leaves a material conflict or human decision unresolved. Existing keys are cross-referenced rather than copied. Routine implementation choices, indexes, diagrams, and generated values without independent authority are explicitly classified as no-decision evidence.
 
@@ -376,7 +381,7 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `COMPLIANCE-01` - Tier A credential evidence is a measurable release and recovery gate
 
 - **Capability:** Primary `PO-3.2` Environment, configuration, secret, certificate, and service-discovery delivery. Secondary `PO-1.3`, `PO-3.1`, `PO-4.4`, and `SF-1.3`.
-- **Decision / status / importance:** Tier A secrets and certificates require age/provisioning or rotation evidence, alerting, emergency handling, and an immutable versioned compliance record with exactly one freshness timestamp. Production blocks on noncompliance; staging transitions from warning to hard enforcement on the documented date; hobby environments validate before traffic. Status `proposed/deferred` because the policy is explicit but implementation is partial and the enforcement date is now due; `H/hard`.
+- **Decision / status / importance:** Tier A secrets and certificates require age/provisioning or rotation evidence, alerting, emergency handling, and an immutable versioned compliance record with exactly one freshness timestamp. Production blocks on noncompliance; staging hard enforcement took effect on July 1, 2026, so non-compliant records block staging promotion/deployment evidence and any staging deployment intended to serve as production-promotion evidence, while detached or quarantined non-promotion drills remain outside that gate; hobby environments validate before traffic. Status `proposed/deferred` because the policy is explicit but implementation is partial; `H/hard`.
 - **Sources / headings:** [environment-and-secrets-overview.md](../../architecture/infrastructure/environment-and-secrets-overview.md) `§ Secret Governance Tiers`, `§ Secret Compliance Controls`, `§ Player-Facing Environment Bootstrap Requirements`, and `§ Certificate Management & Watchers`; [environment-and-secrets-catalog.md](../../architecture/infrastructure/environment-and-secrets-catalog.md) `§ TLS & Certificates`, `§ Authentication & JWT`, and `§ Additional Notes`; [schedule.md](../../architecture/infrastructure/schedule.md) `§ Kubernetes Cluster (Production)`, `§ Kubernetes Cluster (Staging)`, and `§ Hobby / Self-Hosted Environments`.
 - **Strongest alternative:** Keep credential rotation as policy text without immutable evidence, age enforcement, or environment-specific traffic and promotion consequences, or make an external secret manager mandatory now.
 - **ADR recommendation:** Yes. Establish the compliance record schema, timestamp authority, enforcement dates, exception/waiver rules, and relationship to `SEC-01`, `SEC-02`, `OPS-04`, and `PREFLIGHT-01`.

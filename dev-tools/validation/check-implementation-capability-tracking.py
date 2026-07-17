@@ -304,6 +304,31 @@ def validate_coverage_summary(
         fail(f"{relative_path(path, root)}: primary tracker total drifted")
 
 
+def validate_status_row_handoffs(
+    tracker_name: str,
+    capability_id: str,
+    allocation_handoffs: set[str],
+    allocations: dict[str, tuple[str, set[str]]],
+    cell: str,
+) -> None:
+    referenced_ids = set(CAPABILITY_RE.findall(cell))
+    unknown_ids = referenced_ids - set(allocations)
+    if unknown_ids:
+        fail(f"{tracker_name}:{capability_id}: unknown capability handoffs {sorted(unknown_ids)}")
+
+    # Status rows may show a smaller operational subset than the exhaustive
+    # allocation ledger and may link the owner of a named related capability.
+    allowed = allocation_handoffs | {tracker_name} | {allocations[current][0] for current in referenced_ids}
+    actual = linked_tracker_names(cell)
+    unexpected = sorted(actual - allowed)
+    if not unexpected:
+        return
+    fail(
+        f"{tracker_name}:{capability_id}: unexpected status-row secondary handoffs "
+        f"not in allocation ledger: {unexpected}"
+    )
+
+
 def parse_allocations(root: Path, allocation_path: Path, text: str) -> dict[str, tuple[str, set[str]]]:
     allocations: dict[str, tuple[str, set[str]]] = {}
     for line in text.splitlines():
@@ -383,13 +408,12 @@ def main() -> None:
                 fail(f"capability {capability_id} appears in both {tracked[capability_id]} and {tracker_name}")
             if capability_id not in allocations:
                 fail(f"{tracker_name}: unknown capability {capability_id}")
-            expected_primary, _ = allocations[capability_id]
+            expected_primary, expected_handoffs = allocations[capability_id]
             if expected_primary != tracker_name:
                 fail(f"{tracker_name}:{capability_id}: allocation primary is {expected_primary}")
-            referenced_ids = set(CAPABILITY_RE.findall(cells[6]))
-            unknown_ids = referenced_ids - leaf_set
-            if unknown_ids:
-                fail(f"{tracker_name}:{capability_id}: unknown capability handoffs {sorted(unknown_ids)}")
+            validate_status_row_handoffs(
+                tracker_name, capability_id, expected_handoffs, allocations, cells[6]
+            )
             tracked[capability_id] = tracker_name
             row_count += 1
         if row_count == 0:

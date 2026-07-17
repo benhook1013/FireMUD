@@ -14,7 +14,8 @@ Automation & Scripting treats event ingress as at-most-once per **Trigger Identi
 
 - Gameplay/runtime handler identity includes the applicable `tenantId`, `gameInstanceId`, resolved `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun` fields.
 - `isDryRun` is always an identity dimension so live and test execution cannot collide.
-- Scheduler/timer identity additionally carries its due point and trigger mode; its deterministic `scriptEventId` is derived from the due point and required Trigger Identity fields.
+- Scheduler/timer identity additionally carries its due point and trigger mode. The scheduler derives `scriptEventId` from the non-ID inputs `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scheduleDefinitionId, duePoint>`; `scriptEventId` itself is never part of this preimage. `duePoint` is exactly one tagged value: `dueTickId:<value>` for tick-aligned schedules or `dueAt:<epochMillis>` for wall-clock timers. The current scheduler path emits only `triggerMode=TRIGGER_MODE_CATCH_UP`, which remains an explicit field in the full Trigger Identity; any additional scheduler trigger mode must become an explicit deterministic-ID input before that mode is admitted.
+- The canonical preimage is the fixed-order, pipe-delimited UTF-8 serialization used by `ScriptScheduleInstanceServiceImpl.TimerFiringCandidate.identity()`. Hash those bytes with SHA-256, encode the digest as lowercase hexadecimal, retain the first 60 hexadecimal characters, and prefix the result with `timer-`.
 - Tenant-readiness `onLoad` follows the explicit non-runtime exception in the normative table and does not invent sentinel runtime, region, or entity identity.
 - Plugin-trigger identity additionally carries plugin and binding identity where the invocation unit is plugin- or binding-scoped.
 

@@ -118,6 +118,80 @@ def main() -> None:
             "tests or canonical validation/smoke tooling",
         )
 
+        allocation_path = root / "design/project-management/implementation-tracking/capability-allocation.md"
+        allocations = validator.parse_allocations(
+            root,
+            allocation_path,
+            textwrap.dedent(
+                """
+                | `AA-1.1` | [player-access-and-session.md](./player-access-and-session.md) | [shared-runtime-contracts-and-persistence.md](./shared-runtime-contracts-and-persistence.md); [realm-routing-and-playable-state.md](./realm-routing-and-playable-state.md) | rationale |
+                | `AA-1.2` | [player-access-and-session.md](./player-access-and-session.md) |  | rationale |
+                """
+            ),
+        )
+        allowed_handoffs = allocations["AA-1.1"][1]
+        validator.validate_status_row_handoffs(
+            "player-access-and-session.md",
+            "AA-1.1",
+            allowed_handoffs,
+            allocations,
+            "AA-1.1 handoff: [shared-runtime-contracts-and-persistence.md](./shared-runtime-contracts-and-persistence.md)",
+        )
+        validator.validate_status_row_handoffs(
+            "player-access-and-session.md",
+            "AA-1.2",
+            allocations["AA-1.2"][1],
+            allocations,
+            "",
+        )
+        validator.validate_status_row_handoffs(
+            "player-access-and-session.md",
+            "AA-1.2",
+            allocations["AA-1.2"][1],
+            allocations,
+            "No secondary tracker handoff applies.",
+        )
+        validator.validate_status_row_handoffs(
+            "player-access-and-session.md",
+            "AA-1.1",
+            allowed_handoffs,
+            allocations,
+            "Related [AA-1.2](./player-access-and-session.md) capability in this tracker.",
+        )
+        expect_failure(
+            "extra status-row handoff",
+            lambda: validator.validate_status_row_handoffs(
+                "player-access-and-session.md",
+                "AA-1.2",
+                allocations["AA-1.2"][1],
+                allocations,
+                "[shared-runtime-contracts-and-persistence.md](./shared-runtime-contracts-and-persistence.md)",
+            ),
+            "unexpected status-row secondary handoffs",
+        )
+        expect_failure(
+            "wrong status-row handoff",
+            lambda: validator.validate_status_row_handoffs(
+                "player-access-and-session.md",
+                "AA-1.1",
+                allowed_handoffs,
+                allocations,
+                "[gameplay-rules-entities-and-effects.md](./gameplay-rules-entities-and-effects.md)",
+            ),
+            "unexpected status-row secondary handoffs",
+        )
+        expect_failure(
+            "unknown related capability",
+            lambda: validator.validate_status_row_handoffs(
+                "player-access-and-session.md",
+                "AA-1.1",
+                allowed_handoffs,
+                allocations,
+                "Related `ZZ-9.9` capability.",
+            ),
+            "unknown capability handoffs",
+        )
+
     summary = textwrap.dedent(
         """
         ## Coverage Summary

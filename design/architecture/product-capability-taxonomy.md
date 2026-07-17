@@ -1,10 +1,12 @@
 # FireMUD Product Capability Taxonomy
 
-Status: Current allocation taxonomy. The complete canonical design corpus is being allocated against these stable identifiers.
-
 ## Purpose
 
 This taxonomy provides stable product-capability identifiers for canonical design navigation, architecture decision indexing, implementation tracking, and code/proof reconciliation. It organizes responsibility without defining runtime behavior and without mirroring the microservice deployment topology.
+
+## Implementation Status
+
+This is the current allocation taxonomy. The complete canonical design corpus is being allocated against these stable identifiers.
 
 ## Taxonomy Contract
 
