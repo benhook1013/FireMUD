@@ -98,6 +98,8 @@ The ten permanent implementation trackers are retained as the complete-product p
 
 ## Coverage Summary
 
+This summary is a declared automation contract, not a hand-maintained second ledger. `dev-tools/validation/check-implementation-capability-tracking.py` parses the allocation rows and rejects drift in every measure and per-tracker total below.
+
 | Measure | Result |
 | --- | ---: |
 | Taxonomy leaf capabilities | 79 |

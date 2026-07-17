@@ -368,6 +368,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
           GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
               worldSlug, realmSlug, pointerVersion);
+      boolean isDryRun = authoritativeBoolean(false, root, "isDryRun");
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequestFactory.builder(
               new TriggerScriptEventRequestFactory.CommonFields(
@@ -384,6 +385,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredAuthoritativeText(
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
+                  isDryRun,
                   triggerMode(root, followup),
                   playableStateScope(followup.getPlayableStateScope()),
                   requiredAuthoritativeText(

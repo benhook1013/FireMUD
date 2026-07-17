@@ -49,6 +49,7 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 
 The design-allocation and decision-inventory phases were completed against these gates:
 
+- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the architecture source sets, parses each allocation ledger, and reconciles the declared `184`-source coverage summary.
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
 - every Markdown source under `design/architecture/**` is present in the allocation ledger or explicitly classified as non-allocatable generated/index material;
 - mixed canonical documents have heading-level allocations where file-level allocation would hide a real ownership split;
@@ -59,6 +60,7 @@ The design-allocation and decision-inventory phases were completed against these
 
 The capability implementation reconciliation additionally requires:
 
+- `python3 dev-tools/validation/check-implementation-capability-tracking.py` derives the capability and per-tracker totals from the allocation table before accepting its Coverage Summary;
 - every taxonomy leaf appears exactly once in the primary-tracker allocation and exactly once in a tracker status table;
 - implementation and verification are represented independently with approved states;
 - each capability names canonical design, production evidence, focused proof, handoffs, and its remaining gap or decision;

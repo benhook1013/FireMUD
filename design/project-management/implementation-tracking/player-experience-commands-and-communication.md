@@ -1,5 +1,9 @@
 # Player Experience, Commands, and Communication
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for player-facing commands, communication, presence, and client behavior. Canonical target-state player-experience and cross-service contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current capability status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
 This tracker is the permanent reader-facing implementation record for player-facing commands, admission, presentation, communication, presence, and client behavior. Most bounded capabilities are live, including the stored game-authored HELP path; broader command interpretation, rich help authoring/discovery, elevated staff behavior, richer communication, and the dedicated browser-service boundary remain explicitly incomplete.

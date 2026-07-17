@@ -1,5 +1,9 @@
 # Gameplay Rules, Entities, and Effects
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for gameplay rules, entities, and effects. Canonical target-state behavior and cross-service contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current capability status, implementation and proof evidence, gaps, and handoffs for this domain.
+
 ## Current Status
 
 The live implementation is strongest in item containment and transfer, durable effect replay, and the first evaluated actor-state/effect seams. Entity Management also has crafting-oriented query structures and version-scoped recipe rows, but there is no complete player crafting/material-consumption flow yet. The broader authored-action, generic actor, targeting, resource-cost, and combat models remain incomplete. Cross-service proof is strongest on the bounded item, LOOK, movement, and replay paths; broader gameplay orchestration is still represented more by service-level tests and slice-oriented fixtures than by full production integration.

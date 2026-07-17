@@ -1,5 +1,9 @@
 # Player Access and Session
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for player access and session. Canonical target-state authentication, admission, session, and reconnection contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, and does not redefine those contracts.
+
 ## Current Status
 
 The bounded player-access and session paths are implemented across Account, Common Security, TCP Proxy, Gateway, Game Session, and the gameplay runtime services. The live model is account-first bootstrap followed by explicitly authorized gameplay admission, shared Telnet/WebSocket text handling, deliberate lifecycle separation between fresh entry, resume, takeover, and logout, and bounded continuity through the Gateway bridge. Account lifecycle, commerce, entitlement follow-through, generic prompt login, and full control-plane revocation/logout remain partial. Focused automated proofs exist for the principal paths; manual end-to-end QA and a small number of broader continuity/validation follow-ups remain.

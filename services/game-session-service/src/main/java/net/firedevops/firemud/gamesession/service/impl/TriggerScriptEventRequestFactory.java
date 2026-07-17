@@ -20,6 +20,7 @@ final class TriggerScriptEventRequestFactory {
             .setEventSchemaVersion(commonFields.eventSchemaVersion())
             .setScriptPatchVersion(commonFields.scriptPatchVersion())
             .setScriptEventId(commonFields.scriptEventId())
+            .setIsDryRun(commonFields.isDryRun())
             .setTriggerMode(commonFields.triggerMode())
             .setPlayableStateScope(commonFields.playableStateScope())
             .setReadSnapshotToken(commonFields.readSnapshotToken())
@@ -43,6 +44,7 @@ final class TriggerScriptEventRequestFactory {
       String eventSchemaVersion,
       String scriptPatchVersion,
       String scriptEventId,
+      boolean isDryRun,
       TriggerMode triggerMode,
       PlayableStateScope playableStateScope,
       String readSnapshotToken,

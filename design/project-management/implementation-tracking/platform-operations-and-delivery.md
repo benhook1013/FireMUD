@@ -1,5 +1,9 @@
 # Platform Operations and Delivery
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for platform operations and delivery. Canonical target-state infrastructure, deployment, security, and operational contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative policy.
+
 ## Current Status
 
 The implementation record is consolidated by live capability. Runtime identity and logging, bounded metrics, player-experience smoke, hosted delivery, public-edge routing, deployment preflight, reset/recovery tooling, gameplay proof, and operator control surfaces are implemented at the bounded boundaries stated below. The remaining work is concentrated in preview lifecycle/admission cleanup, richer live-environment proof, credential rotation, deferred observability context, and higher-scale gameplay evidence.

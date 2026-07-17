@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Regression checks for capability summaries and evidence-anchor categories."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "dev-tools/validation/check-implementation-capability-tracking.py"
+
+
+def load_validator():
+    spec = importlib.util.spec_from_file_location("implementation_capability_validator", SCRIPT)
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load implementation capability validator")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def expect_failure(label: str, call, expected: str) -> None:
+    try:
+        call()
+    except SystemExit as error:
+        if expected not in str(error):
+            raise AssertionError(f"{label}: unexpected failure: {error}") from error
+    else:
+        raise AssertionError(f"{label}: invalid fixture unexpectedly passed")
+
+
+def main() -> None:
+    validator = load_validator()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        owner = root / "design/project-management/implementation-tracking/tracker.md"
+        owner.parent.mkdir(parents=True)
+        owner.write_text("# tracker\n", encoding="utf-8")
+        for relative in (
+            "design/architecture/canonical.md",
+            "services/example/src/main/Production.java",
+            "services/example/src/test/ProductionTest.java",
+            "dev-tools/validation/check-example.py",
+            "web-client/README.md",
+            "web-client/package.json",
+        ):
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# fixture\n", encoding="utf-8")
+
+        validator.validate_evidence_anchor(
+            root,
+            owner,
+            "../../architecture/canonical.md",
+            "design",
+            "proven",
+            "[design](x)",
+            "design-positive",
+        )
+        validator.validate_evidence_anchor(
+            root,
+            owner,
+            "../../../services/example/src/main/Production.java",
+            "production",
+            "proven",
+            "[production](x)",
+            "production-positive",
+        )
+        validator.validate_evidence_anchor(
+            root,
+            owner,
+            "../../../services/example/src/test/ProductionTest.java",
+            "proof",
+            "proven",
+            "[test](x)",
+            "proof-positive",
+        )
+        validator.validate_evidence_anchor(
+            root,
+            owner,
+            "../../../web-client/package.json",
+            "proof",
+            "audited",
+            "No focused browser test is present; the package exposes scripts only.",
+            "audit-context-positive",
+        )
+        expect_failure(
+            "external evidence",
+            lambda: validator.validate_evidence_anchor(
+                root, owner, "https://example.com/proof", "proof", "proven", "[proof](x)", "external"
+            ),
+            "repository-local",
+        )
+        expect_failure(
+            "missing evidence",
+            lambda: validator.validate_evidence_anchor(
+                root, owner, "../../../services/example/src/main/Missing.java", "production", "proven", "[x](x)", "missing"
+            ),
+            "missing evidence anchor target",
+        )
+        expect_failure(
+            "production test evidence",
+            lambda: validator.validate_evidence_anchor(
+                root, owner, "../../../services/example/src/test/ProductionTest.java", "production", "proven", "[x](x)", "production-test"
+            ),
+            "test-only/docs-only",
+        )
+        expect_failure(
+            "proof design evidence",
+            lambda: validator.validate_evidence_anchor(
+                root, owner, "../../architecture/canonical.md", "proof", "proven", "[x](x)", "proof-design"
+            ),
+            "tests or canonical validation/smoke tooling",
+        )
+
+    summary = textwrap.dedent(
+        """
+        ## Coverage Summary
+
+        | Measure | Result |
+        | --- | ---: |
+        | Taxonomy leaf capabilities | 2 |
+        | Unique allocated capability IDs | 2 |
+        | Primary tracker files represented | 2 of 2 |
+        | Missing or unassigned leaves | 0 |
+        | Duplicate primary allocations | 0 |
+
+        | Primary tracker | Primary leaves |
+        | --- | ---: |
+        | [a](./a.md) | 1 |
+        | [b](./b.md) | 1 |
+        | **Total** | **2** |
+        """
+    )
+    allocations = {"AA-1.1": ("a.md", set()), "AA-1.2": ("b.md", set())}
+    summary_path = Path("design/project-management/implementation-tracking/capability-allocation.md")
+    validator.validate_coverage_summary(summary_path, summary, {"AA-1.1", "AA-1.2"}, allocations, {"a.md", "b.md"})
+    expect_failure(
+        "per-tracker summary drift",
+        lambda: validator.validate_coverage_summary(
+            summary_path, summary.replace("| [a](./a.md) | 1 |", "| [a](./a.md) | 2 |"), {"AA-1.1", "AA-1.2"}, allocations, {"a.md", "b.md"}
+        ),
+        "per-tracker allocation totals drifted",
+    )
+    print("implementation capability tracking regression tests passed")
+
+
+if __name__ == "__main__":
+    main()

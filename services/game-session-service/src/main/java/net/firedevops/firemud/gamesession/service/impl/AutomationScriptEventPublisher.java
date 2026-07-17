@@ -96,6 +96,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                           "v1",
                           scope.scriptPatchVersion(),
                           command.getCommandId(),
+                          false,
                           TriggerMode.TRIGGER_MODE_NORMAL,
                           scope.playableStateScope(),
                           "game-session:onCommand:"
@@ -312,6 +313,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                     "v1",
                     scope.scriptPatchVersion(),
                     scriptEventId,
+                    false,
                     TriggerMode.TRIGGER_MODE_NORMAL,
                     scope.playableStateScope(),
                     readSnapshotToken,

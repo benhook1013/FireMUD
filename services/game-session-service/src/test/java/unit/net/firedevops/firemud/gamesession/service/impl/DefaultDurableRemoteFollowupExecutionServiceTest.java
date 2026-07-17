@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -539,7 +540,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setPointerVersion(17L);
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
-    followup.setPayloadJson("{\"kind\":\"trigger_script_event\"}");
+    followup.setPayloadJson("{\"kind\":\"trigger_script_event\",\"isDryRun\":true}");
     followup.setPayloadKind("trigger_script_event");
     followup.setEventType("onEnterRegion");
     followup.setEventSchemaVersion("v1");
@@ -586,6 +587,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("onEnterRegion", request.getEventType());
     assertEquals("remote-enter-1", request.getScriptEventId());
     assertEquals("v1", request.getEventSchemaVersion());
+    assertTrue(request.getIsDryRun());
     assertEquals("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}", request.getPayloadJson());
     assertEquals("demo", request.getWorldSlug());
     assertEquals("production", request.getRealmSlug());
