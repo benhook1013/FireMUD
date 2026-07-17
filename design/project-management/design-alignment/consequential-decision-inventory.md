@@ -92,4 +92,273 @@ These are inventory findings, not decisions made by this workstream. They remain
 
 ## Adversarial Review Queue
 
-The queue will be ordered after inventory by blast radius, reversibility, evidence weakness, and degree of missing human consultation. Each review must preserve the current choice's strongest argument and construct the strongest credible opposing case before recommending acceptance, revision, deferral, or supersession.
+This is the authoritative progress surface for the human-led adversarial review. Review decisions in the order below unless the implementation orchestrator records a priority override for a concrete design blocker. After an override is resolved, return to the first unchecked key in the normal queue.
+
+The review facilitator must preserve the current choice's strongest argument, construct the strongest credible opposing case, and wait for the human decision owner to choose `accepted`, `revised`, `deferred`, `withdrawn`, or `superseded`. An unchecked item is `unreviewed`; an active item remains unchecked and gains an `in-review` note. A completed item is checked and records the disposition, review date, and a link to any resulting ADR or canonical design change. Closely coupled keys may be discussed together, but every key receives its own outcome.
+
+### Progress Summary
+
+| Packet | Scope | Reviewed | Total | State |
+| --- | --- | ---: | ---: | --- |
+| 1 | Known conflicts and drift | 0 | 9 | `not-started` |
+| 2 | Identity, authority, and security | 0 | 32 | `not-started` |
+| 3 | Execution correctness and durability | 0 | 43 | `not-started` |
+| 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
+| 5 | Gameplay and player experience | 0 | 21 | `not-started` |
+| 6 | Operations and delivery | 0 | 25 | `not-started` |
+| 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
+| **Total** | | **0** | **183** | `not-started` |
+
+### Priority Overrides
+
+No implementation-blocking override is active. Record an override here with the decision keys, blocked capability, blocking question, and requesting branch or PR. An override changes only the next work item; it does not remove or duplicate keys in the normal queue.
+
+### Packet 1: Known Conflicts And Drift
+
+#### Packet 1 P0
+
+- [ ] `SET-01`
+- [ ] `SESSION-04`
+- [ ] `SEC-02`
+- [ ] `OPS-04`
+- [ ] `CMD-STATUS-01`
+- [ ] `TRACE-01`
+- [ ] `EDGE-06`
+- [ ] `MS-GW-DYNAMIC-ROUTES`
+
+#### Packet 1 P1
+
+- [ ] `SESSION-08`
+
+### Packet 2: Identity, Authority, And Security
+
+#### Packet 2 P0
+
+- [ ] `ID-01`
+- [ ] `AUTH-02`
+- [ ] `AUTH-03`
+- [ ] `AUTH-04`
+- [ ] `AUTH-05`
+- [ ] `AUTH-06`
+- [ ] `AUTH-07`
+- [ ] `TENANT-01`
+- [ ] `ADMIT-01`
+- [ ] `EDGE-04`
+- [ ] `SESSION-07`
+- [ ] `SESSION-09`
+- [ ] `SEC-01`
+- [ ] `SEC-03`
+- [ ] `SEC-05`
+- [ ] `JWT-01`
+- [ ] `JWT-02`
+- [ ] `JWT-03`
+- [ ] `JWT-04`
+- [ ] `REDIS-06`
+- [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
+- [ ] `MS-AA-TOKEN-REVOCATION`
+
+#### Packet 2 P1
+
+- [ ] `TENANT-02`
+- [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
+- [ ] `MS-AA-LIFECYCLE-ERASURE`
+- [ ] `MS-AA-PAYMENT-INSTRUMENT`
+- [ ] `MS-AA-LOGIN-FACTORS`
+- [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
+- [ ] `SEC-04`
+- [ ] `ADMIN-01`
+- [ ] `ACCOUNT-01`
+- [ ] `DATA-01`
+
+### Packet 3: Execution Correctness And Durability
+
+#### Packet 3 P0
+
+- [ ] `TICK-01`
+- [ ] `TICK-02`
+- [ ] `TICK-03`
+- [ ] `TICK-04`
+- [ ] `TICK-06`
+- [ ] `HOTPATH-01`
+- [ ] `RECON-01`
+- [ ] `REDIS-01`
+- [ ] `ID-02`
+- [ ] `MS-GR-AMBIENT-STATE-AUTHORITY`
+- [ ] `SPATIAL-01`
+- [ ] `SESSION-06`
+- [ ] `SCRIPT-01`
+- [ ] `SCRIPT-04`
+- [ ] `TICK-09`
+- [ ] `TICK-13`
+- [ ] `TICK-14`
+- [ ] `TICK-15`
+- [ ] `TICK-16`
+- [ ] `TICK-17`
+- [ ] `TICK-19`
+
+#### Packet 3 P1
+
+- [ ] `TICK-05`
+- [ ] `TICK-07`
+- [ ] `TICK-08`
+- [ ] `TICK-10`
+- [ ] `TICK-11`
+- [ ] `TICK-12`
+- [ ] `TICK-18`
+- [ ] `ID-03`
+- [ ] `DB-01`
+- [ ] `DB-02`
+- [ ] `DB-03`
+- [ ] `DB-04`
+- [ ] `REDIS-03`
+- [ ] `REDIS-04`
+- [ ] `REDIS-05`
+- [ ] `CACHE-01`
+- [ ] `CACHE-02`
+- [ ] `SCRIPT-02`
+- [ ] `SCRIPT-03`
+- [ ] `SCRIPT-12`
+- [ ] `TIMER-01`
+- [ ] `GRPC-01`
+
+### Packet 4: Publishing, Settings, And Authored Behavior
+
+#### Packet 4 P0
+
+- [ ] `CONTENT-01`
+- [ ] `CONTENT-02`
+- [ ] `ASSET-01`
+- [ ] `ASSET-02`
+- [ ] `PROMO-01`
+- [ ] `PROC-02`
+- [ ] `PROC-04`
+- [ ] `MS-AS-PATCH-READINESS-PIN`
+- [ ] `MS-GR-REPLACEMENT-STATE`
+- [ ] `MS-GR-WORLD-LIFECYCLE`
+- [ ] `SCRIPT-06`
+- [ ] `SCRIPT-07`
+- [ ] `SCRIPT-08`
+- [ ] `SCRIPT-16`
+- [ ] `TIMER-02`
+
+#### Packet 4 P1
+
+- [ ] `CONTENT-03`
+- [ ] `CONTENT-04`
+- [ ] `CONTENT-05`
+- [ ] `CMD-02`
+- [ ] `SET-02`
+- [ ] `LLM-01`
+- [ ] `PROC-01`
+- [ ] `PROC-03`
+- [ ] `PROC-05`
+- [ ] `EQUIP-01`
+- [ ] `MS-AS-PLUGIN-TRUST`
+- [ ] `MS-AS-DRY-RUN-ISOLATION`
+- [ ] `MS-AR-DRAFT-CONCURRENCY`
+- [ ] `MS-GR-EQUIPMENT-BODY-LAYOUT`
+- [ ] `SCRIPT-05`
+- [ ] `SCRIPT-09`
+- [ ] `SCRIPT-10`
+- [ ] `SCRIPT-11`
+- [ ] `SCRIPT-13`
+- [ ] `PLUGIN-01`
+- [ ] `CP-01`
+
+### Packet 5: Gameplay And Player Experience
+
+#### Packet 5 P0
+
+- [ ] `TENANT-03`
+- [ ] `EDGE-05`
+- [ ] `SESSION-02`
+- [ ] `SESSION-03`
+- [ ] `CMD-04`
+
+#### Packet 5 P1
+
+- [ ] `CMD-03`
+- [ ] `CMD-05`
+- [ ] `MOD-01`
+- [ ] `MS-GR-COMMUNICATION-ORCHESTRATION`
+- [ ] `MS-SOCIAL-RELATIONSHIP-AUTHORITY`
+- [ ] `MS-SOCIAL-HISTORY-DURABILITY`
+- [ ] `MS-SOCIAL-OBSERVER-SHOUT-POLICY`
+- [ ] `PLAYTEST-01`
+- [ ] `LIFE-01`
+- [ ] `PLAYER-01`
+- [ ] `SAFETY-01`
+- [ ] `COMMERCE-01`
+- [ ] `SOCIAL-01`
+- [ ] `MS-PO-MODERATION-APPEALS`
+
+#### Packet 5 P2 And P3
+
+- [ ] `FRONT-01`
+- [ ] `MCP-01`
+
+### Packet 6: Operations And Delivery
+
+#### Packet 6 P0
+
+- [ ] `COMPLIANCE-01`
+- [ ] `PREFLIGHT-02`
+- [ ] `PREFLIGHT-01`
+- [ ] `OPS-03`
+- [ ] `RECOVERY-01`
+- [ ] `RECOVERY-02`
+- [ ] `OPS-02`
+- [ ] `HEALTH-01`
+- [ ] `OBS-04`
+- [ ] `OBS-05`
+
+#### Packet 6 P1
+
+- [ ] `OBS-01`
+- [ ] `OBS-02`
+- [ ] `OBS-03`
+- [ ] `OBS-06`
+- [ ] `CAPACITY-01`
+- [ ] `CAPACITY-02`
+- [ ] `TEST-01`
+- [ ] `TEST-02`
+- [ ] `TEST-03`
+- [ ] `MS-OPS-AVAILABILITY-PARTITION`
+- [ ] `MS-PO-OWNER-REMEDIATION`
+- [ ] `SCRIPT-14`
+- [ ] `SCRIPT-15`
+- [ ] `TRACE-02`
+
+#### Packet 6 P2 And P3
+
+- [ ] `TRACE-03`
+
+### Packet 7: Existing ADR-Backed And Lower-Risk Remainder
+
+#### Packet 7 P2 And P3
+
+- [ ] `AUTH-01`
+- [ ] `EDGE-01`
+- [ ] `EDGE-02`
+- [ ] `EDGE-03`
+- [ ] `SESSION-01`
+- [ ] `SESSION-05`
+- [ ] `REDIS-02`
+- [ ] `AUTO-01`
+- [ ] `AUTO-02`
+- [ ] `AUTO-03`
+- [ ] `GRPC-02`
+- [ ] `CMD-01`
+- [ ] `CMD-06`
+- [ ] `LIB-01`
+- [ ] `OPS-01`
+- [ ] `OPS-05`
+- [ ] `OPS-06`
+
+### Allocation Notes
+
+- `EDGE-06` and `MS-GW-DYNAMIC-ROUTES` describe the same dynamic-route boundary but remain separate authoritative keys and must be reviewed together.
+- `SESSION-08` remains in Packet 1 because the control inventory previously recorded resolved target/current drift that still needs human verification.
+- Publication authority precedes deployment gates, so `CONTENT-01`, `ASSET-01`, `ASSET-02`, and `PROMO-01` remain in Packet 4 rather than Packet 6.
+- Version admission and rollback convergence precede execution, so the patch, plugin, and timer-reload decisions remain in Packet 4 rather than Packet 3.
+- Account authority, identity scope, and erasure govern their player-facing consequences, so `DATA-01` and `ACCOUNT-01` remain in Packet 2 rather than Packet 5.
