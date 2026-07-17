@@ -152,19 +152,6 @@ gh auth login
 
 Use `GitHub.com` as the host and choose HTTPS with browser login or a personal access token. Once authenticated, commands like `gh pr list`, `gh pr view`, and `gh pr edit --body-file <file>` work from this repository and can be safely invoked by AI assistants as part of an explicit task.
 
-### Optional Local PR Summary File
-
-You can maintain a local, untracked summary of your changes and sync it to a pull request body with `gh`:
-
-1. Create or update a `pr-summary.md` file in the repository root with the description you want in the PR body.
-2. Apply it to an open PR with:
-
-   ```bash
-   gh pr edit <pr-number> --body-file pr-summary.md
-   ```
-
-The `pr-summary.md` file is listed in `.gitignore` so it is not committed. AI tooling (such as Codex) may update this file and run the `gh pr edit` command on your behalf when you explicitly ask it to refresh the PR description.
-
 ## Building Docker Images
 
 Use the aggregated task to build container images for all services:

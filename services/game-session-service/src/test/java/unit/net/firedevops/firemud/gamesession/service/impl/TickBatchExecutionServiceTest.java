@@ -128,6 +128,7 @@ class TickBatchExecutionServiceTest {
     assertEquals("PENDING", command.getGameplayResult());
     assertEquals("GAMEPLAY_COMMAND", command.getQueueSourceKind());
     assertEquals("REDIS_PENDING_CLAIMED", command.getQueueSourceState());
+    assertEquals(1L, command.getQueueSourceOrdinal());
   }
 
   @Test

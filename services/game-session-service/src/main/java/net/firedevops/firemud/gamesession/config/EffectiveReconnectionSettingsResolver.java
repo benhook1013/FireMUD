@@ -100,6 +100,9 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
                 override.buffer().ttlMs() != null
                     ? override.buffer().ttlMs()
                     : base.buffer().ttlMs(),
+                override.buffer().maxEntries() != null
+                    ? override.buffer().maxEntries()
+                    : base.buffer().maxEntries(),
                 override.buffer().minMessages() != null
                     ? override.buffer().minMessages()
                     : base.buffer().minMessages(),

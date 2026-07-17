@@ -2,14 +2,18 @@ package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
@@ -21,25 +25,45 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class DurableScreenBufferServiceTest {
+  private static final long TENANT_ID = 22L;
+  private static final long GAME_INSTANCE_ID = 7L;
+  private static final long CHARACTER_ID = 13L;
+
   private final ResumeTranscriptEntryRepository repository =
       Mockito.mock(ResumeTranscriptEntryRepository.class);
   private final ReconnectionSettingsResolver settingsResolver =
       Mockito.mock(ReconnectionSettingsResolver.class);
   private final ScreenBufferService hotCache = Mockito.mock(ScreenBufferService.class);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final List<ResumeTranscriptEntry> persistedEntries = new ArrayList<>();
   private final DurableScreenBufferService service =
-      new DurableScreenBufferService(repository, settingsResolver, hotCache);
+      new DurableScreenBufferService(repository, settingsResolver, hotCache, meterRegistry);
 
   @BeforeEach
   void setUp() {
-    when(settingsResolver.resolve(22L, 7L))
-        .thenReturn(
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(0L, 1, 1, 100, 250)));
+    configureBuffer(0L, 256, 1, 1, 1_000, 2_000);
+    AtomicLong nextOrderingToken = new AtomicLong(100L);
+    doAnswer(
+            invocation -> {
+              List<ResumeTranscriptEntry> entries = invocation.getArgument(0);
+              entries.forEach(entry -> entry.setId(nextOrderingToken.getAndIncrement()));
+              return null;
+            })
+        .when(repository)
+        .assignOrderingTokens(any());
+    doAnswer(
+            invocation -> {
+              persistedEntries.addAll(invocation.getArgument(0));
+              return null;
+            })
+        .when(repository)
+        .saveAll(any());
+    when(repository.findActiveByScope(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any()))
+        .thenAnswer(invocation -> List.copyOf(persistedEntries));
   }
 
   @Test
-  void appendPersistsStructuredEntriesBeforeUpdatingHotCache() {
+  void appendPersistsStructuredEntriesBeforeReplacingHotCache() {
     ScreenBufferService.BufferedEntry entry =
         ScreenBufferService.BufferedEntry.fromStructuredOutput(
             "You say, \"hello\"\n",
@@ -48,25 +72,34 @@ class DurableScreenBufferServiceTest {
             "FULL",
             "player-output",
             "{\"kind\":\"SAY\"}");
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
 
-    service.append(22L, 7L, 13L, List.of(entry));
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(entry));
 
     ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
     verify(repository).saveAll(entries.capture());
     ResumeTranscriptEntry persisted = entries.getValue().getFirst();
-    assertThat(persisted.getTenantId()).isEqualTo(22L);
-    assertThat(persisted.getGameInstanceId()).isEqualTo(7L);
-    assertThat(persisted.getCharacterId()).isEqualTo(13L);
+    assertThat(persisted.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(persisted.getGameInstanceId()).isEqualTo(GAME_INSTANCE_ID);
+    assertThat(persisted.getCharacterId()).isEqualTo(CHARACTER_ID);
     assertThat(persisted.getProtocolText()).isEqualTo("You say, \"hello\"\n");
     assertThat(persisted.getPayloadJson()).isEqualTo("{\"kind\":\"SAY\"}");
     assertThat(persisted.getByteSize())
-        .isEqualTo(entry.withCanonicalByteSize(22L, 7L, 13L).byteSize())
+        .isEqualTo(ResumeTranscriptEntryCanonicalizer.byteSize(persisted))
         .isGreaterThan(entry.byteSize());
     assertThat(persisted.getExpiresAt()).isNull();
-    verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
-    verify(repository, never()).updateExpiryByScope(eq(22L), eq(7L), eq(13L), any());
-    verify(hotCache).append(22L, 7L, 13L, List.of(entry.withCanonicalByteSize(22L, 7L, 13L)));
+    verify(repository, never())
+        .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
+    verify(repository, never()).updateByteSizes(any());
+
+    ArgumentCaptor<List<ScreenBufferService.BufferedEntry>> hotCacheEntries =
+        ArgumentCaptor.captor();
+    verify(hotCache)
+        .replace(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), hotCacheEntries.capture());
+    ScreenBufferService.BufferedEntry cached = hotCacheEntries.getValue().getFirst();
+    assertThat(cached.text()).isEqualTo(entry.text());
+    assertThat(cached.orderingToken()).isEqualTo(100L);
+    assertThat(cached.byteSize()).isEqualTo(persisted.getByteSize());
   }
 
   @Test
@@ -78,101 +111,269 @@ class DurableScreenBufferServiceTest {
     entry.setBriefRenderPolicy("FULL");
     entry.setPayloadType("look-view");
     entry.setPayloadJson("{\"room\":\"R-1\"}");
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of(entry));
+    persistedEntries.add(entry);
 
-    ScreenBufferService.BufferedScreen screen = service.get(22L, 7L, 13L).orElseThrow();
+    ScreenBufferService.BufferedScreen screen =
+        service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID).orElseThrow();
 
     assertThat(screen.protocolText()).isEqualTo("Recent room line\n");
     assertThat(screen.entries().getFirst().payloadJson()).isEqualTo("{\"room\":\"R-1\"}");
-    verify(hotCache).append(eq(22L), eq(7L), eq(13L), eq(screen.entries()));
-    verify(hotCache, never()).get(22L, 7L, 13L);
+    assertThat(screen.entries().getFirst().orderingToken()).isEqualTo(1L);
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
   }
 
   @Test
   void getDoesNotReplayExpiredDurableEntriesAndInvalidatesTheHotCache() {
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
+    assertThat(service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID)).isEmpty();
 
-    assertThat(service.get(22L, 7L, 13L)).isEmpty();
+    verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository, never())
+        .deleteExpired(eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any());
+    verify(hotCache, never()).get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+  }
 
-    verify(hotCache).clear(22L, 7L, 13L);
-    verify(repository, never()).deleteExpired(eq(22L), eq(7L), eq(13L), any());
-    verify(hotCache, never()).get(22L, 7L, 13L);
+  @Test
+  void appendRecordsAReplaceCacheFailure() {
+    Mockito.doThrow(new IllegalStateException("Redis unavailable"))
+        .when(hotCache)
+        .replace(anyLong(), anyLong(), anyLong(), any());
+
+    service.append(
+        TENANT_ID,
+        GAME_INSTANCE_ID,
+        CHARACTER_ID,
+        List.of(ScreenBufferService.BufferedEntry.fromText("Recent room line\\n")));
+
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.reconnect_transcript.hot_cache_sync_failures",
+                    "operation",
+                    "replace")
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void getRecordsAClearCacheFailure() {
+    Mockito.doThrow(new IllegalStateException("Redis unavailable"))
+        .when(hotCache)
+        .clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+
+    service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.reconnect_transcript.hot_cache_sync_failures",
+                    "operation",
+                    "clear")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
   void appendTrimsOldestEntriesUsingExistingBufferBounds() {
-    when(settingsResolver.resolve(22L, 7L))
-        .thenReturn(
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(0L, 1, 1, 100, 100)));
-    ResumeTranscriptEntry first = entry(1L, "old", Instant.parse("2026-07-12T01:00:00Z"));
-    first.setByteSize(75);
-    ResumeTranscriptEntry second = entry(2L, "new", Instant.parse("2026-07-12T01:01:00Z"));
-    second.setByteSize(75);
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
-        .thenReturn(List.of(first, second));
+    configureBuffer(0L, 256, 2, 1, 1_000, 2_000);
+    persistedEntries.add(entry(1L, "old".repeat(350), Instant.parse("2026-07-12T01:00:00Z")));
+    persistedEntries.add(entry(2L, "new".repeat(350), Instant.parse("2026-07-12T01:01:00Z")));
 
-    service.append(22L, 7L, 13L, List.of(ScreenBufferService.BufferedEntry.fromText("new")));
+    service.append(
+        TENANT_ID,
+        GAME_INSTANCE_ID,
+        CHARACTER_ID,
+        List.of(ScreenBufferService.BufferedEntry.fromText("current")));
 
-    inOrder(repository).verify(repository).lockScope(22L, 7L, 13L);
     verify(repository).deleteByIds(List.of(1L));
   }
 
   @Test
   void appendPersistsConfiguredEntryExpiry() {
-    when(settingsResolver.resolve(22L, 7L))
-        .thenReturn(
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(1_000L, 1, 1, 100, 200)));
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any())).thenReturn(List.of());
+    configureBuffer(1_000L, 256, 1, 1, 1_000, 2_000);
     ScreenBufferService.BufferedEntry entry =
         new ScreenBufferService.BufferedEntry(
             "Recent room line\n", 1, 17, 1_000L, null, null, null, null, null);
 
-    service.append(22L, 7L, 13L, List.of(entry));
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(entry));
 
     ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
     verify(repository).saveAll(entries.capture());
     assertThat(entries.getValue().getFirst().getExpiresAt())
         .isEqualTo(Instant.ofEpochMilli(2_000L));
+    verify(repository)
+        .updateExpiryByScope(
+            TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(2_000L));
   }
 
   @Test
   void appendRefreshesTheExpiryForEveryRetainedEntryInTheScope() {
-    when(settingsResolver.resolve(22L, 7L))
-        .thenReturn(
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(1_000L, 1, 1, 100, 200)));
+    configureBuffer(1_000L, 256, 1, 1, 1_000, 2_000);
     ResumeTranscriptEntry retained = entry(1L, "Earlier line\n", Instant.ofEpochMilli(1_000L));
     retained.setExpiresAt(Instant.ofEpochMilli(2_000L));
-    when(repository.findActiveByScope(eq(22L), eq(7L), eq(13L), any()))
-        .thenReturn(List.of(retained));
+    persistedEntries.add(retained);
     ScreenBufferService.BufferedEntry newEntry =
         new ScreenBufferService.BufferedEntry(
             "Current line\n", 1, 13, 3_000L, null, null, null, null, null);
 
-    service.append(22L, 7L, 13L, List.of(newEntry));
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(newEntry));
 
-    verify(repository).updateExpiryByScope(22L, 7L, 13L, Instant.ofEpochMilli(4_000L));
+    verify(repository)
+        .updateExpiryByScope(
+            TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, Instant.ofEpochMilli(4_000L));
     ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
     verify(repository).saveAll(entries.capture());
     assertThat(entries.getValue().getFirst().getExpiresAt())
         .isEqualTo(Instant.ofEpochMilli(4_000L));
   }
 
+  @Test
+  void appendDropsSingleEntryWhoseCanonicalStructuredEnvelopeExceedsHardLimit() {
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(4_096) + "\"}");
+
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(oversized));
+
+    verify(repository, never()).saveAll(any());
+    verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
+    verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
+  }
+
+  @Test
+  void appendRefreshesExistingExpiryAndHotCacheWhenOversizedEntriesAreDiscarded() {
+    configureBuffer(1_000L, 256, 1, 1, 1_000, 2_000);
+    ResumeTranscriptEntry retained = entry(1L, "Earlier line\n", Instant.ofEpochMilli(1_000L));
+    retained.setExpiresAt(Instant.ofEpochMilli(2_000L));
+    persistedEntries.add(retained);
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(4_096) + "\"}");
+
+    service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(oversized));
+
+    verify(repository)
+        .updateExpiryByScope(
+            eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any(Instant.class));
+    verify(repository, never()).saveAll(any());
+    verify(hotCache)
+        .replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(toBufferedEntry(retained)));
+  }
+
+  @Test
+  void appendTrimsOldestEntriesWhenConfiguredEntryLimitIsExceeded() {
+    configureBuffer(0L, 1, 1, 1, 1_000, 2_000);
+    persistedEntries.add(entry(1L, "old", Instant.parse("2026-07-12T01:00:00Z")));
+    persistedEntries.add(entry(2L, "new", Instant.parse("2026-07-12T01:01:00Z")));
+
+    service.append(
+        TENANT_ID,
+        GAME_INSTANCE_ID,
+        CHARACTER_ID,
+        List.of(ScreenBufferService.BufferedEntry.fromText("current")));
+
+    verify(repository).deleteByIds(List.of(1L, 2L));
+  }
+
+  @Test
+  void getTrimsLegacyEntriesBeforeReplacingTheHotCache() {
+    configureBuffer(0L, 1, 1, 1, 1_000, 2_000);
+    persistedEntries.add(entry(1L, "old\n", Instant.parse("2026-07-12T01:00:00Z")));
+    persistedEntries.add(entry(2L, "current\n", Instant.parse("2026-07-12T01:01:00Z")));
+
+    ScreenBufferService.BufferedScreen screen =
+        service.get(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID).orElseThrow();
+
+    assertThat(screen.protocolText()).isEqualTo("current\n");
+    verify(repository).lockScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(repository).deleteByIds(List.of(1L));
+    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, screen.entries());
+  }
+
+  @Test
+  void replaceClearsTheHotCacheWhenNoReplacementEntriesCanBePersisted() {
+    persistedEntries.add(entry(1L, "previous\n", Instant.parse("2026-07-12T01:00:00Z")));
+
+    service.replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
+
+    verify(repository).deleteByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(hotCache).clear(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID);
+    verify(hotCache, never()).replace(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
+  void appendReaccountsLegacyStructuredEntriesBeforeApplyingHardLimit() {
+    ResumeTranscriptEntry legacy = entry(1L, "short\n", Instant.parse("2026-07-12T01:00:00Z"));
+    legacy.setOutputKind("VIEW");
+    legacy.setReplayPolicy("REPLAY");
+    legacy.setBriefRenderPolicy("FULL");
+    legacy.setPayloadType("look-view");
+    legacy.setPayloadJson("{\"description\":\"" + "x".repeat(4_096) + "\"}");
+    persistedEntries.add(legacy);
+
+    service.append(
+        TENANT_ID,
+        GAME_INSTANCE_ID,
+        CHARACTER_ID,
+        List.of(ScreenBufferService.BufferedEntry.fromText("new\n")));
+
+    assertThat(legacy.getByteSize()).isGreaterThan(2_000);
+    verify(repository).updateByteSizes(List.of(legacy));
+    verify(repository).deleteByIds(List.of(1L));
+  }
+
+  private void configureBuffer(
+      long ttlMs,
+      int maxEntries,
+      int minMessages,
+      int minLines,
+      int softMaxBytes,
+      int hardMaxBytes) {
+    when(settingsResolver.resolve(TENANT_ID, GAME_INSTANCE_ID))
+        .thenReturn(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(
+                    ttlMs, maxEntries, minMessages, minLines, softMaxBytes, hardMaxBytes)));
+  }
+
   private ResumeTranscriptEntry entry(Long id, String text, Instant appendedAt) {
     ResumeTranscriptEntry entry = new ResumeTranscriptEntry();
     entry.setId(id);
-    entry.setTenantId(22L);
-    entry.setGameInstanceId(7L);
-    entry.setCharacterId(13L);
+    entry.setTenantId(TENANT_ID);
+    entry.setGameInstanceId(GAME_INSTANCE_ID);
+    entry.setCharacterId(CHARACTER_ID);
     entry.setProtocolText(text);
     entry.setLineCount(1);
     entry.setByteSize(text.length());
     entry.setAppendedAt(appendedAt);
     return entry;
+  }
+
+  private ScreenBufferService.BufferedEntry toBufferedEntry(ResumeTranscriptEntry entry) {
+    return new ScreenBufferService.BufferedEntry(
+        entry.getProtocolText(),
+        entry.getLineCount(),
+        entry.getByteSize(),
+        entry.getAppendedAt().toEpochMilli(),
+        entry.getOutputKind(),
+        entry.getReplayPolicy(),
+        entry.getBriefRenderPolicy(),
+        entry.getPayloadType(),
+        entry.getPayloadJson(),
+        entry.getId());
   }
 }

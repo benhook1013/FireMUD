@@ -1,11 +1,13 @@
 package net.firedevops.firemud.gamesession.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -94,7 +96,8 @@ class RedisScreenBufferServiceTest {
             (tenantId, gameInstanceId) ->
                 new FiremudReconnectionProperties(
                     null,
-                    new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
+                    new FiremudReconnectionProperties.Buffer(
+                        1_800_000L, 256, 8, 24, 16_384, 65_536)));
   }
 
   @Test
@@ -150,11 +153,126 @@ class RedisScreenBufferServiceTest {
             new ObjectMapper(),
             (tenantId, gameInstanceId) ->
                 new FiremudReconnectionProperties(
-                    null, new FiremudReconnectionProperties.Buffer(0L, 8, 24, 16_384, 65_536)));
+                    null,
+                    new FiremudReconnectionProperties.Buffer(0L, 256, 8, 24, 16_384, 65_536)));
 
     noExpiryCache.append(
         22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("ONE\n")));
 
     verify(valueOperations, times(2)).set(eq(REDIS_KEY), anyString());
+  }
+
+  @Test
+  void dropsSingleEntryWhoseCanonicalEnvelopeExceedsHardLimit() {
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(65_536) + "\"}");
+
+    assertThat(oversized.canonicalByteSize(22L, 1L, 123L)).isGreaterThan(65_536);
+
+    cacheService.append(22L, 1L, 123L, List.of(oversized));
+
+    assertThat(cacheService.get(22L, 1L, 123L)).isEmpty();
+  }
+
+  @Test
+  void trimsOldestEntryWhenConfiguredEntryLimitIsExceeded() {
+    RedisScreenBufferService limitedCache =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 1, 1, 1, 16_384, 65_536)));
+
+    limitedCache.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("FIRST\n")));
+    limitedCache.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("SECOND\n")));
+
+    assertThat(limitedCache.get(22L, 1L, 123L))
+        .map(ScreenBufferService.BufferedScreen::protocolText)
+        .hasValueSatisfying(
+            transcript -> {
+              assertThat(transcript).contains("SECOND\n");
+              assertThat(transcript).doesNotContain("FIRST\n");
+            });
+  }
+
+  @Test
+  void replaceWritesTheAuthoritativeEntriesWithoutClearingTheExistingCacheFirst() {
+    storedPayload.set(
+        """
+        {"entries":[{"protocolText":"PREVIOUS\\n","lineCount":1,"byteSize":9,"appendedAtMs":1000}],"updatedAtMs":1000}
+        """
+            .trim());
+
+    cacheService.replace(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
+
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(redisTemplate, times(0)).delete(REDIS_KEY);
+    verify(valueOperations).set(eq(REDIS_KEY), payload.capture(), any(Duration.class));
+    assertThat(payload.getValue()).contains("CURRENT").doesNotContain("PREVIOUS");
+  }
+
+  @Test
+  void replaceTrimsEntriesToTheConfiguredBoundsBeforeWritingRedis() {
+    RedisScreenBufferService limitedCache =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 1, 1, 1, 16_384, 65_536)));
+
+    limitedCache.replace(
+        22L,
+        1L,
+        123L,
+        List.of(
+            ScreenBufferService.BufferedEntry.fromText("PREVIOUS\n"),
+            ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
+
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(valueOperations).set(eq(REDIS_KEY), payload.capture(), any(Duration.class));
+    assertThat(payload.getValue()).contains("CURRENT").doesNotContain("PREVIOUS");
+  }
+
+  @Test
+  void replaceLeavesTheExistingCacheVisibleWhenTheReplacementWriteFails() {
+    storedPayload.set(
+        """
+        {"entries":[{"protocolText":"PREVIOUS\\n","lineCount":1,"byteSize":9,"appendedAtMs":1000}],"updatedAtMs":1000}
+        """
+            .trim());
+    doAnswer(
+            invocation -> {
+              throw new IllegalStateException("Redis unavailable");
+            })
+        .when(valueOperations)
+        .set(eq(REDIS_KEY), anyString(), any(Duration.class));
+
+    assertThatThrownBy(
+            () ->
+                cacheService.replace(
+                    22L,
+                    1L,
+                    123L,
+                    List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n"))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Redis unavailable");
+
+    assertThat(cacheService.get(22L, 1L, 123L))
+        .map(ScreenBufferService.BufferedScreen::protocolText)
+        .hasValueSatisfying(transcript -> assertThat(transcript).contains("PREVIOUS"));
+    verify(redisTemplate, never()).delete(REDIS_KEY);
   }
 }

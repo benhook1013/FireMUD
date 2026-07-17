@@ -116,7 +116,7 @@ public class GameSessionControlPlaneClient
   }
 
   public GetGameplayCommandStatusResponse getGameplayCommandStatus(
-      String tenantId, String commandId) {
+      String tenantId, String gameInstanceId, String commandId) {
     if (stub() == null) {
       return gameplayCommandUnavailable();
     }
@@ -126,6 +126,7 @@ public class GameSessionControlPlaneClient
           .getGameplayCommandStatus(
               GetGameplayCommandStatusRequest.newBuilder()
                   .setTenantId(tenantId)
+                  .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                   .setCommandId(commandId == null ? "" : commandId)
                   .build());
     } catch (RuntimeException ex) {

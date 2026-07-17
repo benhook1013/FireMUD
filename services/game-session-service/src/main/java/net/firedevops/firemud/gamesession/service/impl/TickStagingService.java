@@ -415,7 +415,7 @@ final class TickStagingService {
     if (command != null && command.getEnqueueSeq() != null && command.getEnqueueSeq() > 0) {
       return command.getEnqueueSeq();
     }
-    return fallbackIndex;
+    return fallbackIndex + 1;
   }
 
   private List<GameplayCommand> loadCommands(List<TickQueuedCommandEnvelope> entries) {

@@ -73,6 +73,13 @@ public class CommonAutoConfiguration {
           java.util.List<ScreenBufferService.BufferedEntry> entries) {}
 
       @Override
+      public void replace(
+          long tenantId,
+          long gameInstanceId,
+          long characterId,
+          java.util.List<ScreenBufferService.BufferedEntry> entries) {}
+
+      @Override
       public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
         return Optional.empty();
       }

@@ -99,6 +99,7 @@ firemud:
       stale-resume-falls-through-to-fresh-entry: true
     buffer:
       ttl-ms: 1800000
+      max-entries: 256
       min-messages: 8
       min-lines: 24
       soft-max-bytes: 16384

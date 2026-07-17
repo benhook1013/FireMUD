@@ -55,18 +55,31 @@ public record ScopedSettingsOverrides(
 
   public record ReconnectionOverride(PolicyOverride policy, BufferOverride buffer) {
     public boolean isEmpty() {
-      return policy == null && buffer == null;
+      return (policy == null || policy.isEmpty()) && (buffer == null || buffer.isEmpty());
     }
 
-    public record PolicyOverride(
-        Long resumeWindowMs, Boolean staleResumeFallsThroughToFreshEntry) {}
+    public record PolicyOverride(Long resumeWindowMs, Boolean staleResumeFallsThroughToFreshEntry) {
+      public boolean isEmpty() {
+        return resumeWindowMs == null && staleResumeFallsThroughToFreshEntry == null;
+      }
+    }
 
     public record BufferOverride(
         Long ttlMs,
+        Integer maxEntries,
         Integer minMessages,
         Integer minLines,
         Integer softMaxBytes,
-        Integer hardMaxBytes) {}
+        Integer hardMaxBytes) {
+      public boolean isEmpty() {
+        return ttlMs == null
+            && maxEntries == null
+            && minMessages == null
+            && minLines == null
+            && softMaxBytes == null
+            && hardMaxBytes == null;
+      }
+    }
   }
 
   public record CommunicationOverride(

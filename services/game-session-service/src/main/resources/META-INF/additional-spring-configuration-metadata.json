@@ -96,6 +96,13 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
+      "name": "firemud.reconnection.buffer.max-entries",
+      "type": "java.lang.Integer",
+      "defaultValue": 256,
+      "description": "Maximum complete entries retained in one durable reconnect transcript before oldest-entry eviction.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
       "name": "firemud.reconnection.buffer.expiry-sweep.enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,

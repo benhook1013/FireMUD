@@ -9,6 +9,13 @@ from contextlib import closing
 from urllib.parse import quote
 
 
+class TransientUpstreamSmokeFailure(RuntimeError):
+    """A startup-time upstream error that a bounded smoke retry may retry."""
+
+
+RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
+
+
 def compose_postgres_container_name():
     compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
     return f"{compose_project_name}-postgres-1"
@@ -171,10 +178,24 @@ def run_transport_session(
         try:
             with closing(open_session()) as session:
                 return execute_session(session)
+        except TransientUpstreamSmokeFailure:
+            if deadline is None:
+                raise
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise
+            time.sleep(min(retry_interval_seconds, remaining))
+            if time.time() >= deadline:
+                raise
         except retriable_exceptions as exc:
-            if deadline is None or time.time() >= deadline:
+            if deadline is None:
                 raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
-            time.sleep(retry_interval_seconds)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
+            time.sleep(min(retry_interval_seconds, remaining))
+            if time.time() >= deadline:
+                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
 
 
 def login_play_look_steps(
@@ -218,6 +239,7 @@ def wait_for_incremental_response(
     drain_remaining=None,
     explicit_failure_prefixes=("ERROR ", "DISCONNECT "),
     idle_sleep_seconds=0.05,
+    retry_upstream_failure=False,
 ):
     deadline = time.time() + timeout
     expects_explicit_failure = any(
@@ -234,6 +256,10 @@ def wait_for_incremental_response(
             if not expects_explicit_failure and any(
                 stripped.startswith(prefix) for prefix in explicit_failure_prefixes
             ):
+                if retry_upstream_failure and stripped.startswith("ERROR UPSTREAM_FAILURE"):
+                    raise TransientUpstreamSmokeFailure(
+                        f"Command failed explicitly: {stripped}"
+                    )
                 raise RuntimeError(f"Command failed explicitly: {stripped}")
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
@@ -362,6 +388,7 @@ def send_telnet_command_and_expect(
         timeout_seconds,
         "".join,
         lambda: drain_available_socket(sock, drain_timeout),
+        retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<no data>")
@@ -487,6 +514,7 @@ def send_websocket_command_and_expect(
         timeout_seconds,
         lambda parts: "\n".join(chunk for chunk in parts if chunk),
         lambda: drain_available_websocket(ws, responses),
+        retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
     )
     print(f"=== {label} response ===")
     print(response.strip() or "<empty>")

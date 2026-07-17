@@ -262,7 +262,7 @@ class AutomationPatchControlPlaneServiceTest {
                         .setPointerVersion(99L)
                         .build())
                 .build());
-    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "command-1"))
+    Mockito.when(gameSessionClient.getGameplayCommandStatus("1", "game-2", "command-1"))
         .thenReturn(
             GetGameplayCommandStatusResponse.newBuilder()
                 .setCommand(
@@ -321,6 +321,80 @@ class AutomationPatchControlPlaneServiceTest {
     assertThat(response.getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
     assertThat(response.getEvents(0).getGameplayRemoteTargetCommandGameplayResult())
         .isEqualTo("SUCCESS");
+    Mockito.verify(gameSessionClient).getGameplayCommandStatus("1", "game-2", "command-1");
+  }
+
+  @Test
+  void omitsGameplayStatusWhenHandoffTargetGameInstanceIsMissing() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(
+            workItemService.listHandoffEvents(
+                "1", "", "", "", "", "", "", 0L, "", "", "", "", "", "", "", "", "", "", "", "", "",
+                0L, 0L, 0))
+        .thenReturn(
+            List.of(
+                new ScriptWorkItemService.HandoffEventSummary(
+                    "event-missing-target",
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    "script-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "99",
+                    0,
+                    "workItem:99#0",
+                    "command-1",
+                    "",
+                    "",
+                    0L,
+                    "",
+                    "",
+                    "target-1",
+                    "SHARED",
+                    "demo",
+                    "production",
+                    "17",
+                    "SCHEDULE_TIMER",
+                    "SCHEDULE_DUE_CLAIMED",
+                    5000L,
+                    0L,
+                    5000L,
+                    "LOOK AT old chest",
+                    "enqueued",
+                    "game_session_accepted",
+                    15L,
+                    new ScriptWorkItemService.ScriptPatchPublicationLink(
+                        "patch-1",
+                        17L,
+                        9L,
+                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        140L,
+                        "",
+                        ""),
+                    null)));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    var service =
+        newService(
+            workItemService,
+            Mockito.mock(AutomationAdmissionStateService.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            new ScriptRuntimeProperties(),
+            gameSessionClient);
+
+    var response =
+        service.listScriptHandoffEvents(
+            ListScriptHandoffEventsRequest.newBuilder().setTenantId("1").build());
+
+    assertThat(response.hasError()).isFalse();
+    assertThat(response.getEventsCount()).isEqualTo(1);
+    assertThat(response.getEvents(0).getGameInstanceId()).isEqualTo("game-1");
+    assertThat(response.getEvents(0).getTargetGameInstanceId()).isBlank();
+    assertThat(response.getEvents(0).getGameplayCommandExecutionOutcome()).isBlank();
+    Mockito.verifyNoInteractions(gameSessionClient);
   }
 
   @Test

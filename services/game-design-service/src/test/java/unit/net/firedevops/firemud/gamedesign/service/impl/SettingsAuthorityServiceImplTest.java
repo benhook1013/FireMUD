@@ -63,4 +63,53 @@ class SettingsAuthorityServiceImplTest {
 
     verifyNoInteractions(repository);
   }
+
+  @ParameterizedTest
+  @ValueSource(ints = {-1, 0})
+  void rejectsNonPositiveReconnectTranscriptEntryLimitsBeforePersistence(int maxEntries) {
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, maxEntries, null, null, null, null)),
+            null,
+            null,
+            null,
+            null);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.putDomainOverride(
+                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .withMessage("Reconnection buffer maxEntries must be positive");
+
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void rejectsSemanticallyEmptyNestedReconnectionOverridesBeforePersistence() {
+    var emptyPolicy =
+        new ScopedSettingsOverrides.ReconnectionOverride(
+            new ScopedSettingsOverrides.ReconnectionOverride.PolicyOverride(null, null), null);
+    var emptyBuffer =
+        new ScopedSettingsOverrides.ReconnectionOverride(
+            null,
+            new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                null, null, null, null, null, null));
+
+    for (var reconnection : java.util.List.of(emptyPolicy, emptyBuffer)) {
+      ScopedSettingsOverrides overrides =
+          new ScopedSettingsOverrides(reconnection, null, null, null, null);
+      assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  service.putDomainOverride(
+                      "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+          .withMessage("Reconnection override must set policy or buffer values");
+    }
+
+    verifyNoInteractions(repository);
+  }
 }

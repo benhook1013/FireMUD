@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -65,7 +66,11 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     ResumeTranscriptEntry otherCharacter = entry("Other\n", Instant.parse("2026-07-12T01:02:00Z"));
     otherCharacter.setCharacterId(14L);
 
-    repository.saveAll(List.of(later, earlier, otherCharacter));
+    repository.saveAll(List.of(earlier, later, otherCharacter));
+
+    assertThat(earlier.getId()).isPositive();
+    assertThat(later.getId()).isGreaterThan(earlier.getId());
+    assertThat(otherCharacter.getId()).isGreaterThan(later.getId());
     List<ResumeTranscriptEntry> entries = repository.findByScope(22L, 7L, 13L);
 
     assertThat(entries)
@@ -84,14 +89,31 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
   }
 
   @Test
+  void assignedOrderingTokensPreserveAppendOrderWhenEntriesShareTheSameMillisecond() {
+    Instant occurredAt = Instant.parse("2026-07-12T01:00:00.123Z");
+    ResumeTranscriptEntry first = entry("First\n", occurredAt);
+    ResumeTranscriptEntry second = entry("Second\n", occurredAt);
+    List<ResumeTranscriptEntry> entries = List.of(first, second);
+
+    repository.saveAll(entries);
+
+    assertThat(first.getId()).isPositive();
+    assertThat(second.getId()).isGreaterThan(first.getId());
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("First\n", "Second\n");
+  }
+
+  @Test
   void rehydratesATranscriptAfterTheDurableServiceIsRecreated() {
     ReconnectionSettingsResolver settingsResolver =
         (tenantId, gameInstanceId) ->
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(60_000L, 1, 1, 100, 200));
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
     initial.append(
         22L,
         7L,
@@ -99,11 +121,46 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
         List.of(ScreenBufferService.BufferedEntry.fromText("Durable reconnect line\n")));
 
     DurableScreenBufferService recreated =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
 
     assertThat(recreated.get(22L, 7L, 13L))
         .map(ScreenBufferService.BufferedScreen::protocolText)
         .contains("Durable reconnect line\n");
+  }
+
+  @Test
+  void switchingToTtlZeroClearsExistingScopeExpiryBeforeItsOldDeadline() {
+    ReconnectionSettingsResolver expiringSettings =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 1, 1, 1_000, 2_000));
+    DurableScreenBufferService expiringService =
+        new DurableScreenBufferService(
+            repository, expiringSettings, emptyHotCache(), new SimpleMeterRegistry());
+    expiringService.append(
+        22L,
+        7L,
+        13L,
+        List.of(ScreenBufferService.BufferedEntry.fromText("Retained after policy change\n")));
+    Instant oldExpiry = repository.findByScope(22L, 7L, 13L).getFirst().getExpiresAt();
+
+    ReconnectionSettingsResolver ttlZeroSettings =
+        (tenantId, gameInstanceId) ->
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(180_000L, true),
+                new FiremudReconnectionProperties.Buffer(0L, 256, 1, 1, 1_000, 2_000));
+    DurableScreenBufferService ttlZeroService =
+        new DurableScreenBufferService(
+            repository, ttlZeroSettings, emptyHotCache(), new SimpleMeterRegistry());
+
+    assertThat(ttlZeroService.get(22L, 7L, 13L)).isPresent();
+    assertThat(repository.findByScope(22L, 7L, 13L).getFirst().getExpiresAt()).isNull();
+    assertThat(repository.deleteExpiredBefore(oldExpiry.plusMillis(1), 10)).isZero();
+    assertThat(repository.findByScope(22L, 7L, 13L))
+        .extracting(ResumeTranscriptEntry::getProtocolText)
+        .containsExactly("Retained after policy change\n");
   }
 
   @Test
@@ -180,9 +237,10 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
         (tenantId, gameInstanceId) ->
             new FiremudReconnectionProperties(
                 new FiremudReconnectionProperties.Policy(180_000L, true),
-                new FiremudReconnectionProperties.Buffer(1L, 1, 1, 100, 200));
+                new FiremudReconnectionProperties.Buffer(1L, 256, 1, 1, 1_000, 2_000));
     DurableScreenBufferService initial =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
     initial.append(
         22L,
         7L,
@@ -200,7 +258,8 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
                 null)));
 
     DurableScreenBufferService recreated =
-        new DurableScreenBufferService(repository, settingsResolver, emptyHotCache());
+        new DurableScreenBufferService(
+            repository, settingsResolver, emptyHotCache(), new SimpleMeterRegistry());
 
     assertThat(recreated.get(22L, 7L, 13L)).isEmpty();
   }
@@ -227,6 +286,10 @@ class ResumeTranscriptEntryRepositoryIntegrationTest {
     return new ScreenBufferService() {
       @Override
       public void append(
+          long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {}
+
+      @Override
+      public void replace(
           long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {}
 
       @Override
