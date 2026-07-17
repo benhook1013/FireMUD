@@ -12,7 +12,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 ## Working Tree Safety
 
 - Expect concurrent and dirty worktrees. Preserve unrelated edits and work in scope; do not stop merely because unrelated files changed.
-- Do not run `git restore`, `git checkout`, `git reset`, `git clean`, or `git stash` unless a human explicitly requests that action. Do not delete untracked files merely because they are temporary-looking or fail a linter.
+- Do not run `git restore`, `git checkout`, `git reset`, `git clean`, or `git stash` unless a human explicitly requests that action. Delete an untracked file only when it is unquestionably disposable and in scope; temporary-looking names or lint failures are not sufficient.
 - Edit a modified target in place. If overlapping changes make intent unclear or risky, ask the human. Never revert, clean up, or reformat unrelated work.
 - Do not create, merge, or close pull requests unless explicitly asked.
 
