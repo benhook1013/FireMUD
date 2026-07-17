@@ -51,12 +51,11 @@ be reactivated for rollback, migrations in live or retention-bearing environment
 must be written to preserve the ability to load existing versioned graphs.
 This guidance is scoped to environments/services that already need to preserve
 non-Retired versions or mixed live deployment history. During initial
-development bootstrap, the repo-wide rule in `AGENTS.md` remains authoritative:
-prefer direct replacement and avoid unnecessary dual-read/dual-write or phased
-migration scaffolding until a service actually has live-version preservation
-requirements. Expand/migrate/contract is not the default first-slice stance for
-every service change; it becomes mandatory only once a service has crossed into
-real live-version preservation obligations.
+development bootstrap, prefer direct replacement and avoid unnecessary
+dual-read/dual-write or phased migration scaffolding until a service actually
+has live-version preservation requirements. Expand/migrate/contract is not the
+default first-slice stance for every service change; it becomes mandatory only
+once a service has crossed into real live-version preservation obligations.
 
 - Prefer **additive** changes (adding tables/columns, widening types) while any
   published versions still depend on the existing schema shape.

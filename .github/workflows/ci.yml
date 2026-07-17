@@ -276,7 +276,6 @@ jobs:
           bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
-          bash ./dev-tools/tests/implementation-tracker-migration-contract.sh
           python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
 
   yaml-lint:

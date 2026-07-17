@@ -47,7 +47,6 @@ root
 ├── .gitignore
 ├── .lycheeignore
 ├── .pre-commit-config.yaml
-├── .windsurfrules
 ├── AGENTS.md
 ├── build.gradle.kts
 ├── CODE_OF_CONDUCT.md
@@ -87,8 +86,7 @@ root
 - `.gitignore` – Git ignore rules for build outputs, IDE files, and dependencies.
 - `.lycheeignore` – Ignore rules for the lychee link checker.
 - `.pre-commit-config.yaml` – Configuration for lightweight pre-commit formatting and file-scoped lint checks.
-- `.windsurfrules` – Compatibility link to the local AI rules.
-- `AGENTS.md` – Contribution guide pointing to project AI rules.
+- `AGENTS.md` – Always-on AI contributor safety and authority guidance, with links to conditional developer workflows.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
 - `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
