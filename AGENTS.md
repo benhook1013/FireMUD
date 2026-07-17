@@ -73,7 +73,7 @@ The main `gpt-5.6-sol` thread is the orchestrator. It owns planning, design disc
 - Delegate bounded bulk work proactively when it preserves Sol context or materially reduces orchestration cost. Prefer `gpt-5.6-luna`; reserve `gpt-5.6-terra` for tasks that need stronger independent reasoning.
 - Give each subagent a disjoint write scope, explicit success conditions, and enough canonical context to execute without making design decisions.
 - Optimize for direct convergence and avoid unnecessary splitting across delegated workers.
-- For slice or branch reconciliation, read the owning vertical-slice doc first and use its declared scope, proof, and status before interpreting branch names, commit messages, or raw diffs.
+- For implementation or branch reconciliation, read the owning domain implementation tracker first and use its declared capability scope, proof, and status before interpreting branch names, commit messages, or raw diffs.
 - Be proactive within scope. If the task exposes nearby drift or related breakage in the same area, fix it in the same pass when practical.
 - When rolling out or repairing a shared pattern, update the remaining in-scope adopters in the same pass when practical.
 
@@ -100,6 +100,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Do not artificially keep work narrow when the live invariant clearly spans multiple services or seams and a wider in-scope pass will reduce churn, repeated review cost, or follow-up rework.
 - Do not stop to ask for special approval merely because a change becomes cross-service, breaking, or larger than an initially narrow seam; only stop when design intent is genuinely unclear or competing target states exist.
 - Default to the cheapest credible path to canonical convergence, even when that means folding adjacent slice work together, replacing a larger surface directly, or retiring obsolete code in the same pass.
+- Prefer implementation batches that measurably advance an owned capability's state, close a declared gap, or strengthen its focused proof. Do not accumulate bounded seams that leave tracked capability shape unchanged unless they are an explicit prerequisite for a named capability outcome.
 
 ## Documentation Rules
 

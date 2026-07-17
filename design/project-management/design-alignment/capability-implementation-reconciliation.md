@@ -39,6 +39,14 @@ These are implementation or proof gaps, not silently competing target states:
 
 [`check-implementation-capability-tracking.py`](../../../dev-tools/validation/check-implementation-capability-tracking.py) enforces taxonomy/allocation/tracker coverage, primary ownership, state vocabularies, required evidence cells, valid capability references, and local link integrity. It runs through the existing architecture-document contract suite.
 
+## Post-Review Convergence Priorities
+
+After the human-led adversarial decision review establishes any required design changes:
+
+1. Resolve the five current `drift-found` capabilities.
+2. Select high-value `partial` capabilities and close their designed boundaries end to end rather than adding more isolated substrate.
+3. Prioritize complete playable user journeys over widening foundations that are already credible enough to support them.
+
 ## Human Review Boundary
 
 The automated alignment work ends after independent evidence-quality validation. The human decision owner then conducts adversarial review of the consequential-decision inventory. Agents may prepare evidence or competing arguments only when explicitly requested; they must not accept, revise, defer, withdraw, or supersede decisions autonomously.
