@@ -73,18 +73,18 @@ After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a 
 
 Redis-backed session state allows resumable recovery when the gameplay binding is still logically valid, or a fresh login when it is not. Logical binding expiry and physical Redis deletion are separate:
 
-- **Logical gameplay binding expiry** – On successful gameplay admission at `admissionAt`, Game Session sets the immutable `gameplaySessionExpiresAt` anchor:
+- **Continuity-binding expiry** – On successful gameplay admission at `admissionAt`, Game Session sets the immutable `continuityBindingExpiresAt` anchor:
 
-  `gameplaySessionExpiresAt = admissionAt + session_expiration_ms`
+  `continuityBindingExpiresAt = admissionAt + session_expiration_ms`
 
-  A resume, takeover, reconnect, or backend-token rotation may update socket and token metadata, but never moves this anchor. For a binding disconnected or suspended at `disconnectAt`, the resume deadline is:
+  Passing this anchor does not itself end a continuously connected, currently authorized gameplay session. It means the old binding cannot resume after a later transport loss. A resume, takeover, reconnect, or backend-token rotation may update socket and token metadata, but never moves this anchor. For a binding disconnected or suspended at `disconnectAt`, the resume deadline is:
 
-  `resumeDeadline = min(gameplaySessionExpiresAt, disconnectAt + effective resume-window-ms)`
+  `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective resume-window-ms)`
 
   Resume requires the current time to be before both limits and still requires current identity, membership, entitlement, and revocation checks. A genuinely fresh `PLAY` admission creates a new binding and anchor; it does not extend the old binding or its resume window.
-- **Physical Redis deletion** – The Redis key TTL is storage cleanup for the binding. Expiration processing, failover, or AOF replay can leave a key present after logical expiry, while cleanup can remove it earlier. Key presence is never permission to resume, and refreshing the physical TTL must never rewrite `gameplaySessionExpiresAt`.
+- **Physical Redis deletion** – The Redis key TTL is storage cleanup for the binding. Expiration processing, failover, or AOF replay can leave a key present after logical expiry, while cleanup can remove it earlier. Key presence is never permission to resume, and refreshing the physical TTL must never rewrite `continuityBindingExpiresAt`.
 
-`session_expiration_ms` derives the immutable logical gameplay-binding lifetime established at admission and the key's initial physical cleanup TTL from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. It is not a JWT validity period: every server-side JWT remains valid only through its own `exp` claim. Rotating that JWT can preserve backend-call authorization before `exp` is reached, but cannot extend the gameplay expiry anchor or the resume deadline. Transcript retention under `firemud.reconnection.buffer.*` is independent and never extends resume eligibility.
+`session_expiration_ms` derives the initial continuity-retention and cleanup horizon as `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. It is not a JWT validity period or an uninterrupted-play cutoff: every server-side JWT remains valid only through its own `exp`, while healthy active sessions rotate backend tokens. Rotation cannot extend the continuity anchor or resume deadline. Transcript retention under `firemud.reconnection.buffer.*` is independent and never extends resume eligibility.
 
 Resume is authorized from current identity and current membership/entitlement authority, not from the previous backend token alone. After a fresh successful `LOGIN`, Game Session must rebind any resumed gameplay session to a fresh backend token and reject resume if current membership authority for the tenant has been removed.
 
@@ -183,8 +183,8 @@ Invisible recovery means the client-facing Gateway WebSocket or TCP Proxy socket
 - **Timing** – ordinary recovery targets no more than 10 seconds. Gateway stops hidden recovery after 30 seconds of continuous upstream unavailability and closes with `1013/backend_unavailable`. Retry-attempt counts alone are not an elapsed-time bound.
 - **Input during a detected stall** – input accepted into the bounded stall buffer remains FIFO and is delivered once after successful rebind. If the buffer cannot accept further input, Gateway closes or fails explicitly using the bounded taxonomy; it never silently discards input while leaving the client apparently healthy.
 - **Ambiguous in-flight work** – a command that may already have crossed the failed hop is not blindly replayed. It may be lost under the current at-most-once edge contract; durable command/effect recovery continues only from recorded internal execution identity.
-- **Lifecycle classification** – the internal Gateway-to-Game-Session hop distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and absolute expiry. That internal classification does not add a public close category.
-- **Continuation authority** – replacement Game Session instances use current server-side session authority and the stable edge transport identity. They do not require the original first-party connect token to remain valid as though the internal rebind were a new public admission, but current tenant/game scope, membership, entitlement, revocation, absolute expiry, and fencing still apply.
+- **Lifecycle classification** – the internal Gateway-to-Game-Session hop distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and loss of current authorization. That internal classification does not add a public close category.
+- **Continuation authority** – replacement Game Session instances use current server-side session authority and the stable edge transport identity. They do not require the original first-party connect token to remain valid as though the internal rebind were a new public admission, but current tenant/game scope, membership, entitlement, revocation, authorization, and fencing still apply.
 - **Presence and liveness** – loss of only the internal Game Session hop is not proof that the player transport was lost. Disconnect events, presence removal, and gameplay-binding teardown follow authoritative edge liveness and replacement registration so a successful rebind does not publish a false disconnect.
 
 These timing thresholds are initial functional acceptance criteria rather than a published percentile availability SLO. FireMUD must not claim the complete target as implemented until a real authenticated Gateway and Game Session replacement test retains the same client socket, continues after prior `LOGIN` and `PLAY`, and proves subsequent gameplay, authority, presence, and transcript behavior without repeating admission.
