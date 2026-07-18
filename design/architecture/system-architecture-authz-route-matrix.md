@@ -86,6 +86,8 @@ Critical routes may also require explicit machine-readable fields for:
 
 Without these fields where applicable, a route entry is incomplete for governance and CI enforcement.
 
+Route authorization never becomes in-game elevation. If a global-role account passes the ordinary caller-bound join and admission flow, gameplay presence, command, and actor-capability resolution ignore its global roles. Any moderator, administrator, game-master, or equivalent gameplay authority requires an explicit tenant-scoped gameplay grant; no route classification creates a support impersonation or hidden-observer session.
+
 ## Seed Matrix (Current Required Entries)
 
 | Service | Route | Classification | Required roles/capability |
