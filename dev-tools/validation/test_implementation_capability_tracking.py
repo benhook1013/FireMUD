@@ -203,6 +203,16 @@ def main() -> None:
                 ),
                 "canonical relative target",
             )
+        expect_failure(
+            "primary repeated as secondary",
+            lambda: validator.parse_allocations(
+                root,
+                allocation_path,
+                "| `AA-1.1` | [player-access-and-session.md](./player-access-and-session.md) "
+                "| [player-access-and-session.md](./player-access-and-session.md) | rationale |",
+            ),
+            "primary tracker must not be repeated as a secondary tracker",
+        )
         allowed_handoffs = allocations["AA-1.1"][1]
         validator.validate_status_row_handoffs(
             "player-access-and-session.md",

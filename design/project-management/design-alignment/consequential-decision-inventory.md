@@ -22,7 +22,7 @@ Routine implementation mechanics that do not affect the target-state contract ar
 
 | Status | Meaning |
 | --- | --- |
-| `accepted-explicit` | Canonical design and an accepted ADR explicitly establish the choice. This records repository state, not proof of prior human consultation. |
+| `accepted-explicit` | Canonical design, an accepted ADR, or both explicitly establish the choice. This records repository state, not proof of prior human consultation. |
 | `accepted-implicit` | Canonical design establishes the choice but no adequate rationale/ADR was found. |
 | `proposed` | Design presents a target that still requires explicit acceptance. |
 | `deferred` | The choice is intentionally postponed behind an adoption or implementation gate. |

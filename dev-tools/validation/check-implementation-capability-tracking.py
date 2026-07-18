@@ -415,7 +415,13 @@ def parse_allocations(root: Path, allocation_path: Path, text: str) -> dict[str,
             TRACKERS,
             f"{relative_path(allocation_path, root)}:{capability_id}: secondary tracker",
         )
-        allocations[capability_id] = (next(iter(primary)), secondary)
+        primary_tracker = next(iter(primary))
+        if primary_tracker in secondary:
+            fail(
+                f"{relative_path(allocation_path, root)}:{capability_id}: "
+                "primary tracker must not be repeated as a secondary tracker"
+            )
+        allocations[capability_id] = (primary_tracker, secondary)
     if not allocations:
         fail(f"{relative_path(allocation_path, root)}: no capability allocation rows found")
     return allocations

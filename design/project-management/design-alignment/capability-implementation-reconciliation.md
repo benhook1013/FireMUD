@@ -7,8 +7,8 @@ This record summarizes the automated reconciliation from the complete product ca
 - All 79 leaf capabilities have exactly one primary implementation tracker.
 - All ten tracker domains have primary ownership and explicit secondary handoffs in the [capability allocation](../implementation-tracking/capability-allocation.md).
 - Every leaf has separate implementation and verification states, canonical design links, production anchors, proof anchors, handoffs, and a remaining gap or decision.
-- Current implementation totals are 11 `implemented`, 66 `partial`, and 2 `not-implemented`.
-- Current verification totals are 47 `proven`, 26 `audited`, 5 `drift-found`, and 1 `unverified`.
+- Current implementation totals are 10 `implemented`, 67 `partial`, and 2 `not-implemented`.
+- Current verification totals are 46 `proven`, 26 `audited`, 6 `drift-found`, and 1 `unverified`.
 - `AUTO-01`, `CONTENT-05`, and `SESSION-08` now have one reconciled canonical baseline each. Their decision-inventory entries preserve alternatives for later human review without presenting the sources as currently contradictory.
 
 ## Reconciled Cross-Domain Boundaries

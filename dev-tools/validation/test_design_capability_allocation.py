@@ -40,6 +40,16 @@ def expect_failure(label: str, validator, root: Path, expected: str) -> None:
         raise AssertionError(f"{label}: mutated fixture unexpectedly passed")
 
 
+def expect_call_failure(label: str, call, expected: str) -> None:
+    try:
+        call()
+    except SystemExit as error:
+        if expected not in str(error):
+            raise AssertionError(f"{label}: unexpected failure: {error}") from error
+    else:
+        raise AssertionError(f"{label}: invalid input unexpectedly passed")
+
+
 def replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     if text.count(old) != 1:
@@ -197,6 +207,47 @@ def main() -> None:
             Path(directory),
             "duplicate allocation ledger row",
         )
+
+    for label, source_class, added_path in (
+        (
+            "stale microservice umbrella count",
+            "Microservice architecture",
+            "design/architecture/microservices/example/new-source.md",
+        ),
+        (
+            "stale system umbrella count",
+            "Top-level architecture",
+            "design/architecture/new-source.md",
+        ),
+        (
+            "stale ADR umbrella count",
+            "Architecture decisions",
+            "design/architecture/decisions/adr-9999-example.md",
+        ),
+    ):
+        with fixture_root() as directory:
+            root = Path(directory)
+            source_sets = validator.repository_files(root)
+            source_sets[source_class].add(added_path)
+            expect_call_failure(
+                label,
+                lambda root=root, source_sets=source_sets: validator.validate_top_allocation_ledger(
+                    root,
+                    validator.group_ids(root),
+                    source_sets["Architecture decisions"],
+                    source_sets,
+                ),
+                "allocation row drift",
+            )
+
+    expect_call_failure(
+        "trailing contradictory exemption claim",
+        lambda: validator.parse_explicit_exemptions(
+            "0; 3 explicit exemptions; 99 gaps",
+            "fixture",
+        ),
+        "malformed gap/exemption count",
+    )
 
     print("design capability allocation regression tests passed")
 

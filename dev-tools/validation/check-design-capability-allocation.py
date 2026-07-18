@@ -237,19 +237,6 @@ MICROSERVICE_EXEMPT_ALLOCATIONS = {
     "design/architecture/microservices/service-documentation-structure.md": ("Exempt", "Governance guide"),
     "design/architecture/microservices/service-template.md": ("Exempt", "Template"),
 }
-TOP_ALLOCATION_ROWS = {
-    "design/project-management/design-alignment/design-capability-allocation-microservices.md": (
-        "All 76 files under `design/architecture/microservices/**`",
-        "Per-source allocation",
-    ),
-    "design/architecture/decisions/README.md": ("Registry plus 11 ADRs", "Per-record allocation"),
-    "design/project-management/design-alignment/design-capability-allocation-system.md": (
-        "All 89 direct architecture, 6 infrastructure, and 1 generated source",
-        "Per-source allocation",
-    ),
-}
-
-
 @dataclass(frozen=True)
 class LedgerRow:
     path: str
@@ -759,9 +746,39 @@ def validate_microservice_summary(root: Path, rows: list[LedgerRow], expected_pa
         fail(f"{document.relative_to(root)}: classification total drift")
 
 
-def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisions: set[str]) -> list[LedgerRow]:
+def expected_top_allocation_rows(
+    source_sets: dict[str, set[str]], expected_decisions: set[str]
+) -> dict[str, tuple[str, str]]:
+    adr_count = len(expected_decisions) - 1
+    generated_count = len(source_sets["Generated references"])
+    generated_label = "source" if generated_count == 1 else "sources"
+    adr_label = "ADR" if adr_count == 1 else "ADRs"
+    return {
+        "design/project-management/design-alignment/design-capability-allocation-microservices.md": (
+            f"All {len(source_sets['Microservice architecture'])} files under `design/architecture/microservices/**`",
+            "Per-source allocation",
+        ),
+        "design/architecture/decisions/README.md": (
+            f"Registry plus {adr_count} {adr_label}",
+            "Per-record allocation",
+        ),
+        "design/project-management/design-alignment/design-capability-allocation-system.md": (
+            f"All {len(source_sets['Top-level architecture'])} direct architecture, "
+            f"{len(source_sets['Infrastructure'])} infrastructure, and {generated_count} generated {generated_label}",
+            "Per-source allocation",
+        ),
+    }
+
+
+def validate_top_allocation_ledger(
+    root: Path,
+    groups: set[str],
+    expected_decisions: set[str],
+    source_sets: dict[str, set[str]],
+) -> list[LedgerRow]:
     document = root / TOP_ALLOCATION
     text = document.read_text(encoding="utf-8")
+    expected_rows = expected_top_allocation_rows(source_sets, expected_decisions)
     headers, rows = table_in_section(text, "Allocation Ledger", {"Design source", "Heading or scope", "Primary capability"})
     source_index = headers.index("Design source")
     heading_index = headers.index("Heading or scope")
@@ -775,7 +792,7 @@ def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisi
         if source_path in identities:
             fail(f"{document.relative_to(root)}: duplicate allocation ledger row {source_path}")
         identities.append(source_path)
-        expected = TOP_ALLOCATION_ROWS.get(source_path)
+        expected = expected_rows.get(source_path)
         if expected is None:
             fail(f"{document.relative_to(root)}: unexpected allocation ledger row {source_path}")
         if (row[heading_index].strip(), clean_cell(row[primary_index])) != expected:
@@ -783,7 +800,7 @@ def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisi
                 f"{document.relative_to(root)}:{source_path}: allocation row drift; "
                 f"expected heading/primary {expected!r}"
             )
-    if set(identities) != set(TOP_ALLOCATION_ROWS) or len(identities) != len(TOP_ALLOCATION_ROWS):
+    if set(identities) != set(expected_rows) or len(identities) != len(expected_rows):
         fail(f"{document.relative_to(root)}: allocation ledger references drifted")
 
     if set(ADR_ALLOCATION_EXPECTATIONS) != expected_decisions:
@@ -821,12 +838,15 @@ def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisi
 
 
 def parse_explicit_exemptions(cell: str, context: str) -> tuple[int, int]:
-    numbers = re.findall(r"\d+", cell)
-    if not numbers:
-        fail(f"{context}: missing gap count in {cell!r}")
-    gap_count = int(numbers[0])
-    exemption_match = re.search(r"(\d+)\s+(?:explicit|registry)\s+", cell)
-    exemption_count = int(exemption_match.group(1)) if exemption_match else 0
+    match = re.fullmatch(
+        r"(?P<gaps>\d+)(?:;\s*(?P<exemptions>\d+)\s+"
+        r"(?:explicit(?:\s+[A-Za-z][A-Za-z0-9/-]*)*|registry)\s+exemptions?)?",
+        clean_cell(cell),
+    )
+    if not match:
+        fail(f"{context}: malformed gap/exemption count {cell!r}")
+    gap_count = int(match.group("gaps"))
+    exemption_count = int(match.group("exemptions") or 0)
     return gap_count, exemption_count
 
 
@@ -891,7 +911,9 @@ def validate(root: Path = ROOT) -> None:
     system_rows = validate_system(root, source_sets, groups)
     micro_rows = parse_microservice_ledger(root, groups, source_sets["Microservice architecture"])
     validate_microservice_summary(root, micro_rows, source_sets["Microservice architecture"])
-    decision_rows = validate_top_allocation_ledger(root, groups, source_sets["Architecture decisions"])
+    decision_rows = validate_top_allocation_ledger(
+        root, groups, source_sets["Architecture decisions"], source_sets
+    )
     validate_top_summary(root, source_sets, system_rows, micro_rows, decision_rows)
     print(
         "design capability allocation passed: "
