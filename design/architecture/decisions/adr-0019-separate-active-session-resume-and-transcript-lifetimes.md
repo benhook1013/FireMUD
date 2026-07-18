@@ -1,0 +1,101 @@
+# ADR 0019: Separate Active Session, Resume, and Transcript Lifetimes
+
+## Status
+
+Accepted
+
+## Decision Record
+
+- Decision date: 2026-07-18
+- Primary capability: `AA-2.2` Reconnect, resume eligibility, and cross-device continuity
+- Affected capabilities: `GR-1.4`, `AR-2.1`, `EA-3.4`, `SF-1.1`
+- Decision owner: FireMUD human product and architecture owner
+- Consultation: human-led adversarial review of `SESSION-08`
+
+## Context
+
+FireMUD must distinguish token validity, continuously active gameplay, continuity after transport loss, Redis cleanup, and retained presentation context. These boundaries have different security, player-experience, and storage purposes. The live implementation currently relies primarily on a refreshable Redis TTL, does not enforce the configured disconnected-resume window in `PLAY`, and lacks immutable continuity timestamps.
+
+The previously reconciled target separated the policies but described `gameplaySessionExpiresAt`, derived from JWT lifetime plus a safety margin, as an absolute gameplay-binding ceiling. Read literally, the one-hour JWT default plus five-minute margin could force a healthy long-running player through periodic gameplay-session recreation even though internal service tokens are designed to rotate. Internal credential lifetime must not indirectly dictate uninterrupted player-session duration.
+
+## Decision
+
+JWT validity, active gameplay authorization, continuity-binding eligibility, disconnected-resume eligibility, physical storage, and transcript retention are separate authorities.
+
+### Active Gameplay
+
+- A continuously connected gameplay session may remain active while edge liveness is healthy and current account, membership, entitlement, revocation, fencing, and backend-token checks succeed.
+- Internal service JWTs rotate on their bounded cadence. Each token remains valid only through its own `exp`; rotation neither revives an expired token nor forces a healthy player through fresh `PLAY` merely because the previous token aged out.
+- Account or tenant revocation and loss of required authority remain immediate terminal conditions. This decision does not create an immortal authorization grant.
+- If FireMUD later requires a maximum continuously active player-session lifetime, it must be an explicit security/product policy rather than an accidental consequence of internal JWT configuration.
+
+### Continuity and Resume
+
+On successful gameplay admission, Game Session records an immutable continuity anchor:
+
+`continuityBindingExpiresAt = admissionAt + session_expiration_ms`
+
+where `session_expiration_ms` remains derived from the configured JWT lifetime plus safety margin for the initial continuity-retention horizon. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
+
+On disconnect or suspension:
+
+`resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective resume-window-ms)`
+
+- Resume requires the current time to be before both limits and requires fresh identity, membership, entitlement, revocation, and uniqueness checks.
+- Token rotation, takeover, reconnect attempts, Redis TTL refresh, and transcript retention cannot move either timestamp.
+- After either limit, the old binding is non-resumable even if data remains. A successful current `LOGIN` and `PLAY` may perform fresh admission and create a new binding; that is not continuation of the expired binding.
+
+### Storage, Transcript, and Logout
+
+- Redis TTL is physical cleanup metadata. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
+- Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
+- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and clears or suppresses private transcript replay for that binding. Later fresh admission must not replay logged-out private context unless a separate explicit product policy authorizes it.
+
+## Consequences
+
+- Long uninterrupted play is not coupled to the one-hour internal JWT default.
+- Short disconnected-resume windows still bound unattended continuity risk, and stale Redis or transcript data cannot revive a binding.
+- Fresh admission provides a player-friendly fallback after continuity expiry without pretending that old transient state resumed.
+- The runtime must persist and evaluate additional logical timestamps independently of Redis expiration.
+- Operations and tests must distinguish active-token refresh, continuity expiry, resume expiry, fresh-entry fallback, logout, and transcript cleanup.
+- The derived continuity horizon still changes with JWT configuration; it no longer changes uninterrupted active-session duration.
+
+## Alternatives Considered
+
+### Treat the Derived Anchor as an Active-Session Cutoff
+
+This gives a simple hard cap but couples player-session duration to internal token policy and can interrupt healthy long-running play.
+
+### Use One TTL for Tokens, Bindings, Resume, and Transcript
+
+This is simpler to implement but makes physical Redis behavior security-sensitive and couples credential security, continuity, and storage costs.
+
+### Use a Sliding Resume Binding
+
+Refreshing the logical anchor on activity or token rotation improves continuity but can make automation or steady activity preserve bindings indefinitely and weakens cleanup and stale-binding rejection.
+
+### Disable Resume
+
+Fresh admission after every disconnect is simpler and more conservative but materially degrades continuity and loses bounded in-flight presentation state.
+
+## Implementation and Proof Obligations
+
+- Persist immutable `continuityBindingExpiresAt`, `disconnectAt`, and `resumeDeadline` values and enforce them in `PLAY` admission.
+- Prove token refresh and healthy uninterrupted play independently of the continuity anchor.
+- Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
+- Prove Redis saves, TTL refresh, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
+- Prove current subject, membership, entitlement, revocation, and uniqueness checks on every resume.
+- Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
+- Prove transcript bounds independently and prove explicit logout prevents later private replay from the terminated binding.
+
+## Reversibility and Revisit Triggers
+
+The independent policy boundaries can gain explicit active-session maximum or idle-session policies later without weakening resume rules. Revisit when security requires periodic player reauthentication during uninterrupted play, when measured storage pressure makes the continuity horizon unsuitable, or when product policy defines transcript replay after deliberate logout or non-resumable fresh entry.
+
+## Required Documentation Alignment
+
+- `design/architecture/system-architecture-reconnection.md`
+- `design/architecture/system-architecture-session-behavior.md`
+- `design/architecture/system-architecture-redis.md`
+- `design/architecture/system-architecture-input-output-and-presentation.md`
+- `design/architecture/infrastructure/environment-and-secrets-catalog.md`

@@ -264,7 +264,7 @@ For the current architecture, that means:
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
 - a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
 - Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;
-- after `LOGIN` plus `PLAY`, FireMUD replays the retained resume context in ordering-token order, then emits fresh authoritative reconstruction such as `LOOK` and a prompt;
+- after authorized resume, or fresh admission whose explicit transcript policy permits replay, FireMUD replays retained context in ordering-token order, then emits fresh authoritative reconstruction such as `LOOK` and a prompt; explicit gameplay `LOGOUT` clears or suppresses private replay for the terminated binding;
 - prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
 
 Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.

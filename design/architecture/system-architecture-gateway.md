@@ -234,7 +234,7 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
   - An established `/ws/game/**` session in `unreachable` state retains its edge socket during bounded upstream rebind. Input accepted into its bounded stall buffer remains FIFO and is delivered once to the replacement upstream. Buffer exhaustion closes that session explicitly with `1013/backend_unavailable`; Gateway never silently drops stalled input while leaving the session open.
   - If the backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
 
-Gateway-to-Game-Session close handling uses a bounded internal classification that distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and absolute expiry. A rebindable internal close is not forwarded to the client when recovery succeeds. This classification does not add a public close category; exhausted recovery still maps to `1013/backend_unavailable`.
+Gateway-to-Game-Session close handling uses a bounded internal classification that distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and loss of current authorization. A rebindable internal close is not forwarded to the client when recovery succeeds. This classification does not add a public close category; exhausted recovery still maps to `1013/backend_unavailable`.
 
 ### Gateway Restart Semantics
 
