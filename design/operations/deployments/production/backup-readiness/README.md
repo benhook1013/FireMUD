@@ -1,6 +1,6 @@
 # Production Backup Readiness Evidence
 
-Store one record per `roll-forward-only` production promotion as:
+Store one full record per `roll-forward-only` production promotion, or when the compact recovery-compatibility result requires a new drill, as:
 
 - `<deployment-ref>.json`
 
@@ -11,14 +11,24 @@ Required fields:
 - `promotionAttestationRef`
 - `assessedAt`
 - `assessedBy`
-- `rollbackMode` (`roll-forward-only`)
+- `rollbackMode` (`rollback-compatible` or `roll-forward-only`)
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
-- `serviceDigests`
+- `restoreRecoveryRecordRef`
+- `backupCoverage` (`environment-wide-postgresql`)
+- `backupArtifactRef`
+- `sourceServiceDigests`
+- `candidateServiceDigests`
+- `candidateMigrationPathRef`
+- `backupToolDigest`
+- `recoveryToolDigest`
+- `recoveryContractFingerprint`
 - `evidenceRefs`
 
-`promotionAttestationRef` must point to the production attestation record for the release, and `serviceDigests` must match that attested digest set exactly.
+`promotionAttestationRef` must point to the production attestation record for the release, and `candidateServiceDigests` must match that attested digest set exactly. The source artifact must come from current production database lineage under representative writes; the drill must restore with candidate recovery tooling and prove the exact candidate migration path, config, bindings, environment-wide cold-start convergence, hardening, and controlled reopen.
 
-Production preflight rejects `roll-forward-only` promotions when this evidence is missing, stale, or not bound to the promoted attestation and digest set.
+Production preflight rejects `roll-forward-only` promotions and any `drill_required` release when this evidence is missing, stale, or not bound to the promoted attestation and digest set.
+
+Compatible rollback releases do not duplicate this full record. Their promotion/deployment evidence contains the compact `recoveryCompatibility` result defined by the backup recovery evidence contract.

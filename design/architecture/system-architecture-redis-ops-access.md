@@ -153,8 +153,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
 - Required argument contract:
   - `coordination-maintenance pause`
     - accepts only the scope grammar above.
-    - accepts `--operation <backup|restore|reset|cleanup|migration|topology-change>` and treats that value as the canonical maintenance-lock compatibility class.
-    - is the canonical entrypoint that acquires the deployment maintenance lock for every multi-step backup, restore, reset, cleanup, migration, and topology-changing scaling workflow.
+    - accepts `--operation <backup|restore|reset|cleanup|migration|topology-change>` and treats that value as the canonical maintenance-lock compatibility class; `backup` is reserved for exceptional backup-related maintenance that actually pauses or mutates coordination state.
+    - is the canonical entrypoint that acquires the deployment maintenance lock for multi-step restore, reset, cleanup, migration, topology-changing scaling, and exceptional backup-related maintenance workflows. Routine online PostgreSQL backup neither calls this command nor pauses ticks.
     - blocks until the scope reaches the control-plane `PAUSED` state or exits non-zero on timeout/failure.
     - must emit a `maintenanceLockToken` plus the resolved affected-region inventory in audit output; downstream commands in the same workflow consume that token rather than reacquiring the lock independently.
   - `coordination-maintenance status`

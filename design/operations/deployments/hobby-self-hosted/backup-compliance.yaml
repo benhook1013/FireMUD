@@ -1,12 +1,15 @@
 schemaVersion: hobby-backup-compliance/v1
 environment: hobby-self-hosted
-status: pass
+status: incomplete
 updatedAt: "2026-02-25T00:00:00Z"
 lastSuccessfulBackupAt: "2026-02-24T23:30:00Z"
 lastSuccessfulRestoreDrillAt: "2026-02-10T12:00:00Z"
 lastRestoreDrillAt: "2026-02-10T12:00:00Z"
 retentionDailyPoints: 7
 backupTooling: cron + pg_dump + object storage
+lastSuccessfulRecoveryRecordRef: null
+recoveryContractFingerprint: null
 evidenceRefs:
   - notes/hobby-backup-check-2026-02-24
   - notes/hobby-restore-drill-2026-02-10
+  - legacy evidence does not prove the accepted environment-wide cold-start contract

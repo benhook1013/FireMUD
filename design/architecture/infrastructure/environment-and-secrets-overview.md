@@ -292,7 +292,7 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 - `jwt-signing-keys`
 - `jwt-jwks`
 - cert-manager issuer or issuer reference used by workload and bridge certificates
-- concrete certificate bindings for workload gRPC mTLS, the Gateway internal mTLS WebSocket listener where used, the TCP Proxy bridge client identity where used, and the backup control-plane client identity where backup automation invokes `PauseTicks` / `ResumeTicks`
+- concrete certificate bindings for workload gRPC mTLS, the Gateway internal mTLS WebSocket listener where used, the TCP Proxy bridge client identity where used, and a maintenance control-plane client identity when an exceptional backup-related maintenance workflow invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require that pause identity
 - registry pull credential secret
 - backup/object-store credentials when the environment requires backups, including the binding identity used to prove the intended environment owns the bucket or object-store target
 - asset-store credentials when the environment publishes or serves assets from external object storage, including the binding identity used to prove the intended environment owns the asset bucket or object-store target

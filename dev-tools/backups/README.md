@@ -3,7 +3,7 @@
 This directory contains FireMUD backup tooling for three different lanes:
 
 - local ad hoc PostgreSQL dumps
-- coordinated gameplay-aware backups
+- legacy gameplay-pause maintenance experiments
 - Kubernetes backup setup and verification
 
 ## Script Map
@@ -15,7 +15,7 @@ This directory contains FireMUD backup tooling for three different lanes:
 
 - `firemud-backup.sh`
   - Pauses gameplay ticks through Game Session, waits for pause confirmation, runs `pg_dump`, then resumes ticks.
-  - Intended for coordinated backup workflows where gameplay consistency matters.
+  - Legacy/maintenance-only helper; its process-local pause path, missing bounded cleanup, and non-environment-wide scope do not satisfy routine backup or player-facing recovery readiness.
   - Uses `grpcurl` plus the same PostgreSQL environment variables as `backup-db.sh`.
 
 - `pg-dump-rotate.sh`
@@ -35,7 +35,8 @@ This directory contains FireMUD backup tooling for three different lanes:
 ## Choosing The Right Script
 
 - Use `backup-db.sh` for a quick local PostgreSQL snapshot before a restore or experiment.
-- Use `firemud-backup.sh` when you need a coordinated dump that pauses gameplay ticks first.
+- Do not use `firemud-backup.sh` as routine backup or readiness evidence. It may be used only for explicitly quarantined maintenance experiments while its limitations are recorded.
+- The scheduled `pg-dump-rotate.sh` lane is the routine online-backup direction; it still needs complete lineage and restore-readability proof before player-facing readiness.
 - Use `setup-local-backup.sh` and `verify-backups.sh` for Kubernetes backup drills and backup verification.
 - Do not run `pg-dump-rotate.sh` manually unless you are intentionally testing the scheduled dump lane.
 

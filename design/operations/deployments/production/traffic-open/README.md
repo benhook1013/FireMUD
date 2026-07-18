@@ -4,15 +4,16 @@ Store one record per `first-live` or `reopen` production traffic-open event as:
 
 - `<event>-<deployment-ref>.json`
 
-Canonical writer:
+Current implementation note:
 
-- `python3 dev-tools/deploy/write-traffic-open-evidence.py production <deployment-ref> <first-live|reopen> --assessed-by <operator> --preflight-report design/operations/deployments/production/preflight/<deployment-ref>.json --backup-last-success-at <timestamp> --backup-verify-last-success-at <timestamp> --restore-drill-last-success-at <timestamp> --tenant-id <tenant> --region-id <region> --evidence-ref <ref>`
+`dev-tools/deploy/write-traffic-open-evidence.py` still writes the superseded tenant/region scope shape and cannot produce accepted player-facing readiness evidence. It must be updated before this gate can pass.
 
 Required fields:
 
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment` (`production`)
 - `eventType`
+- `trafficOpenStatus` (`authorized` before the transition; `finalized` after it)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`
@@ -20,10 +21,18 @@ Required fields:
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
-- `coordinatedBackupScope`
-  - `type` (`tenant_region`)
-  - `tenantId`
-  - `regionId`
+- `backupReadinessRef`
+- `baselineRecoveryRecordRef`
+- `actualRecoveryRecordRef` when `eventType=reopen`
+- `backupCoverage` (`environment-wide-postgresql`)
+- `backupArtifactRef`
+- `backupToolDigest`
+- `recoveryToolDigest`
+- `recoveryContractFingerprint`
+- `sourceEnvironmentBinding`
+- `drillTargetBoundary`
+- `trafficExposure` (`isolated-drill` for the referenced drill)
+- `trafficOpenedAt` when finalized
 - `evidenceRefs`
 
-Production preflight now requires the referenced production preflight report to exist, target the canonical production expected-bindings manifest, and contain no failing required checks before traffic-open backup evidence passes.
+Production preflight must require the referenced preflight report to pass and must dereference a current baseline recovery record proving the environment-wide cold-start contract. A `reopen` event must also reference the `ready_to_reopen` actual-recovery record for the exact player-facing target boundary; an isolated drill cannot replace it. The gated transition finalizes both records and records `trafficOpenedAt` before routing traffic. The current executable validates only the older evidence shape, so first-live and reopen remain blocked until it implements this contract.
