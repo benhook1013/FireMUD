@@ -26,7 +26,7 @@ If roles change during an active session (for example, a player is promoted to a
 
 1. The Game Session Service detects or requests a role refresh.
 2. It contacts the Account Service to obtain a new JWT.
-3. Updated token context is used for Game Session's subsequent calls to auth/control-plane services; gameplay-domain gRPC calls continue to use refreshed `SessionAttestation` derived from the current authoritative session state rather than forwarding per-player JWT claims downstream.
+3. Updated token context is used for Game Session's subsequent calls to auth/control-plane services; gameplay-domain gRPC calls use typed `PlayerExecutionContext` derived from current authoritative session state rather than forwarding per-player JWT claims downstream.
 
 The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manual refreshes. Implementations must ensure the effective claims injected into subsequent backend calls reflect the latest role assignments without requiring players to re-login.
 

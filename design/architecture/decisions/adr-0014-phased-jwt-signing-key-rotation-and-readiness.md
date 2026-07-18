@@ -30,7 +30,7 @@ FireMUD retains Kubernetes Secrets and an operator-triggered Kubernetes rotation
 - Browser, player-bootstrap, and Service JWTs use this per-environment asymmetric key ring and carry an explicit stable `kid`.
 - Validators receive no private JWT key. They validate through Account-published JWKS with a bounded cache.
 - The key ring is environment-wide, not tenant-specific. Compromise of an active Account signing key is therefore an environment-wide issuer compromise; incident response must not describe tenant-selective containment as sufficient.
-- Gateway connect-context signing and Game Session `SessionAttestation` signing remain separate key families. They may reuse the sequencing invariants in this record, but this decision does not merge their issuers, storage, or lifecycles.
+- Gateway connect-context signing remains a separate key family from Account JWT signing. [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md) supersedes the former Game Session `SessionAttestation` key family; routine gameplay delegation has no per-action signing keys.
 
 ### Planned Rotation
 

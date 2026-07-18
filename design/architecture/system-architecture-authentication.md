@@ -21,8 +21,8 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Membership revocation scope** – `session:auth:revoked_after:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and is used when membership or tenant roles change without triggering a tenant-wide billing cutoff.
 - **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
-- **Internal delegation boundary** – Gameplay services must validate a Game Session-issued `SessionAttestation` on internal calls; mTLS-only trust is insufficient for end-user identity delegation.
-- **Session attestation audience binding** – `SessionAttestation` must be bound to the destination gameplay service and RPC/method; a valid attestation for one gameplay API must not be reusable against another.
+- **Internal gameplay delegation boundary** – Gameplay services authenticate the concrete mTLS workload identity, enforce an exact method-level caller allowlist, and validate a typed `PlayerExecutionContext` against request and domain scope.
+- **No universal player attestation** – Routine gameplay delegation does not use signed per-action player attestations or a replay cache. Mutation replay is controlled by the owning command/effect/request idempotency contract.
 - **Route classification governance** – Protected routes must be classified in the shared route matrix document and enforced through middleware annotations/interceptors; behavior must not rely on per-service ad-hoc interpretation.
 - **Gameplay session indexing** – Game Session is the authoritative writer for bounded secondary indexes that map gameplay bindings by uniqueness key, account/tenant scope, and tenant scope so takeover, reconnect, and revocation do not require scans.
 - **Gameplay admission semantics** – `LOGIN` authenticates account identity, while `PLAY` binds gameplay identity and gameplay scope. These must remain distinct concepts even when a client UX makes them feel nearly back-to-back.
@@ -609,39 +609,23 @@ Access to services is governed by roles from the JWT:
 Because gameplay services do not validate end-user JWTs, they must still enforce a strict internal trust boundary:
 
 - All gameplay gRPC endpoints must require mTLS and must validate the caller’s service identity (for example via SPIFFE/SAN allowlists) so only authorized internal callers (typically the Game Session Service) can invoke gameplay APIs.
-- Gameplay services must treat tenant/session/player identifiers in requests as untrusted inputs and must rely on a Game Session-issued `SessionAttestation` contract to prevent spoofing when additional internal callers are introduced.
+- Gameplay services must treat tenant/session/player identifiers in requests as scoped data that requires validation. Client-supplied headers cannot create trusted context, and an authenticated workload may invoke only explicitly allowlisted methods.
 
-### Session Attestation Contract (Normative)
+### Gameplay Player Execution Context Contract (Normative)
 
-When Game Session calls gameplay services on behalf of an authenticated player, the request must include a short-lived `SessionAttestation` produced by Game Session. At minimum, the attestation includes:
+When one trusted gameplay workload calls another on behalf of a player, the request carries a typed protobuf `PlayerExecutionContext` with the required subset of:
 
 - `accountId`
 - `tenantId`
 - `gameInstanceId`
 - `characterId`
 - `sessionId`
-- `aud` or `targetService`
-- `targetMethod`
-- `issuedAt`
-- `expiresAt`
-- `nonce` or `jti`
+- applicable room, region, lease/epoch, admitted-bundle, realm, pointer, or playable-state scope
+- stable request, command, or effect identity where the operation requires it
 
-Gameplay services must verify attestation signature (or MAC), expiry bounds, destination audience/method, and caller service identity, then reject calls where attestation fields do not match request payload scope. A valid attestation for one gameplay service or RPC must not be accepted by another gameplay service or RPC. Raw forwarded headers/metadata (`X-Tenant-Id`, `X-Game-Instance-Id`, etc.) are advisory only and are never sufficient identity proof by themselves.
+`PlayerExecutionContext` is unsigned structured scope data, not a credential. Consumers authenticate the immediate caller through its concrete mTLS certificate identity, check the RPC's caller allowlist, validate context/request equality, and enforce the complete tenant/game/resource and domain-ownership scope in existing reads and writes. These checks must not add a fresh Account, Redis, or database lookup solely to authorize every routine action.
 
-Attestation crypto and replay requirements:
-
-- Use asymmetric signatures (recommended `EdDSA`/`Ed25519` or `ES256`) with Game Session as issuer.
-- Keys must be rotated on a bounded cadence and distributed through the same secure secret-management pipeline used for service credentials.
-- Attestation verification keys must be published through a versioned key set with explicit `kid` values so gameplay services can select verification keys deterministically during overlap windows.
-- Verification-key discovery must use a single authoritative interface (JWKS-like HTTP endpoint or gRPC equivalent) owned by Game Session control-plane.
-- Rotation must maintain overlap for at least `2 x max_attestation_ttl` before old keys are removed, and services must fail closed if they cannot resolve a referenced `kid`.
-- Maximum attestation TTL: 120 seconds; reject attestations older than TTL or outside bounded clock-skew tolerance (recommended 60 seconds).
-- Attestations are minted per outbound gameplay RPC using the destination service/method as part of the signed scope; consumers must not accept wildcard or omitted destination scope.
-- Require unique `jti`/`nonce` replay guard within TTL; gameplay services must reject duplicates.
-- Replay guards must be backed by a shared, bounded, low-latency store per gameplay trust domain (for example Coordination Redis prefix) so duplicate detection is consistent across horizontally scaled consumers.
-- Replay guard keys must include `{issuer, jti}` (or equivalent globally unique tuple) and expire automatically at `expiresAt + bounded_skew`; consumers must emit overload metrics when replay-cache capacity limits are hit.
-- On unknown `kid`, consumers must force-refresh attestation keys once and retry validation exactly once before failing closed.
-- Validation failures must return canonical auth errors (`AUTH_SESSION_REVOKED`/`AUTH_UNAUTHORIZED_CONTEXT`), not generic transport errors.
+Gameplay mutations use their command/effect/request idempotency contract. Reads do not use a generic replay store. FireMUD deliberately accepts that a compromised allowlisted intermediary can fabricate player context for methods it is permitted to call; [ADR 0024](./decisions/adr-0024-trusted-gameplay-workload-delegation.md) records that trust boundary and the separate protections for operator and financial actions.
 
 All meta services use a shared `AuthTokenInterceptor` that extracts claims from the `Authorization` header and stores them in a thread-local `SessionContext`. Service methods read roles from this context via the `@RequireAdminRole` annotation (or similar). Gameplay services never read or propagate these claims.
 
@@ -683,7 +667,7 @@ Gameplay takeover, reconnect, token refresh, membership-version handling, and co
 | Session State | Stored in Redis; bound to socket by Game Session Service |
 | Session TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` |
 | Gameplay Reauthentication | Required after disconnect; client re-issues `LOGIN`, and Game Session resumes via Redis if the underlying gameplay and auth session state are still valid |
-| Role Enforcement | Meta/control services validate JWTs directly; gameplay services trust Game Session Service plus validated `SessionAttestation` |
+| Role Enforcement | Meta/control services validate JWTs directly; gameplay services enforce concrete mTLS workload identity, method caller allowlists, and validated `PlayerExecutionContext` scope |
 | Role Updates | Refreshed in-session; no client interaction needed |
 | Multi-Client Behavior | One session per character; new login replaces old session |
 | Login Modes | `PASSWORD` and verified-email `EMAIL_OTP` are the current account-level modes; authenticator-app factors remain future work |

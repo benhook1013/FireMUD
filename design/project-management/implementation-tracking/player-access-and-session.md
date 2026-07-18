@@ -100,7 +100,7 @@ Shared coordination state now carries reconnect/connect-context tracking, discon
 
 The auth/session/routing guardrail family is complete at its current bounded seams and is now a standing regression boundary, not a claim that every future ingress path has been audited. Shared helpers and direct adopters cover:
 
-- `JwtClaims`, `SessionClaims`, session attestation, current-account access, elevated gameplay-role classification, and downstream gRPC bearer creation in Common Security;
+- `JwtClaims`, `SessionClaims`, current-account access, elevated gameplay-role classification, downstream gRPC bearer creation, and the legacy session-attestation seam pending convergence to `PlayerExecutionContext` in Common Security;
 - bootstrap/connect-scope/runtime membership/grant/entitlement claim readers, account-subject coherence, replay readers/writers, and account REST/gRPC request readers in Account Service;
 - `GameplayAdmissionPointerSnapshots`, `ControlPlaneRequestParser`, `SessionIdParsing`, positive-ID readers, gameplay-character parsing, partial-shell classification, IP counter parsing, and command/control-plane routing normalization in Game Session;
 - signed first-party handshake/connect-context checks and `TrustedTcpProxyIdentity` at Gateway, plus `TelnetRoutingBundle` and hidden bootstrap envelope handling at TCP Proxy;
@@ -149,7 +149,7 @@ No competing target state is currently recorded. Future design discussion is req
 | Owner | Current responsibility | Primary contract boundary |
 | --- | --- | --- |
 | Account Service | Global accounts, credentials/challenges, memberships, canonical tenant roles, entitlements, non-public realm grants, account lifecycle, and public-production first join | Account REST/gRPC APIs; bootstrap/connect-token APIs; runtime membership/grant/entitlement reads; `EnsurePublicProductionPlayerMembership` |
-| Common Security | JWT/signed-token claims, session attestation, current-account and tenant access, gameplay-elevated roles, and downstream caller identity | `JwtClaims`, `SessionClaims`, session-context helpers, attestation and shared authorization checks |
+| Common Security | JWT/signed-token claims, current-account and tenant access, gameplay-elevated roles, concrete workload identity, and downstream caller authorization | `JwtClaims`, `SessionClaims`, session-context helpers, target `PlayerExecutionContext`, mTLS caller allowlists, and shared authorization checks; current attestation code is superseded implementation debt |
 | TCP Proxy | Telnet transport, hidden bootstrap envelope, reconnect buffering, disconnect notification, and Telnet close taxonomy | Telnet bridge; `TelnetRoutingBundle`; Game Session `NotifyDisconnect` |
 | Spring Cloud Gateway | Trusted proxy/first-party handshake validation, signed connect context, stable edge socket/session id, upstream gameplay bridge and rebind | `/ws/game/**`; `TrustedTcpProxyIdentity`; connect-token and first-party context headers |
 | Game Session | Text parser/interpreter, login/play/logout, Redis session context, takeover/resume, gameplay presence, admission normalization, command/control-plane routing, and redraw | Text-command protocol; WebSocket ingress; Game Session gRPC/control plane; Account and World/Entity calls |
