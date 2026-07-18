@@ -418,23 +418,20 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 
 ### Dynamic Route Override Lifecycle
 
-Dynamic route management APIs exist to apply **ephemeral overrides** on top of the baseline route configuration loaded from `routes.yml`.
+Player-facing routing has one authority: the version-controlled declarative route catalog released with environment-bound service endpoints. Route changes converge through the normal reviewed deployment and rollback workflow. Emergency routing uses an expedited declarative rollout or a predeclared bounded switch between approved targets.
 
-The lifecycle expectations for these overrides must be explicit so operators understand convergence and persistence:
+Dynamic mutation is an explicitly enabled local/dev/test capability only:
 
-- **Persistence:** dynamic overrides are not the canonical source of truth and must not be treated as durable configuration. A restart of all Gateway pods must revert to baseline config unless an operator re-applies the override.
-- **Multi-pod convergence:** in horizontally scaled gateway deployments, an override must either (a) be stored in a shared backend (so all pods observe the same override set) or (b) be applied to every pod consistently. If neither is true, the API must be documented as “single-pod only” and must not be used in production-like environments.
-- **Auditing:** every dynamic route change must emit an audit log entry (who/what changed, previous value, new value, correlation IDs) so operators can reconstruct edge behavior during incidents.
-- **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
-- **Player-facing fail-fast guard:** in player-facing environments, gateway startup must fail if dynamic route mutation is enabled while shared persistence, multi-pod convergence, and route-change auditing are not enabled.
-  - Recommended control flags: `firemud.gateway.dynamic-routes.enabled` and `firemud.gateway.dynamic-routes.allow-player-facing`; startup should fail when both evaluate true without the required control-plane capabilities above.
-- **Readiness predicates:** startup/readiness checks must expose explicit booleans `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, and `dynamic_routes.audit_ready`.
-  - If any predicate is false while both `firemud.gateway.dynamic-routes.enabled=true` and `firemud.gateway.dynamic-routes.allow-player-facing=true`, gateway startup must fail hard before serving traffic.
-  - Gateway health must expose an aggregate `dynamic_routes_ready` state so operators can verify enforcement from health endpoints and dashboards.
+- mutation components and endpoints are absent or disabled by default, and player-facing startup fails if they are enabled;
+- overrides are process-local, non-durable, visibly non-convergent, and reset to baseline on restart;
+- protected baseline, management, authentication, gameplay, and header-trust routes cannot be replaced or shadowed;
+- route IDs, destinations, predicates, and filters are allowlisted;
+- mutation endpoints remain outside player-facing ingress and use trusted test/operator authorization; and
+- audit records include actor, authorization basis, before/after values, outcome, and correlation identity.
 
-If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
+Persistence, multi-pod convergence, audit, and readiness predicates are not sufficient on their own to promote this developer API. A production runtime-routing control plane requires a separate decision covering versioned desired state, validation, staged activation, expiry, rollback, conflict handling, recovery, and fail-closed behavior.
 
-**Current decision:** until shared persistence, multi-pod convergence, and full route-change auditing are implemented, dynamic route override APIs are scoped to dev/test only and must not be used as a production control plane.
+The current implementation does not yet enforce this profile, endpoint-isolation, validation, or startup boundary. It must not be treated as production-safe merely because the endpoints exist.
 
 ## Observability
 

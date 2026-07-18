@@ -173,8 +173,8 @@ The management-plane contract must be explicit so operator tooling does not assu
 | Gateway capability | Intended use | Current production-like status | Notes |
 | --- | --- | --- | --- |
 | gRPC/REST health and route inspection | Internal diagnostics and control-plane health checks | Supported | Internal-only network surface; mTLS-authenticated operator clients. |
-| Baseline route configuration (`routes-*.yml` + env overrides) | Canonical route definitions and controlled deployment-time changes | Supported | Baseline config files remain the source of truth. |
-| Dynamic route override APIs (runtime mutating overrides) | Ephemeral route changes without redeploy | **Not supported in production-like environments (dev/test only)** | Until shared persistence, multi-pod convergence, and full route-change auditing are implemented. |
+| Version-controlled baseline route catalog + environment endpoint bindings | Canonical route definitions and controlled deployment-time changes | Supported | The released declarative catalog is the sole player-facing route authority. |
+| Dynamic route override APIs (runtime mutating overrides) | Ephemeral mock, fault-injection, and integration-test changes | **Dev/test only; not an initial production capability** | Production enablement requires a separate future decision; persistence, convergence, and audit do not automatically unlock it. |
 
 This matrix is canonical for high-level architecture docs and must remain aligned with [Gateway Architecture](./system-architecture-gateway.md#dynamic-route-override-lifecycle).
 

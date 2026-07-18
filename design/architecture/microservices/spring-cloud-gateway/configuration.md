@@ -22,7 +22,7 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 - Spring Cloud Gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 - Route configuration lives in `routes.yml`, which is imported by `application.yml` and reloaded on startup.
 - These files define the baseline route set for each environment.
-- Dynamic route APIs can overlay additional routes or updates at runtime, but those changes are in-memory only and the system converges back to the baseline definitions on restart unless a higher-level tool updates config.
+- Explicitly enabled dev/test route APIs may overlay bounded in-memory changes on one disposable runtime; player-facing environments use only the version-controlled baseline and must fail startup if mutation is enabled.
 - The default route configuration defines the core service routes required for local Docker Compose environments.
 
 ## Redis Role and Prefixes
