@@ -528,7 +528,7 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 - Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
 - Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
-- Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm resolves to exactly one gameplay-admissible instance at a time, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
+- Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm is `OPEN` on exactly one gameplay-admissible instance or explicitly `CLOSED`, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
 
 ### Realm Routing Contract For Player-Addressable Realms
 
@@ -537,29 +537,30 @@ Version cutover contract for a player-addressable realm:
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
 3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
-4. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
-5. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
+4. Perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap so the selected realm has exactly one target for new or renewed bindings at any instant.
+5. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish only within the explicit bounded drain, then terminate it through the standard `InstanceTermination` workflow.
 6. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm-routing contract (required):
 
-- Each player-addressable realm must have exactly one authoritative routing record managed by Game Session.
+- Each player-addressable realm must have exactly one authoritative routing record managed by Game Session. Its state is `OPEN(admissibleGameInstanceId)` or `CLOSED`; only an open realm has an admission target.
 - Each routing record must contain at minimum:
   - `tenantId`,
   - `realmSlug` (or equivalent stable player-facing realm selector),
-  - `admissibleGameInstanceId`,
-  - `visible`,
-  - `publicProductionRealm`,
+  - `admissionState`,
+  - `admissibleGameInstanceId` only when `OPEN`,
   - `pointerVersion` (monotonic CAS version),
+  - the separately versioned catalog/policy reference used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
 - `REALMS`, connect-token issuance, admission (`PLAY`), and runtime control-plane operations must read these records as the source of truth for realm selection and gameplay-admissible instance routing.
-- Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same realm.
+- Routing updates use an atomic database compare-and-set on the tenant-qualified `{tenantId, worldSlug, realmSlug, pointerVersion}` key; failed CAS must not admit or expose dual-admissible state for the same realm. The expected version is required for an existing record, and route state, audit, idempotent request outcome, and prepared-cutover execution commit atomically.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
 - A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
 - Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
-- If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
+- Stopping a realm without a replacement atomically moves it to `CLOSED` before the old instance drains. `CLOSED` returns a stable realm-unavailable outcome; unavailable, malformed, or ambiguous routing state fails with `ADMISSION_POINTER_UNAVAILABLE` until reconciled.
+- Pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only until the bounded drain ends; fresh `PLAY` and reconnect use the current target.
 - One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
 
 ### Fork-Snapshot Boundary For Playtest Realms

@@ -15,7 +15,7 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Tenant (`tenantId`)** – A hosted game world or project. Each tenant represents one game created on the platform and may have one or more running game instances. The Game Design Service owns `tenantId` issuance.
 - **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See [ADR 0005: Tenant Identifiers in Gameplay Protocol](./decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md) for the required slug stability rules.
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
-  - A tenant may expose one or more **player-addressable realms**. Each realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing contract owned by Game Session.
+  - A tenant may expose one or more **player-addressable realms**. Each realm is explicitly `OPEN` on exactly one admissible `gameInstanceId` or `CLOSED` with none through the authoritative realm-routing contract owned by Game Session.
   - One visible realm may be flagged as the public-production realm in the Game Session admission-pointer record. In v1, that flagged realm is the only realm that may be publicly discoverable to authenticated accounts that do not already hold tenant membership. The initial catalog uses the configured `production` realm as the bootstrap default, but callers must consume the explicit pointer flag rather than infer public-production behavior from a slug.
   - Additional realms are explicitly authorized non-production realms such as playtest forks. They are never public-discovery realms in v1 and require explicit access grants owned by Account Service and evaluated through the same runtime grant authority across bootstrap discovery and gameplay admission.
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
@@ -85,7 +85,7 @@ Realm routing is a control-plane/runtime contract, not merely a lobby rendering 
 The platform distinguishes between:
 
 - a **realm catalog** describing which realms are player-addressable for one tenant; and
-- an **admission pointer** describing which concrete `gameInstanceId` is currently admissible for one `{tenantId, worldSlug, realmSlug}` target.
+- an **admission pointer** describing whether one `{tenantId, worldSlug, realmSlug}` target is `OPEN` on one concrete `gameInstanceId` or `CLOSED` with no admission target.
 
 Minimum realm-catalog facts for one visible realm are:
 
@@ -102,33 +102,37 @@ Minimum admission-pointer facts for one resolved realm are:
 - `tenantId`
 - `worldSlug`
 - `realmSlug`
-- `admissibleGameInstanceId`
+- `admissionState` (`OPEN` or `CLOSED`)
+- `admissibleGameInstanceId` when and only when `OPEN`
 - `pointerVersion`
-- `visible`
-- `publicProductionRealm`
 - `updatedAt`
+
+Catalog-only facts have a separate monotonic `catalogRevision`. Display metadata and other catalog-only edits must not advance the runtime `pointerVersion` or invalidate an existing gameplay binding. Admission-policy reads still revalidate current visibility, public-production, grant, and entitlement facts before creating or renewing authority.
 
 Contract rules:
 
 - `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, connect-token issuance, and reconnect validation must all consume the same realm-catalog and admission-pointer truth.
 - Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
-- Each player-addressable realm resolves to exactly one admissible `gameInstanceId` at a time.
+- Each player-addressable realm has at most one admissible `gameInstanceId` at a time. `OPEN` names exactly one target; `CLOSED` names none.
 - Public-production onboarding and first-join membership creation are controlled by the persisted `publicProductionRealm` flag plus visibility and entitlement checks, not by comparing `realmSlug` with a reserved string.
-- If no admissible target exists for a realm, the realm may remain visible for operator/debug surfaces, but ordinary gameplay admission must fail closed rather than guessing a replacement target.
+- An explicitly `CLOSED` realm may remain visible with an unavailable/maintenance presentation, but ordinary gameplay admission returns the stable realm-unavailable outcome. Missing, malformed, or ambiguous routing state remains `ADMISSION_POINTER_UNAVAILABLE`; callers must not confuse authority failure with deliberate closure or guess a replacement target.
 
 Required read contract:
 
 - `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admission lookup.
 - The authoritative owner of this pointer contract is the Game Session control plane.
-- Callers must treat missing pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults.
+- Callers must treat missing required pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults. A complete `CLOSED` record is not an incomplete pointer.
 
 Pointer freshness and cutover rules:
 
 - `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}`.
-- Any change that can affect which instance is admissible for gameplay admission must advance `pointerVersion`.
+- Any `OPEN`/`CLOSED` transition, target-instance change, or execution-namespace change that materially changes the admitted runtime must advance `pointerVersion`. Catalog-only changes advance `catalogRevision` instead.
 - The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
 - Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
 - Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
+- The persistence key and uniqueness constraint are `{tenantId, worldSlug, realmSlug}`. Existing-route mutations require an expected positive version and use one atomic database conditional write; checking a version in memory before an unconditional update is not compare-and-set.
+- The pointer, append-only audit event, idempotent request outcome, and prepared-cutover execution state commit atomically when held in the Game Session database.
+- The pointer governs new or renewed bindings. An already connected player remains authorized by the bound game instance and its runtime fences until the explicit bounded source drain ends; ordinary actions do not re-read pointer authority or eject the player merely because the pointer advanced.
 
 ## Account-to-Game Relationships
 
@@ -175,7 +179,7 @@ Pointer freshness and cutover rules:
 - All microservices run as shared deployments; there is
   **no tenant-specific infrastructure** or dedicated clusters.
 - Game Session Service instances scale horizontally based on overall load.
-- Operations may run more than one instance per tenant. The player-facing contract exposes whichever realms the caller is authorized to see, and each visible realm resolves to exactly one admissible `gameInstanceId` at a time.
+- Operations may run more than one instance per tenant. The player-facing contract exposes whichever realms the caller is authorized to see, and each open realm resolves to exactly one admissible `gameInstanceId` at a time. One shared world scales through Game Session pods, region partitioning, and fenced lease rebalancing inside that instance; intentionally separate worlds or shards use separately addressable realms.
 - Per-game resource quotas ensure one tenant cannot exhaust cluster capacity.
   Quota thresholds are configured per tenant, derived from the active subscription plan and entitlements returned by `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service. Metrics expose current usage so operators can track `active_sessions`, quota denials, and the impact of billing state on availability (for example, `suspended` or `canceled` tenants cannot start new instances or admit new player sessions even if raw capacity is available).
 

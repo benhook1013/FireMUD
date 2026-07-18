@@ -495,7 +495,7 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 
 Realm discovery and routing contract:
 
-- A tenant may expose multiple player-addressable realms. Each visible realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing records owned by Game Session.
+- A tenant may expose multiple player-addressable realms. Each realm-routing record is explicitly `OPEN` on exactly one admissible `gameInstanceId` or `CLOSED` with none and is owned by Game Session; visibility remains separately revisioned catalog/policy state.
 - One realm may be designated as the default public production realm. In v1, this production realm is the only realm that may be publicly discoverable without an existing tenant membership row, and `public_production_onboarding` governs the first-join path through that realm.
 - Additional realms are access-controlled in v1. Unauthorized or hidden realms must not appear in discovery, and non-production realms such as playtest forks require explicit access grants.
 - Explicit access grants for non-public realms are sourced from Account Service runtime grant authority, not from Game Session-local configuration or frontend-cached state.

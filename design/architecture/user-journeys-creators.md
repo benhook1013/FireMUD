@@ -125,7 +125,7 @@ Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session
 4. **Choose the Rollout Path**
    - **Script-only patch** – A `tenantAdmin` pins the patch to the target realm. Script-only patches apply live without replacing the realm.
    - **Non-script change** – A `tenantAdmin` creates a replacement-instance cutover to a new published version. The Game Session Service performs compatibility checks, launches the replacement instance, and atomically shifts the realm route.
-5. **Player Experience During Cutover** – New admissions follow the new realm target once the cutover completes. Existing players may reconnect through the normal lobby flow if the old instance drains or disconnects them.
+5. **Player Experience During Cutover** – New admissions and reconnects follow the new realm target once the cutover completes. Already connected players remain on the old instance only for the explicit bounded drain and are not ejected merely by their next action; when the drain ends, they reconnect through the normal lobby flow.
 6. **Rollback** – A `tenantAdmin` may roll back to the previous version or script patch using the same control-plane contract. `platformAdmin` is break-glass override only.
 7. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic pre-activation rollback and deterministic runtime cutover. See [Transaction Strategies](./system-architecture-transactions.md).
 8. **Verify Performance** – Check metrics, traces, and rollout signals after deployment; see [Logging & Monitoring](./system-architecture-logging-monitoring.md) and [Testing Strategy](./system-architecture-testing.md).

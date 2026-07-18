@@ -1,0 +1,94 @@
+# ADR 0027: Single Realm Admission Target
+
+## Status
+
+Accepted
+
+## Decision Record
+
+- Decision date: 2026-07-19
+- Primary capability: `AA-3.3` Runtime target identity, admission pointers, and routing freshness
+- Affected capabilities: `AA-3.1`, `AA-3.2`, `AR-3.2`, `GR-2.1`, `GR-1.1`
+- Decision owner: FireMUD human product and architecture owner
+- Consultation: human-led adversarial review of `TENANT-01`
+
+## Context
+
+A player-facing realm such as `production` is a stable logical destination. A `gameInstanceId` identifies one concrete running world timeline, not a Game Session pod. FireMUD can run multiple pods and distribute fenced region execution inside one game instance without presenting players with separate copies of the world.
+
+The prior design correctly routed each realm to one Game Session-owned instance, but described every player-addressable realm as always having exactly one target. That cannot represent deliberate closure or maintenance cleanly. It also did not separate admission routing from display metadata or from the continuing authority of an already admitted session. The current implementation further provides only a read-then-write version check rather than an atomic database compare-and-set, uses a non-tenant-qualified uniqueness constraint, and records prepared-cutover execution after the pointer transaction.
+
+## Decision
+
+### Zero Or One Admission Target
+
+- Each realm has one durable routing record keyed by `{tenantId, worldSlug, realmSlug}` and owned solely by Game Session.
+- The routing state is either `OPEN(admissibleGameInstanceId)` or `CLOSED`. An open realm has exactly one admission target; a closed realm has none.
+- `CLOSED` is an ordinary explicit product/operational state and produces a stable realm-unavailable outcome. Missing, malformed, or ambiguous routing state remains `ADMISSION_POINTER_UNAVAILABLE` and is treated as an authority failure rather than as closure.
+- Clients select stable world and realm identifiers and never select a raw `gameInstanceId`, version, or member of an instance pool.
+- Several realms may intentionally exist for separate worlds, shards, playtests, canaries, or isolated state. They remain separately player-addressable instead of being hidden behind one realm.
+
+### Routing And Catalog Revisions
+
+- `pointerVersion` is a monotonic admission-routing CAS version. It advances when the realm changes between `OPEN` and `CLOSED`, changes its target instance, or changes execution-namespace facts that make the admitted target materially different.
+- Display names, descriptive metadata, visibility presentation, and other catalog-only fields use a separate monotonic catalog revision. Catalog edits must not masquerade as a runtime-route change or invalidate an active gameplay binding.
+- New discovery selections, public-join policy checks, connect-token issuance, `PLAY`, and reconnect validate the current catalog/admission facts appropriate to their operation. Stale selection state returns a bounded refresh/reselection outcome rather than falling back to a guessed target.
+
+### Atomic Mutation And Cutover
+
+- Creating a route uses the equivalent of expected version `0`; every change to an existing route requires its current positive `pointerVersion`.
+- The database mutation performs a real conditional write against `{tenantId, worldSlug, realmSlug, pointerVersion}`. A prior read followed by an unconditional row update is not compare-and-set.
+- Pointer state, the append-only audit event, the idempotent control-plane request outcome, and prepared-cutover execution state commit atomically when they share the Game Session database. If a later deployment separates those stores, it must preserve equivalent durable recovery and retry semantics.
+- A replacement instance remains non-admissible until preparation and compatibility checks pass. Cutover atomically moves `OPEN(source)` to `OPEN(target)`; failure leaves the source as the sole target. Stopping a realm without a replacement first moves it to `CLOSED` before the old runtime drains.
+
+### Existing Sessions And Scaling
+
+- The admission pointer governs new or renewed gameplay bindings. It is not routine per-action authorization for a session already bound to a concrete instance.
+- After cutover, new `PLAY` and reconnect flows use the new target. Existing connected sessions may continue on the source only until the explicit bounded drain ends; the pointer change alone does not perform a database lookup or eject the player on their next action.
+- Source-session commands remain fenced by that source instance's lifecycle and region ownership. Hard account, membership, moderation, or security revocation remains independently enforceable and is not extended by the drain rule.
+- Horizontal capacity for one shared world comes from Game Session pod scaling, region partitioning, and fenced lease rebalancing within the same `gameInstanceId`. It does not come from randomly placing players into independent game instances behind one realm.
+
+## Consequences
+
+- Players entering one realm share one explicit world timeline instead of being silently divided among copies.
+- Closed and maintenance states are representable without retaining a misleading pointer to a stopped instance.
+- Display/catalog edits do not interrupt active gameplay.
+- Cutover has an explicit bounded period in which existing sessions may remain on the draining source while new or reconnected sessions use the target.
+- True atomic CAS and cutover bookkeeping add control-plane implementation and concurrency proof, but no cryptography, distributed lookup, or routine per-action routing cost.
+- A single realm cannot provide matchmaking-style placement across independent world copies. Such a product requires a later explicit placement and cross-instance-state decision.
+
+## Alternatives Considered
+
+### Realm Points To An Instance Pool
+
+A placement service could choose among several compatible game instances for each player. This supports matchmaking, geographic copies, canaries, or population scaling, but current instance boundaries also divide world state, presence, commands, automation, and reconnect identity. A credible pool therefore requires sticky placement, party co-location, health/capacity authority, cross-instance communication, migration, and shared-state or replication contracts.
+
+### Resolve The Latest Running Version
+
+Inferring a target from the newest or latest-active instance reduces explicit control-plane state but makes concurrent launch, rollback, partial failure, and version readiness ambiguous. It also allows an operational ordering accident to change player routing.
+
+### Client-Selected Instance
+
+Exposing raw instance IDs makes routing explicit to the client but leaks replaceable internals, creates stale bookmarks, and lets clients attempt incompatible or non-admissible targets.
+
+## Implementation and Proof Obligations
+
+- Add explicit `OPEN`/`CLOSED` routing state and a tenant-qualified uniqueness constraint.
+- Implement database-level CAS with required expected versions and prove concurrent writers yield one winner and strictly increasing committed versions.
+- Atomically persist pointer state, audit, request replay, and prepared-cutover execution, including crash/retry proof at every boundary.
+- Separate catalog revisioning from admission routing and prove display-only edits do not invalidate connect or active gameplay state unnecessarily.
+- Remove pointer-currentness checks from routine action authority for an already admitted binding; prove cutover admits new/reconnecting players only to the target while source sessions end through the bounded drain.
+- Prove closing a realm blocks new admission before source draining and distinguishes explicit closure from corrupt/unavailable pointer authority.
+
+## Required Documentation Alignment
+
+- `design/architecture/system-architecture-multi-tenancy.md`
+- `design/architecture/system-architecture-versioning-runtime.md`
+- `design/architecture/system-architecture-session-behavior.md`
+- `design/architecture/user-journeys-creators.md`
+- `design/architecture/microservices/game-session-service/api-contracts.md`
+- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
+
+## Reversibility and Revisit Triggers
+
+The player-facing realm selector remains stable, so a future placement model would not require changing ordinary client addressing. Internally, `gameInstanceId` is embedded throughout session, world-state, presence, command, automation, and reconnect authority, so instance pooling would still be a major runtime migration. Revisit only when a concrete matchmaking, geographic, or population-scaling requirement cannot be met through region partitioning or explicit separate realms.
