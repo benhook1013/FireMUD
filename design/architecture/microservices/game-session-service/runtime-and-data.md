@@ -8,7 +8,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 - Redis and PostgreSQL hold the meaningful gameplay-session, tick-coordination, and control-plane state needed for takeover.
 - A Game Session instance may cache or buffer transient transport-local details while it is healthy, but those details must never be the sole source of truth for reconnect, tick ownership, or gameplay admission.
-- Ordinary non-edge Game Session restarts should therefore degrade to a short stall or upstream rebinding event, not a mandatory player-visible re-`LOGIN` / re-`PLAY` cycle.
+- Ordinary qualifying Game Session restarts therefore use ADR 0013's bounded upstream rebind, not a mandatory player-visible re-`LOGIN` / re-`PLAY` cycle. Recovery targets 10 seconds while the edge socket, healthy replacement capacity, and shared authority remain available; hidden recovery stops after 30 seconds and falls back to `1013/backend_unavailable`.
 
 - PostgreSQL stores `game_instances`, `game_manifest`, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
 - Redis stores gameplay session bindings, tick queues, timers, retries, and region leases.
@@ -25,8 +25,9 @@ Game Session uses the gameplay layer’s session front-end plus lease-owner exec
 - Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner.
 - Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Tick-related multi-key operations, including locks, pending state, queues, timers, and retry metadata, are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control). Ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
-- Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after failure. If a non-edge Game Session restart still forces a visible reconnect in practice, treat that as an implementation gap rather than an accepted contract.
-- Lease ownership and session front-end routing are deliberately takeover-ready. Another same-type Game Session instance must be able to acquire the relevant lease or front-end responsibility from shared state after restart; visible reconnect is acceptable only when the edge transport itself was lost.
+- Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after an ordinary qualifying failure. Visible reconnect inside ADR 0013's qualifying conditions and 30-second window remains an implementation or proof gap; exhausted recovery, unavailable shared authority, unsafe ownership ambiguity, terminal session policy, or edge transport loss uses explicit fallback instead.
+- Lease ownership and session front-end routing are deliberately takeover-ready. Another same-type Game Session instance must be able to acquire the relevant lease or front-end responsibility from shared state after restart. Replacement continues the current server-side session authority using the stable edge transport identity rather than requiring the original connect token to remain valid as fresh admission; current membership, entitlement, revocation, absolute expiry, tenant/game scope, and fencing still apply.
+- Closure of only the Gateway-to-Game-Session upstream is not authoritative player transport loss. Presence removal, disconnect lifecycle events, and gameplay-binding teardown must account for retained edge liveness and replacement registration so a successful hidden rebind neither publishes a false disconnect nor leaves the resumed player absent.
 
 Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate concerns:
 

@@ -6,7 +6,7 @@ Status: Complete and independently coverage/fidelity-audited. This artifact is n
 
 `Complete` applies only to inventory scan coverage and fidelity auditing. Decision implementation, approval, and adversarial-review state remain authoritative in the row statuses and review queue below; proposed, conflicting, and human-review-required decisions remain unresolved.
 
-This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It prepares evidence for a later adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
+This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It provides evidence and the authoritative queue for the active adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
 
 ## Decision Threshold
 
@@ -85,7 +85,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `AUTO-01` | Resolved baseline: ADR 0001 now delegates the endpoint-specific identity matrix to the canonical scripting contract table and includes runtime scope plus dry-run separation. |
 | `SET-01` | Resolved target: values follow defaults, preset, bootstrap, supported runtime-default, tenant, and game-instance precedence while hard bounds and operator caps apply separately as constraints. The current effective-settings implementation does not yet resolve the complete accepted model. |
 | `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
-| `SESSION-04` | The invisible non-edge reconnect target and current visible restart/reconnect behavior are not one testable promise. |
+| `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
 | `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
 | `SEC-02` | JWT rotation, overlap, pruning, and hot reload are target design while implementation readiness remains incomplete. |
 | `OPS-04` | Player-facing restore requires a coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
@@ -104,14 +104,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 1 | 9 | `in-progress` |
+| 1 | Known conflicts and drift | 2 | 9 | `in-progress` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **1** | **183** | `in-progress` |
+| **Total** | | **2** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -122,7 +122,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 1 P0
 
 - [x] `SET-01` — `revised` on 2026-07-18; [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); [canonical settings model](../../architecture/system-architecture-settings-model.md)
-- [ ] `SESSION-04`
+- [x] `SESSION-04` — `revised` on 2026-07-18; [ADR 0013](../../architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md); [canonical reconnection contract](../../architecture/system-architecture-reconnection.md)
 - [ ] `SEC-02`
 - [ ] `OPS-04`
 - [ ] `CMD-STATUS-01`
