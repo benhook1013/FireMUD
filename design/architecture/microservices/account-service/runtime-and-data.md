@@ -125,7 +125,7 @@ Runtime caller contract:
   - Minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `evaluatedAt`.
 - `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative internal entitlement surface for gameplay/runtime flows. Runtime callers may cache its positive result only under the strict-new-commitment and bounded-continuity rules in [ADR 0028](../../decisions/adr-0028-differentiated-entitlement-freshness.md); the cache never becomes a second writer.
   - Minimum request fields: `tenantId`, `requestId`.
-  - Minimum response fields: `tenantId`, `subscriptionStatus`, `gameplayAvailable`, `allowNewInstanceStarts`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`.
+  - Minimum response fields: `tenantId`, `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`.
 - `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
   - Minimum request fields: `tenantId`, `worldSlug`, `realmSlug`.
   - Minimum response fields: `tenantId`, `worldSlug`, `realmSlug`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
@@ -162,7 +162,7 @@ Entitlement producer contract:
 
 - `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative producer for admission-critical entitlement snapshots.
 - Responses must include:
-  - explicit `subscriptionStatus`, `gameplayAvailable`, `allowNewInstanceStarts`, and applicable quota fields; absence of a subscription row is not implicit permission, and free/trial hosting is explicit;
+  - explicit `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, and applicable quota fields; absence of a subscription row is not implicit permission, and free/trial hosting is explicit;
   - `evaluatedAt` (UTC RFC3339 timestamp),
   - `entitlementVersion` (monotonic per-tenant version string/integer),
   - `tenantBillingSequence` (monotonic `uint64` scoped to `tenantId`).

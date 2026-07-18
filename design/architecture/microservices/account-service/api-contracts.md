@@ -181,6 +181,8 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
   "tenantId": "tenant-demo",
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
+  "allowPublicJoin": true,
+  "allowNewGameplayBindings": true,
   "allowNewInstanceStarts": true,
   "quotas": {
     "maxActiveSessions": 250,
@@ -195,8 +197,8 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 Required semantics:
 
 - `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
-- `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
-- `allowNewInstanceStarts` and quota fields distinguish permission to add load from permission to continue already-entitled capacity.
+- `gameplayAvailable` reports whether already-authorized gameplay may continue; callers must also enforce the operation-specific flag for a new commitment.
+- `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, and quota fields distinguish new admission/load from permission to continue already-entitled capacity. In `grace`, general gameplay availability may remain true while all three new-commitment flags are false.
 - `entitlementVersion` identifies the evaluated entitlement snapshot.
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
 - `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.

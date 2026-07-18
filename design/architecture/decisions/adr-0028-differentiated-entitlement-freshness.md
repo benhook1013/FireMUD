@@ -23,16 +23,17 @@ The implementation does not yet enforce the previous freshness contract. Account
 ### Account Authority And Snapshot Contract
 
 - Account remains the sole entitlement writer and authoritative refresh source.
-- Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, and monotonic per-tenant `tenantBillingSequence`.
+- Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, and monotonic per-tenant `tenantBillingSequence`.
 - `evaluatedAt` represents when Account evaluated authoritative committed inputs. A caller must not make stale underlying data appear fresh by restamping it at read time.
 - Absence of subscription/entitlement state is not implicit permission. Free, trial, or otherwise non-paid hosting is represented by an explicit entitlement state.
-- `trialing`, `active`, `past_due`, and policy-permitted `grace` remain gameplay-available as defined by the subscription lifecycle. `suspended` and `canceled` are hard denials.
+- `trialing`, `active`, and `past_due` permit gameplay under ordinary quotas. `grace` remains available only for connected sessions and the same still-resumable binding; it denies public join, fresh gameplay bindings, new instances, scale-out, and quota growth. `suspended` and `canceled` are hard denials.
 
 ### Fresh And Last-Known-Good Windows
 
 - A runtime snapshot is fresh for 15 seconds from `evaluatedAt`.
 - Runtime services keep a bounded per-tenant cache, use single-flight refresh, immediately invalidate or advance it from sequenced billing events, and periodically reconcile with Account.
 - A previously observed positive snapshot may be used as last-known-good for continuity for no more than five minutes from `evaluatedAt`. Five minutes is a platform hard maximum; operators may shorten or disable it but cannot widen it without revisiting this decision.
+- Last-known-good entitlement continuity also requires the separate revocation-authority reconciliation lease from ADR 0030 to remain fresh. Entitlement refresh may be unavailable for up to five minutes, but inability to re-establish revocation authority terminates the binding at the stricter 60-second bound.
 - Last-known-good is forbidden after an observed `suspended`/`canceled` state, tenant/account revocation, a newer locally observed billing sequence, a sequence gap, an explicit denial, or when no prior authoritative positive snapshot exists.
 
 ### Strict New Commitments
@@ -46,12 +47,14 @@ The following require a fresh snapshot and fail closed with `ENTITLEMENT_UNAVAIL
 
 Known denial returns `TENANT_BILLING_BLOCKED`, not `ENTITLEMENT_UNAVAILABLE`.
 
+A fresh snapshot is necessary but not sufficient: its operation-specific flag must also allow the requested commitment. In particular, fresh `grace` state still denies the new commitments listed above.
+
 ### Bounded Continuity And Recovery
 
 - Reconnecting the same still-resumable gameplay session may use eligible last-known-good state when Account refresh is unavailable.
 - Restart, rollback, or recovery of already-entitled capacity may use eligible last-known-good state only when it does not increase the tenant's admitted capacity or quota consumption.
 - A reconnect that resolves to a different realm target or creates a fresh gameplay binding is new admission and remains strict.
-- Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant-revocation-watermark path.
+- Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant-revocation-watermark path, while periodic batched reconciliation bounds a missed event to 60 seconds under ADR 0030.
 - Use of last-known-good is logged and metered by operation class and snapshot age without unbounded tenant labels in public metrics.
 
 ### Discovery
@@ -81,7 +84,7 @@ Durably replicating full entitlement projections into each runtime service could
 
 ## Implementation and Proof Obligations
 
-- Implement the complete runtime response and explicit free/trial state; correct `past_due` handling and remove row-ID-derived versions.
+- Implement the complete runtime response, operation-specific billing flags, and explicit free/trial state; correct `past_due` handling and remove row-ID-derived versions.
 - Implement per-tenant cache, single-flight refresh, sequenced event invalidation, gap detection, periodic reconciliation, and the five-minute hard ceiling.
 - Prove strict new commitment denial, eligible reconnect/recovery continuity, expired/unsafe last-known-good denial, and immediate known hard-cutoff behavior.
 - Prove no entitlement lookup occurs on routine actions for an uninterrupted session.

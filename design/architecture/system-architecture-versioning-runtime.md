@@ -524,6 +524,7 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 
 - Call `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
+  - The operation-specific new-instance/scale flag permits the requested lifecycle change; general gameplay availability during `grace` does not authorize new capacity.
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 - New instances, scale-out, quota increases, paid-feature activation, and replacement cutovers that create capacity require an entitlement snapshot no older than 15 seconds. If refresh cannot produce one, the operation fails closed with `ENTITLEMENT_UNAVAILABLE`.

@@ -97,7 +97,7 @@ For tenant-scoped runtime lifecycle, operators are not the routine owners of cre
 
 At minimum, operator tooling should expose enough fork metadata to reason about support and incident response safely: realm type, source snapshot identity, target build (`versionId` / `scriptPatchVersion`), reset/expiry status, and whether the fork is currently player-admissible. This metadata should come from the same tenant runtime/control-plane surfaces that creators use for fork lifecycle and realm routing, rather than from an operator-only shadow model.
 Operator tooling should also support revoking player visibility/admission for a fork without deleting the fork outright, so support, moderation, or incident-response workflows can hide a fork temporarily while preserving its fork-local state and audit history. The canonical mechanism is the same explicit realm-access grant contract used by creator flows and authentication/discovery: revoke or expire the tenant-scoped grant record for the affected account(s), while leaving the fork realm and its fork-local state intact.
-Grant revocation is discovery/admission effective immediately for future actions, but it is not an implicit mid-session eject operation. Existing connected fork sessions may be allowed to drain; any subsequent discovery, reconnect, or `PLAY` attempt after revocation must fail until a valid grant is restored.
+Grant revocation removes current authority and therefore terminates affected connected fork sessions as well as blocking subsequent discovery, reconnect, and `PLAY`. When a creator or operator wants a friendly scheduled playtest ending, they close and drain the realm first and revoke grants afterward; access revocation itself is not overloaded as a drain request.
 
 ---
 

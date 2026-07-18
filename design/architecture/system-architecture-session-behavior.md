@@ -36,7 +36,7 @@ Membership changes that affect tenant access follow a stricter contract than ord
 
 1. The Account Service emits a membership-change event containing `accountId`, `tenantId`, `membershipVersion`, the changed role set, and whether gameplay admission remains allowed.
 2. Game Session compares the event against active gameplay bindings for `{accountId, tenantId}`.
-3. Losing tenant membership or losing gameplay-admission authority (for example removal of `player`) immediately revokes gameplay sessions for that tenant.
+3. Losing tenant membership or losing gameplay-admission authority (for example removal of `player` or a required private-realm grant) immediately revokes the affected gameplay sessions. Planned realm or playtest closure uses the owning close-and-drain workflow before grants are revoked; grant revocation itself is not a graceful-drain mechanism.
 4. For caller-bound tenant control-plane access, the Account Service must also advance `session:auth:revoked_after:membership:<accountId>:<tenantId>` when membership or tenant-role changes invalidate previously issued tenant authority for that caller.
 5. Non-gameplay role changes may be handled by in-session token refresh for gameplay state, but reconnect/resume must compare current membership authority to the stored `membershipVersion` before restoring gameplay.
 6. `PLAY` and reconnect/resume must obtain `membershipVersion` from authoritative membership reads rather than inferring it from JWT claims or local caches.
@@ -48,6 +48,10 @@ Membership-change event delivery semantics are required, not best-effort folklor
 - Consumers must treat duplicate or older versions as no-ops.
 - If Game Session detects a version gap or has no prior version for an active binding, it must reconcile immediately via the authoritative internal membership API before deciding whether the session remains valid.
 - Account Service owns the version increment rules; other services must not synthesize membership versions locally.
+
+Account commits each security, membership, grant, or billing authority change and its monotonic outbox event in one durable database transaction, then idempotently projects the corresponding Account-owned revocation watermark. The cutoff workflow does not report enforcement complete until the watermark projection succeeds. Game Session consumes the durable events through an idempotent consumer and maintains bounded indexes from account, tenant, and private-realm grant scope to active bindings; correctness must not depend on wildcard Redis scans.
+
+Event delivery is the fast path, but not the sole safety mechanism. Game Session performs batched watermark/version reconciliation often enough that a missed event cannot preserve revoked gameplay authority for more than 60 seconds. If that reconciliation lease cannot be renewed, new admission fails closed and active bindings whose authority cannot be re-established are terminated at the 60-second bound. This is periodic per-authority reconciliation, not an Account or Redis lookup on each gameplay command.
 
 ## Session and Identity Management
 
@@ -141,15 +145,18 @@ Subscription and billing state drives how aggressively sessions are revoked:
 - `trialing`, `active`
   - No automatic revocation based solely on billing state.
   - Quotas and entitlements from the plan apply; gameplay and control-plane access behave normally.
-- `past_due`, `grace`
-  - No automatic revocation of existing sessions.
-  - Operator and creator UIs surface strong warnings; services enforce any soft restrictions defined by the plan (for example, blocking new instances while allowing existing ones to run).
-  - Auth token sessions and gameplay sessions remain valid unless explicitly revoked for security reasons.
+- `past_due`
+  - No automatic revocation or gameplay-admission restriction applies solely because of this state. Existing and new gameplay continue under ordinary plan quotas while operator and creator UIs surface strong warnings.
+- `grace`
+  - Existing connected gameplay sessions and reconnect of the same still-resumable session remain allowed.
+  - First-time public join, fresh gameplay bindings, new instances, scale-out, and quota-increasing operations are denied until billing returns to an eligible state.
+  - Auth token sessions remain valid unless separately revoked for security or membership reasons, and billing-safe management remains available.
 - `suspended`, `canceled`
   - Tenant-level hosting is disabled for gameplay:
     - Game Session and world-management flows must reject new game instance creations, restarts, or tenant selection for gameplay for the affected `tenantId` based on `GetTenantEntitlementsForRuntime`.
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
-  - Existing gameplay sessions for the tenant must be revoked so connected sockets are kicked and cannot reconnect into gameplay for that tenant.
+  - Existing gameplay authority is revoked. Game Session sends one bounded, non-sensitive game-unavailable notice, stops further gameplay admission, closes connected sockets, and prevents reconnect into that tenant. The notice flush is not a continuation grace period.
+  - Instance processes may then use the separate five-minute maximum drain window for internal cleanup; they are not player-admissible during that drain.
   - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
 
 Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
