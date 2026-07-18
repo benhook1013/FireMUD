@@ -172,6 +172,37 @@ def main() -> None:
                 """
             ),
         )
+        for label, primary, secondary in (
+            (
+                "primary with unknown local link",
+                "[player-access-and-session.md](./player-access-and-session.md); [unknown.md](./unknown.md)",
+                "",
+            ),
+            (
+                "primary with external link",
+                "[player-access-and-session.md](./player-access-and-session.md); [external](https://example.test/not-declared)",
+                "",
+            ),
+            (
+                "secondary with unknown local link",
+                "[player-access-and-session.md](./player-access-and-session.md)",
+                "[shared-runtime-contracts-and-persistence.md](./shared-runtime-contracts-and-persistence.md); [unknown.md](./unknown.md)",
+            ),
+            (
+                "secondary with external link",
+                "[player-access-and-session.md](./player-access-and-session.md)",
+                "[shared-runtime-contracts-and-persistence.md](./shared-runtime-contracts-and-persistence.md); [external](https://example.test/not-declared)",
+            ),
+        ):
+            expect_failure(
+                label,
+                lambda primary=primary, secondary=secondary: validator.parse_allocations(
+                    root,
+                    allocation_path,
+                    f"| `AA-1.1` | {primary} | {secondary} | rationale |",
+                ),
+                "canonical relative target",
+            )
         allowed_handoffs = allocations["AA-1.1"][1]
         validator.validate_status_row_handoffs(
             "player-access-and-session.md",
@@ -278,6 +309,22 @@ def main() -> None:
         ),
         "per-tracker allocation totals drifted",
     )
+    for label, target in (
+        ("external Coverage Summary tracker", "https://example.test/a.md"),
+        ("aliased Coverage Summary tracker", "../implementation-tracking/a.md"),
+        ("anchored Coverage Summary tracker", "./a.md#capability-status"),
+    ):
+        expect_failure(
+            label,
+            lambda target=target: validator.validate_coverage_summary(
+                summary_path,
+                summary.replace("./a.md", target),
+                {"AA-1.1", "AA-1.2"},
+                allocations,
+                {"a.md", "b.md"},
+            ),
+            "canonical relative target",
+        )
     print("implementation capability tracking regression tests passed")
 
 

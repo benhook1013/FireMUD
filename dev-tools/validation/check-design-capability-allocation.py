@@ -638,7 +638,17 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
     primary_claim = re.search(r"Primary allocation counts are:\s*(.*?)\.\s+These sum", text, re.DOTALL)
     if not primary_claim:
         fail(f"{document.relative_to(root)}: missing primary allocation count claim")
-    claimed_pairs = {capability: int(count) for capability, count in re.findall(r"([A-Z]{2}-\d+)\s+(\d+)", primary_claim.group(1))}
+    primary_pairs = re.findall(r"([A-Z]{2}-\d+)\s+(\d+)", primary_claim.group(1))
+    primary_capabilities = [capability for capability, _ in primary_pairs]
+    duplicate_capabilities = sorted(
+        capability for capability, count in Counter(primary_capabilities).items() if count > 1
+    )
+    if duplicate_capabilities:
+        fail(
+            f"{document.relative_to(root)}: duplicate primary allocation count claim entries: "
+            f"{duplicate_capabilities}"
+        )
+    claimed_pairs = {capability: int(count) for capability, count in primary_pairs}
     expected_primary_counts = {group: primary_counts.get(group, 0) for group in groups}
     sum_match = re.search(r"These sum to\s+(\d+)", text)
     if claimed_pairs != expected_primary_counts or sum(claimed_pairs.values()) != total or not sum_match or int(sum_match.group(1)) != total:
@@ -647,10 +657,20 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
     classification_claim = re.search(r"Classification counts are:\s*(.*?)\.\s+Primary allocation", text, re.DOTALL)
     if not classification_claim:
         fail(f"{document.relative_to(root)}: missing classification count claim")
-    claimed_classifications = {
-        label.strip().removeprefix("and "): int(count)
+    classification_pairs = [
+        (label.strip().removeprefix("and "), int(count))
         for count, label in re.findall(r"`(\d+)`\s+([^,]+)", classification_claim.group(1))
-    }
+    ]
+    classification_labels = [label for label, _ in classification_pairs]
+    duplicate_classifications = sorted(
+        label for label, count in Counter(classification_labels).items() if count > 1
+    )
+    if duplicate_classifications:
+        fail(
+            f"{document.relative_to(root)}: duplicate classification count claim entries: "
+            f"{duplicate_classifications}"
+        )
+    claimed_classifications = dict(classification_pairs)
     actual_classifications = Counter(
         row.classification for ledger_rows in rows_by_name.values() for row in ledger_rows
     )

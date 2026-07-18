@@ -110,6 +110,19 @@ def linked_tracker_names(cell: str) -> set[str]:
     return names
 
 
+def canonical_tracker_names(cell: str, trackers: set[str], context: str) -> set[str]:
+    names: set[str] = set()
+    canonical_targets = {f"./{tracker}" for tracker in trackers}
+    for target in MARKDOWN_LINK_RE.findall(cell):
+        if target not in canonical_targets:
+            fail(
+                f"{context}: implementation-tracker link must use canonical relative target "
+                f"from declared trackers, got {target!r}"
+            )
+        names.add(target.removeprefix("./"))
+    return names
+
+
 def relative_path(path: Path, root: Path) -> str:
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
@@ -335,8 +348,13 @@ def validate_coverage_summary(
         targets = MARKDOWN_LINK_RE.findall(row[0])
         if len(targets) != 1:
             fail(f"{relative_path(path, root)}: primary tracker summary row must link one tracker")
-        tracker = Path(targets[0].split("#", 1)[0]).name
-        if tracker not in trackers or tracker in declared:
+        tracker_names = canonical_tracker_names(
+            row[0],
+            trackers,
+            f"{relative_path(path, root)}: primary tracker summary row",
+        )
+        tracker = next(iter(tracker_names))
+        if tracker in declared:
             fail(f"{relative_path(path, root)}: invalid or duplicate primary tracker summary row {tracker}")
         declared[tracker] = summary_integer(row[leaves_index], f"{relative_path(path, root)}:{tracker}")
     if set(declared) != trackers:
@@ -389,12 +407,21 @@ def parse_allocations(root: Path, allocation_path: Path, text: str) -> dict[str,
         if len(cells) != 4:
             fail(f"{relative_path(allocation_path, root)}: malformed allocation row: {line}")
         capability_id = capability.group()
-        primary = linked_tracker_names(cells[1])
+        primary = canonical_tracker_names(
+            cells[1],
+            TRACKERS,
+            f"{relative_path(allocation_path, root)}:{capability_id}: primary tracker",
+        )
         if len(primary) != 1:
             fail(f"{relative_path(allocation_path, root)}: {capability_id} must name one primary tracker")
         if capability_id in allocations:
             fail(f"{relative_path(allocation_path, root)}: duplicate allocation for {capability_id}")
-        allocations[capability_id] = (next(iter(primary)), linked_tracker_names(cells[2]))
+        secondary = canonical_tracker_names(
+            cells[2],
+            TRACKERS,
+            f"{relative_path(allocation_path, root)}:{capability_id}: secondary tracker",
+        )
+        allocations[capability_id] = (next(iter(primary)), secondary)
     if not allocations:
         fail(f"{relative_path(allocation_path, root)}: no capability allocation rows found")
     return allocations

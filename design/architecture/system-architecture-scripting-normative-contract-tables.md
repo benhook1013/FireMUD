@@ -57,6 +57,7 @@ Additional required fields for scheduler/timer triggers:
 
 | Field | Required | Notes |
 | --- | --- | --- |
+| `scheduleDefinitionId` | Yes | Identifies the pinned schedule definition whose due firing produced the trigger and prevents distinct schedules with otherwise identical trigger fields from colliding. |
 | `dueTickId` and/or `dueAt` | Yes | A due point is required so scheduler `scriptEventId` can be deterministic and so catch-up behavior can be audited. |
 | `triggerMode` | Yes | `NORMAL` vs `CATCH_UP` to make bounded catch-up observable. |
 

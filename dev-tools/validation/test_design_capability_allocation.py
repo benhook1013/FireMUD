@@ -103,6 +103,34 @@ def main() -> None:
         expect_failure("architecture summary drift", validator.validate, Path(directory), "total discovered summary drift")
 
     with fixture_root() as directory:
+        path = Path(directory) / validator.SYSTEM_ALLOCATION
+        replace_once(
+            path,
+            "Primary allocation counts are: `AA-1 0`",
+            "Primary allocation counts are: `AA-1 1`, `AA-1 0`",
+        )
+        expect_failure(
+            "duplicate primary allocation count claim",
+            validator.validate,
+            Path(directory),
+            "duplicate primary allocation count claim entries",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.SYSTEM_ALLOCATION
+        replace_once(
+            path,
+            "Classification counts are: `56` normative design",
+            "Classification counts are: `55` normative design, `56` normative design",
+        )
+        expect_failure(
+            "duplicate classification count claim",
+            validator.validate,
+            Path(directory),
+            "duplicate classification count claim entries",
+        )
+
+    with fixture_root() as directory:
         path = Path(directory) / validator.MICROSERVICE_ALLOCATION
         replace_once(
             path,

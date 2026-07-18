@@ -84,7 +84,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `SESSION-04` | The invisible non-edge reconnect target and current visible restart/reconnect behavior are not one testable promise. |
 | `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
 | `SEC-02` | JWT rotation, overlap, pruning, and hot reload are target design while implementation readiness remains incomplete. |
-| `OPS-04` | Player-facing restore requires coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
+| `OPS-04` | Player-facing restore requires a coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
 | `CMD-STATUS-01` | The current narrower gameplay-command status API and target terminal command-lifecycle surface do not yet converge. |
 | `TRACE-01` | Named gameplay spans and scoped incident sampling are target capabilities, while current implementation supports only a narrower tracing surface. |
 
