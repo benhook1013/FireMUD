@@ -82,7 +82,7 @@ In all player-facing classes (`hobby-self-hosted`, staging, production), this al
 
 ### Secrets & Certificates
 
-- All sensitive values (DB passwords, JWT signing keys, TLS certificates) live in Kubernetes `Secret` objects.
+- Kubernetes workloads consume sensitive values through narrowly scoped Kubernetes `Secret` objects or fixed read-only mounted paths. This is the one FireMUD runtime contract; secret origin is an operator provisioning concern.
 - TLS certificates are rotated automatically by **cert-manager**. JWT rotation is coordinated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that request Account-owned transitions through the single Account JWT rotation control/status interface, observe Account publication and validator convergence, and record evidence; in production this Job is treated as an operator-run template rather than an unattended cadence (see `system-architecture-security.md#jwt-key--jwks-rotation-workflow`). The Job/CronJob must never read or update the private `jwt-signing-keys` Secret or write `jwt-jwks`.
 - Services reload TLS material via shared utilities, and Account Service may use the JWT watcher as one implementation of atomic signing-generation promotion:
   - `TlsCertificateWatcher`
@@ -107,20 +107,23 @@ For full descriptions of the variables and their defaults, open `environment-and
 - The sample file `.env.sample` lists the variables described in the catalog with default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
+- When local or operator-run Docker mounts real private material, it uses read-only files outside the repository with restrictive host permissions. FireMUD does not bundle a Vault container or another secret-manager dependency into Compose.
 
 ### Shared and Player-Facing Kubernetes Environments
 
 This section describes the Kubernetes-backed environments that use the canonical runtime configuration and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
-- TLS certificates are issued by **cert-manager** and rotated automatically; services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
+- Sensitive values (database passwords, JWT signing keys, TLS private keys) are delivered through Kubernetes `Secret` objects.
+- TLS certificates are issued by **cert-manager** and rotated automatically; each workload receives a distinct certificate/private-key Secret and services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
 - JWT signing keys are stored in Secrets. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Dedicated Kubernetes Jobs (for example `jwt-rotation`) request Account-owned transitions through the single Account JWT rotation control/status interface, prove validator visibility, observe the Account-published key set, and record evidence; they never read or update `jwt-signing-keys` or write `jwt-jwks`. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
 - In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`. Validators must use asymmetric Account JWKS; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
 - Services reload TLS certificates for gRPC client and server channels using `TlsCertificateWatcher` and `GrpcServerTlsReloader`. Account may use `JwtSecretWatcher` only as part of validated atomic signer promotion; validators refresh bounded JWKS caches and never reload a private Account signing key.
-- **Kubernetes Secrets** is the chosen mechanism for storing all sensitive credentials. External secret stores like Vault are out of scope at this stage.
+- FireMUD applications support only this Kubernetes Secret/mounted-file delivery contract. They do not call or deploy Vault or cloud-provider secret APIs. Operators may synchronize an external source into the canonical Secret names, but that is transparent infrastructure and must leave already-materialized healthy workload secrets usable during an upstream outage.
+- Staging and production require verified Kubernetes Secret encryption at rest, minimal service-account RBAC, namespace isolation, and Kubernetes API audit logging. Hobby/self-hosted player-facing clusters must pass the common binding, least-privilege, and credential-age preflight; operators should enable the same control-plane encryption/audit controls where their distribution supports them.
+- Re-creatable leaf certificates and service credentials are reissued after loss. Backup-decryption keys or an intentionally retained offline CA root must have encrypted out-of-cluster custody rather than relying on the live cluster as the sole copy.
 
 The Account-only asymmetric/JWKS boundary above is target state, not proof that the current stack enforces it. Current implementation drift includes the runtime classpath JWKS fallback when the configured file is absent, deployment preflight checks that require signing paths and mounts across primary workloads, and checked-in baseline resources that mount shared `jwt-signing-keys` beyond Account. This documentation records the required convergence without changing runtime, preflight, or manifest behavior.
 
@@ -134,7 +137,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Environment variables are loaded from `.env`, and secrets such as JWT signing keys may be generated randomly on startup for convenience.
   - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
 - **Staging / Non-production clusters**
-  - Player-facing staging must use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret. Account Service sets `FIREMUD_AUTH_JWT_SECRET_PATH` to its private bundle and `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json` from the read-only `jwt-jwks` mount.
+  - Player-facing staging must use a persistent `jwt-signing-keys` Secret and immutable, integrity-controlled public `jwt-jwks` ConfigMap or equivalent artifact. Account Service sets `FIREMUD_AUTH_JWT_SECRET_PATH` to its private bundle and `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json` from the read-only `jwt-jwks` mount.
   - Account startup must fail when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; classpath fallback is local/test only.
   - The same immutable `jwt-rotation` artifact and phased protocol used in production must be exercised periodically. It may run on a low-frequency schedule or as an explicit operator drill.
 - **PR preview**
@@ -154,7 +157,7 @@ For guidance on how to respond to a suspected JWT signing key compromise (as opp
 
 ## Secret Governance Tiers
 
-FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls even while Kubernetes Secrets remains the storage backend:
+FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls while Kubernetes Secrets remains the canonical workload-delivery boundary:
 
 - **Tier A (high impact)**
   - Includes JWT signing keys/JWKS, PostgreSQL application/admin credentials, object-store credentials used for backup and restore, and operator-only control-plane credentials.
@@ -167,7 +170,7 @@ FireMUD applies a tiered governance model so the highest-risk credentials have e
   - Includes lower-risk integration credentials and service-level secrets where compromise blast radius is narrower.
   - Rotation cadence may be manual and less frequent, but owners must still document current age, intended cadence, and emergency rotation path.
 
-This model is designed to reduce risk now without introducing unnecessary operational complexity. If operational burden or compliance requirements increase, environments can migrate selected Tier A credential classes to external secret orchestration later without changing application-level environment variable contracts.
+This model is designed to reduce risk without making a secret manager part of the FireMUD runtime. Operators may provision selected Tier A credentials from external orchestration without changing application-level Secret names or mounted-file contracts. A shared active-active multi-datacenter signing or secret authority requires a separate architecture decision; independent deployments use independent authorities by default, and FireMUD does not implement cross-cluster secret replication.
 
 ### Secret Compliance Controls
 
@@ -359,7 +362,7 @@ The catalog document groups these variables by subsystem (PostgreSQL, Redis, TLS
 
 ## Certificate Management & Watchers
 
-Mutual TLS protects all internal service-to-service traffic. Certificates are normally provisioned by **cert-manager** and mounted from Kubernetes Secrets. These certificates secure:
+Mutual TLS protects all internal service-to-service traffic. Certificates are normally provisioned by **cert-manager** and mounted from per-workload Kubernetes Secrets so each service has a concrete private identity. These certificates secure:
 
 - All gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)
