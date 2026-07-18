@@ -4,7 +4,7 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Current phase: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, and independent validation are complete. Human-led adversarial decision review remains deliberately unstarted.
+Current phase: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, and independent validation are complete. Human-led adversarial decision review is in progress against the authoritative queue in [`consequential-decision-inventory.md`](./consequential-decision-inventory.md).
 
 | Phase | Status | Output |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 | Implementation tracker reshaping | Complete | [Capability allocation](../implementation-tracking/capability-allocation.md) and ten permanent domain trackers |
 | Code and proof reconciliation | Complete and independently validated | Per-capability implementation/verification states and evidence anchors in the domain trackers |
 | Cross-domain convergence | Complete and independently validated | [Capability implementation reconciliation](./capability-implementation-reconciliation.md) |
-| Human-led adversarial decision review | Not started; explicitly outside automated completion | Human decisions and later canonical design/ADR updates |
+| Human-led adversarial decision review | In progress; human-owned | Recorded dispositions and resulting canonical design/ADR updates |
 
 ## Authority Boundaries
 
@@ -23,7 +23,7 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 - Architecture decision records explain consequential accepted choices and their tradeoffs; they do not replace the current design contract.
 - This directory contains allocation, inventory, review, and status artifacts. It is deliberately non-normative.
 - Implementation trackers report implementation and proof against accepted design. They do not define design.
-- Automated inventory work may identify evidence, conflicts, alternatives, and review questions, but it must not conduct or resolve the adversarial decision review. The human decision owner runs that later process manually against the completed register and canonical sources.
+- Automated inventory work may identify evidence, conflicts, alternatives, and review questions, but it must not conduct or resolve the adversarial decision review. The human decision owner runs that process manually against the completed register and canonical sources.
 
 ## Coverage Rules
 
