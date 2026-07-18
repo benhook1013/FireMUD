@@ -10,7 +10,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 - Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
 - The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is now implemented for first-party browser gameplay. Non-browser clients may still use the dedicated `X-Firemud-Connect-Token` header carrier, but Gateway rejects handshakes that try to present both carriers at once.
-- `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
+- `/sessions/{sessionId}/refresh-roles` exists as an operational hook, but current role-refresh token regeneration and periodic active-session Service JWT rotation remain implementation gaps; the placeholder response is not proof of refresh.
 
 ## Contract Decisions (Normative)
 

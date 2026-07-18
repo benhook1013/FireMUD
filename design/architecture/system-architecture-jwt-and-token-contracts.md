@@ -107,6 +107,8 @@ To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles
   - Intended audience: internal services (for example an `aud` claim such as `internal`).
   - Carried only over mTLS-protected service-to-service links.
   - Lifetime: also short-lived and backed by `session:auth:*` allowlist entries; services must not cache them beyond their expiry or ignore allowlist revocation.
+  - An active gameplay binding rotates its private Account/control-plane Service JWT through the Account-owned refresh contract in ADR 0031. Refresh authority includes the still-valid current token generation and cannot be derived from Game Session mTLS identity plus an account ID alone.
+  - Account rejects rotation when the current generation is blocked by account, tenant, or membership revocation. A replacement with a newer `iat` must not cross a logout-all, password-reset, security-lock, or membership-loss watermark.
 
 Services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs, or a player-bootstrap JWT presented to an admin API).
 
