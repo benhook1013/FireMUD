@@ -13,11 +13,12 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 
 ## Implementation Notes
 
-This runbook describes the required deployment flow. Current automation is executable for the canonical preflight policy-ID set, expected-binding report reference, mounted JWT/JWKS contract, and traffic-open backup gates, but some evidence production remains operator- or future-automation-owned:
+This runbook describes the required deployment flow. Current automation is executable for the existing expected-binding report reference, mounted JWT/JWKS path contract, and traffic-open backup gates, but some required gates and evidence production remain operator- or future-automation-owned:
 
 - Fresh-boundary restore bootstrap and post-restore secret-compliance refresh are canonical requirements, but current restore scripts do not yet automate the full evidence chain.
 - Production release digest manifests are canonical release-lineage evidence, but current overlay CI does not yet enforce their presence or schema.
 - Expected-binding validation is first-pass repository/render validation. Real first-live and reopen decisions still require current environment evidence files produced by operators or automation.
+- `PREFLIGHT-JWT-002` and `PREFLIGHT-JWT-ROTATION-001` are not yet implemented, so the current shared-HMAC and private-key distribution topology cannot satisfy player-facing JWT readiness.
 
 Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.
 
@@ -27,10 +28,10 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 
 1. Provision the target namespace and registry pull credentials used by workloads.
 2. Provision per-environment PostgreSQL credentials (`postgres-credentials`) and, when rotation Jobs are used, `postgres-admin-credentials`.
-3. Provision per-environment JWT resources (`jwt-signing-keys`, `jwt-jwks`) and ensure the Account Service file-path contract can mount them.
+3. Provision a per-environment asymmetric Account signing bundle (`jwt-signing-keys`) mounted only into Account Service and a public validation resource (`jwt-jwks`) consumed by every validator.
 4. Provision cert-manager issuer bindings and certificate resources required for workload gRPC mTLS, Gateway internal mTLS WebSocket listener, TCP Proxy bridge mTLS client identity, and operator-only client identities where applicable.
 5. Provision per-environment external integration credentials: backup/object-store, asset-store, outbound-communications, and operator-control-plane credentials as needed for that environment class.
-6. Run `./dev-tools/deploy/preflight.py <environment>` and require `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` to pass before the first apply.
+6. Run `./dev-tools/deploy/preflight.py <environment>` and require `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWT-002`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` to pass before the first apply.
 7. Record bootstrap secret-compliance evidence for each Tier A credential class. First deployment may use immutable initial-provisioning evidence (`lastProvisionedAt`) instead of rotation evidence, but the record must still satisfy the canonical secret-compliance schema before the environment is considered promotable or traffic-open.
 
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
@@ -64,6 +65,18 @@ Before opening production to player traffic for the first time, or reopening it 
 If production must be opened before the normal schedules have accumulated history, operators must create an explicit bootstrap backup, verification, and restore-drill record first. Opening traffic without proven recovery evidence is non-compliant.
 This is a traffic-open gate, not a routine steady-state rollout gate.
 
+## Player-Facing JWT Readiness Gate
+
+Before first-live, reopen-after-restore, or production promotion evidence is accepted, operators must require `PREFLIGHT-JWT-ROTATION-001=pass` and prove the [phased JWT rotation contract](./system-architecture-security.md#jwt-key--jwks-rotation-workflow):
+
+1. Confirm only Account Service receives the asymmetric private signing bundle and every validator uses Account `kid`/JWKS verification with HMAC fallback disabled.
+2. Run the production rotation artifact through prepublication, validator visibility, signer promotion, old/new continuity, overlap through retiring-token expiry, pruning, and rejection proof.
+3. Prove rollback-safe JWKS retention for every key used by either signer generation.
+4. Run a quarantined compromise drill that performs environment-wide issuer invalidation, hard cutover without old-key overlap, forced validator convergence, old-`kid` rejection, and replacement-`kid` acceptance.
+5. Retain the immutable artifact digest, key generations, exact validator inventory, timings, acceptance/rejection results, and authorized reopen outcome.
+
+The drill evidence may be reused within the configured freshness window only while the rotation artifact digest, key lifecycle contract, complete validator inventory, and environment binding remain unchanged. Mounted Secrets, file watcher callbacks, and raw JWKS serving are insufficient evidence.
+
 ## Overlay Deployment Flow (Staging and Production)
 
 1. **Review Release Notes**
@@ -77,7 +90,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**
    - Validate the target overlay before apply and fail fast on policy violations.
-   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, and `PREFLIGHT-PROMOTION-001` for production).
+   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWT-002`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-JWT-ROTATION-001` when applicable, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, and `PREFLIGHT-PROMOTION-001` for production).
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.py <staging|production|hobby-self-hosted>`.
    - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>.json` with optional waiver record `.../<deployment-ref>.waiver.json` as defined in `design/architecture/system-architecture-deploy-preflight-policy.md`.

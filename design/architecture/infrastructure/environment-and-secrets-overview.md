@@ -24,13 +24,13 @@ This section summarizes the **most important environment variables and rotation 
 
 This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
 
-- Player-facing JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret` in canonical non-test runtimes.
+- JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret`, but the current path still supplies a shared HMAC secret rather than the required Account-only asymmetric signing bundle.
 - Account Service can serve JWKS from the environment-provided `jwt-jwks` resource while preserving the packaged classpath fallback for local/dev.
 - Hosted `pr-preview` rendering produces preview-unique JWT signing material and matching JWKS data per namespace instead of relying on one shared inline JWT secret.
 - `dev-tools/deploy/preflight.py` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
-- The `jwt-rotation` Job/CronJob, overlap and pruning mechanics, validator-convergence checks, and retained rotation evidence described below remain target-state design rather than checked-in deployment automation.
+- Account-only private-key distribution, downstream asymmetric JWKS validation, the phased `jwt-rotation` Job/CronJob, overlap and pruning mechanics, validator-convergence checks, and retained rotation evidence described below remain target-state design rather than checked-in deployment automation.
 
-Remaining deployment evidence work is narrower: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those remaining gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
+Remaining deployment work includes the JWT authority and rotation boundary above as well as deeper live evidence: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
 
 ### Core Profiles
 
@@ -73,14 +73,14 @@ In all player-facing classes (`hobby-self-hosted`, staging, production), this al
 
 - All sensitive values (DB passwords, JWT signing keys, TLS certificates) live in Kubernetes `Secret` objects.
 - TLS certificates are rotated automatically by **cert-manager**. JWT signing keys are rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`); in production this Job is treated as an operator-run template rather than an unattended cadence (see `system-architecture-security.md#jwt-key--jwks-rotation-workflow`).
-- Services reload TLS and JWT material via shared utilities:
+- Services reload TLS material via shared utilities, and Account Service may use the JWT watcher as one implementation of atomic signing-generation promotion:
   - `TlsCertificateWatcher`
   - `JwtSecretWatcher`
   - `GrpcServerTlsReloader`
 
 Operator actions:
 
-- For manual secret rotation, update the relevant Kubernetes `Secret` and confirm:
+- For manual secret rotation, follow the owning phased runbook rather than treating one Secret update as a complete rotation, and confirm:
   - Pods reload configuration (via watcher) or are restarted according to the runbook.
   - gRPC clients/servers establish new mTLS sessions without errors.
 
@@ -104,11 +104,11 @@ This section describes the Kubernetes-backed environments that use the canonical
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - TLS certificates are issued by **cert-manager** and rotated automatically; services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
-- JWT signing keys are stored in Secrets and rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that update both the signing key Secret and the JWKS document served by the Account Service. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
-- In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing material must be consumed from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secret configuration is non-compliant in those environments.
+- JWT signing keys are stored in Secrets and rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that prepublish a versioned JWKS generation, prove validator visibility, promote the Account signer, overlap through token expiry, and then prune. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
+- In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`. Validators must use asymmetric Account JWKS; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
-- Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
+- Services reload TLS certificates for gRPC client and server channels using `TlsCertificateWatcher` and `GrpcServerTlsReloader`. Account may use `JwtSecretWatcher` only as part of validated atomic signer promotion; validators refresh bounded JWKS caches and never reload a private Account signing key.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive credentials. External secret stores like Vault are out of scope at this stage.
 
 ---
@@ -122,7 +122,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
 - **Staging / Non-production clusters**
   - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret, with the Account Service serving JWKS from the mounted file.
-  - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
+  - The same immutable `jwt-rotation` artifact and phased protocol used in production must be exercised periodically. It may run on a low-frequency schedule or as an explicit operator drill.
 - **PR preview**
   - Each preview namespace must receive PR-unique JWT signing material and JWKS data, even when those resources are treated as low-sensitivity test material.
   - Canonical default: store the preview signing key in a preview-unique Kubernetes `Secret` and publish the corresponding preview-unique JWKS document via a namespace-local `ConfigMap`.
@@ -130,6 +130,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
   - The `jwt-rotation` CronJob is defined with `spec.suspend: true` and is triggered explicitly by operators as part of a rotation runbook.
+  - Mounted resources alone do not establish readiness. Promotion and traffic-open evidence must prove Account-only asymmetric signing, validator `kid`/JWKS convergence, planned rotation through pruning, and compromise hard cutover as defined in `system-architecture-security.md#player-facing-jwt-readiness`.
 
 For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the “JWT Key Compromise Response” section in `system-architecture-security.md`.
 

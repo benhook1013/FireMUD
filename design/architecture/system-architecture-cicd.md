@@ -378,6 +378,8 @@ Enforcement workflow contract:
   - `backup-object-store-credentials`
   - `operator-credentials`
 
+The `jwt-signing-keys-jwks` age record is necessary but not sufficient for JWT readiness. Any staging deployment used for production attestation, production promotion, or player-facing first-live/reopen evidence must also carry `PREFLIGHT-JWT-002=pass` and current `PREFLIGHT-JWT-ROTATION-001=pass` evidence proving Account-only asymmetric signing, validator convergence, planned rotation through pruning, and compromise hard cutover. The current executable preflight does not yet implement those checks, so mounted JWT/JWKS resources and a fresh credential-age record cannot be used to claim the player-facing JWT gate is satisfied.
+
 ---
 
 ## Deployment Credentials & Environments

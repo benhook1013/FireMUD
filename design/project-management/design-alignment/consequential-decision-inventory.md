@@ -83,7 +83,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
 | `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
 | `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
-| `SEC-02` | JWT rotation, overlap, pruning, and hot reload are target design while implementation readiness remains incomplete. |
+| `SEC-02` | Resolved target: planned Account JWT rotation prepublishes and converges the new public key before signer promotion, retains old verification through token expiry, then prunes; compromise/restore uses an environment-wide hard cutover. Current shared-HMAC issuance and validation fail the accepted player-facing readiness gate. |
 | `OPS-04` | Player-facing restore requires coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
 | `CMD-STATUS-01` | The current narrower gameplay-command status API and target terminal command-lifecycle surface do not yet converge. |
 | `TRACE-01` | Named gameplay spans and scoped incident sampling are target capabilities, while current implementation supports only a narrower tracing surface. |
@@ -100,14 +100,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 2 | 9 | `in-progress` |
+| 1 | Known conflicts and drift | 3 | 9 | `in-progress` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **2** | **183** | `in-progress` |
+| **Total** | | **3** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -119,7 +119,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 - [x] `SET-01` — `revised` on 2026-07-18; [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); [canonical settings model](../../architecture/system-architecture-settings-model.md)
 - [x] `SESSION-04` — `revised` on 2026-07-18; [ADR 0013](../../architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md); [canonical reconnection contract](../../architecture/system-architecture-reconnection.md)
-- [ ] `SEC-02`
+- [x] `SEC-02` — `revised` on 2026-07-18; [ADR 0014](../../architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md); [canonical JWT rotation workflow](../../architecture/system-architecture-security.md#jwt-key--jwks-rotation-workflow)
 - [ ] `OPS-04`
 - [ ] `CMD-STATUS-01`
 - [ ] `TRACE-01`
