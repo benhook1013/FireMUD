@@ -66,7 +66,7 @@ The subscription lifecycle is modeled as a finite state machine:
 - `trialing` – The tenant is in a time-limited trial; full hosting features are enabled but may be subject to conservative quotas.  
 - `active` – The subscription is paid and current; quotas and entitlements from the selected plan apply.  
 - `past_due` – Recent billing attempts have failed; the platform has not yet enforced restrictions, but alerts and UI warnings appear.  
-- `grace` – A configured grace period after `past_due` where some or all entitlements may be restricted (for example, blocking new game instances while allowing existing ones to run).  
+- `grace` – A configured recovery period after `past_due` where connected sessions and the exact same resumable bindings may continue, while public join, fresh gameplay bindings, new instances, scale-out, and quota growth are blocked.
 - `suspended` – Hosting entitlements are temporarily disabled due to non-payment or policy; new sessions and instance starts are blocked for the tenant.  
 - `canceled` – The subscription has been terminated; long-term data retention and clean-up policies apply.
 
@@ -102,11 +102,11 @@ Subscription status feeds directly into tenant availability and resource enforce
 
 - When a subscription is `past_due`:
   - The tenant remains available for gameplay, but operator dashboards and creator/admin UIs surface prominent warnings.  
-  - Optional soft restrictions may apply (for example, preventing further plan upgrades or new instance types) without revoking existing sessions.
+  - Existing and new gameplay continue under the tenant's ordinary plan quotas; `past_due` alone does not revoke sessions or close admission.
 
 - When a subscription enters `grace`:
-  - The tenant continues to run existing game instances and player sessions.  
-  - New instances or large-scale operations (for example, starting additional shards) may be blocked until billing is brought current, based on plan and operator policy.  
+  - The tenant continues to run existing game instances and connected player sessions, and the same still-resumable session may reconnect.
+  - First-time public join, a fresh gameplay binding, new instances, scale-out, and quota-increasing operations are blocked until billing is brought current.
   - Gameplay sessions and auth token sessions remain valid unless explicitly revoked for security reasons.
 
 - When a subscription is `suspended` or `canceled`:
@@ -115,16 +115,17 @@ Subscription status feeds directly into tenant availability and resource enforce
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated error code and user-facing message indicating that the game is currently unavailable due to billing.
   - Existing running game instances for the tenant must be transitioned to shutdown:
     - Admission is closed immediately (no new sessions).
-    - Connected gameplay sessions are revoked immediately.
+    - Connected gameplay authority is revoked immediately. Game Session sends one bounded, non-sensitive availability notice and closes the sockets; the notice flush does not permit continued gameplay.
     - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
   - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export tenant-scoped data. This surface includes actions such as updating payment methods, viewing invoices, and initiating tenant-bounded exports, but does not include full account export, starting game instances, or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
   - As part of the transition into `suspended` or `canceled`, the Account Service must:
-    - Write `session:auth:revoked_after:tenant:<tenantId>` with the current timestamp (authoritative writer), and
-    - Emit a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`.
+    - Commit the billing state and a monotonic durable `TenantBillingStateChanged` outbox event in one database transaction, and
+    - Idempotently project `session:auth:revoked_after:tenant:<tenantId>` with the effective cutoff timestamp as the authoritative watermark writer; the cutoff workflow does not report enforcement complete until this projection succeeds.
   - Game Session and related services consume this event and immediately:
     - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and
     - Reconcile entitlement caches and admission gates for the tenant.
   - Downstream services must not write `session:auth:revoked_after:*` watermark keys directly. Implementations must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths; opportunistic cleanup of tenant-scoped allowlist entries is allowed only via purpose-built, bounded indexes and background work.
+  - Durable event consumption is the fast path. Game Session must also batch-reconcile active tenant authority so a missed event cannot preserve gameplay authority beyond 60 seconds. Failure to renew that authority-reconciliation lease closes admission and terminates bindings whose authority cannot be re-established at the bound; routine commands do not perform entitlement reads.
 
 These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
 
@@ -140,9 +141,10 @@ The internal runtime entitlement surface returns a snapshot of:
 
 - The current subscription status for the tenant (for example, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).  
 - The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan, plus pending plan-change metadata when a period-end downgrade or cancellation is scheduled.  
-- The current billing-state flags used for availability decisions, such as:
-  - Whether the tenant is considered **available for gameplay** (for example, `trialing` or `active` vs `suspended`/`canceled`).  
-  - Whether new game instances or scaling operations are allowed under the current plan and billing state.
+  - The current billing-state flags used for availability decisions, such as:
+    - Whether the tenant is considered **available for gameplay** (for example, `trialing` or `active` vs `suspended`/`canceled`).
+    - Whether first-time public join and first/new gameplay bindings are allowed under the current billing state.
+    - Whether new game instances or scaling operations are allowed under the current plan and billing state.
 - Freshness and sequencing metadata:
   - `evaluatedAt` (UTC timestamp when entitlements were evaluated),
   - `entitlementVersion` (monotonic entitlement snapshot/version identifier), and
@@ -151,7 +153,7 @@ The internal runtime entitlement surface returns a snapshot of:
 Runtime services such as the Game Session Service and world-management components use this internal runtime contract as follows:
 
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlementsForRuntime(tenantId)` and enforce both availability and quotas before admitting new load.  
-- When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
+- When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new bindings; general gameplay availability is not sufficient when `grace` has closed new admission.
 - They cache entitlements per tenant, coalesce concurrent refreshes, and invalidate or advance cached state immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events arrive rather than checking entitlements on every tick or issuing one Account call per player.
 - A snapshot is fresh for 15 seconds. Explicit join, first/new session admission, new instance/scale, quota increase, paid-feature activation, and capacity-creating cutover require fresh authority and fail closed with `ENTITLEMENT_UNAVAILABLE` when refresh cannot complete.
 - Reconnecting the same resumable session and non-expanding restart/rollback/recovery may use a previously authoritative positive snapshot for at most five minutes from `evaluatedAt`. A different realm target or fresh binding is new admission. The five-minute maximum may be shortened or disabled but not widened by operator configuration.

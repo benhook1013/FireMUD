@@ -83,18 +83,22 @@ Unauthenticated `sessionctx:*` entries may exist before `LOGIN`; they are bootst
 Game Session must also maintain the bounded authoritative indexes defined in the authentication architecture so takeover, reconnect, and revocation do not require scans:
 
 - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account:<accountId>` -> active tenant-qualified `sessionId` set
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
+- `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` -> active `sessionId` set for grant-gated realms
 
-Gameplay session creation/update plus these tenant-scoped index mutations are one shard-local Redis CAS/update flow under `{tenantGameplayTag}`. Region-local gameplay admission still uses the separate `tick:{tenantRegionTag}:session-binding:<entityId>` bridge contract and is not folded into the same Lua invocation.
+Gameplay session creation/update plus the tenant-scoped index mutations are one shard-local Redis CAS/update flow under `{tenantGameplayTag}`. The cross-tenant account index is an idempotent secondary lookup updated separately; an account watermark remains authoritative, and periodic reconciliation repairs a missing index entry. Region-local gameplay admission still uses the separate `tick:{tenantRegionTag}:session-binding:<entityId>` bridge contract and is not folded into the same Lua invocation.
 
-Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session, such as `authTokenHash` and `authTokenIssuedAt`, plus authoritative membership freshness metadata such as `membershipVersion` so resume logic can validate current identity, current membership authority, and current revocation state before rebinding to a fresh backend token:
+Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session, such as `authTokenHash` and `authTokenIssuedAt`, plus authoritative membership and applicable realm-grant freshness metadata so resume and active revocation can validate current identity, current authority, and current revocation state before rebinding to a fresh backend token:
 
 - current caller identity matches the stored gameplay binding subject;
 - membership authority still allows gameplay admission for the tenant; and
 - bulk revocation watermarks such as `session:auth:revoked_after:*` do not block the account or tenant.
 
 These identity and revocation rules are defined in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
+
+Game Session consumes Account-owned membership, grant, security, and hard-billing events through an idempotent durable consumer. Stable event IDs and monotonic authority versions make duplicates and older events no-ops; a gap triggers authoritative reconciliation. Events drive targeted termination through the bounded indexes above. A periodic batched watermark/version reconciliation renews a revocation-authority freshness lease for active bindings at least once every 60 seconds. New admission fails closed while that lease is stale, and active bindings whose authority cannot be re-established terminate at the bound. Routine gameplay commands do not read Account or revocation watermarks.
 
 ## Tick Coordination and Lease Ownership
 
