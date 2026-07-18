@@ -21,9 +21,9 @@ service GameSessionService {
   rpc ListGameplayRealms(ListGameplayRealmsRequest) returns (ListGameplayRealmsResponse);
   rpc GetAdmissionPointer(GetAdmissionPointerRequest) returns (GetAdmissionPointerResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
-  // Pause tick execution so a consistent pg_dump can be taken.
+  // Pause tick execution for an authorized maintenance workflow.
   rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
-  // Resume tick execution after a backup.
+  // Resume tick execution after the maintenance workflow completes.
   rpc ResumeTicks(ResumeTicksRequest) returns (ResumeTicksResponse);
   // Report whether ticks are currently paused.
   rpc GetTickStatus(GetTickStatusRequest) returns (GetTickStatusResponse);
@@ -267,7 +267,7 @@ message PauseTicksResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
-// Resume ticks after a backup has started.
+// Resume ticks after an authorized maintenance workflow completes.
 message ResumeTicksRequest {
   string reason = 1;
 }

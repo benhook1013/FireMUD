@@ -6,7 +6,7 @@ This document mixes live and target-state control-plane surfaces. Current live b
 
 - the shipped pause/resume control path is `PauseTicksForScope` / `ResumeTicksForScope` at the current `{tenantId, gameInstanceId}` runtime boundary;
 - the shipped owner/status read is `GetRuntimeOwnershipStatus`, not yet the fuller target-state `GetRegionTickStatus` surface described below;
-- player-facing prod-like coordinated backup and restore-point recovery are therefore still blocked on the later canonical `tenantId + regionId` status/pause convergence.
+- canonical region pause/status remains incomplete for maintenance, reset, migration, and future scoped recovery. Routine online PostgreSQL backup does not depend on this control; player-facing restore remains blocked instead on the environment-wide cold-start quarantine, convergence, hardening, and proof gaps.
 
 Read the pause/status/recovery APIs below as the target-state contract unless the repo implementation or slice docs explicitly say they are already live.
 
@@ -46,9 +46,9 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 - `EnqueueCommand` – adds a player action to the next tick's queue.
 - `QueryState` – retrieves condensed session or player state for monitoring.
 - `ToggleFeatureFlag` – updates runtime flags for a tenant.
-- `PauseTicks` – temporarily halt tick execution before a backup.
-- `ResumeTicks` – resume tick processing after the backup begins.
-- `GetRegionTickStatus` – returns the canonical per-region pause/status surface for backup orchestration, reset tooling, and recovery gates.
+- `PauseTicks` – temporarily halt tick execution for maintenance, reset, migration, or future scoped-recovery work.
+- `ResumeTicks` – resume tick processing after the authorized maintenance workflow completes.
+- `GetRegionTickStatus` – returns the canonical per-region pause/status surface for maintenance, reset tooling, topology changes, and future scoped-recovery gates.
 - `ValidateInstanceCutoverCompatibility` – resolves the target replacement launch descriptor, freezes any approved `remapSetId`, checks target Game Design proof, and returns the canonical multi-participant cutover-preflight report for a source instance and target version.
 - `PrepareVersionUpgrade` – persists one `prepared_version_upgrade` control-plane artifact containing the target launch-descriptor identity, frozen `remapSetId`, participant results, and checked-at timestamp for a source-instance -> target-version cutover attempt. The request must include `controlPlaneRequestId` so retries reuse the same durable preparation instead of creating duplicates.
 - `ExecutePreparedVersionCutover` – executes the canonical prepared cutover workflow for one realm pointer. The request identifies the realm, replacement `gameInstanceId`, durable `preparedVersionUpgradeId`, and expected pointer version; Game Session revalidates the durable preparation against the current pointer and target instance before performing the CAS-guarded swap.

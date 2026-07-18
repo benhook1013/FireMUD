@@ -199,8 +199,8 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - `tick_effect_outcome_total` is emitted for at least one synthetic tick effect, with `outcome` values limited to the documented set (for example `first_apply`, `replay_ok`, `guard_error`).
     - If replay-controller instrumentation is present, `tick_effects_replay_scan_lag_ms` and `tick_effects_replay_batches_total` appear for the synthetic region.
     - Where Redis coordination is enabled, a basic tail-loss or coordination metric such as `redis_coordination_tail_loss_ms` is exposed, even if its value is near zero in CI.
-    - Where coordinated backups are enabled, backup pause metrics expose both observed values and budget gauges (`backup_tick_pause_wait_seconds`, `backup_tick_pause_wait_budget_seconds`, `backup_tick_pause_duration_seconds`, `backup_tick_pause_duration_budget_seconds`).
-    - Where alias-scope pause/resume is still supported, `backup_pause_scope_alias_requests_total` is exported.
+    - Where online backups are enabled, backup metrics expose freshness, artifact-lineage validity, and restore-readability signals; recovery environments also expose bounded participant safe-disposition/convergence signals.
+    - Maintenance/reset pause metrics may be tested by those workflows, but their presence is not routine backup proof.
     - These checks should confirm that metrics follow the cardinality guardrails defined in the Logging & Monitoring doc (for example, no `traceId` or `characterId` labels).
 - **Alert wiring smoke tests**
   - Define one or more **test-only** alert rules (for example `ObservabilitySmokeTestAlert`) in non-production Alertmanager configurations with `alert_class="test"` and notifications routed only to low-noise channels or logging sinks, not to paging integrations.
@@ -222,12 +222,8 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - Verifies the presence of at least one `gamesession_handle_command` span with attributes such as `tenantId`, `regionId`, and `characterId`.
     - Verifies the presence of at least one `tick_execute` span in environments where ticks are enabled.
     - Verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) in environments that expose the Telnet path.
-    - Verifies the presence of at least one backup coordination span (`backup_pause_ticks` and `backup_resume_ticks`) in environments that run coordinated backup workflows.
-    - For coordinated backup workflows, verifies the required backup-scope attributes on those spans:
-      - `scope_type` is present.
-      - `tenantId` is present when the request is tenant- or region-scoped.
-      - `regionId` is present for canonical region-scoped requests.
-      - `alias_scope_used=true` is present when the workflow intentionally exercises legacy `game_instance_id` alias scope.
+    - Verifies `backup_pg_dump_snapshot` and `backup_verify_artifact` spans with matching environment/database, artifact, and tool lineage in environments that run online backups.
+    - In recovery-drill pipelines, verifies `recovery_converge_participant` spans cover every declared and enabled participant and contain only approved safe dispositions before controlled reopen.
   - These checks may be skipped in environments without tracing backends but should be treated as required in pipelines that advertise tracing support, so span regressions are caught before production.
 
 - **Structured log-field contract checks**
@@ -272,14 +268,14 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
   - External observability-entrypoint smoke: verify the authoritative external monitoring configuration covers Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query entrypoints, and that each has a documented non-production validation method or bounded mirrored signal mapping.
   - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
   - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
-  - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend. In environments that expose Telnet and coordinated backups, also verify at least one `tcpproxy_notify_disconnect`/`tcpproxy_connection` span and one `backup_pause_ticks` + `backup_resume_ticks` pair.
+  - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend. In environments that expose Telnet and online backups, also verify at least one `tcpproxy_notify_disconnect`/`tcpproxy_connection` span and matching `backup_pg_dump_snapshot` + `backup_verify_artifact` evidence.
   - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`characterId`).
   - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path.
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
     - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
     - This includes preserving the bounded `command` label on the core-command latency recording rules so single-command regressions continue to alert.
     - This includes the replay-convergence set (`tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_convergence_budget_seconds`, `tick_effects_replay_slo_breached`, and `tick_effects_replay_starved`) so ledger backlog alerting does not drift into environment-specific guesswork.
-    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
+    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
     - This also includes the tick-state projections (`current_tick_state`, `current_tick_terminal_at_ms`) and the aggregate remote follow-up recordings (`remote_followups_due_total`, `remote_followups_drain_lag_ms`, `remote_followups_backlog_over_budget_total`) so the observability contract stays aligned with the Redis and scaling docs without drifting back into forbidden tenant/region metric labels.
   - External-signal contract smoke: verify the prod-like environment exposes the canonical independent-signal contract from `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`, or a documented compatibility mapping:
     - `entrypath_blackbox_probe_success{path,target}` for `path="websocket"` and `path="telnet"`, or a documented equivalent mapping.

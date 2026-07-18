@@ -7,8 +7,8 @@ This directory stores environment deployment evidence used by architecture contr
 - `production/attestations/<deployment-ref>.json`: production promotion attestation artifacts referenced by overlay PRs.
 - `production/release-manifests/<release-tag-or-deployment-ref>.json`: release digest manifests binding official release tags or deployment refs to the promoted digest set.
 - `production/recovery/<recovery-ref>.json`: production post-restore recovery evidence including external credential validation results.
-- `production/backup-readiness/<deployment-ref>.json`: production backup-readiness evidence for `roll-forward-only` promotions.
-- `production/traffic-open/<event>-<deployment-ref>.json`: production traffic-open evidence bound to the canonical production preflight report and coordinated-backup scope.
+- `production/backup-readiness/<deployment-ref>.json`: full production recovery evidence for `roll-forward-only` promotions and releases whose compatibility result requires a new drill.
+- `production/traffic-open/<event>-<deployment-ref>.json`: production first-live/reopen evidence bound to the canonical preflight report and environment-wide cold-start recovery record.
 - `<environment>/preflight/<deployment-ref>.json`: preflight policy reports.
 - `<environment>/preflight/<deployment-ref>.waiver.json`: break-glass waiver records for a single deployment event.
 - `hobby-self-hosted/deployments/<deployment-ref>.json`: hobby deploy evidence records.

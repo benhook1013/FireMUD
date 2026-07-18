@@ -71,10 +71,11 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 - **Cross-region and saga flows**
   - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
-- **Backup and pause/resume flows**
-  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `scope_type`, `tenantId`, `regionId` when bounded, `alias_scope_used` when the request still uses `game_instance_id`, and a `reason`.
-  - `backup_pg_dump_snapshot` – span measuring the logical backup operation itself.
-  - `backup_resume_ticks` – span for resuming ticks after the snapshot, tagged consistently with `backup_pause_ticks`.
+- **Backup and recovery flows**
+  - `backup_pg_dump_snapshot` – span measuring the online transactionally consistent logical backup, tagged with environment/database identity and immutable artifact lineage rather than gameplay scope.
+  - `backup_verify_artifact` – span for integrity and restore-readability verification, tagged with artifact and backup/restore-tool identities.
+  - `recovery_converge_participant` – span for one declared recovery participant's safe disposition, tagged with bounded participant type and outcome.
+  - Tick pause/resume spans belong to maintenance, reset, migration, and future scoped-recovery traces. Routine backup does not emit or require them.
 
 All spans should include, where applicable:
 
@@ -147,9 +148,9 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics. The f
 - **Telnet/TCP Proxy incidents**
   - Filter by `service.name = "tcp-proxy-service"` and spans such as `tcpproxy_connection` or `tcpproxy_notify_disconnect`.
   - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.transport_failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.
-- **Backup and pause/resume issues**
-  - Search for `backup_pause_ticks` and `backup_resume_ticks` spans around the time of a backup.
-  - Confirm that `backup_pg_dump_snapshot` spans align with the expected backup schedule and that pauses are short-lived relative to SLOs.
+- **Backup and recovery issues**
+  - Search for `backup_pg_dump_snapshot` and `backup_verify_artifact` around the expected schedule and confirm their artifact lineage matches.
+  - For drills or restores, inspect `recovery_converge_participant` outcomes and the controlled-reopen trace; do not infer routine backup failure from the absence of tick-pause spans.
 
 Runbooks for Redis incidents, tick failures, scaling decisions, and backup/recovery reference these span names and query patterns so operators have concrete examples to follow rather than starting from scratch in Jaeger.
 

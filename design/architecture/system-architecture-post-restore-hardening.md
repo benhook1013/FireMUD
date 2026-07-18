@@ -118,21 +118,21 @@ Each refreshed credential record must use exactly one freshness timestamp: `last
 
 ## Post-Restore Coordination Recovery Gate
 
-After PostgreSQL is restored, but before normal application startup and before quarantine is lifted, the restore workflow must prove that Coordination Redis is operating in exactly one approved recovery mode:
+After PostgreSQL is restored, but before normal application startup and before quarantine is lifted, the player-facing restore workflow must prove the environment-wide `cold_start_restore` recovery mode:
 
 ### `cold_start_restore`
 
-- verify the Coordination Redis keyspace is empty for coordination prefixes
-- complete the same reopen evidence quality required for scoped reset recovery
-- record evidence that reset-sensitive session/auth state was dropped or re-established
+- verify the entire Coordination Redis keyspace for the restored environment boundary is empty before rebuild; Cache Redis is a separate non-authoritative role and is not evidence for this check
+- invalidate all gameplay and Account sessions from the restored timeline
+- advance or recreate every gameplay-region epoch and fence before normal work can resume
+- rebuild coordination state only from restored durable authority after every declared and enabled recovery participant and external-effect workflow has recorded a safe disposition such as converged, terminalized, invalidated, or durably fenced/disabled with its backlog retained
+- record the backup artifact, restore/recovery tool digests, recovery-contract fingerprint, participant inventory, convergence results, and controlled-reopen evidence
 
 ### `scoped_reset_restore`
 
-- run the authoritative reset handshake for the affected scope
-- record evidence for pause completion, epoch bump, scoped reset execution, ledger reconcile / command convergence, metadata reinitialization, and post-reset smoke success
-- record whether reset-sensitive session/auth prefixes were invalidated
+Player-facing `scoped_reset_restore` with surviving Coordination Redis is deferred. Quarantined experiments may explore its region inventory, pause/fence/reset, ledger convergence, and session policy, but they cannot lift quarantine or satisfy player-facing recovery readiness until a separate accepted design and proof package authorizes the mode.
 
-Recovery automation must fail closed if the restore event cannot be classified into one of these two modes with evidence.
+Recovery automation must fail closed if it cannot prove the complete `cold_start_restore` contract. A successful PostgreSQL restore or empty Redis check alone is insufficient.
 
 ## Reopen Sequence
 
@@ -140,14 +140,16 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 
 1. Enter restore-safe quarantine by disabling external traffic paths to Gateway and TCP Proxy and by stopping or restore-safe-fencing background processors, outbound integrations, automation workers, and Game Session tick executors.
 2. Restore PostgreSQL and Kubernetes manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
-3. Select and prove exactly one coordination recovery mode (`cold_start_restore` or `scoped_reset_restore`) before normal Game Session or automation startup can create fresh coordination state.
-4. Run `post-restore-secret-hardening` in the target namespace and wait for success.
-5. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
-6. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
-7. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the recovery record.
-8. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
-9. Start normal workloads in a controlled order and confirm application health checks, login/session flows, gameplay smoke, and JWT validation while ingress remains quarantined.
-10. Only then remove quarantine and route external or player traffic to the restored cluster.
+3. Prove empty Coordination Redis, environment-wide gameplay and Account session invalidation, and every gameplay-region epoch/fence reset before any normal Game Session or automation startup can create fresh coordination state.
+4. Run the complete enabled offline durable-participant and external-effect reconciliation inventory; unknown, missing, or unsafe outcomes keep quarantine closed, while a participant with a proved durable fenced/disabled disposition may retain backlog for later operator action.
+5. Run `post-restore-secret-hardening` in the target namespace and wait for success.
+6. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
+7. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
+8. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the recovery record.
+9. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
+10. Start normal workloads in a controlled order and confirm application health checks, fresh login/session flows, gameplay smoke, JWT validation, and recovery-participant invariants while ingress remains quarantined.
+11. Complete every pre-release control group, record operator approval, and advance the canonical recovery record to `ready_to_reopen`.
+12. Use the gated transition to remove quarantine; that transition atomically records release/finalization and only then routes external or player traffic to the restored cluster.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and writes the canonical recovery record before reopening player traffic.
 

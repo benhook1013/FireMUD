@@ -55,12 +55,12 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 11 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
+| Existing ADR set | 15 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 184 architecture artifacts classified; 172 decision-scan sources plus 12 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
+| **Total unique decision keys** | **All 188 architecture artifacts classified; 172 decision-scan sources plus 16 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
 
 ## Decision Ledger
 
@@ -88,7 +88,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
 | `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
 | `SEC-02` | Resolved target: planned Account JWT rotation prepublishes and converges the new public key before signer promotion, retains old verification through token expiry, then prunes; compromise/restore uses an environment-wide hard cutover. Current shared-HMAC issuance and validation fail the accepted player-facing readiness gate. |
-| `OPS-04` | Player-facing restore requires a coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
+| `OPS-04` | Resolved target: routine backups are online environment-wide PostgreSQL snapshots without gameplay pause; player-facing rewind uses only environment-wide `cold_start_restore` with empty Redis, safe participant dispositions, quarantine, and controlled reopen. Current implementation and proof do not satisfy the accepted gates. |
 | `CMD-STATUS-01` | The current narrower gameplay-command status API and target terminal command-lifecycle surface do not yet converge. |
 | `TRACE-01` | Named gameplay spans and scoped incident sampling are target capabilities, while current implementation supports only a narrower tracing surface. |
 
@@ -104,14 +104,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 3 | 9 | `in-progress` |
+| 1 | Known conflicts and drift | 4 | 9 | `in-progress` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **3** | **183** | `in-progress` |
+| **Total** | | **4** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -124,7 +124,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SET-01` — `revised` on 2026-07-18; [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); [canonical settings model](../../architecture/system-architecture-settings-model.md)
 - [x] `SESSION-04` — `revised` on 2026-07-18; [ADR 0013](../../architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md); [canonical reconnection contract](../../architecture/system-architecture-reconnection.md)
 - [x] `SEC-02` — `revised` on 2026-07-18; [ADR 0014](../../architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md); [canonical JWT rotation workflow](../../architecture/system-architecture-security.md#jwt-key--jwks-rotation-workflow)
-- [ ] `OPS-04`
+- [x] `OPS-04` — `revised` on 2026-07-18; [ADR 0015](../../architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md); [canonical backup and recovery contract](../../architecture/system-architecture-backup-recovery.md)
 - [ ] `CMD-STATUS-01`
 - [ ] `TRACE-01`
 - [ ] `EDGE-06`
