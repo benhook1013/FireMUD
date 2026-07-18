@@ -1,8 +1,12 @@
 # Shared Runtime, Service Contracts, and Persistence
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for shared runtime, service contracts, orchestration, and persistence. Canonical target-state contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
-The implemented record below is the canonical reader-facing account of the shared runtime, service-contract, orchestration, persistence, and workflow boundaries represented by this tracker. The record distinguishes live implementation from bounded follow-up work; it does not claim that every future service, runtime consumer, or workflow family has already adopted these conventions.
+The implementation record below summarizes the shared runtime, service-contract, orchestration, persistence, and workflow boundaries represented by this tracker. It distinguishes live implementation from bounded follow-up work; it does not claim that every future service, runtime consumer, or workflow family has already adopted these conventions.
 
 ## Capability Status
 

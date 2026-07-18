@@ -47,6 +47,18 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_in_line(path: Path, marker: str, old: str, new: str) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    matching_lines = [index for index, line in enumerate(lines) if marker in line]
+    if len(matching_lines) != 1:
+        raise AssertionError(f"expected exactly one line containing {marker!r} in {path}")
+    index = matching_lines[0]
+    if lines[index].count(old) != 1:
+        raise AssertionError(f"expected exactly one mutation target in {path}: {old!r}")
+    lines[index] = lines[index].replace(old, new, 1)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     validator = load_validator()
     with fixture_root() as directory:
@@ -60,6 +72,30 @@ def main() -> None:
             encoding="utf-8",
         )
         expect_failure("missing architecture ledger row", validator.validate, Path(directory), "source manifest mismatch")
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.SYSTEM_ALLOCATION
+        replace_in_line(path, "system-architecture-authentication.md", "| `AA-2` |", "| `SF-1` |")
+        replace_once(path, "AA-2 4", "AA-2 3")
+        replace_once(path, "SF-1 19", "SF-1 20")
+        expect_failure(
+            "system primary allocation drift with adjusted counts",
+            validator.validate,
+            Path(directory),
+            "unexpected primary capability",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.SYSTEM_ALLOCATION
+        replace_in_line(path, "system-architecture-authentication.md", "| normative design |", "| reference |")
+        replace_once(path, "`56` normative design", "`55` normative design")
+        replace_once(path, "`14` reference", "`15` reference")
+        expect_failure(
+            "system classification drift with adjusted counts",
+            validator.validate,
+            Path(directory),
+            "unexpected source classification",
+        )
 
     with fixture_root() as directory:
         path = Path(directory) / validator.TOP_ALLOCATION
@@ -92,6 +128,30 @@ def main() -> None:
             validator.validate,
             Path(directory),
             "unexpected primary capability",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.TOP_ALLOCATION
+        replace_in_line(path, "`design/architecture/decisions/README.md`", "| Exempt |", "| `AS-1` |")
+        replace_once(path, "| Architecture decisions | 12 | 11 |", "| Architecture decisions | 12 | 12 |")
+        replace_once(path, "| Architecture decisions | 12 | 12 | 0; 1 registry exemption", "| Architecture decisions | 12 | 12 | 0")
+        replace_once(path, "| **Total** | **184** | **181** |", "| **Total** | **184** | **182** |")
+        replace_once(path, "| **Total** | **184** | **182** | **0; 3 explicit exemptions**", "| **Total** | **184** | **182** | **0; 2 explicit exemptions**")
+        expect_failure(
+            "ADR primary allocation drift with adjusted counts",
+            validator.validate,
+            Path(directory),
+            "unexpected primary capability",
+        )
+
+    with fixture_root() as directory:
+        path = Path(directory) / validator.TOP_ALLOCATION
+        replace_in_line(path, "adr-0004-gameplay-reroute-vs-backend-unavailable.md", "| Superseded by ADR 0007 |", "| Accepted |")
+        expect_failure(
+            "ADR classification drift",
+            validator.validate,
+            Path(directory),
+            "unexpected source classification",
         )
 
     with fixture_root() as directory:

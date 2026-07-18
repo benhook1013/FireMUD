@@ -6,7 +6,7 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 
 ## Allocation Rules
 
-- Every canonical Markdown source under `design/architecture/**` receives one file-level primary capability unless it is an index, generated reference, template, diagram companion, or genuinely mixed canonical source.
+- Every canonical Markdown source under `design/architecture/**` receives one file-level primary capability. Indexes, generated references, diagram companions, and mixed sources may use an explicit allocation anchor or heading-level rows; only documented governance or template artifacts are exempt.
 - Mixed sources use heading-level rows for separately normative capability sections.
 - Secondary capabilities identify required handoffs and review scope without duplicating primary ownership.
 - References and runbooks map to the capability whose contract or operation they support.

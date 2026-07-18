@@ -4,6 +4,10 @@ Status: Complete and independently coverage/fidelity-audited. This artifact is n
 
 This inventory contains 54 decision rows: 48 retained rows and 6 distinct evidence-backed additions. It covers the specialized Redis, scripting, tick, identity, token, migration, shared-library, spatial-effects, authorization, and tracing sources allocated by `design-capability-allocation-system.md`. The main Redis, scripting, and tick hub documents were used only for cross-checking. This file records only decisions that are not already represented by a key in `decision-inventory-cross-cutting.md`, or materially stronger or contradictory evidence for an existing key.
 
+## Implementation Status
+
+`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. It does not mean every recorded decision is implemented, approved, or adversarially reviewed; each row's status and the queues below retain those distinctions.
+
 The required baseline documents were read before the assigned corpus: [product capability taxonomy](../../architecture/product-capability-taxonomy.md), [system allocation](./design-capability-allocation-system.md), [main consequential decision inventory](./consequential-decision-inventory.md), and [cross-cutting decision inventory](./decision-inventory-cross-cutting.md).
 
 ## Status And Review Notation

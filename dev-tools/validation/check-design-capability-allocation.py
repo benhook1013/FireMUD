@@ -20,6 +20,144 @@ MICROSERVICE_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-microser
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 GROUP_ID_RE = re.compile(r"[A-Z]{2}-\d+")
 SYSTEM_CLASSIFICATIONS = {"normative design", "runbook", "reference", "index"}
+SYSTEM_ALLOCATION_EXPECTATIONS = {
+    # Direct architecture sources.
+    "design/architecture/README.md": ("SF-1", "index"),
+    "design/architecture/product-capability-taxonomy.md": ("SF-1", "normative design"),
+    "design/architecture/repository-structure.md": ("PO-3", "reference"),
+    "design/architecture/service-responsibility-matrix.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-asset-store-runbook.md": ("AR-1", "runbook"),
+    "design/architecture/system-architecture-authentication.md": ("AA-2", "normative design"),
+    "design/architecture/system-architecture-authz-route-matrix.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md": (
+        "PO-4",
+        "normative design",
+    ),
+    "design/architecture/system-architecture-backup-recovery.md": ("PO-3", "runbook"),
+    "design/architecture/system-architecture-cicd.md": ("PO-3", "normative design"),
+    "design/architecture/system-architecture-database-migrations.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-deploy-preflight-policy.md": ("PO-3", "normative design"),
+    "design/architecture/system-architecture-deployment-runbook.md": ("PO-3", "runbook"),
+    "design/architecture/system-architecture-diagram.md": ("SF-1", "reference"),
+    "design/architecture/system-architecture-frontend.md": ("EA-3", "normative design"),
+    "design/architecture/system-architecture-game-customization.md": ("AR-1", "normative design"),
+    "design/architecture/system-architecture-gateway.md": ("PO-2", "normative design"),
+    "design/architecture/system-architecture-grpc.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-identifier-glossary.md": ("SF-1", "reference"),
+    "design/architecture/system-architecture-input-output-and-presentation.md": ("EA-1", "normative design"),
+    "design/architecture/system-architecture-jwt-and-token-contracts.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-jwt-compromise-runbook.md": ("SF-1", "runbook"),
+    "design/architecture/system-architecture-llm-content-tools.md": ("AR-1", "normative design"),
+    "design/architecture/system-architecture-logging-monitoring.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-mud-client-protocol.md": ("PO-2", "normative design"),
+    "design/architecture/system-architecture-multi-tenancy.md": ("AA-3", "normative design"),
+    "design/architecture/system-architecture-observability-incident-runbook.md": ("PO-4", "runbook"),
+    "design/architecture/system-architecture-operator-credentials-runbook.md": ("SF-1", "runbook"),
+    "design/architecture/system-architecture-overview.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-player-command-model.md": ("EA-1", "normative design"),
+    "design/architecture/system-architecture-player-experience-incident-runbook.md": ("PO-4", "runbook"),
+    "design/architecture/system-architecture-post-restore-hardening.md": ("PO-3", "runbook"),
+    "design/architecture/system-architecture-procedural-generation.md": ("AR-1", "normative design"),
+    "design/architecture/system-architecture-promotion-attestation.md": ("PO-3", "normative design"),
+    "design/architecture/system-architecture-protocol-bridging.md": ("PO-2", "normative design"),
+    "design/architecture/system-architecture-reconnection.md": ("AA-2", "normative design"),
+    "design/architecture/system-architecture-redis-cache-reference.md": ("SF-2", "reference"),
+    "design/architecture/system-architecture-redis-cache.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-redis-cheatsheet.md": ("SF-2", "reference"),
+    "design/architecture/system-architecture-redis-design-checklist.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-redis-incident-runbook.md": ("PO-4", "runbook"),
+    "design/architecture/system-architecture-redis-lua-patterns.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-redis-metrics-catalog.md": ("PO-4", "reference"),
+    "design/architecture/system-architecture-redis-operations.md": ("SF-2", "runbook"),
+    "design/architecture/system-architecture-redis-ops-access.md": ("PO-1", "normative design"),
+    "design/architecture/system-architecture-redis-reset-and-recovery.md": ("SF-2", "runbook"),
+    "design/architecture/system-architecture-redis-script-rollout-and-compatibility.md": ("SF-2", "runbook"),
+    "design/architecture/system-architecture-redis-usage-and-profiles.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-redis.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-runbooks.md": ("PO-3", "index"),
+    "design/architecture/system-architecture-scaling-runbook.md": ("PO-4", "runbook"),
+    "design/architecture/system-architecture-scripting-contracts.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting-control-plane-api.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting-control-plane-events.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-scripting-control-plane-operations.md": ("AR-3", "normative design"),
+    "design/architecture/system-architecture-scripting-dsl-and-lifecycle.md": ("AS-1", "index"),
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md": ("AR-1", "reference"),
+    "design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md": (
+        "AS-1",
+        "normative design",
+    ),
+    "design/architecture/system-architecture-scripting-event-registry.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting-examples-and-patterns.md": ("AS-1", "reference"),
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md": (
+        "SF-1",
+        "normative design",
+    ),
+    "design/architecture/system-architecture-scripting-observability-contract.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-scripting-operations-cookbook.md": ("PO-1", "runbook"),
+    "design/architecture/system-architecture-scripting-quotas-and-operations.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting-rollout-and-rollback.md": ("AR-3", "runbook"),
+    "design/architecture/system-architecture-scripting-runtime-execution.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md": ("AS-1", "normative design"),
+    "design/architecture/system-architecture-scripting.md": ("AS-1", "index"),
+    "design/architecture/system-architecture-security.md": ("SF-1", "normative design"),
+    "design/architecture/system-architecture-session-behavior.md": ("AA-2", "normative design"),
+    "design/architecture/system-architecture-settings-model.md": ("AR-2", "normative design"),
+    "design/architecture/system-architecture-shared-libraries.md": ("SF-1", "reference"),
+    "design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md": ("GR-2", "normative design"),
+    "design/architecture/system-architecture-telnet-degraded-runbook.md": ("PO-2", "runbook"),
+    "design/architecture/system-architecture-temporal-workflows.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-testing.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-tick-concepts-and-invariants.md": ("GR-1", "normative design"),
+    "design/architecture/system-architecture-tick-execution-flows.md": ("GR-1", "normative design"),
+    "design/architecture/system-architecture-tick-failures-and-operations.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-tick-incident-runbook.md": ("PO-4", "runbook"),
+    "design/architecture/system-architecture-ticks.md": ("GR-1", "normative design"),
+    "design/architecture/system-architecture-tracing.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-transactions.md": ("SF-2", "normative design"),
+    "design/architecture/system-architecture-versioning-runtime.md": ("AR-3", "normative design"),
+    "design/architecture/system-context-diagram.md": ("SF-1", "index"),
+    "design/architecture/user-journeys-creators.md": ("AR-1", "reference"),
+    "design/architecture/user-journeys-operators.md": ("PO-1", "reference"),
+    "design/architecture/user-journeys-players.md": ("AA-2", "reference"),
+    "design/architecture/user-journeys.md": ("EA-3", "index"),
+    # Infrastructure and generated sources.
+    "design/architecture/infrastructure/README.md": ("PO-3", "index"),
+    "design/architecture/infrastructure/deployment-environments.md": ("PO-3", "normative design"),
+    "design/architecture/infrastructure/environment-and-secrets-catalog.md": ("SF-1", "reference"),
+    "design/architecture/infrastructure/environment-and-secrets-overview.md": ("SF-1", "normative design"),
+    "design/architecture/infrastructure/environment-and-secrets.md": ("SF-1", "index"),
+    "design/architecture/infrastructure/schedule.md": ("PO-3", "reference"),
+    "design/architecture/generated/platform-settings-reference.md": ("AR-2", "generated"),
+}
+ADR_ALLOCATION_EXPECTATIONS = {
+    "design/architecture/decisions/README.md": ("Exempt", "Decision registry/index"),
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md": (
+        "AS-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md": (
+        "AS-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md": ("AS-1", "Accepted"),
+    "design/architecture/decisions/adr-0004-gameplay-reroute-vs-backend-unavailable.md": (
+        "PO-2",
+        "Superseded by ADR 0007",
+    ),
+    "design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md": ("AA-3", "Accepted"),
+    "design/architecture/decisions/adr-0006-gameplay-shard-routing-key-transport.md": (
+        "PO-2",
+        "Withdrawn; superseded by ADR 0007",
+    ),
+    "design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md": ("PO-2", "Accepted"),
+    "design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md": ("GR-1", "Accepted"),
+    "design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md": ("SF-2", "Accepted"),
+    "design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md": ("SF-1", "Accepted"),
+    "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md": (
+        "GR-1",
+        "Accepted",
+    ),
+}
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",
     "api-contracts.md": "API contract",
@@ -274,6 +412,30 @@ def primary_from_cell(owner: Path, cell: str, groups: set[str], root: Path) -> s
     return primary
 
 
+def validate_expected_allocation(
+    root: Path,
+    document: Path,
+    source_path: str,
+    primary: str,
+    classification: str,
+    expected_allocations: dict[str, tuple[str, str]],
+) -> None:
+    expected = expected_allocations.get(source_path)
+    if expected is None:
+        fail(f"{document.relative_to(root)}:{source_path}: no expected allocation")
+    expected_primary, expected_classification = expected
+    if primary != expected_primary:
+        fail(
+            f"{document.relative_to(root)}:{source_path}: unexpected primary capability "
+            f"{primary!r}; expected {expected_primary!r}"
+        )
+    if classification != expected_classification:
+        fail(
+            f"{document.relative_to(root)}:{source_path}: unexpected source classification "
+            f"{classification!r}; expected {expected_classification!r}"
+        )
+
+
 def expected_microservice_allocation(source_path: str) -> tuple[str, str]:
     if source_path in MICROSERVICE_EXEMPT_ALLOCATIONS:
         return MICROSERVICE_EXEMPT_ALLOCATIONS[source_path]
@@ -307,6 +469,7 @@ def parse_linked_ledger(
     expected_paths: set[str],
     groups: set[str],
     allowed_classifications: set[str],
+    expected_allocations: dict[str, tuple[str, str]],
 ) -> list[LedgerRow]:
     text = document.read_text(encoding="utf-8")
     headers, rows = table_in_section(text, heading, {"Path", "Primary", "Classification"})
@@ -327,6 +490,14 @@ def parse_linked_ledger(
                 f"{document.relative_to(root)}:{source_path}: invalid source classification "
                 f"{classification!r}; expected one of {sorted(allowed_classifications)}"
             )
+        validate_expected_allocation(
+            root,
+            document,
+            source_path,
+            primary,
+            classification,
+            expected_allocations,
+        )
         parsed.append(LedgerRow(source_path, primary, classification))
     paths = [row.path for row in parsed]
     if len(paths) != len(set(paths)):
@@ -388,6 +559,13 @@ def parse_microservice_ledger(root: Path, groups: set[str], expected_paths: set[
 
 def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[str]) -> list[LedgerRow]:
     document = root / SYSTEM_ALLOCATION
+    expected_paths = (
+        source_sets["Top-level architecture"]
+        | source_sets["Infrastructure"]
+        | source_sets["Generated references"]
+    )
+    if set(SYSTEM_ALLOCATION_EXPECTATIONS) != expected_paths:
+        fail(f"{document.relative_to(root)}: system allocation expectations drifted")
     direct = parse_linked_ledger(
         root,
         document,
@@ -395,6 +573,7 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
         source_sets["Top-level architecture"],
         groups,
         SYSTEM_CLASSIFICATIONS,
+        SYSTEM_ALLOCATION_EXPECTATIONS,
     )
     infrastructure = parse_linked_ledger(
         root,
@@ -403,6 +582,7 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
         source_sets["Infrastructure"],
         groups,
         SYSTEM_CLASSIFICATIONS,
+        SYSTEM_ALLOCATION_EXPECTATIONS,
     )
     generated = parse_linked_ledger(
         root,
@@ -411,6 +591,7 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
         source_sets["Generated references"],
         groups,
         {"generated"},
+        SYSTEM_ALLOCATION_EXPECTATIONS,
     )
     rows_by_name = {
         "Direct architecture": direct,
@@ -585,15 +766,31 @@ def validate_top_allocation_ledger(root: Path, groups: set[str], expected_decisi
     if set(identities) != set(TOP_ALLOCATION_ROWS) or len(identities) != len(TOP_ALLOCATION_ROWS):
         fail(f"{document.relative_to(root)}: allocation ledger references drifted")
 
-    headers, rows = table_in_section(text, "Architecture Decision Allocation", {"Design source", "Primary capability"})
+    if set(ADR_ALLOCATION_EXPECTATIONS) != expected_decisions:
+        fail(f"{document.relative_to(root)}: ADR allocation expectations drifted")
+    headers, rows = table_in_section(
+        text,
+        "Architecture Decision Allocation",
+        {"Design source", "Primary capability", "Status or classification"},
+    )
     source_index = headers.index("Design source")
     primary_index = headers.index("Primary capability")
+    classification_index = headers.index("Status or classification")
     parsed: list[LedgerRow] = []
     for row in rows:
         source_path = path_from_code_cell(document, row[source_index], root)
         primary_cell = clean_cell(row[primary_index])
         primary = "Exempt" if primary_cell == "Exempt" else primary_from_cell(document, row[primary_index], groups, root)
-        parsed.append(LedgerRow(source_path, primary, ""))
+        classification = row[classification_index].strip()
+        validate_expected_allocation(
+            root,
+            document,
+            source_path,
+            primary,
+            classification,
+            ADR_ALLOCATION_EXPECTATIONS,
+        )
+        parsed.append(LedgerRow(source_path, primary, classification))
     paths = [row.path for row in parsed]
     if len(paths) != len(set(paths)) or set(paths) != expected_decisions:
         fail(f"{document.relative_to(root)}: decision allocation manifest mismatch")
