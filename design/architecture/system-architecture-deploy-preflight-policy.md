@@ -10,9 +10,9 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Implementation Notes
 
-`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently emits the required policy ID set, consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS contract, validates first-pass expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS path and resource-type contract, validates first-pass expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
 
-The remaining limitation is evidence depth, not missing policy IDs: the expected-binding checks validate repository manifests and declared binding refs, while real first-live and reopen decisions still require current environment evidence files produced by operators or automation. A successful static report without traffic-open evidence is not enough to open player-facing traffic.
+The current executable does not yet enforce `PREFLIGHT-JWT-002` or `PREFLIGHT-JWT-ROTATION-001`: it does not prove Account-only asymmetric signing, absence of private-key mounts from validators, validator `kid`/JWKS behavior, or planned and compromise rotation drills. That is a missing security gate, not only evidence depth. Until it is implemented and passes with current environment evidence, player-facing JWT readiness remains blocked even if the older mounted-path checks pass. Other expected-binding checks still validate repository manifests and declared binding refs rather than complete live state; a successful static report without traffic-open evidence is not enough to open player-facing traffic.
 
 ## Bootstrap Contract
 
@@ -20,7 +20,7 @@ For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `p
 
 - registry pull credentials for workload image access,
 - PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
-- JWT signing and validation resources (`jwt-signing-keys`, `jwt-jwks`),
+- an Account-only asymmetric JWT signing resource (`jwt-signing-keys`) and public validator resource (`jwt-jwks`),
 - cert-manager issuer or issuer reference for workload and bridge certificates,
 - backup/object-store credentials when the environment requires backups, including the binding identity that owns the bucket or object-store target,
 - asset-store and outbound-communications credentials when those integrations are enabled, including the binding identity that owns the asset bucket or object-store target,
@@ -43,7 +43,7 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 ## Enforcement Boundaries
 
 - Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
-- Operator pre-apply execution (`preflight.py`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
+- Operator pre-apply execution (`preflight.py`) enforces resolved-manifest and target-environment checks: required secret/key contracts, Account-only private-key distribution, validator JWKS configuration, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation. Traffic-open JWT rotation evidence is evaluated when the run declares the relevant event.
 - Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
 
 ## Environment Applicability
@@ -62,8 +62,10 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-DIGEST-002` – hobby/self-hosted workload manifests are digest-pinned where the operator packaging format supports digest references.
 - `PREFLIGHT-SECRETS-001` – required Secrets and keys exist for the target environment.
 - `PREFLIGHT-SECRETS-002` – player-facing environments validate internal state/trust bindings (PostgreSQL endpoint and credential binding, Redis role endpoints, JWT/JWKS resource bindings, certificate issuer binding, registry pull credentials) against the target environment boundary and fail on cross-environment reuse.
-- `PREFLIGHT-JWT-001` – player-facing environments use `FIREMUD_AUTH_JWT_SECRET_PATH` and do not rely on inline-only JWT secrets.
+- `PREFLIGHT-JWT-001` – Account Service in player-facing environments uses `FIREMUD_AUTH_JWT_SECRET_PATH` and does not rely on inline-only JWT secrets.
 - `PREFLIGHT-JWKS-001` – JWKS resource type matches environment policy (`jwt-jwks` Secret for player-facing environments; ConfigMap only for explicitly non-player-facing/test environments).
+- `PREFLIGHT-JWT-002` – player-facing resolved manifests give the Account JWT private signing bundle only to Account Service; every validator uses asymmetric Account `kid`/JWKS verification with HMAC fallback disabled and receives no Account private key.
+- `PREFLIGHT-JWT-ROTATION-001` – player-facing first-live, reopen, and promotion evidence references successful planned-rotation and compromise-cutover drills using the production rotation artifact, including validator inventory/convergence, old/new `kid` acceptance and rejection, pruning, and immutable evidence identity.
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-BOOTSTRAP-001` – player-facing environments confirm the minimum bootstrap secret and trust resources exist before apply.
@@ -80,9 +82,11 @@ Policy applicability:
 - `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise. This check fails when backup evidence relies on alias-scoped coordinated backups or on a restore drill that did not produce the required recovery record lineage.
 - `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status. This check fails when the traffic-open evidence lacks a restore drill completed within 30 days for the same production environment class/binding or when the referenced backup attempt is not canonical `tenant_id + region_id` scope.
 - `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. This check validates both `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json` for the current event.
+- `PREFLIGHT-JWT-002` is required for every player-facing apply.
+- `PREFLIGHT-JWT-ROTATION-001` is required for player-facing first-live and reopen events and for any staging evidence used in production promotion. Routine deployments may reuse still-current drill evidence only when its artifact digest, key lifecycle contract, complete validator inventory, and environment binding remain unchanged and its configured freshness window has not expired.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
-- `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
+- `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
 
 ## Canonical Expected-Binding Inputs
 
