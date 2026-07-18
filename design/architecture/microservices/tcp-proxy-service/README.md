@@ -37,7 +37,7 @@ When code, tests, and docs diverge, align implementation to this doc set and the
 - Provide graceful disconnect and reconnection handling.
 - Refuse new user-facing traffic while the downstream gameplay path is not yet ready for first-session admission.
 
-Plaintext/raw Telnet support in production is an intentional, non-removable requirement so that classic MUD clients which cannot speak TLS can connect. Reviews should treat that as an accepted tradeoff with documented hardening, not as a defect to remove.
+Plaintext/raw Telnet remains available for local development, automated proof, and explicitly private-network compatibility. Public player-facing hobby/self-hosted, staging, and production endpoints require TLS as established by [ADR 0033](../../decisions/adr-0033-public-player-facing-telnet-requires-tls.md); TLS-incapable clients require a trusted local wrapper or cannot connect directly.
 
 ## Readiness and Liveness
 

@@ -35,7 +35,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 [ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) is the authority for this ownership split. Current implementation gaps in watermark enforcement, monotonic membership versions, or gameplay token storage do not transfer authority to another service.
 
-The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment and any associated transport policy are future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Plaintext Telnet remains a legacy transport that deployments should prefer to replace with Telnet-over-TLS or the web client; no unimplemented per-account TOTP gate is presented as current enforcement.
+The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
 
 Issued JWTs, allowlist entries, revocation watermarks, and token-profile validation rules are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). This document still defines how those token contracts are applied to route classification, gameplay admission, and tenant authorization, but it no longer carries the full token catalog inline.
 

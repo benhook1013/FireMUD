@@ -207,7 +207,7 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 - Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design).
-- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is a legacy compatibility transport; player-facing deployments should prefer TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
+- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is limited to local, automated-test, and explicitly private-network compatibility; player-facing deployments require TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway); they may reuse the same files in small deployments, but they are different trust surfaces.
 
 ### Bridging to the backend
@@ -294,8 +294,8 @@ The exact Telnet configuration varies by environment, but recommended defaults a
 | Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
 | --- | --- | --- | --- |
 | Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | Allowed for protocol iteration; do not represent it as an account-factor-protected path. |
-| Hobby / self‑hosted (single operator) | Prefer Telnet-over-TLS; plaintext permitted only for controlled legacy clients | Recommended but not strictly required; can front the TCP Proxy directly if PROXY protocol and per-IP limits are not needed | Prefer TLS Telnet or the web client. |
-| Player-facing staging / production | Telnet-over-TLS via edge proxy or web client | Required for public Telnet ingress | Do not expose public plaintext Telnet until a complete admission policy is implemented and verified. |
+| Hobby / self‑hosted (single operator) | Telnet-over-TLS for any public player-facing endpoint; plaintext only on an explicitly private network | Required for public Telnet ingress; optional for private/local use | Public raw Telnet does not qualify as a supported player-facing deployment. |
+| Player-facing staging / production | Telnet-over-TLS via edge proxy or web client | Required for public Telnet ingress | Do not expose public plaintext Telnet. |
 
 These recommendations complement the detailed Telnet controls in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 
