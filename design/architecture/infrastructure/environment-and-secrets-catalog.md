@@ -187,8 +187,8 @@ All services export OpenTelemetry spans. The collector endpoint can be overridde
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
-| `OTEL_TRACES_SAMPLER` | OpenTelemetry sampler (for example `parentbased_traceidratio`) | `parentbased_traceidratio` |
-| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (for example ratio `0.01`) | `0.01` |
+| `OTEL_TRACES_SAMPLER` | Target OpenTelemetry sampler control; unsupported until the shared SDK consumes and proves it | Not currently supported |
+| `OTEL_TRACES_SAMPLER_ARG` | Target sampler argument; unsupported until the shared SDK consumes and proves it | Not currently supported |
 | `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
 | `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
 
