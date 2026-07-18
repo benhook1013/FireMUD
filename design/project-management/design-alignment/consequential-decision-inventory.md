@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 3 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 4 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **12** | **183** | `in-progress` |
+| **Total** | | **13** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -138,7 +138,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `ID-01` — `revised` on 2026-07-18; [ADR 0020](../../architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md); [canonical identifier contract](../../architecture/system-architecture-identifier-glossary.md)
 - [x] `AUTH-02` — `revised` on 2026-07-18; [ADR 0021](../../architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md)
 - [x] `AUTH-03` — `accepted` on 2026-07-18; [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md)
-- [ ] `AUTH-04`
+- [x] `AUTH-04` — `revised` on 2026-07-18; [ADR 0023](../../architecture/decisions/adr-0023-central-route-authorization-governance.md)
 - [ ] `AUTH-05`
 - [ ] `AUTH-06`
 - [ ] `AUTH-07`

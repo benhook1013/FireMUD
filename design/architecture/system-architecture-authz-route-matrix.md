@@ -15,10 +15,10 @@ Every protected route must be listed here with:
 
 Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks. Routes that are protected but missing from this matrix are considered an architectural violation.
 
-## Implemented Status
+## Implementation Status
 
-- Every protected route must be listed and CI fails for missing/unknown classifications.
-- Warning-only legacy gaps are not permitted for authentication/session admission, billing-safe/support-safe, or subscription/entitlement routes.
+- The static Gateway route catalog and bounded internal/actuator blockers provide partial edge-exposure enforcement.
+- CI inventory generation, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Until they are, this target contract must not be reported as fully proven.
 
 ## Governance (Required)
 
@@ -29,9 +29,9 @@ Services must enforce these classifications through shared middleware annotation
   - Fail if a route uses an unknown classification value.
   - Fail if a route is marked billing- or support-safe but lacks required redaction/authorization tests.
   - Fail if generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains.
-- **Default-deny classification**:
-  - Any protected route that cannot be classified deterministically must be treated as `tenant_regular` (tenant watermark applies) until explicitly reviewed and added to the matrix.
-  - No route may default to a billing-safe or support-safe class.
+- **Default-deny behavior**:
+  - Any protected route that cannot be classified deterministically must be rejected until explicitly reviewed and added to the matrix.
+  - No route may default to `tenant_regular`, billing-safe, support-safe, or another executable class.
 - **Change control**:
   - `billing_safe_tenant`, `cross_tenant_support_safe`, and `cross_tenant_billing_safe` changes require explicit security review approval.
 

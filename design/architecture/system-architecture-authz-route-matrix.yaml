@@ -1,6 +1,6 @@
 version: 2
 updated_by: "platform-security+account-service"
-default_classification: tenant_regular
+default_action: deny
 classifications:
   - public
   - account_scoped

@@ -122,7 +122,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | Cross-tenant (billing-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `billingAdmin` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
 | Cross-tenant (data-bearing) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `platformAdmin` | Yes when operation targets tenant-scoped data | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
-Protected routes that are absent from the route matrix must fail CI and deployment policy checks. Runtime middleware must still default-deny such routes as `tenant_regular` semantics (watermark applies) if misconfiguration reaches execution.
+Protected routes that are absent from the route matrix must fail CI and deployment policy checks. If misconfiguration reaches execution, runtime middleware must reject the unclassified protected route rather than approximating it as `tenant_regular` or another route class.
 
 Billing-safe mutation membership contract (normative):
 
