@@ -307,8 +307,8 @@ This section is the canonical source of truth for connect-token enforcement and 
   - First-party browser clients send the connect token through the `Firemud-Connect-Token` cookie set by `POST /auth/connect-token`.
   - Required cookie attributes: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL.
   - The cookie value is the connect token. Browser JavaScript must not read, copy, or persist the token outside the cookie; client code uses the non-secret response metadata from `POST /auth/connect-token` for retry and expiry UX.
-  - Gateway must accept exactly one connect-token carrier on non-proxy `/ws/game/**` handshakes. If both `X-Firemud-Connect-Token` and `Cookie: Firemud-Connect-Token=...` are present, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
-  - Gateway must not accept connect tokens from query parameters in player-facing environments unless a future security review explicitly changes this rule and documents the resulting logging, referrer, and replay implications.
+  - Gateway must accept exactly one non-empty, single-valued connect-token carrier on non-proxy `/ws/game/**` handshakes. Duplicate header values, duplicate token cookies, or simultaneous header and cookie carriers are rejected as `CONNECT_TOKEN_REJECTED`; Gateway never chooses precedence among ambiguous credentials.
+  - Gateway must not accept connect tokens from query parameters in player-facing environments. Query-carried values do not satisfy the token requirement and are never promoted into a supported carrier.
 - **Required claims**
   - `accountId`
   - `tenantId`
@@ -321,9 +321,10 @@ This section is the canonical source of truth for connect-token enforcement and 
   - `exp` (absolute expiration)
   - `jti` (single-use nonce for replay defense)
 - **Lifetime and replay**
-  - Token TTL must be short (target: <= 30s).
+  - Token lifetime has a platform hard maximum of 30 seconds from issuance to `exp`. Issuers may choose a shorter lifetime; Gateway rejects a token whose declared lifetime exceeds the hard maximum even if its signature and current expiry are otherwise valid.
   - Gateway must reject expired tokens and tokens whose `jti` has already been observed within the replay window.
-  - Replay cache entries must expire automatically at `exp + small_skew`.
+  - After signature, issuer/audience, lifetime, required-claim, and request-scope validation succeeds, Gateway atomically consumes `jti` before opening the upstream WebSocket. The token is spent even if the subsequent upgrade or backend connection fails; a retry obtains a newly issued token.
+  - Replay cache entries must expire automatically at `exp + small_skew`. The replay marker covers the complete token acceptance window and must not be shortened to a fixed 30 seconds from consumption.
   - Replay cache ownership is Gateway-only; downstream services do not participate in connect-token replay checks.
   - Replay checks must be backed by shared Cache/Rate-Limit Redis (not per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods.
   - Replay cache keys use `gateway:connect-token:jti:<jti>` and bounded cardinality with deterministic expiry at `exp + small_skew`.
@@ -338,12 +339,14 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Backend-unavailable remains HTTP `503`.
 - **Trusted TCP Proxy exception**
   - Connect-token checks are bypassed only for `/ws/game/**` handshakes that authenticate as the TCP Proxy Service on the internal mTLS listener and satisfy header-trust allowlists.
+  - This is a positive authenticated connection mode, not an inference from a proxy-shaped header. Public listeners strip untrusted proxy and connect-context headers before classification, and a public client cannot select the exception.
   - If the proxy identity or trust checks fail, the handshake is rejected with HTTP `403` and classified as `POLICY_DENY`.
 
 This token is an edge admission/rate-limiting hint only. It does not replace `LOGIN` + lobby selection + `PLAY` and does not grant gameplay authorization by itself.
 
 - **Verified context handoff (Gateway -> Game Session)**
   - After successful connect-token validation, Gateway must emit a signed, short-lived connect context (`X-Firemud-Connect-Context`) for the upgraded `/ws/game/**` connection.
+  - Gateway strips every external connect-token carrier before forwarding. The raw header or cookie token never reaches Game Session or another upstream service.
   - Context payload must include at least: `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
   - Game Session validates signature (`kid` aware) and expiry bounds before using scope for `CONNECT_SCOPE_MISMATCH` enforcement. Replay protection for `connectTokenJti` is performed only at Gateway handshake time.
   - Missing/invalid/expired context on first-party handshakes that required connect-token validation must be rejected by Game Session admission with canonical error `CONNECT_CONTEXT_INVALID` before `PLAY` (no scope fallback to raw headers).
