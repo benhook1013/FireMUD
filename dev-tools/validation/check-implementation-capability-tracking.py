@@ -303,7 +303,12 @@ def validate_coverage_summary(
 
     measure_headers, measure_rows = measure_table
     measure_index = measure_headers.index("Result")
-    measures = {summary_key(row[0]): row for row in measure_rows}
+    measures: dict[str, list[str]] = {}
+    for row in measure_rows:
+        name = summary_key(row[0])
+        if name in measures:
+            fail(f"{relative_path(path, root)}: duplicate Coverage Summary measure {name}")
+        measures[name] = row
     expected_measures = {
         "Taxonomy leaf capabilities": len(leaves),
         "Unique allocated capability IDs": len(allocations),

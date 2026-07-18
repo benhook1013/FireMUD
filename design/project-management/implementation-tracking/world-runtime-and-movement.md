@@ -1,5 +1,9 @@
 # World Runtime and Movement
 
+## Target-State Authority
+
+This is a non-normative implementation tracker for world runtime and movement. Canonical target-state contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, not normative design.
+
 ## Current Status
 
 This tracker is the permanent reader-facing implementation record for world runtime, room reads, movement, lifecycle orchestration, and Draft topology mutation. Canonical target-state design remains under [design/architecture](../../architecture/README.md).

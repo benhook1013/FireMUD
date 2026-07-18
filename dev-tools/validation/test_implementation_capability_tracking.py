@@ -155,7 +155,7 @@ def main() -> None:
         ):
             expect_failure(
                 label,
-                lambda target=target: validator.validate_evidence_anchor(
+                lambda target=target, label=label: validator.validate_evidence_anchor(
                     root, owner, target, "proof", "proven", "[proof](x)", label
                 ),
                 "tests or canonical validation/smoke tooling",
@@ -257,6 +257,20 @@ def main() -> None:
     allocations = {"AA-1.1": ("a.md", set()), "AA-1.2": ("b.md", set())}
     summary_path = Path("design/project-management/implementation-tracking/capability-allocation.md")
     validator.validate_coverage_summary(summary_path, summary, {"AA-1.1", "AA-1.2"}, allocations, {"a.md", "b.md"})
+    expect_failure(
+        "duplicate coverage-summary measure",
+        lambda: validator.validate_coverage_summary(
+            summary_path,
+            summary.replace(
+                "| Taxonomy leaf capabilities | 2 |",
+                "| Taxonomy leaf capabilities | 999 |\n| Taxonomy leaf capabilities | 2 |",
+            ),
+            {"AA-1.1", "AA-1.2"},
+            allocations,
+            {"a.md", "b.md"},
+        ),
+        "duplicate Coverage Summary measure Taxonomy leaf capabilities",
+    )
     expect_failure(
         "per-tracker summary drift",
         lambda: validator.validate_coverage_summary(
