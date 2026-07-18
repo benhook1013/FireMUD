@@ -12,7 +12,7 @@ Read the pause/status/recovery APIs below as the target-state contract unless th
 
 ## Service Interactions
 
-Game Session communicates with other platform services exclusively via gRPC for gameplay-domain work. For gameplay-domain gRPC calls made on behalf of a player, it includes a signed `SessionAttestation` and rotates it on bounded TTL; downstream gameplay services must reject calls missing a valid attestation, or attestations whose destination service/method scope does not match the invoked RPC, even when mTLS is present. The attestation now carries the current admitted gameplay bundle too: `tenantId`, `sessionId`, `accountId`, `characterId`, resolved `gameInstanceId`, optional `roomInstanceId`, optional admitted `worldSlug`, optional admitted `realmSlug`, optional `pointerVersion`, and optional resolved `playableStateScope`.
+Game Session communicates with other platform services exclusively via gRPC for gameplay-domain work. Player-delegated calls carry the typed unsigned `PlayerExecutionContext` defined in the authentication architecture, including the required admitted gameplay scope. Downstream services authenticate the concrete mTLS caller, enforce an exact RPC caller allowlist, validate context/request equality and domain scope, and reject client-supplied identity metadata. Routine gameplay calls do not use signed per-action attestations or a generic replay cache; mutations retain their owning command/effect/request idempotency.
 
 It also communicates game lifecycle changes to other microservices over gRPC so they can react to game instances starting, stopping, or changing runtime configuration.
 

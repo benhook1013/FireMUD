@@ -38,7 +38,7 @@ Game Session owns:
 - the protocol `LOGIN` and `PLAY` state transitions;
 - the active `{tenantId, gameInstanceId, characterId}` gameplay binding and its bounded Redis indexes;
 - reconnect, takeover, and gameplay-session lifecycle state; and
-- destination- and method-bound session attestations for downstream gameplay calls.
+- typed unsigned player execution context for downstream gameplay calls under the trusted workload contract in [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md).
 
 Game Session consumes authoritative Account membership, entitlement, and revocation state. It stores only the token identity and freshness metadata needed to validate a binding, such as token hash, issued-at time, and `membershipVersion`; it must not make a persisted raw backend JWT the durable session authority.
 
@@ -50,7 +50,7 @@ Gateway is not a general identity, membership, entitlement, or gameplay-binding 
 - require or validate credentials for Gateway-owned management routes according to their explicit route class; and
 - strip untrusted identity/scope headers before forwarding.
 
-These checks do not allow Gateway to issue account authority, infer membership, or bind a player to gameplay. Internal services still validate the credential or session attestation appropriate to their own method.
+These checks do not allow Gateway to issue account authority, infer membership, or bind a player to gameplay. Internal gameplay services authenticate the concrete mTLS caller, enforce the method allowlist, and validate player execution context and domain scope.
 
 ### Failure and Freshness Rules
 

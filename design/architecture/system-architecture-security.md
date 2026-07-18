@@ -117,40 +117,13 @@ Compromise response must not rely on wildcard key scans/deletes in hot paths. Wa
 
 Mounted file paths and a served JWKS document do not establish JWT readiness. Before any player-facing environment is described as promotable or traffic-open, startup and deployment gates must prove Account-only asymmetric signing, no private-key distribution to validators, `kid`/JWKS validation with HMAC fallback disabled, a successful planned-rotation drill through prune, a successful compromise hard-cutover drill, and retained validator-convergence evidence. Until those conditions are implemented and proved, the current shared-HMAC topology is non-production implementation debt rather than an alternate supported design.
 
-### SessionAttestation Key Lifecycle
+### Gameplay Workload Trust
 
-Gameplay `SessionAttestation` is now also the canonical internal carry-through for the admitted gameplay bundle, not only for raw session identity. When Game Session delegates gameplay-owned gRPC work, the attestation can preserve:
+Routine internal gameplay delegation uses concrete mTLS workload identity, method-level caller allowlists, and the typed unsigned `PlayerExecutionContext` defined by [Authentication & Authorization](./system-architecture-authentication.md#gameplay-player-execution-context-contract-normative). It does not have a separate gameplay-attestation signing key, verification-key publication surface, or replay store.
 
-- `tenantId`
-- `sessionId`
-- `accountId`
-- `characterId`
-- resolved `gameInstanceId`
-- optional `roomInstanceId`
-- optional admitted `worldSlug`
-- optional admitted `realmSlug`
-- optional `pointerVersion`
-- optional resolved `playableStateScope`
+Every gameplay workload certificate must resolve to one approved service identity. Consumers reject a generic internal-service claim, an unknown certificate identity, a caller not allowlisted for the exact RPC, missing context scope, or context that does not match the request and owning domain data. Mutation replay remains governed by command/effect/request idempotency.
 
-Downstream gameplay services should validate any of those dimensions they depend on instead of reintroducing narrower local trust shortcuts from standalone request fields.
-
-Gameplay `SessionAttestation` signing keys are managed independently from JWT signing keys:
-
-- **Issuer and publication**
-  - Game Session signs attestations and publishes verification keys as a versioned key set containing explicit `kid` values.
-  - Verification keys are exposed through one authoritative discovery interface (JWKS-like endpoint or gRPC equivalent) owned by Game Session control-plane.
-  - Gameplay services cache this key set with a bounded max-age and must fail closed if an attestation references an unknown `kid`.
-- **Rotation**
-  - Rotation keeps old and new keys overlapped for at least `2 x max_attestation_ttl` so in-flight attestations remain verifiable.
-  - After overlap, retired keys are removed from the published set.
-- **Replay-defense storage**
-  - Replay guards for attestation `jti`/nonce values use a bounded shared store (Coordination Redis or equivalent) with TTL set to `expiresAt + bounded_skew`.
-  - Replay storage must declare capacity quotas per trust domain and deterministic eviction policy (`oldest-expiry-first` or equivalent).
-  - Services emit overload metrics when replay-store capacity limits are reached.
-- **Compromise response**
-  - On suspected compromise, rotate attestation keys immediately, remove compromised keys from the published set, and force revalidation on downstream gameplay services.
-  - Incident records must capture rotated `kid` values, invalidation scope, and post-rotation convergence checks.
-  - Consumers that encounter unknown `kid` must perform one forced key refresh and a single validation retry before failing closed.
+Compromise response revokes or replaces the affected workload certificate, removes its method permissions, and audits calls made under that identity. Account JWT and Gateway connect-context keys retain their separate rotation contracts. Administrative and financial operations use their own control-plane and payment security boundaries rather than introducing gameplay-wide per-action signatures.
 
 ---
 
