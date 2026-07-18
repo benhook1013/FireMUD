@@ -468,7 +468,7 @@ Credential-bearing login commands carry an account email/username and one secret
 
 FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId`) before gameplay commands are accepted.
 
-Players must never be asked to type raw internal identifiers such as `tenantId` UUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
+Players must never be asked to type platform-scope identifiers such as `tenantId`, `gameInstanceId`, or `characterId` during lobby selection. Lobby flows accept human-friendly world slugs, menu indices, and character names or indices and resolve them server-side. Gameplay may separately expose stable numeric runtime-entity IDs when useful for distinguishing visible live instances; those IDs remain scoped selectors rather than authorization.
 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 

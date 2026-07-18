@@ -215,7 +215,7 @@ Published asset delivery uses the canonical external `/assets/**` family:
 The `game_assets` table stores ordinary design-time upload records. In the current first implementation slice it also stores the uploaded bytes used as the exact-bytes repair source. Columns include:
 
 - `id` – primary key
-- `tenant_id` – identifies the owning game as a UUID string stored in `VARCHAR(36)`
+- `tenant_id` – identifies the owning game using the canonical UUID `tenantId`; a private numeric database key may coexist but must not replace the logical tenant identity
 - `file_name` – original file name
 - `content_type` – MIME type
 - `data` – immutable uploaded bytes for the ordinary binary asset in the current first slice; this is the canonical repair source for object-store republish/repair until a future metadata-only storage model introduces an equivalent retained immutable source
