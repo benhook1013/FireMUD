@@ -11,7 +11,7 @@ For the canonical, detailed design, see `design/architecture/system-architecture
 This document describes the target execution model. The current live runtime is narrower:
 
 - the durable owner/status surface is currently `{tenantId, gameInstanceId}`-scoped rather than true region-scoped;
-- the live command-status API is `GetGameplayCommandStatus`, not the fuller target-state `GetCommandStatus` shape described below;
+- `GetGameplayCommandStatus` is the canonical command-status API, but its live fields and state vocabulary are narrower than the accepted lifecycle described below;
 - the live batch/effect substrate exists with the current gameplay-command selected-work manifest on `tick_batch`, but timer/retry/remote-follow-up source-claim manifests, cross-region result-return plumbing, and some richer command-status fields are still target-state follow-through.
 
 ## What This Covers
@@ -73,7 +73,7 @@ Every phase must be idempotent with respect to `(region_epoch, tickId)` and effe
 
 Because enqueueing uses reset-tolerant Redis coordination queues, command acceptance must distinguish between **ingress receipt** and **durable gameplay outcome**:
 
-- Every accepted command receives a stable `commandId` generated client-side or by Game Session and returned to the caller.
+- Every accepted command has a stable `commandId` before the first backend retry boundary and returns it to the caller. A capable client may generate it; for line-oriented or Telnet sessions, the first trusted Game Session/session-front-end ingress assigns and retains it before forwarding or retrying. Human players do not type or manage this identity.
 - Ingress acknowledgements use explicit levels:
   - `ACCEPTED_VOLATILE` (default for gameplay commands): command is accepted into coordination flow but may still be lost within tail-loss/reset envelopes before staging.
   - `ACCEPTED_DURABLE` (exceptional, feature-specific): command intent is durably recorded outside Redis before acknowledgement and can be re-driven after coordination loss.
@@ -110,10 +110,10 @@ Current live note:
 - the shipped surface today is `GetGameplayCommandStatus` with the narrower lifecycle vocabulary documented in the `02.18.7` slice and Game Session proto;
 - the richer `ackLevel` / `ingressStatus` / bound-tick response described here remains target-state and should not be read as fully live repo behavior yet.
 
-Command outcome convergence must be externally observable through one canonical status surface. Whether this is implemented as an API, event stream, or both, the contract is:
+Command outcome convergence must be externally observable through one canonical authoritative API. Optional event delivery projects the same lifecycle but does not replace lookup authority. The contract is:
 
 - Canonical control-plane surfaces:
-  - `GetCommandStatus(tenantId, gameInstanceId, commandId)` for authoritative lookup.
+  - `GetGameplayCommandStatus(tenantId, gameInstanceId, commandId)` for authoritative lookup.
   - Optional `StreamCommandOutcomes` (or equivalent) for lower-latency observation of the same lifecycle.
 - Lookup key:
   - `(tenantId, gameInstanceId, commandId)`
@@ -126,6 +126,8 @@ Command outcome convergence must be externally observable through one canonical 
   - `tickBatchId` (nullable until `BOUND_TO_BATCH`)
   - `regionId`, `regionEpoch`, `tickId` (nullable until bound)
   - `updatedAt`
+- Existing values such as `STAGED`, `DRAINED`, and `RETRY_QUEUED` are lifecycle progress and must map into the canonical ingress model. Values such as `PURGED` become a terminal outcome plus a structured reason rather than a competing terminal vocabulary.
+- Rich routing, automation, script, plugin, remote-leg, and diagnostic metadata may extend this response without replacing or conflating the canonical lifecycle fields.
 - Terminal outcome semantics:
   - `executionOutcome = APPLIED` – command effects reached a terminal execution state and at least one batch-bound effect converged successfully enough that the command is no longer replay-pending.
   - `executionOutcome = ABANDONED` – command reached a terminal execution failure after being durably bound to a batch.
@@ -135,8 +137,8 @@ Command outcome convergence must be externally observable through one canonical 
     - `gameplayResult` may remain `null` until the command reaches terminal state.
     - `gameplayResult` must not be inferred solely from `executionOutcome`; cross-region and multi-leg commands may legitimately end as `executionOutcome = APPLIED` with `gameplayResult = PARTIAL`.
 - Delivery rules:
-  - `GetCommandStatus` is the authoritative source for the fields above.
-  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle plus the same `executionOutcome` and `gameplayResult` vocabulary as `GetCommandStatus`.
+  - `GetGameplayCommandStatus` is the authoritative source for the fields above.
+  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle plus the same `executionOutcome` and `gameplayResult` vocabulary as `GetGameplayCommandStatus`.
   - Events are advisory for latency; the durable status surface is authoritative.
   - Clients must not infer command success from ingress acknowledgement alone.
 
@@ -203,15 +205,15 @@ Storage rule:
   - Exactly one durable status record keyed by `(tenantId, gameInstanceId, commandId)` must be readable as the authoritative command outcome surface, whether it is physically stored as one row or as a joined ingress/outcome projection.
   - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, and `updatedAt`.
   - Physical storage may use snake_case column names such as `execution_outcome` / `gameplay_result`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
-  - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
+  - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetGameplayCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
 - Worked schema examples:
   - Single-row ingress table shape:
     - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, updated_at, ...)`
   - Split ingress plus outcome projection:
     - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
     - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, updated_at, ...)`
-  - In both shapes, `GetCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
-- Regardless of physical schema, `GetCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
+  - In both shapes, `GetGameplayCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
+- Regardless of physical schema, `GetGameplayCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
 
 ## Tick Execution Flow
 
