@@ -254,15 +254,15 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 - Transport: connect-token carriage on `/ws/game/**` handshake.
   - First-party browser clients use the cookie `Firemud-Connect-Token` set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The cookie value is the connect token; browser JavaScript must not read or persist it.
   - Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
-  - Gateway must accept exactly one connect-token carrier for non-proxy gameplay handshakes. If both the cookie and header are present, or if either carrier is malformed, Gateway rejects the handshake as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
-  - Query-string carriage is not allowed in player-facing environments unless a future security review explicitly changes that rule.
+  - Gateway must accept exactly one non-empty, single-valued connect-token carrier for non-proxy gameplay handshakes. Duplicate values, both carrier types, or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - Query-string carriage is not a supported connect-token carrier in player-facing environments.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `exp`, `jti`.
-- Lifetime: short-lived (target <= 30 seconds).
+- Lifetime: a platform hard maximum of 30 seconds from issuance to `exp`; issuers may shorten but not widen it, and Gateway independently enforces the maximum.
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.
   - Replay cache owner: Gateway.
   - Replay key format: `gateway:connect-token:jti:<jti>`.
-  - Replay TTL: `exp + bounded_skew` (recommended 30 seconds).
+  - Replay TTL: through `exp + bounded_skew`, covering the token's complete acceptance window.
   - Capacity policy: bounded cardinality with deterministic eviction (`oldest-expiry-first`) and overload metrics when capacity limits are reached.
 - Enforcement:
   - `/ws/game/**` is the only gameplay WebSocket route.
