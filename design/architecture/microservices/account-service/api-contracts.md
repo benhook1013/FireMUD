@@ -196,9 +196,11 @@ Required semantics:
 
 - `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
 - `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
+- `allowNewInstanceStarts` and quota fields distinguish permission to add load from permission to continue already-entitled capacity.
 - `entitlementVersion` identifies the evaluated entitlement snapshot.
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
-- `evaluatedAt` is used with the admission freshness SLA from the authentication and subscription-management designs.
+- `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.
+- Missing subscription state is not implicit availability. Free or trial hosting is returned as an explicit entitlement state.
 
 ## Subject-Binding Rules (Normative)
 

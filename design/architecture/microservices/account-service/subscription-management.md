@@ -152,9 +152,12 @@ Runtime services such as the Game Session Service and world-management component
 
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlementsForRuntime(tenantId)` and enforce both availability and quotas before admitting new load.  
 - When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
-- They cache entitlements for a bounded period (for example, at most 60 seconds) and **must** invalidate or refresh them immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick. Admission paths (new player logins and game instance start/restart flows) must always consult a fresh or recently refreshed entitlement snapshot and must not bypass revocation rules based solely on stale cache entries.
-- Admission-critical paths (`PLAY`, new session admission, instance start/restart/rollback) must enforce a hard entitlement freshness bound of 15 seconds. If the local entitlement snapshot is older than this bound and a refresh cannot be completed immediately, the path fails closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
-- Admission-critical paths must also fail closed when `tenantBillingSequence` is behind locally observed sequence or when a sequence gap is detected, then reconcile immediately via `GetTenantEntitlementsForRuntime(tenantId)`.
+- They cache entitlements per tenant, coalesce concurrent refreshes, and invalidate or advance cached state immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events arrive rather than checking entitlements on every tick or issuing one Account call per player.
+- A snapshot is fresh for 15 seconds. Explicit join, first/new session admission, new instance/scale, quota increase, paid-feature activation, and capacity-creating cutover require fresh authority and fail closed with `ENTITLEMENT_UNAVAILABLE` when refresh cannot complete.
+- Reconnecting the same resumable session and non-expanding restart/rollback/recovery may use a previously authoritative positive snapshot for at most five minutes from `evaluatedAt`. A different realm target or fresh binding is new admission. The five-minute maximum may be shortened or disabled but not widened by operator configuration.
+- Last-known-good is forbidden after observed `suspended`/`canceled`, tenant/account revocation, explicit denial, a newer locally observed `tenantBillingSequence`, a sequence gap, or when no positive authoritative snapshot exists. Sequence uncertainty reconciles immediately through `GetTenantEntitlementsForRuntime(tenantId)`.
+- Existing uninterrupted sessions do not check entitlements per action. Hard billing events still revoke them immediately through the canonical event/watermark flow.
+- Missing subscription state is not implicit gameplay availability. Free and trial hosting use explicit entitlement states.
 
 ## Edge Cases and Failure Handling
 

@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 8 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 9 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **17** | **183** | `in-progress` |
+| **Total** | | **18** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -143,7 +143,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `AUTH-06` — `revised` on 2026-07-19; [ADR 0025](../../architecture/decisions/adr-0025-explicit-open-enrollment-membership.md)
 - [x] `AUTH-07` — `revised` on 2026-07-19; [ADR 0026](../../architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md)
 - [x] `TENANT-01` — `revised` on 2026-07-19; [ADR 0027](../../architecture/decisions/adr-0027-single-realm-admission-target.md)
-- [ ] `ADMIT-01`
+- [x] `ADMIT-01` — `revised` on 2026-07-19; [ADR 0028](../../architecture/decisions/adr-0028-differentiated-entitlement-freshness.md)
 - [ ] `EDGE-04`
 - [ ] `SESSION-07`
 - [ ] `SESSION-09`
