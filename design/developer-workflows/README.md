@@ -9,4 +9,4 @@ Use the workflow that matches the current contribution, validation, review, or m
 - [login-session-smoke-tests.md](./login-session-smoke-tests.md) – Walks through the `LOGIN` + `LOOK` path over both WebSocket and Telnet, including expected transcripts and pointers back to the corresponding architecture and implementation-tracking documents.
 - [pr-lifecycle.md](./pr-lifecycle.md) – PR status, CodeRabbit, CI, Renovate, merging, and branch/worktree cleanup.
 - [validation-and-runtime-proof.md](./validation-and-runtime-proof.md) – Formatting, scoped checks, documentation hygiene, and canonical runtime/smoke proof selection.
-- [ai-delegation-and-review.md](./ai-delegation-and-review.md) – Subagent selection, delegation boundaries, independent review, and Codex Spark handovers.
+- [ai-delegation-and-review.md](./ai-delegation-and-review.md) – Subagent selection, delegation boundaries, and independent review.
