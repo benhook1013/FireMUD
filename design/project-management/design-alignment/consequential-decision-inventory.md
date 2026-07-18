@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative and ready for the human-led adversarial review.
+Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative; the human-led adversarial review is in progress.
 
 This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It prepares evidence for a later adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
 
@@ -79,7 +79,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | Decision key | Conflict or missing decision |
 | --- | --- |
 | `AUTO-01` | Resolved baseline: ADR 0001 now delegates the endpoint-specific identity matrix to the canonical scripting contract table and includes runtime scope plus dry-run separation. |
-| `SET-01` | The target settings precedence includes presets and caps that the current effective-settings implementation does not yet resolve. |
+| `SET-01` | Resolved target: values follow defaults, preset, bootstrap, supported runtime-default, tenant, and game-instance precedence while hard bounds and operator caps apply separately as constraints. The current effective-settings implementation does not yet resolve the complete accepted model. |
 | `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
 | `SESSION-04` | The invisible non-edge reconnect target and current visible restart/reconnect behavior are not one testable promise. |
 | `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
@@ -100,14 +100,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 0 | 9 | `not-started` |
+| 1 | Known conflicts and drift | 1 | 9 | `in-progress` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **0** | **183** | `not-started` |
+| **Total** | | **1** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -117,7 +117,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 1 P0
 
-- [ ] `SET-01`
+- [x] `SET-01` — `revised` on 2026-07-18; [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); [canonical settings model](../../architecture/system-architecture-settings-model.md)
 - [ ] `SESSION-04`
 - [ ] `SEC-02`
 - [ ] `OPS-04`
