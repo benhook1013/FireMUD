@@ -87,6 +87,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `OPS-04` | Resolved target: routine backups are online environment-wide PostgreSQL snapshots without gameplay pause; player-facing rewind uses only environment-wide `cold_start_restore` with empty Redis, safe participant dispositions, quarantine, and controlled reopen. Current implementation and proof do not satisfy the accepted gates. |
 | `CMD-STATUS-01` | Resolved target: evolve `GetGameplayCommandStatus` in place as the single authoritative durable API, with stable pre-retry identity and separate acknowledgement, ingress, execution-outcome, and gameplay-result dimensions. Current fields, persistence, recovery, and proof remain incomplete. |
 | `TRACE-01` | Resolved target: metrics and structured logs are the dependable baseline; named workflow tracing, service sampling, and tenant/region sampling are progressively advertised only after end-to-end environment proof. Current tracing remains a narrower best-effort surface. |
+| `EDGE-06` / `MS-GW-DYNAMIC-ROUTES` | Resolved target: the version-controlled release catalog is the sole player-facing route authority; bounded ephemeral mutation is dev/test-only, and any production runtime control plane requires a separate future decision. Current endpoint gating, isolation, validation, and proof remain incomplete. |
 
 These are inventory findings, not decisions made by this workstream. They remain inputs to the later human-led adversarial review and explicit human resolution.
 
@@ -100,14 +101,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 6 | 9 | `in-progress` |
+| 1 | Known conflicts and drift | 8 | 9 | `in-progress` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **6** | **183** | `in-progress` |
+| **Total** | | **8** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -123,8 +124,8 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `OPS-04` — `revised` on 2026-07-18; [ADR 0015](../../architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md); [canonical backup and recovery contract](../../architecture/system-architecture-backup-recovery.md)
 - [x] `CMD-STATUS-01` — `revised` on 2026-07-18; [ADR 0016](../../architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md); [canonical command lifecycle](../../architecture/system-architecture-tick-execution-flows.md#command-ingress-acknowledgement-contract-required)
 - [x] `TRACE-01` — `revised` on 2026-07-18; [ADR 0017](../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md); [capability-gated tracing contract](../../architecture/system-architecture-tracing.md#implementation-notes)
-- [ ] `EDGE-06`
-- [ ] `MS-GW-DYNAMIC-ROUTES`
+- [x] `EDGE-06` — `revised` on 2026-07-18; [ADR 0018](../../architecture/decisions/adr-0018-declarative-production-gateway-routes.md); [canonical route authority](../../architecture/system-architecture-gateway.md#dynamic-route-override-lifecycle)
+- [x] `MS-GW-DYNAMIC-ROUTES` — `revised` on 2026-07-18; [ADR 0018](../../architecture/decisions/adr-0018-declarative-production-gateway-routes.md); [Gateway API boundary](../../architecture/microservices/spring-cloud-gateway/api-contracts.md#dynamic-route-management)
 
 #### Packet 1 P1
 
