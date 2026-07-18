@@ -12,10 +12,14 @@ This document defines canonical identifier names and scopes used across FireMUD 
 
 ## Identifier Format Conventions
 
-- When a FireMUD identifier format is documented explicitly, use `UUID` terminology rather than `GUID`.
-- `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are canonical UUID string identifiers.
-- Services must still treat these identifiers as opaque values unless a contract specifically requires validation of UUID shape.
-- `tenantSlug` is not a UUID. It is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`.
+- `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are canonical UUID string logical identifiers. Authored template identifiers are also client-allocatable UUID strings.
+- Services treat these identifiers as opaque values unless a contract specifically requires UUID-shape validation. Consumers must not derive authority, routing, or related identifiers from their contents.
+- Services may maintain numeric primary and join keys internally. Private database keys never replace or appear as reversible encodings of the canonical UUID identity in public or cross-service contracts.
+- Live room, entity, and item instance identifiers are the deliberate exception: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime.
+- `tenantSlug` is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`; it is not durable tenant identity.
+- Identifier values are never authorization credentials. Every lookup validates the complete tenant/runtime scope and caller authority even when the ID is globally unique or difficult to guess.
+
+Security, idempotency, command, event, effect, workflow-request, and correlation identifiers retain their separate high-entropy or collision-resistance contracts. The family-specific resource-ID rule does not permit predictable session/token material or retry identities that can collide within their required scope.
 
 ## World Identifiers
 
@@ -24,17 +28,20 @@ World data uses two distinct identifier families. Template identifiers must not 
 - **Template identifiers (design-time, version-scoped)** – keyed by `(tenantId, versionId)`:
   - `regionTemplateId`, `zoneTemplateId`, `roomTemplateId`
   - `RoomTemplateRef` = `(tenantId, versionId, roomTemplateId)`
+  - template IDs are client-allocatable UUID logical identities, allowing independently created authored graph objects to reference one another before persistence
 - **Instance identifiers (runtime, instance-scoped)** – keyed by `(tenantId, gameInstanceId)`:
   - `regionInstanceId`, `zoneInstanceId`, `roomInstanceId`
   - `RoomInstanceRef` = `(tenantId, gameInstanceId, roomInstanceId)`
-  - `roomInstanceId` is the canonical cross-service runtime room identity and must be treated as opaque by callers, even when some implementations currently use numeric-looking values.
+  - `roomInstanceId` is the canonical cross-service runtime room identity. It may be numeric, but callers use it only inside the complete typed scope and must not infer storage location or authorization from its value.
 
-World Management may still keep an internal numeric storage key for room topology joins, but that key is not the shared runtime contract and should use distinct naming such as `roomInstanceRowId` / `roomInstanceDbId` rather than `roomInstanceId`.
+World Management may use a numeric room row key as `roomInstanceId` only when it guarantees scoped stability, concurrency-safe allocation, and non-reuse for the required runtime lifetime. Otherwise it allocates a separate runtime identity and names internal topology keys `roomInstanceRowId` / `roomInstanceDbId`. Undocumented reversible encodings such as `R-<rowId>` are not canonical identities.
 
 ## Entity Identifiers
 
-- `entityId` – identifies a live runtime entity (character, NPC, item instance, container entity) within a tenant.
-- `entityTemplateId` – identifies a versioned entity template (items, NPC definitions, equipment templates) scoped by `(tenantId, versionId)`.
+- `entityId` – identifies a live runtime entity (character, NPC, item instance, container entity) within `(tenantId, gameInstanceId)` and may be a stable scoped number.
+- `entityTemplateId` – identifies a versioned entity template (items, NPC definitions, equipment templates) scoped by `(tenantId, versionId)` and is a UUID logical identity.
+- Stable numeric `entityId` values may be presented to authorized players as disambiguators and accepted in gameplay commands. Resolution still enforces tenant, game-instance, location/visibility, and authorization scope.
+- Continuing the same logical authored object across versions may preserve `entityTemplateId`; `versionId` pins the exact representation. Forks and semantically new replacements receive new template IDs and use explicit mappings when state migration is intended.
 
 ## Cross-Service Effect Identity
 
