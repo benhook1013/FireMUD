@@ -36,7 +36,7 @@ Reconnect uses a fresh bootstrap/connect-token sequence where required by the ow
 
 Telnet and generic WebSocket clients authenticate in-band with `LOGIN <username> <secret>` and then use `PLAY`. Account Service interprets the secret according to the account's enabled `PASSWORD` or verified-email `EMAIL_OTP` mode. Bare prompt-based login remains the target text-client experience, but its absence is an implementation gap rather than a different authentication contract.
 
-Plaintext Telnet credentials are a legacy exposure. Deployments should prefer Telnet-over-TLS or the first-party browser path and must provide the documented pre-login warning where plaintext Telnet remains enabled.
+Plaintext Telnet credentials are a legacy exposure. As subsequently constrained by [ADR 0033](./adr-0033-public-player-facing-telnet-requires-tls.md), public player-facing deployments require Telnet-over-TLS or the first-party browser path. Local, test, and explicitly private-network plaintext listeners retain the documented pre-login warning where real credentials could be entered.
 
 ### Factor Policy
 
