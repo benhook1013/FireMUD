@@ -43,6 +43,37 @@ CAPABILITY_RE = re.compile(r"[A-Z]{2}-\d+\.\d+")
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx"}
 AUDIT_CONTEXT_NAMES = {"README.md", "package.json"}
+CANONICAL_PROOF_TOOLS = {
+    "dev-tools/backups/verify-backups.sh",
+    "dev-tools/deploy/preflight.py",
+    "dev-tools/deploy/validate-kustomize-overlays.sh",
+    "dev-tools/hosted/shared/hosted-login-look-smoke.sh",
+    "dev-tools/observability/check-metrics-cardinality.py",
+    "dev-tools/observability/run-player-experience-smoke.py",
+    "dev-tools/observability/validate-observability-contract.py",
+    "dev-tools/observability/validate-player-experience-smoke-evidence.py",
+    "dev-tools/tests/architecture-doc-contracts.sh",
+    "dev-tools/tests/gradle-proof-tooling-contract.sh",
+    "dev-tools/tests/player-experience-smoke-evidence-contract.sh",
+    "dev-tools/tests/player-experience-smoke-runner-contract.sh",
+    "dev-tools/tests/preflight-contract.sh",
+    "dev-tools/tests/preview-eligibility-contract.sh",
+    "dev-tools/tests/reset-service-db-contract.sh",
+    "dev-tools/tests/secret-compliance-contract.sh",
+    "dev-tools/tests/smoke-image-env-contract.sh",
+    "dev-tools/tests/smoke-transport-contract.sh",
+    "dev-tools/tests/static-analysis-summary-contract.sh",
+    "dev-tools/validation/check-flyway-versions.py",
+    "dev-tools/validation/check-grpc-public-methods.py",
+    "dev-tools/validation/check-grpc-transport-config.py",
+    "dev-tools/validation/check-grpc-transport-config.sh",
+    "dev-tools/validation/check-implementation-capability-tracking.py",
+    "dev-tools/validation/test_check_proto_time_fields.py",
+    "dev-tools/validation/validate-helm.sh",
+    "dev-tools/verify-fresh-bootstrap.sh",
+    "dev-tools/verify-restart-state.sh",
+    "dev-tools/verify-smoke-images.sh",
+}
 
 
 def fail(message: str) -> None:
@@ -61,12 +92,22 @@ def state(cell: str, allowed: set[str], context: str) -> str:
 
 
 def linked_tracker_names(cell: str) -> set[str]:
-    return {
-        Path(target.split("#", 1)[0]).name
-        for target in MARKDOWN_LINK_RE.findall(cell)
-        if target.split("#", 1)[0].endswith(".md")
-        and Path(target.split("#", 1)[0]).name in TRACKERS
-    }
+    names: set[str] = set()
+    for target in MARKDOWN_LINK_RE.findall(cell):
+        bare = target.split("#", 1)[0]
+        tracker_name = Path(unquote(bare)).name
+        if tracker_name not in TRACKERS:
+            continue
+        canonical_target = f"./{tracker_name}"
+        resolved = (TRACKING_DIR / unquote(bare)).resolve()
+        canonical = (TRACKING_DIR / tracker_name).resolve()
+        if is_external_target(bare) or bare != canonical_target or resolved != canonical:
+            fail(
+                "implementation-tracker link must use canonical relative target "
+                f"{canonical_target!r}, got {target!r}"
+            )
+        names.add(tracker_name)
+    return names
 
 
 def relative_path(path: Path, root: Path) -> str:
@@ -128,9 +169,9 @@ def is_test_target(relative: str) -> bool:
 
 
 def is_canonical_proof_tool(relative: str) -> bool:
-    if relative.startswith(("dev-tools/", ".github/workflows/")):
+    if relative.startswith(".github/workflows/"):
         return True
-    return relative == "k8s/velero/verify-backups-cronjob.yaml"
+    return relative in CANONICAL_PROOF_TOOLS or relative == "k8s/velero/verify-backups-cronjob.yaml"
 
 
 def is_docs_only_target(relative: str) -> bool:

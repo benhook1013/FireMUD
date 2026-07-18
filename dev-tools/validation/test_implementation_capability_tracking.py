@@ -45,7 +45,14 @@ def main() -> None:
             "design/architecture/canonical.md",
             "services/example/src/main/Production.java",
             "services/example/src/test/ProductionTest.java",
+            "dev-tools/tests/architecture-doc-contracts.sh",
+            "dev-tools/validation/validate-helm.sh",
             "dev-tools/validation/check-example.py",
+            "dev-tools/validation/unrelated-helper.py",
+            "dev-tools/README.md",
+            "dev-tools/verify-restart-state.sh",
+            ".github/workflows/ci.yml",
+            "k8s/velero/verify-backups-cronjob.yaml",
             "web-client/README.md",
             "web-client/package.json",
         ):
@@ -89,6 +96,16 @@ def main() -> None:
             "No focused browser test is present; the package exposes scripts only.",
             "audit-context-positive",
         )
+        for target, context in (
+            ("../../../dev-tools/tests/architecture-doc-contracts.sh", "validation-tool-positive"),
+            ("../../../dev-tools/validation/validate-helm.sh", "validation-script-positive"),
+            ("../../../dev-tools/verify-restart-state.sh", "smoke-entrypoint-positive"),
+            ("../../../.github/workflows/ci.yml", "workflow-positive"),
+            ("../../../k8s/velero/verify-backups-cronjob.yaml", "velero-positive"),
+        ):
+            validator.validate_evidence_anchor(
+                root, owner, target, "proof", "proven", "[proof](x)", context
+            )
         expect_failure(
             "external evidence",
             lambda: validator.validate_evidence_anchor(
@@ -117,6 +134,32 @@ def main() -> None:
             ),
             "tests or canonical validation/smoke tooling",
         )
+        for label, target in (
+            (
+                "external tracker URL",
+                "https://example.test/player-access-and-session.md",
+            ),
+            (
+                "aliased tracker path",
+                "../implementation-tracking/player-access-and-session.md",
+            ),
+        ):
+            expect_failure(
+                label,
+                lambda target=target: validator.linked_tracker_names(f"[tracker]({target})"),
+                "canonical relative target",
+            )
+        for label, target in (
+            ("unrelated dev-tools helper", "../../../dev-tools/validation/unrelated-helper.py"),
+            ("dev-tools README", "../../../dev-tools/README.md"),
+        ):
+            expect_failure(
+                label,
+                lambda target=target: validator.validate_evidence_anchor(
+                    root, owner, target, "proof", "proven", "[proof](x)", label
+                ),
+                "tests or canonical validation/smoke tooling",
+            )
 
         allocation_path = root / "design/project-management/implementation-tracking/capability-allocation.md"
         allocations = validator.parse_allocations(
