@@ -235,7 +235,9 @@ Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-se
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
 
 - `AUTH_INVALID_CREDENTIALS` - wrong username or unsupported/invalid login secret
-- `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_RETRY_LATER` - a graduated credential-abuse throttle rejected the attempt; bounded retry metadata is supplied without confirming account existence
+- `AUTH_ACCOUNT_LOCKED` - durable account-security policy denies authentication after sufficient identity proof; arbitrary failed attempts must not use this as an account-existence oracle
+- `AUTH_ABUSE_CONTROL_UNAVAILABLE` - shared credential-abuse enforcement is unavailable, so new player-facing authentication fails closed and may be retried
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
 The Game Session Service translates these codes into text-protocol `ERROR <CODE>` responses so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.

@@ -214,16 +214,18 @@ Abuse defense follows a layered ownership model:
 - **Edge transport controls (Spring Cloud Gateway and TCP Proxy Service)**:
   - Per-IP/per-connection request and handshake throttling.
   - Connection caps, idle timeouts, and protocol-level safety guards.
-  - No credential-level account lockout decisions.
+  - No credential decisions or durable account-state mutations.
 - **Credential/login abuse controls (Account Service)**:
-  - Monitors failed login attempts per account and per source IP.
-  - Applies account lockouts/throttles and emits canonical auth errors (for example `AUTH_ACCOUNT_LOCKED`).
-  - Owns suspicious-login notifications and account-security policy enforcement.
+  - Applies one policy across password and verified-email-code login over REST, gRPC, Telnet, and WebSocket-derived paths using trusted server-derived source context.
+  - Uses graduated source/account-candidate throttles and stable retry outcomes. Ordinary failed attempts never place an account into durable `security_locked`, because that would let an attacker lock a victim by username.
+  - Reserves `security_locked` for verified or high-confidence compromise, explicit security policy, or audited operator action, with revocation and recovery. Public failure behavior avoids account enumeration.
+  - Fails new credential-bearing authentication closed when shared abuse enforcement is unavailable in a player-facing environment; existing authenticated sessions continue under their normal authority.
 - **Post-auth gameplay abuse controls (Game Session Service)**:
-  - Enforces per-session and per-tenant gameplay command budgets after authentication.
+  - Enforces ordinary per-session command budgets with a local token bucket on the current session front end rather than a Redis operation per command.
+  - May use coarse shared account/tenant/reconnect windows as reset-tolerant defense in depth outside the per-command fast path.
   - Applies gameplay-side abuse heuristics (spam commands, hotspot behavior, abnormal tick patterns).
 
-TCP Proxy Service and Spring Cloud Gateway forward canonical client identity headers so edge and account-service controls can apply consistently across Telnet and WebSocket paths.
+TCP Proxy Service and Spring Cloud Gateway forward canonical source context so edge and Account controls apply consistently across Telnet and WebSocket paths. Clients cannot supply that trusted context themselves. Per-IP policy is never the only credential signal because shared and carrier-grade NAT can place many legitimate players behind one address. [ADR 0034](./decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md) records the availability, lockout, privacy, and gameplay-fast-path tradeoffs.
 
 ---
 
@@ -284,7 +286,7 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 | TLS Termination | Load balancer |
 | Internal Encryption | Per-workload mTLS identities delivered via dedicated Kubernetes Secrets; shared CA trust and server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
-| Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces credential/login abuse lockouts; Game Session enforces post-auth gameplay command abuse limits |
+| Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces graduated credential/login throttles and high-confidence security locks; Game Session enforces local fast-path post-auth gameplay command limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
 | Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Player-facing deployments require Telnet-over-TLS or the web client and do not expose public plaintext ingress. |
 | Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |
