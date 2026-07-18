@@ -8,7 +8,6 @@ import java.io.IOException;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -180,6 +179,16 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return failure(
           "REMOTE_FOLLOWUP_KIND_REQUIRED",
           "Target-side remote followup payload must declare a kind");
+    }
+    try {
+      TriggerScriptEventRequestFactory.requirePlayableStateScope(
+          authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
+    } catch (IllegalArgumentException ex) {
+      return failure(
+          TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)
+              ? "REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID"
+              : "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
+          ex.getMessage());
     }
     if ("enqueue_gameplay_command".equals(payloadKind)) {
       return executeEnqueueGameplayCommand(
@@ -396,7 +405,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
                   isDryRun,
                   triggerMode(root, followup),
-                  playableStateScope(followup.getPlayableStateScope()),
+                  TriggerScriptEventRequestFactory.requirePlayableStateScope(
+                      authoritativeText(
+                          followup.getPlayableStateScope(), root, "playableStateScope")),
                   requiredAuthoritativeText(
                       followup.getReadSnapshotToken(), root, "readSnapshotToken"),
                   eventPayloadJson(root, followup)),
@@ -566,17 +577,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return payloadNode.toString();
     }
     throw new IllegalArgumentException("eventPayload is required");
-  }
-
-  private static PlayableStateScope playableStateScope(String value) {
-    if (value == null || value.isBlank()) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    }
-    return switch (value) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> throw new IllegalArgumentException("Unsupported playableStateScope=" + value);
-    };
   }
 
   private static Long optionalLong(JsonNode root, String fieldName) {

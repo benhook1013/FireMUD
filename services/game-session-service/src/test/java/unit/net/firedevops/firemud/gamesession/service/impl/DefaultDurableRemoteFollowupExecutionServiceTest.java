@@ -29,6 +29,9 @@ import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class DefaultDurableRemoteFollowupExecutionServiceTest {
@@ -81,6 +84,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTenantId(1L);
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(8L);
+    followup.setPlayableStateScope("SHARED");
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
     followup.setPayloadJson("{\"kind\":\"teleport\"}");
@@ -118,6 +122,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTenantId(1L);
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(8L);
+    followup.setPlayableStateScope("SHARED");
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
     followup.setPayloadKind("enqueue_gameplay_command");
@@ -636,6 +641,29 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
     assertEquals("isDryRun must be boolean", result.failureMessage());
+    verifyNoInteractions(automationScriptingClient);
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"", " ", "UNSPECIFIED", "UNKNOWN"})
+  void executeRejectsTriggerScriptEventWhenPlayableStateScopeIsNotExplicit(
+      String playableStateScope) {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
+    followup.setPlayableStateScope(playableStateScope);
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
+    assertEquals(
+        "playableStateScope must be explicitly SHARED or ISOLATED", result.failureMessage());
     verifyNoInteractions(automationScriptingClient);
   }
 

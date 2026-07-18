@@ -93,20 +93,14 @@ def state(cell: str, allowed: set[str], context: str) -> str:
 
 def linked_tracker_names(cell: str) -> set[str]:
     names: set[str] = set()
+    canonical_targets = {f"./{tracker}" for tracker in TRACKERS}
     for target in MARKDOWN_LINK_RE.findall(cell):
-        bare = target.split("#", 1)[0]
-        tracker_name = Path(unquote(bare)).name
-        if tracker_name not in TRACKERS:
-            continue
-        canonical_target = f"./{tracker_name}"
-        resolved = (TRACKING_DIR / unquote(bare)).resolve()
-        canonical = (TRACKING_DIR / tracker_name).resolve()
-        if is_external_target(bare) or bare != canonical_target or resolved != canonical:
+        if target not in canonical_targets:
             fail(
                 "implementation-tracker link must use canonical relative target "
-                f"{canonical_target!r}, got {target!r}"
+                f"from declared trackers, got {target!r}"
             )
-        names.add(tracker_name)
+        names.add(target.removeprefix("./"))
     return names
 
 

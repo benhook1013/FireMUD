@@ -84,7 +84,7 @@ Automation faction reputation uses the same resolved namespace and requires `{te
 
 ### Recorded Proof
 
-The evidence records focused proof for stale-pointer rejection at connect-token issuance, verified `LOGIN`, `PLAY`, reused relogin, websocket route/selector refresh, session normalization, command staging and replay, communication availability/delivery, presence, logout, tick-state, disconnect envelopes, remote routing metadata, complete-pointer catalog/control-plane projection, world-qualified duplicate-slug lookup, operator tenant guards, and shared-versus-isolated playable-state behavior. It also records touched-service `check -PfullCheck` runs, focused Game Session/Account/Entity Management/Automation/Logging & Admin/TCP Proxy/Game Logic tests, `linkCheck lintMarkdown`, and fresh rebuilt `bash dev-tools/verify-fresh-bootstrap.sh` proof covering WebSocket and Telnet bootstrap/login/play/LOOK, item/container/equipment reads, and authenticated disconnect cleanup. These are recorded validation facts, not a claim that this documentation pass reran all of them.
+The evidence records focused proof for stale-pointer rejection at connect-token issuance, verified `LOGIN`, `PLAY`, reused relogin, websocket route/selector refresh, session normalization, command staging and replay, communication availability/delivery, presence, logout, tick-state, disconnect envelopes, remote routing metadata, complete-pointer catalog/control-plane projection, world-qualified duplicate-slug lookup, operator tenant guards, and shared-versus-isolated playable-state behavior. It also records touched-service `check -PfullCheck` runs, focused Game Session/Account/Entity Management/Automation/Logging & Admin/TCP Proxy/Game Logic tests, invocation of `linkCheck lintMarkdown` without a retained passing completion result, and fresh rebuilt `bash dev-tools/verify-fresh-bootstrap.sh` proof covering WebSocket and Telnet bootstrap/login/play/LOOK, item/container/equipment reads, and authenticated disconnect cleanup. These are recorded validation facts, not a claim that this documentation pass reran all of them.
 
 ## Active Gaps
 
@@ -96,7 +96,7 @@ The evidence records focused proof for stale-pointer rejection at connect-token 
 - Replacement-instance migration/remap mechanics and domain-specific carry-forward rules remain unimplemented, including economy, guild, and combat-specific policy.
 - The pointer migration's unique index is `(world_slug, realm_slug)` rather than the canonical tenant-qualified key, so cross-tenant duplicate world/realm selectors are not schema-safe even though repository reads include `tenant_id`.
 - The canonical grant record permits expiry and calls for tenant-admin management; the current Account grant row and internal-only grant endpoints do not implement that follow-through.
-- The aggregate realm-routing documentation checkpoint did not record `./gradlew linkCheck lintMarkdown` as complete. That proof limitation does not make the bounded implemented capabilities above incomplete.
+- The aggregate realm-routing documentation checkpoint records that `./gradlew linkCheck lintMarkdown` was invoked but does not retain a passing completion result. That proof limitation does not make the bounded implemented capabilities above incomplete.
 
 ## To Discuss
 

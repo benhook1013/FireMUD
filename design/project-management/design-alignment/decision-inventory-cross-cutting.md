@@ -2,6 +2,10 @@
 
 Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative.
 
+## Implementation Status
+
+`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. It does not mean every recorded decision is implemented, approved, or adversarially reviewed; each row's status and the review queues below retain those distinctions.
+
 This ledger continues the completed read-only decision scan. It preserves the prior decision keys, sources, statuses, alternatives, ADR recommendations, flags, and review queue while allocating every decision to the exact capability identifiers in the [Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md). It does not create, accept, supersede, or amend canonical design.
 
 The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-backed additions. The counted source partition is exactly 22 paths. The existing [main consequential-decision-inventory](./consequential-decision-inventory.md) is intentionally unchanged; its nine ADR-ledger keys are cross-referenced below.

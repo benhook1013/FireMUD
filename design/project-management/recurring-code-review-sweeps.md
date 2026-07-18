@@ -1,6 +1,6 @@
 # Recurring Code Review Sweeps
 
-This is the standing guide for repeated review patterns found by CodeRabbit, human, or AI review. It identifies reusable sweep families; it is not permission for speculative repo-wide churn. [AGENTS.md](../../AGENTS.md) owns always-on authority and safety; [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) and [validation and runtime proof](../developer-workflows/validation-and-runtime-proof.md) own their conditional procedures. [review-checklists.md](./review-checklists.md) and [testing-focus-areas.md](./testing-focus-areas.md) supply broader completion and regression-risk context.
+This is the standing guide for repeated review patterns found by CodeRabbit, human, or AI review. It identifies reusable sweep families; it is not permission for speculative repo-wide churn. [AGENTS.md](../../AGENTS.md) owns always-on process and safety rules; [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) and [validation and runtime proof](../developer-workflows/validation-and-runtime-proof.md) own their conditional procedures. [review-checklists.md](./review-checklists.md) and [testing-focus-areas.md](./testing-focus-areas.md) supply broader completion and regression-risk context.
 
 ## 1. Evidence and Execution Rules
 

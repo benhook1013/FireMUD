@@ -447,12 +447,11 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private static PlayableStateScope resolvePlayableStateScope(
       SessionContext context, GameplayCommand command) {
-    if (command != null && StringUtils.hasText(command.getPlayableStateScope())) {
-      return resolvePlayableStateScope(command.getPlayableStateScope());
-    }
-    return context == null
-        ? PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
-        : resolvePlayableStateScope(context.playableStateScope());
+    String playableStateScope =
+        command != null && StringUtils.hasText(command.getPlayableStateScope())
+            ? command.getPlayableStateScope()
+            : context == null ? null : context.playableStateScope();
+    return TriggerScriptEventRequestFactory.requirePlayableStateScope(playableStateScope);
   }
 
   private static TriggerScriptEventRequestFactory.RoutingBundle resolveRoutingBundle(
@@ -553,19 +552,6 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
 
   private record PublishedRegionScope(String regionId, long regionEpoch) {}
-
-  private static PlayableStateScope resolvePlayableStateScope(String playableStateScope) {
-    if (!StringUtils.hasText(playableStateScope)) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    }
-    return switch (playableStateScope) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default ->
-          throw new IllegalArgumentException(
-              "Unsupported playableStateScope=" + playableStateScope);
-    };
-  }
 
   private static long positive(Long value, long fallback) {
     return value != null && value > 0 ? value : fallback;

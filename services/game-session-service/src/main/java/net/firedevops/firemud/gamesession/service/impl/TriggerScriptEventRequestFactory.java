@@ -9,6 +9,8 @@ final class TriggerScriptEventRequestFactory {
 
   static TriggerScriptEventRequest.Builder builder(
       CommonFields commonFields, RoutingBundle routingBundle) {
+    PlayableStateScope playableStateScope =
+        requirePlayableStateScope(commonFields.playableStateScope());
     TriggerScriptEventRequest.Builder builder =
         TriggerScriptEventRequest.newBuilder()
             .setTenantId(commonFields.tenantId())
@@ -22,7 +24,7 @@ final class TriggerScriptEventRequestFactory {
             .setScriptEventId(commonFields.scriptEventId())
             .setIsDryRun(commonFields.isDryRun())
             .setTriggerMode(commonFields.triggerMode())
-            .setPlayableStateScope(commonFields.playableStateScope())
+            .setPlayableStateScope(playableStateScope)
             .setReadSnapshotToken(commonFields.readSnapshotToken())
             .setPayloadJson(commonFields.payloadJson());
     if (routingBundle != null) {
@@ -32,6 +34,31 @@ final class TriggerScriptEventRequestFactory {
           .setPointerVersion(routingBundle.pointerVersion());
     }
     return builder;
+  }
+
+  static PlayableStateScope requirePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      throw invalidPlayableStateScope();
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED, PLAYABLE_STATE_SCOPE_ISOLATED -> playableStateScope;
+      default -> throw invalidPlayableStateScope();
+    };
+  }
+
+  static PlayableStateScope requirePlayableStateScope(String playableStateScope) {
+    if (playableStateScope == null || playableStateScope.isBlank()) {
+      throw invalidPlayableStateScope();
+    }
+    return switch (playableStateScope) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> throw invalidPlayableStateScope();
+    };
+  }
+
+  private static IllegalArgumentException invalidPlayableStateScope() {
+    return new IllegalArgumentException("playableStateScope must be explicitly SHARED or ISOLATED");
   }
 
   record CommonFields(

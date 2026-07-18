@@ -36,6 +36,8 @@ This tracker consolidates Game Design authoring, settings, publication, release 
 
 ## Consolidated Implementation Record
 
+This record describes implemented behavior and summarizes constraints from the linked canonical architecture contracts. Normative terms used while summarizing those constraints do not make this tracker a second design authority.
+
 ### Settings Authority and Effective Resolution
 
 The implemented pre-`06` settings model separates service boot configuration from tenant/game behavior policy. Operator and bootstrap defaults remain service-local typed properties. Game Design is the shared persisted authority for tenant/game overrides, and `common-platform-core` merges persisted tenant overrides before game-instance overrides. Runtime services perform the final merge against their local operator defaults; there is no centralized cross-service operator-default, cap, or preset resolver and no distributed invalidation push model.

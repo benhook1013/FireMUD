@@ -121,9 +121,9 @@ Resume validation must not depend on the previous internal service token remaini
 Long-lived gameplay sessions require periodic service-token rotation, independent of role changes. Game Session must:
 
 1. Refresh session service JWTs on a bounded cadence (recommended at 50% of JWT lifetime with random jitter and a hard floor of 60 seconds between refresh attempts).
-2. Refresh immediately when an internal backend call fails with auth-expired or auth-revoked semantics.
+2. Refresh immediately when an internal backend call fails with auth-expired semantics. Treat auth-revoked responses as non-refreshable: fail closed and revalidate authoritative account, tenant, membership, and gameplay-binding state before allowing further actions.
 3. On successful refresh, atomically update gameplay session binding fields `authTokenHash` and `authTokenIssuedAt` before using the new token for subsequent backend calls. Do not rewrite the immutable `gameplaySessionExpiresAt` anchor or the disconnected `resumeDeadline`.
-4. If refresh fails and the existing token is expired or revoked, fail closed for gameplay actions that require backend auth and return a canonical session-expired error, forcing re-login.
+4. If expiration-driven refresh fails, fail closed for gameplay actions that require backend auth and return a canonical session-expired error, forcing re-login. For auth-revoked responses, terminate or revoke the gameplay binding when authoritative state no longer permits it; token rotation must not bypass revocation.
 
 Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 

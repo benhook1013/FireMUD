@@ -265,6 +265,27 @@ def main() -> None:
             ),
             "unknown capability handoffs",
         )
+        for label, handoff in (
+            (
+                "external non-tracker status-row link",
+                "[external](https://example.test/not-declared)",
+            ),
+            (
+                "existing local non-tracker status-row link",
+                "[allocation](./capability-allocation.md)",
+            ),
+        ):
+            expect_failure(
+                label,
+                lambda handoff=handoff: validator.validate_status_row_handoffs(
+                    "player-access-and-session.md",
+                    "AA-1.1",
+                    allowed_handoffs,
+                    allocations,
+                    handoff,
+                ),
+                "canonical relative target",
+            )
 
     summary = textwrap.dedent(
         """
