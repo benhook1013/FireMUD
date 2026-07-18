@@ -69,6 +69,7 @@ class MultiplayerLoadProofCrossServiceTest {
     List<GameplayLoadScenarios.PlayerSeed> players =
         GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
+    int gameDesignRequestsBeforeEntry = STACK.gameDesignStub().publishedReleaseBundleRequests();
     TimedResult<List<PlayerRunResult>> playerRuns =
         timed(
             () -> {
@@ -97,6 +98,8 @@ class MultiplayerLoadProofCrossServiceTest {
         "concurrent LOGIN -> PLAY -> LOOK entry", playerRuns.duration(), ENTRY_PHASE_BUDGET);
     List<PlayerRunResult> results = playerRuns.result();
     assertThat(results).hasSize(CLIENT_COUNT);
+    assertThat(STACK.gameDesignStub().publishedReleaseBundleRequests())
+        .isGreaterThan(gameDesignRequestsBeforeEntry);
     assertThat(results)
         .allSatisfy(
             result -> {
