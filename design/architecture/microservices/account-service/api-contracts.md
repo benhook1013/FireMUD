@@ -221,7 +221,7 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 
 ## Login Modes
 
-Account Service currently supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected login modes. Both `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not current contracts.
+Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected ordinary gameplay login modes. Both modes must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not mandatory gameplay contracts; stronger factors for elevated control-plane actions are a separate security policy.
 
 ## Login Error Codes
 
