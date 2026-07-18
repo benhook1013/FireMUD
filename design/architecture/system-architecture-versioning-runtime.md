@@ -526,7 +526,8 @@ Before any operation that changes whether a tenant is actively serving gameplay 
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
-- Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
+- New instances, scale-out, quota increases, paid-feature activation, and replacement cutovers that create capacity require an entitlement snapshot no older than 15 seconds. If refresh cannot produce one, the operation fails closed with `ENTITLEMENT_UNAVAILABLE`.
+- Restart, rollback, or recovery of already-entitled capacity may use a previously authoritative positive snapshot for at most five minutes only when the operation does not increase capacity or quota consumption and no hard denial, revocation, newer sequence, or sequence gap has been observed.
 - Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
 - Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm is `OPEN` on exactly one gameplay-admissible instance or explicitly `CLOSED`, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
 

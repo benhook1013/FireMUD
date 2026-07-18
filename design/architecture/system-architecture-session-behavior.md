@@ -113,6 +113,7 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 - Current tenant membership and role authority still permits gameplay admission for the target tenant and is not older than the stored `membershipVersion`.
 - The gameplay session key remains logically resumable (key present, `continuityBindingExpiresAt` has not passed, the current `resumeDeadline` has not passed, and the uniqueness key is unchanged).
 - Current revocation state does not block the account or tenant for gameplay admission.
+- Current entitlement authority is fresh for a new binding. Resume of the same still-resumable binding may instead use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; hard denial, revocation, a newer billing sequence, or a sequence gap forbids this continuity path.
 
 Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, consume the current disconnection episode, and then resume the gameplay binding. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
 
@@ -154,6 +155,8 @@ Subscription and billing state drives how aggressively sessions are revoked:
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
   - Existing gameplay sessions for the tenant must be revoked so connected sockets are kicked and cannot reconnect into gameplay for that tenant.
   - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+
+Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
 ### Gameplay Logout and Resume Transcript
 
