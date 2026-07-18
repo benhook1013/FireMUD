@@ -90,7 +90,7 @@ Game Session must also maintain the bounded authoritative indexes defined in the
 
 Gameplay session creation/update plus the tenant-scoped index mutations are one shard-local Redis CAS/update flow under `{tenantGameplayTag}`. The cross-tenant account index is an idempotent secondary lookup updated separately; an account watermark remains authoritative, and periodic reconciliation repairs a missing index entry. Region-local gameplay admission still uses the separate `tick:{tenantRegionTag}:session-binding:<entityId>` bridge contract and is not folded into the same Lua invocation.
 
-Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session, such as `authTokenHash` and `authTokenIssuedAt`, plus authoritative membership and applicable realm-grant freshness metadata so resume and active revocation can validate current identity, current authority, and current revocation state before rebinding to a fresh backend token:
+Gameplay session bindings must include the server-side auth token identity used for Account and other control-plane calls on behalf of the session, including `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`, plus authoritative membership and applicable realm-grant freshness metadata so resume, rotation, and active revocation can validate current identity, current authority, and current revocation state before rebinding to a fresh backend token:
 
 - current caller identity matches the stored gameplay binding subject;
 - membership authority still allows gameplay admission for the tenant; and
@@ -99,6 +99,8 @@ Gameplay session bindings must include the server-side auth token identity used 
 These identity and revocation rules are defined in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
 
 Game Session consumes Account-owned membership, grant, security, and hard-billing events through an idempotent durable consumer. Stable event IDs and monotonic authority versions make duplicates and older events no-ops; a gap triggers authoritative reconciliation. Events drive targeted termination through the bounded indexes above. A periodic batched watermark/version reconciliation renews a revocation-authority freshness lease for active bindings at least once every 60 seconds. New admission fails closed while that lease is stale, and active bindings whose authority cannot be re-established terminate at the bound. Routine gameplay commands do not read Account or revocation watermarks.
+
+Game Session schedules private Service JWT rotation at approximately half-life with jitter and an expiry safety margin, and single-flights refresh for each binding. Refresh presents the current token generation to Account; workload identity by itself cannot mint a replacement after a blocking watermark. Successful rotation atomically installs the new token identity and refreshed membership metadata before new control-plane calls use it. The old entry survives only for the bounded already-started RPC overlap and is then deleted idempotently. Rotation never changes gameplay continuity or resume deadlines. If the current token expires before authority can be refreshed, backend-authenticated actions fail closed and the player must authenticate again. Gameplay-domain RPCs continue to use concrete workload identity and typed `PlayerExecutionContext`; they do not acquire a per-call player JWT requirement from this rotation contract.
 
 ## Tick Coordination and Lease Ownership
 

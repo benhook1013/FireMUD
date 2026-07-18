@@ -219,7 +219,7 @@ Authenticated gameplay session keys capture:
 
 - Socket binding metadata and transport details.
 - Active `characterId` / `tenantId` context.
-- Server-side auth token identity used for backend calls on behalf of this session (for example `authTokenHash` and `authTokenIssuedAt`), so resume and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
+- Server-side auth token identity used for Account and other control-plane calls on behalf of this session (`authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`), so planned refresh, resume, and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
 - Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
@@ -270,7 +270,7 @@ Key properties:
   `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`
 
   Resume also requires current account identity, membership authority, entitlement, and revocation checks. The pair is immutable for that disconnection episode: failed reconnects, takeover attempts, and server-token rotation cannot change it. Successful resume consumes the episode; a later connected-to-disconnected transition creates a new pair bounded by the original continuity anchor. A genuinely fresh `PLAY` admission creates a new binding and anchor only after ordinary admission succeeds.
-- JWT validity remains bounded by each token's own `exp` claim. Game Session may rotate `authTokenHash` and `authTokenIssuedAt` to obtain a currently valid backend token, but token rotation cannot extend continuity-binding expiry or resume eligibility.
+- JWT validity remains bounded by each token's own `exp` claim. Game Session may atomically rotate `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt` only after Account validates the token generation and current authority, but token rotation cannot cross blocking revocation authority or extend continuity-binding expiry or resume eligibility.
 
 Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The effective disconnected-resume window is the stricter of the remaining continuity-binding lifetime and `firemud.reconnection.policy.resume-window-ms`.
 

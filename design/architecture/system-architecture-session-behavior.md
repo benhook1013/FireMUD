@@ -108,6 +108,7 @@ Each gameplay session binding must store the server-side auth token identity it 
 
 - `authTokenHash` – the token hash for the internal JWT that Game Session uses when making backend calls for this session. Clients never see or transmit this token.
 - `authTokenIssuedAt` (`iat`) – the issuance time of that JWT.
+- `authTokenExpiresAt` (`exp`) – the deadline used to schedule rotation before expiry.
 - `membershipVersion` – the latest authoritative tenant-membership version used when the session was admitted or last refreshed.
 - When roles are refreshed mid-session, Game Session must update the stored `authTokenHash` and `authTokenIssuedAt` in the gameplay session binding and persist the refreshed `membershipVersion` when tenant membership authority is consulted.
 
@@ -127,12 +128,15 @@ When an `auth-revoked` result reaches a currently connected gameplay binding, Ga
 
 ### Active Session Token Refresh (Required)
 
-Long-lived gameplay sessions require periodic service-token rotation, independent of role changes. Game Session must:
+Long-lived gameplay sessions require periodic rotation of the private Service JWT used for Account and other control-plane calls. Gameplay clients never receive it, and gameplay-domain authorization continues to use the mTLS workload and typed execution-context contract rather than adding token refresh to each gameplay RPC. Game Session must:
 
-1. Refresh session service JWTs on a bounded cadence (recommended at 50% of JWT lifetime with random jitter and a hard floor of 60 seconds between refresh attempts).
-2. Refresh immediately when an internal backend call fails with auth-expired semantics. Treat auth-revoked responses as non-refreshable: fail closed, suspend backend-authenticated gameplay actions, and revalidate authoritative account, tenant, membership, and gameplay-binding state. If authority still permits gameplay, first apply the active-socket auth-revocation transition above when the binding is connected, then require a fresh client `LOGIN` followed by `PLAY`; revalidation alone must not resume actions or mint a replacement token. If authority denies gameplay, leave the binding terminated or revoked.
-3. On successful refresh, atomically update gameplay session binding fields `authTokenHash` and `authTokenIssuedAt` before using the new token for subsequent backend calls. Do not rewrite the immutable `continuityBindingExpiresAt` anchor or any active disconnection episode's `resumeDeadline`.
-4. If expiration-driven refresh fails, fail closed for gameplay actions that require backend auth and return a canonical session-expired error, forcing re-login. After an auth-revoked response, successful fresh `LOGIN` plus `PLAY` may resume a still-authorized logical binding only after the binding is disconnected with a defined current disconnection episode; for an active socket, the transition above must create that episode before re-admission. Game Session must then atomically replace `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, and consume the current episode while preserving `continuityBindingExpiresAt`. Token rotation must not bypass revocation.
+1. Schedule planned refresh at approximately 50% of the current JWT lifetime with random jitter, but always before `exp` by the configured safety margin. A 60-second minimum interval may throttle repeated attempts only when enough validity remains; it must never postpone the final safe refresh beyond expiry.
+2. Single-flight concurrent refresh demand for the same binding. A transient failure while the current token remains valid retries with bounded jittered backoff and does not rewrite gameplay continuity deadlines.
+3. Present the current token identity, `iat`, binding identity, and idempotent request ID to the Account-owned refresh surface. Account revalidates the current token generation, account state, membership/version, and account/tenant/membership revocation watermarks before issuing a replacement. Concrete Game Session mTLS identity alone cannot refresh a revoked player generation.
+4. Treat auth-expired backend failure as an immediate refresh opportunity while the refresh authority remains valid. Auth-revoked failure is non-refreshable and requires authoritative reconciliation; when the binding is connected, Game Session first applies the active-socket auth-revocation transition above. Logout-all, password reset, security lock, membership loss, or another blocking watermark cannot be crossed by minting a token with a newer `iat`, and revalidation alone cannot resume gameplay actions.
+5. On success, atomically replace `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata in the gameplay binding before new calls use the replacement. The prior token may overlap only through the shorter of its original expiry or the maximum already-started internal RPC deadline, after which its allowlist entry is removed idempotently.
+6. Never rewrite the immutable `continuityBindingExpiresAt` anchor or the current disconnection episode's `disconnectAt` / `resumeDeadline` pair during token rotation. Successful resume consumes that episode; a later connected-to-disconnected transition creates a new pair still bounded by the original continuity anchor.
+7. If refresh cannot establish authority before the current token expires, fail closed for backend-authenticated actions, terminate the affected gameplay authentication state with the canonical session-expired/revoked outcome, and require fresh login. Fresh `LOGIN` plus `PLAY` may resume a still-authorized binding only after a defined disconnection episode exists; the active-socket transition above creates that episode before re-admission, and successful re-admission consumes it without extending `continuityBindingExpiresAt`.
 
 Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
@@ -180,16 +184,16 @@ For per-token logout, clients call `POST /auth/logout` with the current JWT in t
 
 - Computes the `tokenHash` from the presented JWT.
 - Deletes the corresponding `session:auth:*:<tokenHash>` allowlist entries for that token (account-scoped, plus any global and tenant-scoped entries that were created for it).
-- Emits an audit event so logout activity is observable.
+- Emits a distinct idempotent per-token logout audit event so logout activity is observable without recording the raw token.
 
-This flow performs a per-token logout: it invalidates the current browser or device session without affecting other active sessions for the same account.
+This flow performs a per-token logout: it invalidates the current browser or device session without affecting other devices or unrelated gameplay bindings for the same account. A first-party player UI separately stops reconnect, closes its socket through gameplay `LOGOUT`, and then revokes that device's `player-bootstrap` token; Account does not discover sockets from the per-token endpoint.
 
 For `POST /auth/logout-all`, the Account Service must:
 
-- Set `session:auth:revoked_after:account:<accountId>` to "now".
-- Emit an audit event indicating global logout and actor context.
+- Commit a durable account-wide logout event and audit record with distinct action type, actor, account, and request identity, then idempotently project `session:auth:revoked_after:account:<accountId>` to the logout generation without recording raw tokens.
 - Return success even when no active tokens remain (idempotent behavior).
 - Treat the account watermark as immediate authority for revocation; existing `session:auth:tenant:*` and `session:auth:global:*` keys may be removed by bounded background cleanup and must not be required for correctness.
+- Terminate control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through the account-security event and bounded reconciliation contract in ADR 0030.
 
 See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 

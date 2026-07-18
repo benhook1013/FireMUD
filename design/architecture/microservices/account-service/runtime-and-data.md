@@ -105,6 +105,10 @@ Gameplay clients never hold control-plane Browser JWTs or internal Service JWTs.
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
+Active gameplay Service JWT refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's allowlist generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement allowlist entry before returning it; Game Session installs the replacement atomically and removes the previous entry after the bounded in-flight RPC overlap.
+
+Per-token logout deletes only the presented token's bounded scoped allowlist entries and is idempotent. Logout-all commits a distinct durable account-wide logout/audit event and then idempotently projects the account watermark; it does not depend on scanning every token key. Raw token values are excluded from both audit forms. The account-wide event terminates active gameplay under ADR 0030, whereas per-token logout leaves other devices and unrelated gameplay bindings intact.
+
 ## Membership and Entitlement Authority
 
 Billing-safe mutation authority contract:
