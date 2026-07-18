@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
+import net.firedevops.firemud.gamesession.test.stubs.GameDesignStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
@@ -25,6 +26,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 /** Shared gameplay-oriented cross-service bootstrap fixture above the lower-level app harness. */
 public final class GameplayCrossServiceStack implements AutoCloseable {
   private final AccountRuntimeStubServer accountStub;
+  private final GameDesignStubServer gameDesignStub;
   private final WorldManagementStubServer worldStub;
   private final EntityManagementStubServer entityStub;
   private final SocialGroupsStubServer socialStub;
@@ -36,6 +38,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
   private GameplayCrossServiceStack(
       AccountRuntimeStubServer accountStub,
+      GameDesignStubServer gameDesignStub,
       WorldManagementStubServer worldStub,
       EntityManagementStubServer entityStub,
       SocialGroupsStubServer socialStub,
@@ -44,6 +47,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       CrossServiceAppHarness.GameLogicHolder gameLogic,
       CrossServiceAppHarness.GameSessionHolder gameSession) {
     this.accountStub = accountStub;
+    this.gameDesignStub = gameDesignStub;
     this.worldStub = worldStub;
     this.entityStub = entityStub;
     this.socialStub = socialStub;
@@ -75,6 +79,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       justification = "Test stack intentionally exposes mutable stubs for scenario control.")
   public AccountRuntimeStubServer accountStub() {
     return accountStub;
+  }
+
+  public GameDesignStubServer gameDesignStub() {
+    return gameDesignStub;
   }
 
   public WorldManagementStubServer worldStub() {
@@ -251,6 +259,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     }
     entityStub.close();
     worldStub.close();
+    gameDesignStub.close();
     accountStub.close();
   }
 
@@ -348,6 +357,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       accountStub.setDefaultAccountId(defaultAccountId);
       accountMappings.forEach(accountStub::mapAccountId);
 
+      GameDesignStubServer gameDesignStub = new GameDesignStubServer(0);
       WorldManagementStubServer worldStub = new WorldManagementStubServer(0);
       EntityManagementStubServer entityStub = new EntityManagementStubServer(0);
       if (initialRoomEntities != null) {
@@ -381,6 +391,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 props.put("firemud.postgres.username", postgresUsername);
                 props.put("firemud.postgres.password", postgresPassword);
                 props.put("firemud.database.enabled", "true");
+                props.put("firemud.services.gameDesignService", gameDesignStub.endpoint());
                 props.put("firemud.services.entityManagementService", entityStub.endpoint());
                 if (socialStub != null) {
                   props.put("firemud.services.socialGroupsService", socialStub.endpoint());
@@ -391,6 +402,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
       return new GameplayCrossServiceStack(
           accountStub,
+          gameDesignStub,
           worldStub,
           entityStub,
           socialStub,

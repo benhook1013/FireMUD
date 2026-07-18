@@ -4,6 +4,8 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 public final class GameInstanceTestFixtures {
+  public static final long PUBLISHED_RELEASE_BUNDLE_ID = 700L;
+
   private GameInstanceTestFixtures() {}
 
   public static void ensureGameInstancesTable(JdbcTemplate jdbc) {
@@ -67,7 +69,7 @@ public final class GameInstanceTestFixtures {
                 gameTemplateId,
                 "stub-launch-descriptor",
                 gameTemplateId,
-                700L,
+                PUBLISHED_RELEASE_BUNDLE_ID,
                 700L,
                 "genrev:test:" + gameTemplateId,
                 null,
