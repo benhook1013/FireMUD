@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 6 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 7 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **15** | **183** | `in-progress` |
+| **Total** | | **16** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -141,7 +141,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `AUTH-04` — `revised` on 2026-07-18; [ADR 0023](../../architecture/decisions/adr-0023-central-route-authorization-governance.md)
 - [x] `AUTH-05` — `revised` on 2026-07-19; [ADR 0024](../../architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md)
 - [x] `AUTH-06` — `revised` on 2026-07-19; [ADR 0025](../../architecture/decisions/adr-0025-explicit-open-enrollment-membership.md)
-- [ ] `AUTH-07`
+- [x] `AUTH-07` — `revised` on 2026-07-19; [ADR 0026](../../architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md)
 - [ ] `TENANT-01`
 - [ ] `ADMIT-01`
 - [ ] `EDGE-04`
