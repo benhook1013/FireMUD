@@ -94,7 +94,7 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - Audience is `player-bootstrap`.
 - It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
 - `POST /auth/player-bootstrap` is the canonical first-party browser/mobile player-login endpoint. It authenticates player credentials directly under the same password, OTP, brute-force defense, and account-lock policy used for gameplay login rather than deriving bootstrap from a pre-existing admin/creator session.
-- It establishes account identity for first-party gameplay bootstrap only; tenant membership/public-admission and runtime entitlement checks occur later during `POST /auth/connect-token` for the discovery-selected realm target.
+- It establishes account identity for first-party gameplay bootstrap only. Public-game membership is created only by explicit `/auth/bootstrap/join`; character creation and `POST /auth/connect-token` later require that membership and recheck applicable grants, entitlements, and the discovery-selected runtime target.
 - It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.
 - For first-party `/ws/game/**`, subsequent gameplay `LOGIN` must complete from the bootstrap/connect context already established for that socket; browser clients must not be required to replay account credentials after bootstrap.
 - If the token is lost because the page/app process is restarted, the client must restart bootstrap from `POST /auth/player-bootstrap`; the current architecture does not define a hidden silent-bootstrap refresh mechanism.
@@ -140,15 +140,15 @@ Runtime caller contract:
 - Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, characters, and a canonical `connectScopeId` selector for each admissible realm target.
 - Account Service must use the authoritative realm-routing contract when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current admissible instance for the selected realm instead of a caller-supplied guess.
 - `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure rather than minting a new logical issuance result.
-- `EnsurePublicProductionPlayerMembership(accountId, tenantId, worldSlug, realmSlug, requestId)` is the authoritative membership-creation surface for first admission through a tenant's default production realm.
+- `JoinPublicProductionMembership(accountId, tenantId, worldSlug, realmSlug, requestId)` is the authoritative explicit open-enrollment membership surface for a tenant's default public production realm. Connect-token issuance and `PLAY` require its result but never invoke it implicitly.
   - It is valid only for the default public production realm and only when the caller satisfies the public-production admission policy.
   - `requestId` is the attempt idempotency key. Retrying the same `{accountId, tenantId, worldSlug, realmSlug, requestId}` must return the same resulting membership identity/version or the same deterministic application failure.
   - The resulting membership must be immediately visible to `GetTenantMembershipForRuntime`.
   - Minimum preconditions: the selected realm is still the tenant's default public production realm, it remains publicly visible to the caller, current runtime entitlements still allow gameplay admission, and current admission-pointer state resolves unambiguously for that realm.
   - Concurrency rule: racing first-join requests must create at most one membership row and all successful callers must observe the same resulting membership identity/version.
-  - Audit rule: successful first-join creation must emit one durable audit/event record carrying at minimum `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `membershipVersion`, and `requestId`.
+  - Audit rule: successful join commits one durable outbox/audit record in the same SQL transaction, carrying at minimum `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `membershipVersion`, and `requestId`.
   - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, and `TENANT_BILLING_BLOCKED`.
-  - Failed requests are non-committing: they must not leave behind a partial membership row or other admission side effects that later retries could accidentally reuse.
+  - Failed join requests are non-committing. Once the join transaction succeeds, membership intentionally remains even if later character creation, connect-token issuance, socket connection, or `PLAY` fails.
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:

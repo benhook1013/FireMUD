@@ -1,4 +1,4 @@
-version: 2
+version: 3
 updated_by: "platform-security+account-service"
 default_action: deny
 classifications:
@@ -36,26 +36,33 @@ routes:
     scope: tenant
     classification: public_production_onboarding
     tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
+  - service: game-session-service
+    route: JOIN
+    scope: tenant
+    classification: public_production_onboarding
+    tenant_billing_watermark_applies: false
     membership_watermark_applies: false
-    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    mutation_contract: explicit_public_membership_atomic
   - service: game-session-service
     route: PLAY
     scope: tenant
     classification: public_production_onboarding
     tenant_billing_watermark_applies: false
-    membership_watermark_applies: false
-    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
-    mutation_contract: public_production_membership_atomic
+    membership_watermark_applies: true
+    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
     canonical_errors:
-      any_of: [CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH]
+      any_of: [JOIN_REQUIRED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH]
   - service: entity-management-service
     route: POST /characters
     scope: tenant
     classification: public_production_onboarding
     auth_path: player_bootstrap
     tenant_billing_watermark_applies: false
-    membership_watermark_applies: false
-    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
+    membership_watermark_applies: true
+    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
   - service: game-session-service
     route: StartSession
     scope: tenant
@@ -99,6 +106,14 @@ routes:
     route: PlayerBootstrapLogin
     scope: public
     classification: public
+  - service: account-service
+    route: JoinPublicProductionMembership
+    scope: tenant
+    classification: public_production_onboarding
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: false
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    mutation_contract: explicit_public_membership_atomic
   - service: account-service
     route: AuthLogout
     scope: account

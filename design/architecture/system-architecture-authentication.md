@@ -213,7 +213,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
-- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, `POST /auth/connect-token`, and public-production first-join membership creation. Game Session owns the in-socket `LOGIN`/`PLAY` binding steps and consumes the gateway-signed connect context; it does not own the public first-party bootstrap HTTP surface.
+- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, explicit `/auth/bootstrap/join`, `POST /auth/connect-token`, and membership lifecycle. Game Session exposes the equivalent text `JOIN` command and owns in-socket `LOGIN`/`PLAY`, but delegates membership mutation to Account and never creates it during `PLAY`.
 - Bootstrap-discovery APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return the canonical lobby discovery data used to choose a target before socket open.
   - These endpoints are the canonical pre-socket discovery path for first-party clients.
   - They must apply the same caller-bound membership, realm visibility, and entitlement filtering rules as in-band `WORLDS` / `REALMS` / `CHARS`.
@@ -367,6 +367,11 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_emberfall_production_v1"
    }]
 
+POST /auth/bootstrap/join
+Authorization: Bearer <bootstrapToken>
+{ connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
+-> { tenantId: "tenant-emberfall", membershipVersion: 1, joined: true }
+
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 Authorization: Bearer <bootstrapToken>
 -> []
@@ -378,7 +383,7 @@ Authorization: Bearer <bootstrapToken>
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
+{ connectScopeId: "cs_emberfall_production_v1", requestId: "req-connect-1" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
 -> { accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt, jti, issuedAt }
 
@@ -388,17 +393,17 @@ PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
-Required postconditions for the first successful public-production join:
+Required postconditions for the explicit public-production join:
 
 - the account now has canonical `player` membership for the tenant;
 - future `WORLDS` results for that account may rely on membership rather than public discovery alone; and
-- if character creation or admission fails before `OK PLAY`, the service must not persist a partial membership grant.
+- later character, token, socket, or `PLAY` failure does not remove the intentionally joined membership.
 
 Canonical character-creation contract for this flow:
 
 - The player-facing control-plane surface is `POST /characters` using the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target.
 - Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
-- `POST /characters` is allowed only after bootstrap discovery has selected a caller-visible realm target and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
+- `POST /characters` is allowed only after the caller has explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
 - The current realm-scoped backend creation substrate carries `{tenantId, accountId, name, gameInstanceId, playableStateScope}` into Entity Management. The richer player-facing descriptor for template/race/class/options is still a required product contract before first-party clients can render nontrivial character creation without game-specific assumptions.
 
@@ -476,10 +481,11 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
 - `REALMS <world>` – list the visible realms for the selected world (`<world>` is a world index from `WORLDS` or a world slug). Responses include the default production realm plus any explicitly authorized additional realms such as playtest forks.
+- `JOIN <world>` – explicitly create or return the caller's durable `player` membership for the world's public production realm. First-party clients expose the equivalent `Join & Play` action through Account bootstrap.
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
-`public_production_onboarding` is the lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists. First-party bootstrap clients create the caller's `player` membership during `POST /auth/connect-token` before socket admission, while credential-bearing text clients use the same Account Service writer boundary during `PLAY` before gameplay binding is committed.
+`public_production_onboarding` is the lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before membership exists, but must explicitly use `Join & Play` or `JOIN <world>` before character creation, connect-token issuance, or `PLAY`. The resulting membership is the intended durable account-to-game relationship used by later discovery and return flows.
 
 Realm discovery and routing contract:
 
@@ -505,7 +511,7 @@ Lobby discovery source-of-truth contract:
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row. For first-party bootstrap clients, `POST /auth/connect-token` creates the caller's `player` membership through the Account Service writer boundary before socket admission. For credential-bearing text clients that do not use connect-token bootstrap, `PLAY` invokes the same writer boundary before gameplay binding is committed.
+- `REALMS <world>` and explicit `JOIN <world>` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a membership, but `CHARS`, character creation, connect-token issuance, and `PLAY` require the explicit join result or another applicable membership/grant.
 - `REALMS <world>` remains a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
 - `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
@@ -514,17 +520,9 @@ The `PLAY` flow:
 
 - Resolves `<world>` to a canonical `tenantId` and validates it exists.
 - Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
-- Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority or the canonical public-production admission policy for the default production realm. Global roles alone must not satisfy gameplay admission.
-- If admission is proceeding through public-production discovery rather than an existing membership row, membership creation must go through the Account Service writer boundary before gameplay binding is committed. First-party bootstrap clients normally complete this during `POST /auth/connect-token`; credential-bearing text clients and any non-bootstrap admission path invoke the same boundary during `PLAY`. Failed admissions must not leave behind a partial membership grant.
-  - Membership creation writer authority: Account Service only. Game Session must not write membership rows directly.
-  - Required API: `EnsurePublicProductionPlayerMembership(accountId, tenantId, worldSlug, realmSlug, requestId)` or protocol-equivalent, owned by Account Service.
-  - This API is valid only for the tenant's default production realm under the canonical public-production admission policy; it must fail closed for non-production realms or callers that are not eligible for public admission.
-  - Minimum preconditions: the selected realm is the tenant's current default public production realm, the realm remains caller-visible through public-production discovery, the current admission pointer resolves unambiguously for that realm, and runtime entitlement checks still allow gameplay admission for the tenant.
-  - Idempotency: `requestId` is the attempt identity. Retrying the same `{accountId, tenantId, worldSlug, realmSlug, requestId}` must return the same resulting membership identity/version or the same deterministic application failure. A new `requestId` is required when callers intentionally start a fresh first-join attempt after policy, entitlement, or routing conditions change.
-  - Concurrency: if multiple first-join attempts race, exactly one membership row may be created and all successful callers must observe the same resulting membership identity/version.
-  - Visibility: on success, the resulting membership must be immediately visible to `GetTenantMembershipForRuntime(accountId, tenantId)` for the same admission transaction.
-  - Audit: successful first-join creation must emit one durable audit/event record including at minimum `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `membershipVersion`, `requestId`, and actor source (`public_production_onboarding`).
-  - Failure semantics: gameplay binding, session creation, and any character-binding side effects must not commit unless `EnsurePublicProductionPlayerMembership` commits successfully. Policy denial or availability failure must not leave behind a partial membership row, provisional character ownership, or resumable gameplay shell.
+- Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership and any required realm grant. Global roles and public discoverability alone must not satisfy gameplay admission.
+- If the public realm is visible but the account has not explicitly joined, returns `JOIN_REQUIRED` with `JOIN <world>`/`Join & Play` recovery guidance and does not create membership or other admission state.
+- Membership creation writer authority remains Account Service through `JoinPublicProductionMembership(accountId, tenantId, worldSlug, realmSlug, requestId)` or protocol-equivalent. Game Session, connect-token issuance, character creation, and `PLAY` must not create membership implicitly.
 - Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. The membership response must also assert `gameplayAdmissionAllowed=true`; gameplay admission must not source `membershipVersion` or gameplay authority from JWT claims or local caches.
 - Consults the runtime entitlement contract `GetTenantEntitlementsForRuntime(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
 - Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId, gameInstanceId}` according to the selected realm's character policy.
