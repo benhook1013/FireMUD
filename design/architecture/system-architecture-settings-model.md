@@ -33,16 +33,24 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 
 ## Ownership and Precedence
 
-FireMUD should resolve settings in this order:
+FireMUD resolves each effective setting from the applicable value sources below in increasing order of specificity:
 
 1. hardcoded safe defaults
-2. selected preset baseline
-3. operator bootstrap file/env settings
-4. operator runtime overrides where explicitly supported
-5. operator caps and bounds
-6. tenant/game overrides
+2. selected operator preset baseline
+3. explicit operator bootstrap file/env configuration
+4. supported operator runtime defaults
+5. tenant overrides
+6. game-instance overrides
 
-Tenant/game overrides are always constrained by operator caps where those caps exist.
+Not every setting participates in every source. Each surfaced key must declare which sources and scopes may configure it. Infrastructure wiring, connection targets, secrets, and service bootstrap values remain operator-owned and cannot acquire tenant or game-instance overrides merely because they use the same typed settings machinery.
+
+Presets and bootstrap configuration use the same typed setting key space. A preset expands into a bundle of ordinary operator baseline values; it is not a second settings authority. An explicit bootstrap value overrides the selected preset value for the same key.
+
+Value precedence is separate from constraint evaluation. Schema and platform hard bounds always apply, and configured operator caps constrain tenant and game-instance values for keys that declare such caps. A later value source can never override a hard bound or operator cap.
+
+- New tenant or game-instance writes that violate an applicable bound or cap are rejected.
+- If an operator later tightens a cap so an existing persisted override becomes invalid, the resolver disregards that invalid override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic suitable for operator and creator remediation.
+- Effective-setting responses report the value's provenance, including the winning source and any disregarded invalid override.
 
 This means:
 
@@ -184,13 +192,15 @@ Later admin/operator or creator tooling should consume the generated machine-rea
 
 ## Effective Config Resolution
 
-The eventual target state is one shared settings authority or read model that resolves effective configuration for gameplay-facing domains.
+The eventual target state is one bounded shared resolver or read model that resolves effective configuration for gameplay-facing domains consistently across consuming services.
 
-That later authority should:
+That later resolver or read model should:
 
 - own tenant/game behavior settings
-- apply operator caps and defaults consistently
-- present resolved effective values to services without each service inventing its own merge logic
+- apply the canonical value precedence and source eligibility for every surfaced key
+- enforce schema/platform hard bounds and operator caps separately from value precedence
+- reject invalid writes and handle cap-invalidated persisted overrides through the canonical fallback and diagnostic rule
+- present resolved effective values and provenance to services without each service inventing its own merge logic
 
 This does not need to become a full distributed config platform. A bounded authoritative settings read model is enough.
 
