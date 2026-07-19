@@ -179,7 +179,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-02` — `revised` on 2026-07-19; [ADR 0052](../../architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md)
 - [x] `TICK-03` — `revised` on 2026-07-19; [ADR 0053](../../architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md)
 - [x] `TICK-04` — `revised` on 2026-07-19; [ADR 0054](../../architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md)
-- [ ] `TICK-06`
+- [x] `TICK-06` — `revised` on 2026-07-19; [ADR 0055](../../architecture/decisions/adr-0055-durable-cross-region-effects-with-static-live-topology.md)
 - [ ] `HOTPATH-01`
 - [ ] `RECON-01`
 - [ ] `REDIS-01`

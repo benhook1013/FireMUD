@@ -259,7 +259,7 @@ Ownership changes (moving a region between executors) follow the lease rules:
 
 Normal lease handoff/rebalancing does **not** bump `regionEpoch`: `regionEpoch` is reserved for scoped coordination resets and explicit maintenance operations that intentionally sever the old region timeline. Lease tokens provide fencing between executors within the same epoch.
 
-For most deployments, region topology changes (splits, merges, or reassignments between executors) are applied between game instances or during maintenance windows so active sessions are not disrupted.
+Under [ADR 0055](./decisions/adr-0055-durable-cross-region-effects-with-static-live-topology.md), region topology is static while an active game instance is normally open. Unchanged regions may move between executors through ordinary fenced ownership handoff. Split/merge is initially an operator-controlled maintenance cutover; automatic live split/merge is not a supported capability until separately accepted with complete migration and rollback proof.
 
 World Management owns region topology (layout and `<regionId>` assignments) and may, over time, support “drain and split” or “merge” flows:
 
@@ -270,11 +270,11 @@ World Management owns region topology (layout and `<regionId>` assignments) and 
 
 Region split/merge operations interact directly with tick idempotency, Redis key ownership, and cross-region follow-ups. To keep these operations safe and deterministic, topology changes must follow a single, explicit protocol:
 
-1. **Freeze and fence**
-   - Pause tick scheduling and new command intake for the affected region(s).
+1. **Barrier, freeze, and fence**
+   - Establish a durable admission barrier covering player front ends, automation, timers, and remote-follow-up producers, then pause tick scheduling and new work intake for the affected region(s).
    - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered to a terminal state.
 2. **Converge durable outcomes**
-   - Run the tick effect ledger replay controller/reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` before moving queues or entities.
+   - Run the tick effect ledger replay controller/reconcile tooling until the declared bounded drain deadline. At expiry, explicitly terminalize remaining `SCHEDULED` effects, coordinators, follow-ups, and results rather than waiting indefinitely.
    - Accepted command records that never became durably tied to a surviving `tick_batch_id` converge to terminal command status (`executionOutcome = LOST_BEFORE_STAGING`, default `gameplayResult = NOT_APPLIED`) as part of the same reset/topology scope; do not leave old-epoch dedupe rows stranded in pre-batch states.
 3. **Sever the old timeline for any mapping change (required)**
    - If the operation changes region boundaries or re-homes entities to a different region mapping, bump `regionEpoch` for all affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
@@ -286,7 +286,7 @@ Region split/merge operations interact directly with tick idempotency, Redis key
    - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.
 5. **Handle cross-region follow-ups explicitly**
    - Durable follow-up rows in PostgreSQL are the source of truth for cross-region work. Topology changes must ensure follow-ups are either:
-     - Rewritten to target the new region mapping, or
+     - Recreated under a new lineage-linked identity targeting the new region mapping, or
      - Converged to `ABANDONED` with a topology-change reason when replaying them under the new mapping is not valid.
 6. **Resume**
    - Re-enable tick scheduling and command intake once the new mapping is in place and the region(s) are healthy.
@@ -448,6 +448,7 @@ Cross-region actions (for example, one player affecting another in a different r
 - The origin region enqueues follow-up work for the target region.
 - The target region drains and executes those follow-ups under its own lease.
 - Results are relayed back to the origin region or player session.
+- Origin tick commit proves durable scheduling only. The player command remains pending until its durable coordinator derives a terminal command outcome; epoch change or maintenance abandonment is explicit rather than silent carry-over.
 
 See `system-architecture-tick-execution-flows.md` for the detailed cross-region flow, budgets, and backpressure rules.
 
