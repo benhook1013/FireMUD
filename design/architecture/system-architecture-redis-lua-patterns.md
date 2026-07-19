@@ -119,20 +119,17 @@ Many coordination structures stored in Redis (for example `tick:{tenantRegionTag
 
 - Every structured payload that may evolve must include a small, explicit `schemaVersion` field in its serialized representation.
 - Scripts that read these payloads:
-  - Treat a missing `schemaVersion` as a well-defined default (for example, version `1`).
-  - Support **at least** the current and previous schema versions (`N` and `N‑1`) during rollout windows.
+  - Treat a missing `schemaVersion` as a legacy version only when the registry identifies one unambiguous legacy shape and focused proof shows every versionless value in scope has that meaning; otherwise fail without mutation.
+  - Support every caller and stored-payload version that can actually coexist during a supported rollout, rollback, recovery, or retained-data window. This may be one, two, or more versions and is not a permanent `N`/`N-1` formula.
   - Never silently ignore unknown versions; instead they return a clear, non-mutating outcome such as `"UNSUPPORTED_SCHEMA_VERSION"` that callers can log and surface in metrics.
 - Migration-friendly branching:
   - Scripts branch on `schemaVersion` only to:
     - Apply added fields with sensible defaults (for example, treat absent optional fields as `nil` / default values).
     - Adjust interpretation of existing fields in a way that remains idempotent for both `N` and `N‑1`.
   - They avoid “upgrade in place” behavior inside Lua (for example, rewriting the payload to a new shape as a side effect of reads) unless that behavior is explicitly designed and tested for replay.
-- Rollout order mirrors the guidance in the Redis architecture doc:
-  1. Deploy new scripts that understand both `N‑1` and `N` payloads everywhere.
-  2. Update services to start writing `schemaVersion = N` payloads.
-  3. Once metrics show old versions have drained, remove the `N‑1` branch from scripts in a separate change.
+- Rollout order mirrors [ADR 0084](decisions/adr-0084-evidence-scoped-redis-lua-compatibility.md): first deploy a shared script or immutable version-specific script set that covers every evidenced caller/payload combination, then change writers, and remove obsolete support only after deployment and retained-state evidence proves it can no longer appear.
 - Tests for versioned scripts:
-  - Exercise both `N‑1` and `N` payloads (and the “missing version” default case).
+  - Exercise every evidenced caller/payload combination and both proven and rejected versionless legacy cases.
   - Assert that re-running the script with the same payload and `schemaVersion` is idempotent.
   - Assert that unknown versions do not mutate Redis state and return the expected `"UNSUPPORTED_SCHEMA_VERSION"` (or equivalent) outcome.
 
@@ -368,14 +365,15 @@ Unit tests for this script would:
 Script changes must be rolled out in a way that respects both AOF replay semantics and the reset model described in `system-architecture-redis-reset-and-recovery.md`:
 
 - **Compatibility levels**
-  - `compatible` – purely additive changes (for example, new return fields, extra read-only validations) that do not change key shape or semantics. These may be rolled out without coordination resets as long as callers tolerate older results.
+  - `compatible` – semantically safe for every caller and stored payload that can coexist, preserving fencing, idempotency, mutation/no-mutation, outcomes, and validation. These may roll normally only when the compatibility evidence covers the full coexistence set.
   - `requires_region_reset` / `requires_tenant_reset` / `requires_cluster_reset` – changes that alter key shapes or semantics in ways that cannot be safely mixed with old behavior. These must run alongside the corresponding coordination reset flows and are expected to be rare.
   - If a rollout requires an epoch boundary to avoid mixed old/new semantics, classify it as the corresponding `requires_*_reset` scope and execute the full reset handshake (pause ticks → bump `region_epoch` → reconcile ledger → resume). Do not treat `region_epoch` bumps as a routine rollout mechanism outside this compatibility contract.
 - **Registry as the source of truth**
   - The Lua Script Registry records a `compatibility_level` (or equivalent) and `reset_sensitivity` for each script and version.
   - Upgrades that move a script into a stricter compatibility level must be reflected in the registry before rollout, and their expected reset scope must be documented in design docs and runbooks.
 - **AOF replay and schemaVersion**
-  - `schemaVersion` changes must be backwards compatible for at least `N-1` versions, and scripts must treat unknown versions as non-mutating (`"UNSUPPORTED_SCHEMA_VERSION"`) so AOF replay cannot apply effects with mismatched schemas.
+  - `schemaVersion` changes support the full evidenced coexistence set, and scripts treat unknown or ambiguous versionless values as non-mutating (`"UNSUPPORTED_SCHEMA_VERSION"`) so replay cannot apply effects with mismatched schemas.
+  - Immutable version-specific scripts may coexist when they make the supported transition clearer than branching inside one script; registry metadata maps supported callers and payloads to the correct immutable identity.
   - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
 
 ## Lua Script Registry and CI Expectations

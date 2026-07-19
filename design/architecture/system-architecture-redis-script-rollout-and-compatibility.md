@@ -7,7 +7,7 @@ This document defines how Lua script evolution is classified, tested, and rolled
 Script changes are classified into a small set of compatibility modes:
 
 - `compatible`
-  - backward- and forward-compatible with existing key shapes and supported `schemaVersion` ranges
+  - semantically safe across every caller and stored-payload version that can actually coexist during supported rollout, rollback, recovery, or retained-data windows
   - may be deployed through normal rolling deployments without coordination resets
 - `requires_region_reset`
   - safe only when region-scoped coordination state is cleared
@@ -31,12 +31,14 @@ The Lua Compatibility Registry lives in the shared `firemud-common` module along
 - `outcomesSupported`
 - compatibility tag and rationale
 - optional minimum/maximum `schemaVersion` values known to exist in production deployments
+- every evidenced caller/payload coexistence combination, any proven versionless legacy interpretation, and immutable version-specific script routing where used
 
 For the purposes of this registry, `compatible` is intentionally narrow:
 
 - it does not allow changes that alter return codes for valid input
 - it does not allow turning a no-op into a mutating path or vice versa
 - it does not allow reinterpreting existing payload semantics during AOF replay
+- it does not mean speculative compatibility with unknown future versions or permanent current/previous support; the supported set follows concrete coexistence evidence
 
 ## Concrete Examples
 
