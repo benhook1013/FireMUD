@@ -37,7 +37,7 @@ Movement, drops, pickups, and room presence are cross-service by design:
 - All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`.
 - Both services must implement durable idempotency guards so partial success can be retried safely until convergence.
 - Cross-service retry orchestration is owned by the Game Session reconciliation backlog. World Management exposes participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
-- Ambient world mutations such as doors, hazards, and weather are applied only via effect-shaped commands carrying `EffectId` plus `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
+- Ambient world mutations such as doors, hazards, and weather are applied only via typed effect-shaped commands carrying the root `EffectId`, runtime scope, expected epoch/version, operation and target identity, and immutable request digest. World owns the durable fact and authoritative version; Game Logic owns its gameplay interpretation. Correctness-bearing player, automation, script, and operator changes use Game Session's durable effect-admission and outcome path. Operators and scripts must not write World Management instance tables directly.
 
 Concrete per-effect required writes and reconciliation rules live in [Spatial and Ambient Effects Catalog](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 

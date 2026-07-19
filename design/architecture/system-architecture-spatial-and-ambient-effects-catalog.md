@@ -79,7 +79,7 @@ Reconciliation:
 
 ## Ambient Effects (World Management Authoritative)
 
-Ambient effects are durable mutations to world instance state such as doors, hazards, and weather. They must use effect-shaped mutation contracts (for example `ApplyRoomAmbientStatePatch(RoomInstanceRef, EffectId, patch)`), not direct table writes.
+Ambient effects are durable mutations to world instance facts such as doors, hazards, and weather. World Management owns those typed runtime facts and their versions; Game Logic owns their interpretation and gameplay consequences, while Game Design owns authored defaults. Scripts, automation, and operators submit effect intent rather than owning or directly writing runtime state. Correctness-bearing changes pass through Game Session's durable effect admission and outcome/reconciliation path even when World is the only mutation participant. World applies exact fenced preconditions and an operation/aggregate/request-digest-bound idempotency result through typed mutation contracts such as `ApplyRoomAmbientStatePatch`; see [ADR 0060](./decisions/adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md).
 
 ### Door Toggle
 
