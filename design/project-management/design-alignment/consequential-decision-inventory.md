@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 41 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 42 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **78** | **183** | `in-progress` |
+| **Total** | | **79** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -219,7 +219,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SCRIPT-02` — `revised` on 2026-07-20; [ADR 0088](../../architecture/decisions/adr-0088-static-and-incremental-script-output-bounds.md)
 - [x] `SCRIPT-03` — `revised` on 2026-07-20; [ADR 0089](../../architecture/decisions/adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md)
 - [x] `SCRIPT-12` — `revised` on 2026-07-20; [ADR 0090](../../architecture/decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md)
-- [ ] `TIMER-01`
+- [x] `TIMER-01` — `revised` on 2026-07-20; [ADR 0091](../../architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md)
 - [ ] `GRPC-01`
 
 ### Packet 4: Publishing, Settings, And Authored Behavior

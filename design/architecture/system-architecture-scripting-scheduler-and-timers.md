@@ -8,14 +8,17 @@ The current Automation & Scripting implementation now persists a durable patch-s
 
 ## Script Timers vs Tick Timers
 
-Script timers are layered on top of the core tick model and always express cadence in terms of the authoritative game tick timeline, not raw wall-clock seconds:
+Every script timer declares a clock and recovery class under [ADR 0091](decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md) and [ADR 0072](decisions/adr-0072-class-specific-timer-durability-and-recovery.md):
 
-- Cadence for `onInterval` and other tick-based timers is configured in ticks (for example, "every N ticks"). Internally, schedulers may derive wall-clock hints from tick heartbeat streams, but the public contract is expressed in game ticks.
+- `onInterval` and other gameplay-cadence schedules use authoritative tick/game time by default. Their cadence freezes or stretches with that timeline.
+- An explicitly real-time timer may use a wall-clock deadline when elapsed real time is its declared product semantics. Reaching the deadline makes work eligible, but gameplay work enters only at the next eligible canonical tick and never mutates on a parallel wall-clock path.
 - Missed firings are handled in a bounded, deterministic way:
   - Every schedule declares `SKIP_MISSED` or `COALESCE_ONE`. When leaders change, `COALESCE_ONE` may enqueue at most one synthetic firing for that logical schedule in the durable resume window; `SKIP_MISSED` enqueues none.
+  - The durable resume-window identity spans repeated scans and progress observations, so they cannot mint another catch-up firing for the same logical schedule/window.
   - Before enqueueing any such firing, the scheduler must first claim or insert a durable trigger-instance row keyed by an instance-aware uniqueness projection so failover or duplicate consumers cannot create duplicate logical triggers.
   - If `scheduleId` is not globally unique across game instances, this projection must include `gameInstanceId`.
   - Missed firings due to quotas, budgets, disabled scripts, or failed or unknown versions are not replayed later; they are recorded in `script_event_audit` and associated metrics as dropped or skipped triggers.
+- A gameplay consequence that must occur once is not a best-effort interval. It uses the durable correctness-bearing one-shot timer path with stable identity, authoritative due state, idempotent dispatch, and an explicit terminal outcome.
 
 Within that model:
 
@@ -40,7 +43,7 @@ When reload, rollback, or schedule preservation keeps a logical timer alive acro
   - the scheduler resumes on the next future cadence boundary at or after resume, never by replaying every missed firing from the paused window;
   - a preserved schedule may fire immediately after resume only when its next valid cadence boundary is exactly `resumeTickId`;
   - reload and rollback preservation and leader-failover catch-up remain distinct behaviors. The resume rule governs preserved timers after a version transition; bounded catch-up rules govern missed firings after scheduler downtime within the same logical schedule and version.
-- Equivalent wall-clock timers must define an analogous formula over `nextRunAt` and `resumeAt`, but gameplay-facing cadence remains specified in ticks and must reduce to the same tick-boundary behavior when tick-aligned.
+- Explicit wall-clock schedules define the analogous formula over `nextRunAt` and `resumeAt`; their due point still creates gameplay work only at the next eligible canonical tick.
 
 ## End-to-End `onInterval` Timer Lifecycle
 
@@ -66,6 +69,7 @@ All durable timer identity and scheduler checkpoints must be instance-aware even
   - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream for that epoch; and
   - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which "every N ticks" boundaries were crossed during the gap. Before enqueueing any `onInterval` trigger, it first claims or inserts a durable trigger-instance row keyed by `(scheduleId, gameInstanceId, regionEpoch, dueTickId, triggerKind)` or an equivalent uniqueness projection.
 - Each `COALESCE_ONE` schedule may enqueue at most one missed `onInterval` trigger before normal scheduling resumes; `SKIP_MISSED` schedules enqueue none. `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` is the global cap across logical schedules for one durable resume-window identity. Candidates beyond this cap are dropped, not deferred, and surfaced through audit and `automation_script_timer_catchup_truncated_total`.
+- That durable resume-window identity is reused across repeated observations and worker takeover until the recovery window closes; rescanning cannot grant another coalesced firing to the same schedule.
 - Catch-up truncation must use one stable fairness algorithm when due candidates exceed `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME`:
   - Build the candidate set ordered by `dueTickId ASC`, then `priorityTag` (`high`, `normal`, `background`), then stable schedule identity ASC.
   - Admit catch-up firings in round-robin passes across distinct `scheduleDefinitionId` values so one noisy schedule cannot consume the entire resume window before other overdue schedules get one chance to fire.

@@ -198,7 +198,7 @@ If Game Session rejects a queued command because its embedded `scriptPatchVersio
 
 ## Table 3: Timer Semantics Matrix
 
-Timer-driven handlers (`onInterval`, `onTimerExpire`) are best-effort, at-most-once per Trigger Identity.
+Best-effort timer-driven handlers (`onInterval` and explicitly classified best-effort `onTimerExpire`) are at-most-once per Trigger Identity. Correctness-bearing one-shot timers instead use the durable ADR 0072/ADR 0091 timer path and reach an explicit terminal outcome.
 
 The matrix below defines what the scheduler does when a firing becomes due under different conditions:
 
@@ -208,10 +208,10 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | Quota/budget denied | Skip the firing; do not replay later. | `finalStage=ADMISSION` and an explicit deny outcome/reason. |
 | `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading`. |
 | `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=rollback_paused`. |
-| Leader failover / short downtime | Apply the schedule's declared `SKIP_MISSED` or `COALESCE_ONE` policy. A coalescing schedule may admit at most one synthetic firing in the durable resume window; one deterministic fair `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` cap applies across schedules. Excluded candidates are dropped and never deferred as backlog. | Catch-up firings use `triggerMode=CATCH_UP` and deterministic identity from the coalesced due point and resume window. Skipped or cap-excluded candidates emit operator-visible audit, metric, and bounded reason evidence. |
+| Leader failover / short downtime | Apply the schedule's declared `SKIP_MISSED` or `COALESCE_ONE` policy. A coalescing schedule may admit at most one synthetic firing in the durable resume window across all repeated scans/observations; one deterministic fair `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` cap applies across schedules. Excluded candidates are dropped and never deferred as backlog. | Catch-up firings use `triggerMode=CATCH_UP` and deterministic identity from the coalesced due point and durable resume window. Skipped or cap-excluded candidates emit operator-visible audit, metric, and bounded reason evidence. |
 | Runtime scope / epoch change before due-point admission | Do not remint stale due points under the newer `(regionId, regionEpoch)` timeline. Advance the schedule to the next valid due point for the new scope and treat the old due point as fenced. | Record the dropped candidate against the old Trigger Identity with `finalStage=ADMISSION`, `finalOutcome=canceled`, and `finalReason=runtime_scope_changed`, and emit the runtime-fence metric. |
 | Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window unless the next valid cadence boundary lands exactly on resume. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
-| Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
+| Long downtime or sustained overload | No guarantee of eventual execution for each best-effort firing; the recurring schedule continues with future eligible boundaries once capacity returns unless separately removed, disabled, or fenced. | Missed firings must be visible as skips/drops in metrics and audit. |
 | Infrastructure error after admission | Evaluation may retry only under the same full Trigger Identity and must converge on the same work item/dispatch identities. Downstream retries remain idempotent. | `finalStage` must reflect where it failed; do not record `handoff_accepted` without full durable child acceptance. |
 
 ## Table 4: Metrics Label Matrix
