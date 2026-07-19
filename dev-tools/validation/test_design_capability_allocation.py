@@ -249,6 +249,40 @@ def main() -> None:
         "malformed gap/exemption count",
     )
 
+    expect_call_failure(
+        "duplicate exact allocation section",
+        lambda: validator.section(
+            "## Allocation Ledger\n\n## Allocation Ledger\n",
+            "Allocation Ledger",
+        ),
+        "expected exactly one section",
+    )
+    expect_call_failure(
+        "non-exact allocation section",
+        lambda: validator.section("## Allocation Ledger Notes\n", "Allocation Ledger"),
+        "expected exactly one section",
+    )
+    duplicate_table = """
+## Allocation Ledger
+
+| Design source | Heading or scope | Primary capability |
+| --- | --- | --- |
+| one | scope | primary |
+
+| Design source | Heading or scope | Primary capability |
+| --- | --- | --- |
+| two | scope | primary |
+"""
+    expect_call_failure(
+        "duplicate matching allocation table",
+        lambda: validator.table_in_section(
+            duplicate_table,
+            "Allocation Ledger",
+            {"Design source", "Heading or scope", "Primary capability"},
+        ),
+        "expected exactly one table",
+    )
+
     print("design capability allocation regression tests passed")
 
 

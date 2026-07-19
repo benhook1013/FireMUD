@@ -213,6 +213,29 @@ def main() -> None:
             ),
             "primary tracker must not be repeated as a secondary tracker",
         )
+        validator.validate_evidence_presence(
+            "not-implemented",
+            ["[design](x)", "No production anchor: no implementation exists.", "[proof](x)"],
+            "absent-production-positive",
+        )
+        expect_failure(
+            "missing production anchor without explicit rationale",
+            lambda: validator.validate_evidence_presence(
+                "not-implemented",
+                ["[design](x)", "No implementation exists.", "[proof](x)"],
+                "absent-production-negative",
+            ),
+            "implementation evidence must include a repository link",
+        )
+        expect_failure(
+            "implemented row without production anchor",
+            lambda: validator.validate_evidence_presence(
+                "implemented",
+                ["[design](x)", "No production anchor: missing.", "[proof](x)"],
+                "implemented-production-negative",
+            ),
+            "implementation evidence must include a repository link",
+        )
         allowed_handoffs = allocations["AA-1.1"][1]
         validator.validate_status_row_handoffs(
             "player-access-and-session.md",
@@ -319,6 +342,69 @@ def main() -> None:
     allocations = {"AA-1.1": ("a.md", set()), "AA-1.2": ("b.md", set())}
     summary_path = Path("design/project-management/implementation-tracking/capability-allocation.md")
     validator.validate_coverage_summary(summary_path, summary, {"AA-1.1", "AA-1.2"}, allocations, {"a.md", "b.md"})
+    expect_failure(
+        "duplicate Coverage Summary section",
+        lambda: validator.validate_coverage_summary(
+            summary_path,
+            summary + summary,
+            {"AA-1.1", "AA-1.2"},
+            allocations,
+            {"a.md", "b.md"},
+        ),
+        "expected exactly one Coverage Summary section",
+    )
+    duplicate_measure_table = summary.replace(
+        "| Primary tracker | Primary leaves |",
+        "| Measure | Result |\n| --- | ---: |\n| Duplicate | 0 |\n\n"
+        "| Primary tracker | Primary leaves |",
+    )
+    expect_failure(
+        "duplicate Coverage Summary measure table",
+        lambda: validator.validate_coverage_summary(
+            summary_path,
+            duplicate_measure_table,
+            {"AA-1.1", "AA-1.2"},
+            allocations,
+            {"a.md", "b.md"},
+        ),
+        "must contain exactly one measure table",
+    )
+    duplicate_tracker_table = summary + """
+| Primary tracker | Primary leaves |
+| --- | ---: |
+| [a](./a.md) | 1 |
+| [b](./b.md) | 1 |
+| **Total** | **2** |
+"""
+    expect_failure(
+        "duplicate Coverage Summary tracker table",
+        lambda: validator.validate_coverage_summary(
+            summary_path,
+            duplicate_tracker_table,
+            {"AA-1.1", "AA-1.2"},
+            allocations,
+            {"a.md", "b.md"},
+        ),
+        "one primary-tracker table",
+    )
+    expect_failure(
+        "duplicate Capability Status section",
+        lambda: validator.level_two_section(
+            "## Capability Status\n\n## Capability Status\n",
+            "Capability Status",
+            "tracker.md",
+        ),
+        "expected exactly one Capability Status section",
+    )
+    expect_failure(
+        "non-exact Capability Status section",
+        lambda: validator.level_two_section(
+            "### Capability Status\n",
+            "Capability Status",
+            "tracker.md",
+        ),
+        "expected exactly one Capability Status section",
+    )
     expect_failure(
         "duplicate coverage-summary measure",
         lambda: validator.validate_coverage_summary(

@@ -43,6 +43,7 @@ CAPABILITY_RE = re.compile(r"[A-Z]{2}-\d+\.\d+")
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx"}
 AUDIT_CONTEXT_NAMES = {"README.md", "package.json"}
+PRODUCTION_ANCHOR_OPTIONAL_STATES = {"not-implemented", "design-unresolved", "not-applicable"}
 CANONICAL_PROOF_TOOLS = {
     "dev-tools/backups/verify-backups.sh",
     "dev-tools/deploy/preflight.py",
@@ -283,6 +284,33 @@ def markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
     return tables
 
 
+def level_two_section(text: str, heading: str, context: str) -> str:
+    matches = list(re.finditer(rf"^## {re.escape(heading)}\s*$", text, re.MULTILINE))
+    if len(matches) != 1:
+        fail(f"{context}: expected exactly one {heading} section, found {len(matches)}")
+    match = matches[0]
+    following = re.search(r"^## ", text[match.end() :], re.MULTILINE)
+    end = match.end() + following.start() if following else len(text)
+    return text[match.end() : end]
+
+
+def validate_evidence_presence(
+    implementation: str,
+    cells: list[str],
+    context: str,
+) -> None:
+    for label, cell in zip(("design", "implementation", "proof"), cells, strict=True):
+        if MARKDOWN_LINK_RE.search(cell):
+            continue
+        if (
+            label == "implementation"
+            and implementation in PRODUCTION_ANCHOR_OPTIONAL_STATES
+            and re.search(r"\bno production anchor\s*:", cell, re.IGNORECASE)
+        ):
+            continue
+        fail(f"{context}: {label} evidence must include a repository link")
+
+
 def summary_key(cell: str) -> str:
     return cell.strip().strip("*").strip()
 
@@ -302,11 +330,17 @@ def validate_coverage_summary(
     trackers: set[str],
     root: Path = ROOT,
 ) -> None:
-    tables = markdown_tables(text)
-    measure_table = next((table for table in tables if {"Measure", "Result"} <= set(table[0])), None)
-    tracker_table = next((table for table in tables if {"Primary tracker", "Primary leaves"} <= set(table[0])), None)
-    if measure_table is None or tracker_table is None:
-        fail(f"{relative_path(path, root)}: Coverage Summary tables are missing or malformed")
+    context = relative_path(path, root)
+    tables = markdown_tables(level_two_section(text, "Coverage Summary", context))
+    measure_tables = [table for table in tables if {"Measure", "Result"} <= set(table[0])]
+    tracker_tables = [table for table in tables if {"Primary tracker", "Primary leaves"} <= set(table[0])]
+    if len(measure_tables) != 1 or len(tracker_tables) != 1:
+        fail(
+            f"{context}: Coverage Summary must contain exactly one measure table "
+            f"and one primary-tracker table; found {len(measure_tables)} and {len(tracker_tables)}"
+        )
+    measure_table = measure_tables[0]
+    tracker_table = tracker_tables[0]
 
     measure_headers, measure_rows = measure_table
     measure_index = measure_headers.index("Result")
@@ -455,11 +489,10 @@ def main() -> None:
     for tracker_name in sorted(TRACKERS):
         path = tracking_dir / tracker_name
         text = path.read_text(encoding="utf-8")
-        if "## Capability Status" not in text:
-            fail(f"{relative_path(path, root)}: missing Capability Status section")
-        section = text.split("## Capability Status", 1)[1].split("\n## ", 1)[0]
+        tracker_context = relative_path(path, root)
+        capability_section = level_two_section(text, "Capability Status", tracker_context)
         row_count = 0
-        for line in section.splitlines():
+        for line in capability_section.splitlines():
             match = re.match(r"^\| `?([A-Z]{2}-\d+\.\d+)`?(?:\s+[^|]+)? \|", line)
             if not match:
                 continue
@@ -471,9 +504,7 @@ def main() -> None:
             verification = state(cells[2], VERIFICATION_STATES, f"{tracker_name}:{capability_id}")
             if any(not cell for cell in cells[3:]):
                 fail(f"{tracker_name}:{capability_id}: design, anchors, handoffs, and gap cells are required")
-            for label, cell in zip(("design", "implementation", "proof"), cells[3:6], strict=True):
-                if not MARKDOWN_LINK_RE.search(cell):
-                    fail(f"{tracker_name}:{capability_id}: {label} evidence must include a repository link")
+            validate_evidence_presence(implementation, cells[3:6], f"{tracker_name}:{capability_id}")
             validate_evidence_links(root, path, capability_id, verification, cells[3:6])
             if (implementation == "not-applicable") != (verification == "not-applicable"):
                 fail(f"{tracker_name}:{capability_id}: not-applicable states must be paired")
@@ -491,7 +522,7 @@ def main() -> None:
             row_count += 1
         if row_count == 0:
             fail(f"{relative_path(path, root)}: Capability Status has no rows")
-        validate_local_links(path, section, root)
+        validate_local_links(path, capability_section, root)
 
     if set(tracked) != leaf_set:
         fail(

@@ -280,19 +280,27 @@ def markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
 
 
 def section(text: str, heading: str) -> str:
-    match = re.search(rf"^## {re.escape(heading)}\s*$", text, re.MULTILINE)
-    if not match:
-        fail(f"missing section {heading!r}")
+    matches = list(re.finditer(rf"^## {re.escape(heading)}\s*$", text, re.MULTILINE))
+    if len(matches) != 1:
+        fail(f"expected exactly one section {heading!r}, found {len(matches)}")
+    match = matches[0]
     following = re.search(r"^## ", text[match.end() :], re.MULTILINE)
     end = match.end() + following.start() if following else len(text)
     return text[match.end() : end]
 
 
 def table_in_section(text: str, heading: str, required_headers: set[str]) -> tuple[list[str], list[list[str]]]:
-    for headers, rows in markdown_tables(section(text, heading)):
-        if required_headers <= set(headers):
-            return headers, rows
-    fail(f"{heading}: missing table with headers {sorted(required_headers)}")
+    matches = [
+        (headers, rows)
+        for headers, rows in markdown_tables(section(text, heading))
+        if required_headers <= set(headers)
+    ]
+    if len(matches) != 1:
+        fail(
+            f"{heading}: expected exactly one table with headers "
+            f"{sorted(required_headers)}, found {len(matches)}"
+        )
+    return matches[0]
 
 
 def clean_cell(cell: str) -> str:
