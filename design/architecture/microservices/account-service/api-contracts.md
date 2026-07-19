@@ -58,7 +58,7 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT after its single `session:auth:token:<tokenHash>` registry record exists |
+| `POST` | `/auth/login` | Authenticate the global platform account and establish a first-party control-plane session by returning the exact `control-ui` token profile after its single `session:auth:token:<tokenHash>` registry record exists; the request does not accept an authoritative tenant selection |
 | `POST` | `/auth/logout` | Idempotently delete only the currently presented control-plane or player-bootstrap token record; other devices and unrelated gameplay bindings remain active |
 | `POST` | `/auth/logout-all` | Idempotently revoke all control-plane, player-bootstrap, and active gameplay authority for the authenticated account by advancing `session:auth:generation:account:<accountId>` and emitting the account-security event; older token records may be cleaned up asynchronously |
 | `POST` | `/auth/request-password-reset` | Request account-scoped password reset |
@@ -116,6 +116,12 @@ Canonical `/auth/login` success shape:
 
 Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes`.
 
+### Control-Plane Tenant Selection
+
+`/auth/login` accepts account credentials, not a `tenantId`. The resulting `control-ui` token identifies the global account and may carry global roles plus roles scoped to multiple tenants. A first-party UI may remember a selected tenant for navigation, but that state is not authorization evidence and switching it does not require a new token.
+
+Every tenant-targeted request identifies its tenant in the route or request contract and independently enforces the `control-ui` profile, account subject, route class, scoped role, current membership generation, and applicable account or tenant authority generation. Global-role operations use explicit global or cross-tenant route classes and never derive authority from the UI's selected tenant. Gameplay discovery and admission continue to use the separate `player-bootstrap` profile.
+
 ## Endpoint Authentication Classes
 
 | Surface | Examples | Required auth path | Notes |
@@ -123,7 +129,7 @@ Error responses use the standard `shared.v1.ErrorDetail` structure and `Authenti
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
 | Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
 | Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/join`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context. Discovery may show the public production realm before membership exists. `/auth/bootstrap/join` is the only first-party open-enrollment writer; later character and connect-token surfaces require live membership plus applicable grant, entitlement, and pointer checks. Browser connect-token response mode sets the secure HttpOnly cookie. |
-| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenants/{tenantId}/export` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
+| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenants/{tenantId}/export` | Exact `control-ui` profile through JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, current authority generations, and explicit tenant/global role checks; UI tenant selection grants no authority. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, `ListPresenceVisibilityPolicies`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
 ## Runtime Membership and Entitlement Response Shapes
@@ -264,7 +270,7 @@ Example login request:
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+  -d '{"username":"demo","password":"secret"}'
 ```
 
 Call the gRPC method with:
