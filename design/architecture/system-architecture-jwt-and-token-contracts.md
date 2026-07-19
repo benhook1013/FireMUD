@@ -2,7 +2,7 @@
 
 This document defines the JWT profiles, claim requirements, issued-token registry, revocation generations, and token-validation behavior used by FireMUD services. It complements [Authentication & Authorization](./system-architecture-authentication.md), which defines how these token contracts are applied to route classification, gameplay admission, and tenant authorization.
 
-Each revocable Browser, player-bootstrap, or private Service JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`.
+Each revocable control UI, player-bootstrap, or private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`.
 
 `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, issuance/refresh generation, and active state. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
 
@@ -50,7 +50,7 @@ Coordination Redis outage behavior follows [ADR 0037](./decisions/adr-0037-fail-
 
 ## JWT Format and Role Claims
 
-Internal JWTs are issued by the Account Service and used for backend gRPC authorization to auth/control-plane services and for first-party admin/creator web UIs. Raw gameplay protocol clients (for example Telnet clients and gameplay WebSocket command streams after the socket is open) never carry gameplay authorization JWTs. First-party gameplay web/mobile clients may temporarily hold the short-lived `player-bootstrap` token defined in [Authentication & Authorization](./system-architecture-authentication.md) for bootstrap calls such as `POST /auth/connect-token`, but that token is not sent as gameplay command auth and is not accepted by gameplay services. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway forwards tokens without validating them. Game Session may hold Account Service-issued JWTs for its own calls to auth/control-plane services, but gameplay-domain requests use concrete mTLS workload identity plus typed `PlayerExecutionContext`, not forwarded per-player JWT claims.
+Account JWTs carry account authority for first-party control UIs, player bootstrap, or narrowly scoped private delegation to auth/control-plane services. They do not authenticate workloads. Raw gameplay protocol clients (for example Telnet clients and gameplay WebSocket command streams after the socket is open) never carry gameplay authorization JWTs. First-party gameplay web/mobile clients may temporarily hold `player-bootstrap` for discovery and `POST /auth/connect-token`, but it is not sent as gameplay command auth or accepted by gameplay services. Game Session may hold a receiver-specific private delegation token for an actual Account/control-plane call; gameplay-domain requests instead use concrete mTLS workload identity plus typed `PlayerExecutionContext`.
 
 ### Claims
 
@@ -60,7 +60,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 | `sub` | Subject claim for the authenticated account (same semantic identity as `accountId`) |
 | `jti` | Unique token identifier for audit/correlation |
 | `accountId` | Identity of the authenticated account |
-| `aud` | Audience/profile marker used to separate Browser, player-bootstrap, and Service tokens |
+| `aud` | Exact audience/profile marker separating control UI, player-bootstrap, and receiver-specific private delegation |
 | `iat` | Issued-at timestamp (UTC epoch seconds), required for audit and token lifetime validation but not revocation ordering |
 | `issuerAuthGeneration` | Current issuer generation captured at issuance |
 | `accountAuthGeneration` | Current account generation captured at issuance |
@@ -84,17 +84,17 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 - `tenantAuthGenerations`: `{ "tenant-abc": 4, "tenant-def": 9 }`
 - `membershipAuthGenerations`: `{ "tenant-abc": 18, "tenant-def": 3 }`
 
-Tokens are short-lived and internal only. Gameplay context (for example `characterId` and `tenantId`) is stored in Redis and sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in end-user JWT contracts.
+Tokens are short-lived and limited to first-party control/bootstrap or private delegation surfaces. Gameplay context (for example `characterId` and `tenantId`) is stored in Redis and sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in end-user JWT contracts.
 
 ### Token Profiles and Audiences
 
-To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles:
+To keep trust boundaries clear, FireMUD uses the exact profiles in [ADR 0038](./decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md):
 
-- **Browser JWTs**
+- **Control UI JWTs (`aud=control-ui`)**
   - Issued via the `/auth/login` HTTP endpoint on the Account Service after a successful login from a first-party admin/creator web UI.
-  - Intended audience: frontend/meta APIs (for example an `aud` claim such as `frontend` or `meta-ui`).
+  - Intended audience: first-party admin/creator control-plane APIs only.
   - Carried only by first-party SPAs behind the Gateway; stored in memory only and sent as `Authorization: Bearer <token>` on meta/control API calls.
-  - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a Browser JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
+  - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a control UI JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
 
 - **Player-bootstrap JWTs**
   - Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service as the first step of the first-party gameplay bootstrap flow, before discovery, connect-token issuance, and gameplay `LOGIN`.
@@ -103,27 +103,28 @@ To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles
   - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
   - Full-page reload or process restart is treated the same way as token loss: the client re-enters the bootstrap flow from `POST /auth/player-bootstrap` (or an equivalent future explicit bootstrap-restoration endpoint if one is added). The architecture does not currently define a hidden refresh token or silent bootstrap-restoration mechanism.
 
-- **Service JWTs**
-  - Issued by the Account Service for backend callers (for example, Game Session, Logging & Admin, Game Design) via the gRPC `Authenticate` or equivalent internal flows.
-  - Intended audience: internal services (for example an `aud` claim such as `internal`).
-  - Carried only over mTLS-protected service-to-service links.
-  - Lifetime: also short-lived and backed by one `session:auth:token:<tokenHash>` registry record; services must not cache them beyond their expiry or ignore registry revocation.
-  - An active gameplay binding rotates its private Account/control-plane Service JWT through the Account-owned refresh contract in ADR 0031. Refresh authority includes the still-valid current token generation and cannot be derived from Game Session mTLS identity plus an account ID alone.
-  - Account rejects rotation when an issuer, account, tenant, or membership generation no longer matches. A replacement with a newer `iat` must not cross logout-all, password reset, security lock, tenant cutoff, or membership loss.
+- **Private player-delegation JWTs**
+  - Issued only for demonstrated control-plane calls that must carry a player's Account authority from an approved workload, beginning with the Game Session to Account/control use case.
+  - Each profile has a narrow name and exact receiving-service or purpose audience; generic `Service JWT` and `aud=internal` are forbidden.
+  - The receiver requires both the approved concrete mTLS caller identity and the exact delegated-token profile. The token does not authenticate the workload.
+  - Tokens are short-lived and backed by one `session:auth:token:<tokenHash>` record plus applicable auth generations. An active gameplay binding rotates required private delegation through ADR 0031 without exposing it to the player.
+  - Account rejects rotation when an issuer, account, tenant, or membership generation no longer matches. A replacement cannot cross logout-all, password reset, security lock, tenant cutoff, or membership loss.
 
-Services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs, or a player-bootstrap JWT presented to an admin API).
+Workload-only calls use certificate-derived mTLS identity and exact per-method caller policy without a JWT. Gameplay-domain requests additionally use typed `PlayerExecutionContext` and never add per-command token validation.
+
+Services must validate both the signature and exact expected audience/profile and reject every cross-profile or wrong-receiver token before authorization.
 
 ### JWT Claim Contract (Normative)
 
 Services must enforce this claim contract before role/tenant authorization:
 
-| Claim | Browser JWT | Player-bootstrap JWT | Service JWT | Notes |
+| Claim | Control UI JWT | Player-bootstrap JWT | Private player-delegation JWT | Notes |
 | --- | --- | --- | --- | --- |
 | `iss` | Required | Required | Required | Must match Account Service issuer value |
 | `sub` | Required | Required | Required | Must identify the account subject |
 | `jti` | Required | Required | Required | Unique per issued token |
 | `accountId` | Required | Required | Required | Must be consistent with `sub` mapping |
-| `aud` | Required (`frontend` / `meta-ui`) | Required (`player-bootstrap`) | Required (`internal`) | Exact allowed values are centrally configured |
+| `aud` | Required (`control-ui`) | Required (`player-bootstrap`) | Required (exact receiver/purpose) | Generic `internal` is forbidden |
 | `iat` | Required | Required | Required | UTC epoch seconds |
 | `nbf` | Required | Required | Required | Token not usable before this time |
 | `exp` | Required | Required | Required | Token unusable after this time |

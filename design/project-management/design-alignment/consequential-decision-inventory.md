@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 18 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 19 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **27** | **183** | `in-progress` |
+| **Total** | | **28** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -153,7 +153,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
 - [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
 - [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
-- [ ] `JWT-04`
+- [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [ ] `REDIS-06`
 - [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
 - [ ] `MS-AA-TOKEN-REVOCATION`
