@@ -20,6 +20,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Migrations follow the `V<version>__<description>.sql` naming convention.
 - Every service-local module begins with a `V1` baseline migration. On unsquashed services that is still usually `V1__init.sql`; on destructive pre-v1 squash targets it becomes a canonical `V1__baseline.sql` that replaces the older local chain.
 - Shared saga migrations live in the `common-saga` module under `src/main/resources/db/migration/saga` and are bundled onto consuming service classpaths as the additional `classpath:db/migration/saga` Flyway location alongside the owning service's `classpath:db/migration`.
+- Shared migration artifacts use a repository-checked version convention that cannot collide with adopter-local versions and remain compatible with supported library/adopter combinations during rollout. An applied shared migration is never renumbered or rewritten.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - SQL-backed service `application.yml` files also carry an explicit `spring.flyway.table` contract in the same `flyway_schema_history_<service_schema>` form used by local destructive reset tooling and hosted/runtime manifests, so plain service boot does not silently fall back to bare `flyway_schema_history`.
 - Generated `jOOQ` sources derive from these migrated schemas rather than from a second hand-maintained SQL model.
@@ -45,6 +46,8 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   - Services that need these shared tables include `common-saga` as a dependency and expose both `classpath:db/migration` and `classpath:db/migration/saga` to Flyway at startup.
   - Saga tables are created inside the owning service schema via the shared `${serviceSchema}.saga_*` migrations rather than a separate dedicated `saga` schema.
 - New migrations are committed alongside service code so history stays with the owning service.
+
+[ADR 0080](decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md) defines the shared-component boundary. The reusable library owns the definition of its tables and migration artifacts, while each adopter owns deliberate inclusion, its schema and Flyway history, deployment timing, and failure recovery. Services do not apply cross-service DDL, create cross-service foreign keys, or directly read another service's tables. Multiple service schemas may share one physical PostgreSQL deployment without changing those logical ownership rules.
 
 ### Version-Aware Migration Guidelines
 
