@@ -51,16 +51,9 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 
 ### Version-Aware Migration Guidelines
 
-Because game data is versioned and previously published `version_id` values may
-be reactivated for rollback, migrations in live or retention-bearing environments
-must be written to preserve the ability to load existing versioned graphs.
-This guidance is scoped to environments/services that already need to preserve
-non-Retired versions or mixed live deployment history. During initial
-development bootstrap, prefer direct replacement and avoid unnecessary
-dual-read/dual-write or phased migration scaffolding until a service actually
-has live-version preservation requirements. Expand/migrate/contract is not the
-default first-slice stance for every service change; it becomes mandatory only
-once a service has crossed into real live-version preservation obligations.
+[ADR 0081](decisions/adr-0081-objective-compatibility-gates-for-database-evolution.md) replaces a subjective “initial development” boundary with two objective compatibility questions. Expand/migrate/contract is required when either old and new application binaries can overlap during a supported deployment or rollback window, or retained durable data—including a non-Retired game version—still requires the old representation to remain readable or reconstructable.
+
+Direct replacement remains appropriate only when neither obligation exists: no retained data requires compatibility, no old reader or writer may coexist or be restored, and all call sites, generated SQL access, tests, deployment configuration, and documentation can converge atomically. Pre-v1 status alone does not establish this exception.
 
 - Prefer **additive** changes (adding tables/columns, widening types) while any
   published versions still depend on the existing schema shape.
@@ -83,9 +76,8 @@ that rollback and historical analysis remain viable across deployments.
 
 Before applying destructive or shape-changing migrations in a service that owns
 versioned/template data (for example templates keyed by `(tenantId, versionId)`),
-engineers should follow this checklist once that service has crossed out of the
-initial-bootstrap phase and must preserve existing non-Retired/live data across
-deployments:
+engineers should follow this checklist whenever retained data or supported old/new
+binary overlap activates the compatibility gates:
 
 1. **Enumerate non-Retired versions**
    - Query the Game Design Service’s version metadata (or the service-local
@@ -130,15 +122,18 @@ Services that own versioned templates (such as Game Design, World Management,
 Entity Management, and Asset Storage) should reference this checklist in their
 local docs and treat it as part of their migration review process.
 
-Initial-development exception:
+Direct-replacement exception:
 
-- If a service is still in initial bootstrap and has no preservation requirement
-  for old readers/writers or non-Retired historical versions, it may replace
-  schema and contracts directly in one change, provided all call sites, tests,
-  and docs are updated together.
-- Once a service begins carrying live/version-retention obligations, this
-  document's version-aware rules become authoritative for subsequent
-  destructive migrations.
+- A service or environment may replace schema and contracts directly only when
+  it has no retained-data or non-Retired-version preservation requirement, no
+  supported overlap with or rollback to an old reader or writer, and every call
+  site, generated SQL surface, test, deployment configuration, and document can
+  converge atomically.
+- The change records the evidence for both gates. Labels such as pre-v1,
+  bootstrap, development, or production are not substitutes for that evidence.
+- Contract-phase removal is allowed only after both the supported binary
+  overlap/rollback window and every applicable durable-data or game-version
+  dependency have ended under their owning release and retention policies.
 
 ### Cross-Service Identifier Migration
 

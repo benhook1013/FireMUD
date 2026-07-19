@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 31 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 32 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **68** | **183** | `in-progress` |
+| **Total** | | **69** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -209,7 +209,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `ID-03` — `revised` on 2026-07-20; [ADR 0078](../../architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md)
 - [x] `DB-01` — `accepted` on 2026-07-20; [ADR 0079](../../architecture/decisions/adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md)
 - [x] `DB-02` — `accepted` on 2026-07-20; [ADR 0080](../../architecture/decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md)
-- [ ] `DB-03`
+- [x] `DB-03` — `revised` on 2026-07-20; [ADR 0081](../../architecture/decisions/adr-0081-objective-compatibility-gates-for-database-evolution.md)
 - [ ] `DB-04`
 - [ ] `REDIS-03`
 - [ ] `REDIS-04`
