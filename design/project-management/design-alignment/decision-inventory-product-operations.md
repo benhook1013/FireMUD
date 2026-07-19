@@ -203,14 +203,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes. Make the mode and write-authority boundary explicit alongside `CONTENT-01` and `CONTENT-03`.
 - **Human consultation:** Yes; creators and runtime owners must approve the boundary and its authoring ergonomics.
 
-#### `PROC-02` - Deterministic generation provenance and fail-closed replay
+#### `PROC-02` - Request-bounded generation replay and explicit regeneration
 
 - **Capability:** Primary `AR-1.5`. Secondary `AR-3.2`, `GR-2.1`, and `SF-2.3`.
-- **Decision / status / importance:** Persist `generationRunId` or `requestId`, implementation version, configuration snapshot, schema version, seed, and output digest. Replay must reproduce the exact output or fail `OUT_OF_SYNC`; the version-scoped generation configuration revision is frozen for publish and runtime. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Resolve and record the exact generator/model, immutable configuration, seed, target, and policy for one stable request identity. Retries reuse that request's recorded output and never silently select newer code. Committed topology is authoritative; a deliberate regeneration is a new revision that may use the newest policy-permitted generator, without requiring old binaries to remain executable forever. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-procedural-generation.md](../../architecture/system-architecture-procedural-generation.md) `§ Deterministic Replay Contract for Design-Time Generation`, `§ Generation Pipeline:`, and `§ Output and Metadata (Common)`; [system-architecture-promotion-attestation.md](../../architecture/system-architecture-promotion-attestation.md) `§ Validation Rules`.
-- **Strongest alternative:** Rerun generation with current implementation or mutable defaults and accept a different output if the seed is unchanged.
-- **ADR recommendation:** Yes. Record the provenance fields, digest definition, replay failure behavior, and relationship to immutable content promotion.
-- **Human consultation:** Yes; content and operations owners must decide the retention and user-facing handling of out-of-sync revisions.
+- **Strongest alternative:** Retain every historical generator and execution environment indefinitely so all accepted output can be reconstructed from seed and configuration alone.
+- **ADR recommendation:** [ADR 0098](../../architecture/decisions/adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md) records the revised human decision and bounded compatibility lifetime.
+- **Human consultation:** Completed through human-led adversarial review; intentional regeneration using newer generators and the loss of indefinite seed-only reconstruction were explicitly accepted.
 
 #### `PROC-03` - Revision-scoped replacement preserves manual edits
 

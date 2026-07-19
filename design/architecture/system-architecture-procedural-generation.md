@@ -70,40 +70,36 @@ Procedural generators are invoked by the World Management Service, which calls p
   `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
   rows remain unchanged.
 
-For persistent instance layouts, the invariant is that all `*_instance` rows must be **replayable** from:
+Persistent instance layouts are authoritative stored topology. Restarts and disaster recovery restore those rows, retained finalized artifacts, or backups; they do not depend on indefinite re-execution of the historical generator. Generator metadata remains provenance and request-retry evidence rather than a seed-only reconstruction guarantee.
 
-- the published templates for the associated `versionId`, plus
-- the stored generator metadata for each generation run, including `generationMode`, `seed`, `generatorType`, and an immutable `configSnapshot` with an explicit `schemaVersion`.
-
-Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. Long-lived overworld-style instance layouts that need to survive restarts must persist enough generator metadata to satisfy the replayable-from-templates invariant.
+Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. If ephemeral topology is lost, its lifecycle may permit discarding it and starting a new generation request under the current permitted generator policy. Long-lived overworld-style layouts must persist their actual topology.
 
 Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
 
-### Deterministic Replay Contract for Design-Time Generation
+### Request-Bounded Replay and Explicit Regeneration
 
-Design-time generation is part of publish safety and reconciliation, so retries must not depend on mutable defaults or the currently deployed generator binary alone.
+Design-time generation is part of publish safety and reconciliation, so retries of one admitted request must not depend on mutable defaults or whichever generator binary happens to be current. This compatibility obligation is bounded to that request; FireMUD does not retain every historical generator implementation indefinitely.
 
-For each design-time generation run, World Management must persist a durable generation artifact that includes:
+At admission, World Management persists a durable generation record that includes:
 
 - `generationRunId` and stable `generationRequestId`
 - `tenantId`, `versionId`, `generationMode`
 - `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
 - canonicalized `configSnapshot` including explicit `schemaVersion`
 - seed and any derived deterministic inputs
-- `outputDigest` computed from a canonical serialized topology output
+- the identity of recorded or staged output, including an `outputDigest` computed from its canonical serialized topology
 
-These design-time generation artifacts are replay/reconciliation provenance, not published topology rows themselves:
+The resolved implementation and inputs are immutable for that request, including across rolling nodes. These records and artifacts are retry/reconciliation evidence, not published topology rows themselves:
 
 - The canonical publish contract is still the finalized version-scoped template rows keyed by `(tenantId, versionId)`.
 - Design-time generation artifact tables are excluded from `GetDraftDesignDigest` unless a future doc revision explicitly promotes named semantic fields into the digest manifest.
-- Retention and migration rules for these artifact rows must preserve deterministic replay for non-Retired versions, but publish gating compares only the finalized template graph plus other documented semantic inputs.
+- Staged output must remain available for the active request's retry lifecycle. Provenance may outlive the executable implementation and does not promise seed-only reconstruction.
 
 Reconciliation behavior:
 
-- Replaying a previously applied design revision must either:
-  - reuse the persisted staged/finalized output artifact directly, or
-  - rerun generation and verify that the regenerated output matches the recorded `outputDigest`.
-- If regenerated output does not match the recorded digest, reconciliation must fail fast and mark the version `OUT_OF_SYNC` rather than silently accepting a drifted topology.
+- Retrying the same in-flight request reuses its recorded or staged output. If that output cannot be reused and the admitted implementation is unavailable, the request fails closed or is explicitly abandoned; it never substitutes a newer implementation under the same identity.
+- Once finalized, committed template topology is authoritative and recovery restores committed rows, immutable releases, retained finalized artifacts, or backups rather than re-executing the generator.
+- Intentional regeneration is a new request and authored revision. It may select the newest generator or model permitted by explicit game or operator policy and must obey the declared scope, epoch, and replacement rules.
 - The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
 
 Generation revisions are explicit and scope-bound:
