@@ -29,7 +29,9 @@ The incident flows below describe the target operator model. In the current impl
    - Alerts fire on tick duration, Redis latency, or error rates.
    - Logs show failures acquiring locks or writing tick entries.
 2. **Stabilize**
-   - Reduce incoming player load if necessary (rate-limit new sessions).
+   - Close new login, join, `PLAY`, reconnect/rebind, token issuance/refresh, and protected control-plane admission while required authority cannot be established.
+   - If gameplay coordination remains healthy but token authority alone is unavailable, existing admitted bindings may continue only through their last renewed authority-freshness lease and terminate at the 60-second maximum. Do not add per-command registry reads.
+   - If the complete Coordination Redis role is unavailable, halt correctness-sensitive gameplay mutations; bounded socket recovery does not authorize local-only processing.
    - Pause non-critical background scripts that depend heavily on Coordination Redis.
 3. **Recover**
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.

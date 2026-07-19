@@ -20,7 +20,7 @@ Token validity semantics:
 - For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable current Account-owned auth generations. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
 - The single-use connect token and Gateway signed connect context use their separate bounded replay/verification contracts and do not create Account issued-token records.
-- During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the registry check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side token record to be present.
+- During token-authority outages, protected control-plane and admission calls fail closed because authorization cannot be established without the registry and applicable generation checks. This is an explicit availability/security tradeoff; ordinary gameplay commands retain their separate bounded authority-lease contract and do not acquire token lookups.
 
 Bulk revocation (for example “logout all devices”, account bans, membership loss, or tenant-wide billing suspensions) must not rely on wildcard deletes, key scans, or wall-clock ordering. [ADR 0036](./decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md) defines Account-owned positive monotonic generations:
 
@@ -40,11 +40,13 @@ Revocation-generation contract requirements:
 
 Per-token logout is a single-key delete of the token record; bulk revocation advances generations and relies on TTL for eventual registry cleanup.
 
-Coordination Redis outage behavior must be deterministic:
+Coordination Redis outage behavior follows [ADR 0037](./decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md):
 
-- **Control-plane APIs (HTTP/gRPC)** – Requests that require issued-token registry checks fail closed while Coordination Redis is unavailable, returning a clear infrastructure error (for example `AUTH_UNAVAILABLE` / `SERVICE_UNAVAILABLE`) rather than silently bypassing authorization.
-- **Gameplay admission (`LOGIN` / lobby selection via `PLAY`)** – New admissions fail closed while Coordination Redis is unavailable because allowlist and gameplay session binding state cannot be established reliably.
-- **Already-entered gameplay sessions** – Ongoing gameplay behavior follows the Redis outage/degradation policy defined in [Redis Architecture](./system-architecture-redis.md) and [Redis Operations](./system-architecture-redis-operations.md). Game Session must not “assume authorization” in the absence of Redis; if coordination state needed to process commands safely is unavailable, it must degrade or halt according to the Redis policy instead of inventing local-only session authority.
+- **Unavailable versus revoked** – Unreachable registry/generation state returns retryable `AUTH_UNAVAILABLE` / HTTP `503` and does not tell clients to discard authentication. Reachable missing, deleted, expired, malformed, or mismatched authority returns `AUTH_SESSION_REVOKED` or the specific invalid-token outcome and requires reauthentication. Reset-lost records are missing authority, not a grace path.
+- **Token issuance and control plane** – Account exposes no token whose registry and generation state could not be established. Login/bootstrap issuance, refresh/rotation, and every protected control-plane request fail closed during authority unavailability; sensitive admin, billing, support, and payment operations receive no stale-authority exception.
+- **Gameplay admission** – New login, join, `PLAY`, reconnect/rebind, and other admission transitions fail closed when their required token, generation, membership, or gameplay-binding authority cannot be established.
+- **Registry-only outage with healthy gameplay coordination** – Ordinary gameplay commands perform no registry/generation lookup. An already-admitted binding may continue only through its last successfully renewed ADR 0030 authority-freshness lease, never renews from stale state, and terminates if authority cannot be re-established by the 60-second maximum.
+- **Complete Coordination Redis outage** – Game Session does not execute gameplay work whose session state, queues, locks, leases, or tick coordination cannot be established. Existing bounded transport recovery/close behavior may retain the socket temporarily but grants no local-only gameplay authority.
 
 ## JWT Format and Role Claims
 
