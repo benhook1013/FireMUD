@@ -450,7 +450,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
   - Ledger behavior:
     - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.
     - The **default policy** is to mark those rows `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) via the scoped ledger reconcile step in the coordination reset tooling, so operators can see exactly which work was discarded.
-    - Only features that explicitly document alternative behavior may opt into re-scheduling selected SCHEDULED effects under the new epoch, and such behavior must be implemented via dedicated reset tooling, not ad-hoc replay.
+    - If a feature still requires the intent, explicitly authorized reset tooling creates a new current-epoch effect identity linked to the abandoned row after revalidating current scope, ownership, location, aggregate versions, and feature policy. It never rewrites or rebinds the old row.
   - Player impact:
     - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
     - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rewind/hiccup at the coordination layer, not silent corruption.
@@ -463,7 +463,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
   - Ledger behavior:
     - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the same default policy:
       - Bulk-marked `ABANDONED` with a tenant-scoped reset reason (for example `RESET_TENANT_SCOPED`) via the scoped ledger reconcile step so that all affected effects converge to a terminal outcome.
-      - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
+      - Any required reconstruction creates a new current-epoch identity linked to the abandoned row through explicitly authorized tooling after current-state revalidation; the old row remains immutable.
   - Player impact:
     - The tenant experiences a “clean slate” for tick coordination: timers, retries, and queued commands are cleared.
     - Long-lived domain state (characters, inventory, world) is preserved; tick-driven features must be designed so players can naturally continue from durable state.
@@ -474,7 +474,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - This is effectively a deliberate, unbounded tail-loss event for all regions and must be treated as a rare, planned operation.
   - Ledger behavior:
     - `SCHEDULED` ledger rows for all affected regions should normally be bulk-marked `ABANDONED` with a cluster reset reason (for example `RESET_CLUSTER_SCOPED`) by the ledger reconcile tooling.
-    - Only in exceptional, explicitly designed cases should migration or batch re-drive tooling attempt to carry work across a cluster reset; such tools must document their expectations and failure modes in the owning feature’s design docs.
+    - Exceptional migration or batch re-drive tooling creates lineage-linked new identities after current-state revalidation; it never adopts or rewrites old-epoch rows.
   - Player impact:
     - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
     - UX and communications for planned cluster resets should set expectations (maintenance windows, possible brief rollbacks).
@@ -483,6 +483,7 @@ In all three cases, the **goal is convergence**:
 
 - For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one terminal ledger state (`APPLIED` or `ABANDONED`), regardless of resets.
 - Reset tooling and Game Session control flows must ensure that no tick remains forever “half-applied” in the ledger (for example, perpetually `SCHEDULED` with no chance of replay), by running a scoped tick-effect-ledger reconcile for the relevant `(tenantId, regionId, region_epoch)` combinations as part of the reset flow.
+- Before reopening the affected scope, the reconcile flow enumerates every durable old-epoch effect and follow-up independently of Redis hints and terminalizes each non-terminal row.
 
 These expectations should be reflected in the coordination reset tooling described in `system-architecture-redis-operations.md` and the reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
 
@@ -538,12 +539,11 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
   - Draining follow-ups into a tick must use database-side concurrency control (for example `FOR UPDATE SKIP LOCKED` or an atomic “claim” update) so that only one executor can claim a follow-up at a time, even during failover or when multiple workers are racing around lease changes.
 - **Epoch boundaries**
   - Follow-ups must never silently “carry over” to a new epoch:
-    - When `target_region_epoch` changes, old-epoch follow-ups converge to terminal outcomes (typically `ABANDONED` with a reset/topology reason) unless explicit maintenance tooling re-schedules them into the new epoch.
+    - When `target_region_epoch` changes, old-epoch follow-ups converge to `ABANDONED` with a reset/topology reason.
+    - Explicitly authorized maintenance that still requires the work creates a new current-epoch follow-up identity linked to the immutable abandoned row after revalidating current scope, ownership, location, aggregate versions, and feature policy.
 - **Topology changes**
   - Mapping-changing split/merge operations must bump `region_epoch` for affected source/target regions before follow-up draining resumes (see required topology protocol in `system-architecture-ticks.md`).
-  - If region split/merge changes which region owns the target entity, topology-change tooling must either:
-    - Rewrite the follow-up to the new `(target_region_id, target_region_epoch)` with an explicit audit trail, or
-    - Mark it `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid.
+  - If region split/merge changes which region owns the target entity, topology-change tooling marks the old follow-up `ABANDONED` with a topology-change reason. If the work remains valid, it creates a lineage-linked new request for the new `(target_region_id, target_region_epoch)` after current-state revalidation.
 
 ## Remote Hint Markers and Resets
 

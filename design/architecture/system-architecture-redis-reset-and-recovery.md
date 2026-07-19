@@ -351,7 +351,7 @@ Expected impact:
 Coordination resets interact with tail‑loss and replay in predictable ways:
 
 - A **reset** is effectively a deliberate, large tail‑loss event for the chosen scope:
-  - Instead of losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of state, the system discards **all** coordination state for that scope.
+  - The system discards **all** coordination state for that scope rather than the bounded environment-measured unreplicated-write exposure of an ordinary failover. ADR 0058 defines the class-specific durable outcomes; no tick-derived loss formula applies.
   - This is only safe when:
     - All critical outcomes are recorded durably in PostgreSQL or another authoritative store.
     - Double‑apply is prevented via idempotency guards (for example, effect IDs, transaction IDs).
@@ -363,6 +363,7 @@ Coordination resets interact with tail‑loss and replay in predictable ways:
 - **Replay** behavior must remain safe regardless of resets:
   - Lua scripts must be idempotent with respect to their `KEYS` and `ARGV`.
   - Replaying a subset of surviving entries after a reset should not violate core invariants or double‑apply domain effects.
+  - Old-epoch effects and follow-ups are fully enumerated from durable storage and terminalized before reopen. Required reconstruction uses a new lineage-linked current-epoch identity after explicit authorization and current-state revalidation; old rows are never rewritten or rebound.
 
 Designers should use the **Redis Design Checklist** to confirm that new flows remain safe under:
 
