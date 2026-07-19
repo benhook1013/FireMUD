@@ -241,24 +241,23 @@ The following rules align generators with the core runtime and tooling:
    - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
    - Runtime population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus `RoomInstanceRef` so downstream services can safely no-op on replays.
    - Design-time binding materialization must instead carry `tenantId`, `versionId`, the target template identifiers, `commitId`, `revisionId`, and `expectedDraftScopeRevisionEpoch`; duplicate revision replay must no-op through the same Draft write idempotency rules as other design-time mutations.
-   - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.
-   - The only supported destructive rollback is deleting an entire **ephemeral** instance as a unit (for example a short-lived dungeon instance), after verifying it is no longer referenced by active sessions.
+   - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), retryable items retry until convergence using the original identities. A permanently invalid item reaches an explicit terminal failure with durable diagnostics rather than retrying forever.
+   - Cleanup may remove only objects carrying explicit ownership by the failed generation run; it must never infer ownership from location or delete player-created, manually authored, or unrelated state. Whole-instance deletion is supported only for an explicitly **ephemeral** instance after verifying it is no longer referenced by active sessions.
    - Initial-slice scope is narrower: instance-scoped population schedules and follow-up population commands are required only for primary world creation of the launched `gameInstanceId`. Portal-driven or later dynamic instancing may adopt the same contract in future slices but is not required by this document for first delivery.
 7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and guarantees **no partial persistence** for the affected template or instance scope.
 
-   Persistence must use a staged/finalize model so large graphs can be written safely without relying on oversized single transactions:
+   Persistence guarantees atomic reader visibility and replay-safe convergence through one of two bounded mechanisms:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
    - `generationRequestId` must be derived from business identity rather than transient execution identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`.
    - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
-   - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
-   - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
-   - A single finalize transaction atomically:
-     - Marks the staged run as committed (or swaps it into the active template/instance scope), and
-     - Makes the generated topology visible to readers.
-   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged (staged rows may be left for diagnostics or garbage-collected by `generationRunId`).
-   - World Management must document and implement a garbage-collection policy for abandoned staging rows keyed by `(tenantId, generationRunId)` (for example time-based cleanup for `FAILED`/`ABORTED` runs, while retaining a short diagnostic window).
+   - World Management must enforce single-writer semantics per target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs cannot both commit.
+   - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
+   - An output within enforced and proved row and serialized-byte limits may write the complete result and idempotency outcome in one owner-local transaction. Readers see either the prior scope or the complete new scope.
+   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph.
+   - The initial implementation may reject oversized output deterministically until the staged path exists. Callers may not bypass the bounded-transaction limits.
+   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 

@@ -221,14 +221,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes. Define scope ownership, revision/epoch semantics, conflict reporting, and the publish-time freeze.
 - **Human consultation:** Yes; creators must choose replacement and append semantics for each generator family.
 
-#### `PROC-04` - Staged, idempotent, single-writer generation with convergence
+#### `PROC-04` - Bounded atomic generation with staging for large outputs
 
 - **Capability:** Primary `GR-2.1` World topology, rooms, regions, and runtime instances. Secondary `GR-1.4`, `SF-2.3`, and `AS-1.5`.
-- **Decision / status / importance:** Use staged output and an explicit finalize step, stable business idempotency keys, uniqueness constraints, and one writer per generation scope. Runtime population retries until convergence and does not use compensating deletes except for ephemeral instances; partial persistence and duplicate effects are not acceptable. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Require atomic reader visibility, stable request identity, uniqueness, and a fenced writer per scope. Fully validated output within enforced row/byte limits may commit in one owner-local transaction; larger or chunked output uses private staging and a short digest/count-checked finalize, and may initially be rejected until that path exists. Retryable population converges while permanently invalid work terminates diagnostically; cleanup is limited to explicitly generation-owned state. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-procedural-generation.md](../../architecture/system-architecture-procedural-generation.md) `§ Generation Pipeline:`, `§ Output and Metadata (Common)`, `§ Integration Guidelines`, and `§ Service Responsibilities`; [system-architecture-protocol-bridging.md](../../architecture/system-architecture-protocol-bridging.md) `§ Ordering & Delivery Invariants`.
-- **Strongest alternative:** Put the whole generation in one oversized transaction or compensate failed populations with broad deletes.
-- **ADR recommendation:** Yes. Align staged/finalize behavior with `TICK-03`, `TICK-04`, `TICK-05`, and the replay/reconciliation contract.
-- **Human consultation:** Yes; runtime and content owners must accept convergence latency and the cleanup boundary.
+- **Strongest alternative:** Require staged/finalize persistence for every output immediately, accepting its additional schemas, writes, garbage collection, and diagnostic lifecycle even for small graphs.
+- **ADR recommendation:** [ADR 0099](../../architecture/decisions/adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md) records the revised human decision and evidence-gated staging boundary.
+- **Human consultation:** Completed through human-led adversarial review; bounded rejection, convergence latency, and generation-owned cleanup limits were explicitly accepted.
 
 #### `PROC-05` - World density and movement cost are product choices
 

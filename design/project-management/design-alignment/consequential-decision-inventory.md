@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 6 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 7 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **86** | **183** | `in-progress` |
+| **Total** | | **87** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -232,7 +232,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `ASSET-02` — `revised` on 2026-07-20; [ADR 0096](../../architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md)
 - [x] `PROMO-01` — `revised` on 2026-07-20; [ADR 0097](../../architecture/decisions/adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md)
 - [x] `PROC-02` — `revised` on 2026-07-20; [ADR 0098](../../architecture/decisions/adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md)
-- [ ] `PROC-04`
+- [x] `PROC-04` — `revised` on 2026-07-20; [ADR 0099](../../architecture/decisions/adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md)
 - [ ] `MS-AS-PATCH-READINESS-PIN`
 - [ ] `MS-GR-REPLACEMENT-STATE`
 - [ ] `MS-GR-WORLD-LIFECYCLE`
