@@ -8,11 +8,11 @@
 - `ApplyRoomAmbientStatePatch` – applies a typed ambient fact patch to the target runtime scope under expected epoch/version preconditions and an operation/aggregate/request-digest-bound guard derived from the root `EffectId`; replay returns the durable prior result and a conflicting identity/payload fails closed.
 - `GetDraftDesignDigest` – returns the publish-gating digest for Draft world templates using the typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`.
 - `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
-- `PrepareWorldInstance` – creates or reuses the canonical `PREPARING` world lifecycle row for a resolved launch descriptor, validates release-bundle and `versionStateEpoch` proof against Game Design, and materializes first-cut instance topology rows without admitting gameplay yet.
-- `ActivatePreparedWorldInstance` – performs the fenced `PREPARING -> ACTIVE` lifecycle transition after Game Session has finished local start-up work for the same `gameInstanceId`.
-- `FailPreparedWorldInstance` – performs the fenced `PREPARING -> FAILED_PRE_ACTIVATION` transition when Game Session or another pre-admission consumer must roll back a prepared instance before admission opens.
-- `GetWorldInstanceLifecycle` – returns the current fenced lifecycle snapshot for an existing `(tenantId, gameInstanceId)` so stop/cutover consumers can retry against fresh lifecycle truth instead of cached guesses.
-- `TerminateWorldInstance` – performs the fenced `ACTIVE -> TERMINATING -> TERMINATED` shutdown path and runs the canonical cross-service runtime cleanup before World reports termination complete.
+- `PrepareWorldInstance` – creates or reuses the canonical `PREPARING` world lifecycle row for a resolved launch descriptor, validates release-bundle and `versionStateEpoch` proof against Game Design, and materializes first-cut instance topology rows without admitting gameplay yet. Its idempotent local writes and step result commit together.
+- `ActivatePreparedWorldInstance` – performs the storage-level compare-and-set `PREPARING -> ACTIVE` lifecycle transition after Game Session has finished local start-up work for the same `gameInstanceId`; a termination transition that already advanced the epoch makes stale activation fail.
+- `FailPreparedWorldInstance` – performs the storage-level compare-and-set `PREPARING -> FAILED_PRE_ACTIVATION` transition when Game Session or another pre-admission consumer must close a prepared instance before admission opens. Cleanup completion is tracked separately and is not implied by this response.
+- `GetWorldInstanceLifecycle` – returns the authoritative database-backed lifecycle state and epoch for an existing `(tenantId, gameInstanceId)`, together with separate cleanup request and owner-acknowledgement progress when present, so stop/cutover consumers retry against durable truth instead of cached or Temporal-projected guesses.
+- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING` or `ACTIVE` under a stable `terminationRequestId`. It reports `TERMINATED` only after every registered durable `gameInstanceId` data owner has acknowledged cleanup and the final storage compare-and-set commits.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -173,14 +173,20 @@ Illustrative `GetRoomSnapshot` fragments:
 
 ## Instance Termination Contract
 
-World Management owns the lifecycle of `gameInstanceId` rows, but teardown is cross-service:
+World Management owns the authoritative lifecycle row and monotonic `lifecycle_epoch` for each `gameInstanceId`; Temporal coordinates teardown but its history and status are not admission or termination authority. Teardown remains cross-service:
 
-- Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
-- Expiry or operator shutdown transitions the instance to `TERMINATING` through the durable Temporal `world-lifecycle` workflow.
-- Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
+- Game Session must first mark an `ACTIVE` instance non-admissible and draining. A `PREPARING` instance is already non-admissible.
+- During replacement, the old instance remains retained while the target is prepared and validated. Termination cannot begin until the fenced realm-pointer swap is durable, old admission is closed, sessions have drained or moved under the lifecycle contract, and all owners acknowledge cleanup safety.
+- Expiry or operator shutdown starts or signals the durable Temporal `world-lifecycle` workflow. The owning World activity performs a storage-level compare-and-set from `PREPARING` or `ACTIVE` to `TERMINATING` under the expected epoch.
+- A successful `PREPARING -> TERMINATING` transition fences activation. If activation and termination race, the database compare-and-set selects the winner; stale callers reread lifecycle truth and do not infer precedence from workflow order.
+- Termination records a stable request identity, the required registered durable data-owner set, and separate per-owner cleanup state. Each owner acknowledges its idempotent local cleanup in durable storage; ambiguous activity delivery must replay to the stored result.
+- Entity Management's containment and room-ground containers are one required owner family, not the complete future owner set. World Management marks the instance `TERMINATED` only after every registered owner has acknowledged cleanup and the final `TERMINATING -> TERMINATED` compare-and-set succeeds.
+- Cleanup may delete only families explicitly classified as S3 for that instance. S1/S2 namespace state is not generic instance cleanup payload, and unknown or unclassified state blocks cleanup.
+- `FAILED_PRE_ACTIVATION` is admission-terminal for the `gameInstanceId`, but its separate cleanup state may remain pending or failed. The lifecycle status must not be presented as proof of cleanup completion.
+- Any new durable family keyed by `gameInstanceId` must register its ownership, replacement-state classification, termination cleanup, stable operation identity, acknowledgement, retry, and retention contract before launch paths write it. Missing or unknown owner acknowledgement fails finalization closed.
 - Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.
-- Lifecycle fencing is mandatory. Termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened and `ACTIVE` is committed.
-- Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
+- Game Session finalizes runtime `game_instances` termination only after World reports authoritative `TERMINATED`.
+- Routine gameplay and tick execution do not call Temporal or wait on cleanup state; they use the lifecycle surface only at admission, cutover, and termination boundaries.
 
 Current implementation notes:
 
@@ -188,6 +194,8 @@ Current implementation notes:
 - World Management persists `world_instance`, `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` rows keyed by `(tenantId, gameInstanceId)` and uses `lifecycle_epoch` as the current fence token for prepare/activate/fail/terminate transitions.
 - `world_event` is now runtime-owned and keyed by `(tenantId, gameInstanceId)` via `region_instance`, rather than hanging off template `region` rows.
 - `stopSession` now consumes `GetWorldInstanceLifecycle` + `TerminateWorldInstance` rather than the old ping-only shutdown path; Entity Management cleanup runs through `CleanupRuntimeInstance`, and World hard-deletes its own runtime rows (`world_event`, room exits, rooms, zones, regions) before reporting `TERMINATED`.
+- The live termination path is still the synchronous active-instance first cut. It does not yet accept `PREPARING` termination or persist separate cleanup request/owner acknowledgement state, and its Entity-plus-World sequence is not the extensible all-owner gate required above.
+- Lifecycle/cleanup metrics and alerts do not yet prove stuck-state detection or cleanup convergence.
 - Replacement-instance/cutover callers beyond explicit stop/termination are still follow-on work.
 
 ## LOOK Consumer Notes

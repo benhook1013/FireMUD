@@ -115,6 +115,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0099](./adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md) | Accepted | `GR-2` | `GR-1`, `SF-2`, `AS-1` | Atomic generation visibility through bounded local transactions or digest-checked staging for large output |
 | [ADR 0100](./adr-0100-single-authority-script-pins-with-exact-version-execution.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `GR-1` | Game Session-authoritative script pins with exact-version execution, epoch fencing, and explicit rollback |
 | [ADR 0101](./adr-0101-stable-playable-state-namespaces-for-runtime-replacement.md) | Accepted | `AR-3` | `GR-2`, `GR-3`, `AR-3`, `SF-2` | Stable playable-state namespaces with explicit preservation, owner-applied mappings, and fail-closed replacement |
+| [ADR 0102](./adr-0102-database-authoritative-temporal-coordinated-world-lifecycle.md) | Accepted | `AR-3` | `SF-2`, `GR-2`, `PO-1` | Database-authoritative fenced world lifecycle with Temporal coordination and all-owner cleanup convergence |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

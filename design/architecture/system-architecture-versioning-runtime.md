@@ -519,14 +519,15 @@ Activation workflows must also respect per-instance lifecycle fencing in World M
 
 ### Instance Termination Handoff
 
-Termination requires ordered handoff across runtime and domain owners:
+Termination requires ordered handoff across runtime and every registered durable instance-data owner:
 
 1. Game Session marks the instance non-admissible/draining and blocks new admissions.
-2. World Management acquires the lifecycle fence, transitions to `TERMINATING`, and runs `InstanceTermination` with Entity Management cleanup.
-3. World Management commits `TERMINATED` only after Entity Management confirms cleanup.
-4. Game Session marks the `game_instances` runtime record terminated/stopped only after step 3.
+2. World Management performs the authoritative database compare-and-set from `PREPARING` or `ACTIVE` to `TERMINATING`, advancing the lifecycle epoch so a stale activation cannot commit, and starts or resumes the stable `InstanceTermination` workflow.
+3. Every registered owner performs its idempotent local cleanup and records an acknowledgement. Entity Management is one required owner for its explicitly S3 containment state, not the complete future owner set.
+4. World Management commits `TERMINATED` only after every required owner acknowledgement is durable. `FAILED_PRE_ACTIVATION` remains terminal for admission but uses separate cleanup state until the same owner obligations converge.
+5. Game Session marks the `game_instances` runtime record terminated/stopped only after step 4.
 
-If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
+If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence. The World database lifecycle row and epoch remain authoritative; routine gameplay never queries Temporal.
 
 Before any operation that changes whether a tenant is actively serving gameplay through one of its player-addressable realms (for example, starting the default production realm, creating a playtest fork, cutting a realm over to a replacement instance with a different `runtime_version`, or rolling a realm back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 

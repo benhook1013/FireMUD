@@ -79,9 +79,11 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 
 - `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
-- `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> (ACTIVE | FAILED_PRE_ACTIVATION)` and `ACTIVE -> TERMINATING -> TERMINATED`.
-- `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
-- `world_instance_lifecycle_lock`, or equivalent fenced token, enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)`.
+- `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, and `ACTIVE -> TERMINATING -> TERMINATED`.
+- `FAILED_PRE_ACTIVATION` is terminal for admission by that `gameInstanceId`; recovery is modeled as provisioning a new ID. It is not proof that partial preparation data has been cleaned up.
+- Separate durable cleanup state records the stable cleanup request, registered durable instance-data owner set, per-owner acknowledgements and failures, and last progress time. `TERMINATED` requires every registered owner acknowledgement; an unknown or missing owner fails closed.
+- `world_instance_lifecycle_lock`, or preferably the authoritative row's monotonic epoch and storage compare-and-set, enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)`. Temporal coordinates retries and waits but is not lifecycle authority.
+- Any new durable family keyed by `gameInstanceId` must register its ownership, replacement-state classification, termination cleanup, stable operation identity, acknowledgement, retry, and retention behavior before launch paths write it.
 - `character_location` records the current room for each character, including instance occupancy.
 
 ### Runtime configuration and events

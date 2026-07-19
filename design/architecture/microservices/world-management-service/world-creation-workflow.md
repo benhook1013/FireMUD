@@ -1,6 +1,6 @@
 # World Creation Workflow
 
-World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow now runs on the shared **Temporal** substrate so prepare/activate/fail/terminate orchestration survives service restarts, keeps deterministic workflow identity, and exposes operator-visible execution status without pulling gameplay runtime onto the workflow engine. World Management's activation lifecycle surface is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
+World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow runs on the shared **Temporal** substrate so prepare/activate/fail/terminate coordination survives service restarts, keeps deterministic workflow identity, and exposes operator-visible execution progress without pulling gameplay runtime onto the workflow engine. Temporal coordinates the control-plane work; the World Management `world_instance` lifecycle row and its monotonic epoch remain authoritative for admission and lifecycle state. World Management's activation lifecycle surface is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
 
 - `tenantId` – identifies the game (tenant) as described in
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -57,13 +57,17 @@ Activation-time input invariants:
 - Any runtime generation that affects persisted instance topology must be driven from version-scoped published design inputs and the frozen `expectedGenerationConfigRevision`.
 - Operational inputs such as shard placement or worker sizing may influence execution placement only; they must not change the generated room graph, room metadata, exits, or other persisted world semantics for a given launch descriptor.
 
-The Class A/Class B boundary is persisted explicitly through a monotonic instance lifecycle state in World Management:
+The Class A/Class B boundary and termination state are persisted explicitly on the authoritative World Management `world_instance` row:
 
-- `world_instance_status=PREPARING` while world-lifecycle workflow steps are still compensatable.
-- `world_instance_status=ACTIVE` once admission opens for gameplay.
-- `world_instance_status=FAILED_PRE_ACTIVATION` when Class A preparation cannot converge and admission never opens.
+- `world_instance_status=PREPARING` while world-lifecycle workflow steps are still compensatable and gameplay admission is closed.
+- `world_instance_status=ACTIVE` once preparation has completed and gameplay admission may open.
+- `world_instance_status=FAILED_PRE_ACTIVATION` when Class A preparation cannot converge and admission never opens for that `gameInstanceId`.
+- `world_instance_status=TERMINATING` once a fenced termination request has closed or superseded activation and cross-service cleanup is in progress.
+- `world_instance_status=TERMINATED` only after every registered durable `gameInstanceId` data owner has acknowledged its cleanup obligation.
 
-Transitions are one-way for a given `gameInstanceId` once terminal states are reached. Compensation logic in the world-lifecycle workflow is allowed only while status is `PREPARING`; once status is `ACTIVE`, failures must be handled by Class B retry/reconciliation semantics instead of destructive rollback.
+The row carries a monotonic `lifecycle_epoch`. Every lifecycle mutation is a storage-level compare-and-set against the expected state and epoch; Temporal status, worker memory, and operator projections are not lifecycle authority. Allowed forward transitions are `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`. `FAILED_PRE_ACTIVATION` and `TERMINATED` are lifecycle-terminal for that `gameInstanceId`.
+
+Compensation logic in the world-lifecycle workflow is allowed only before `ACTIVE` commits. Once status is `ACTIVE`, failures use Class B retry/reconciliation semantics instead of destructive rollback. `FAILED_PRE_ACTIVATION` proves only that activation and admission are permanently closed; it does not prove cleanup completion. Pre-activation cleanup progress is tracked separately through durable owner-scoped acknowledgement state and can continue after the lifecycle has reached `FAILED_PRE_ACTIVATION`.
 
 Initial NPC and item presence is modeled declaratively:
 
@@ -84,6 +88,7 @@ Initial-slice delivery expectation:
 - Current starter-region preparation still stores hard-coded `SimpleDungeonGenerator` metadata rather than resolving the frozen published generator inputs and provenance required above.
 - Initial event scheduling is not present in the current prepare path, and the lifecycle snapshot has no durable per-stage outcome projection.
 - Broader activation/cutover consumers and later runtime world-state families remain follow-on work on the same lifecycle seam rather than a separate activation model.
+- Termination during `PREPARING`, separate failed-instance cleanup state, an extensible durable-owner registry, and all-owner acknowledgement gating are not implemented in the first cut.
 
 - The current live implementation cut implements the structural part of step 1 and the lifecycle transition in step 4. Step 2 and published generation-input convergence for step 1 remain incomplete; future work must extend the same workflow-state model rather than introducing a second activation path.
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
@@ -151,9 +156,9 @@ If retries are exhausted before admission:
 - No gameplay admission is permitted for that `gameInstanceId`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; operators must create a new instance with a new `gameInstanceId` for retry.
 
-This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new workflow runs resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
+This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. Lifecycle mutations additionally use storage-level compare-and-set predicates on the expected state and `lifecycle_epoch`. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new workflow runs resolve to the same generation run instead of creating duplicate topology writes. An activity that loses its response after local commit must reconstruct and return the durable prior result on retry. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
 
-The durable workflow state is owned by Temporal using the canonical `world-lifecycle` workflow identity. Operators can inspect progress through the normal lifecycle read surface and any Temporal-backed operator tooling that projects the same `workflowId`.
+Temporal owns durable coordination history for the canonical `world-lifecycle` workflow identity, including retries, waits, and operator-visible progress. It does not own lifecycle truth. Operators inspect the authoritative World Management lifecycle row and cleanup acknowledgements alongside Temporal-backed tooling that projects the same `workflowId`. Routine gameplay and tick execution do not call Temporal or wait for workflow status; they consult the existing admission and lifecycle fences only at lifecycle-sensitive boundaries.
 
 See [World Management Service](README.md) for additional service context.
 
@@ -163,12 +168,16 @@ See [Transaction Strategies](../../system-architecture-transactions.md) for the 
 
 Instance expiry and operator-driven shutdown must use an explicit cross-service termination workflow rather than independent cleanup jobs.
 
-- Game Session must first mark the target instance non-admissible/draining before World starts termination.
-- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and marks the instance `TERMINATING`.
-- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with Temporal `workflowId` / run identity as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
-- World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion; current world-side cleanup hard-deletes runtime `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows for the terminating instance while retaining the terminal `world_instance` lifecycle row.
-- The current first implementation cut now exposes that contract synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination.
-- If cleanup fails after admission is already closed, the world remains `TERMINATING` and the same termination workflow identity must retry to convergence instead of restoring the instance to live admission.
+- For an `ACTIVE` instance, Game Session first marks the target non-admissible/draining. A `PREPARING` instance is already non-admissible.
+- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and performs a storage-level compare-and-set from `PREPARING` or `ACTIVE` to `TERMINATING` under the expected lifecycle epoch. A successful `PREPARING -> TERMINATING` transition makes any stale activation attempt fail its compare-and-set and immediately starts cleanup of preparation outputs.
+- At termination admission, World Management records the stable `terminationRequestId`, the complete registered set of durable data owners for that `gameInstanceId`, and separate per-owner cleanup acknowledgement state.
+- Each owner runs an idempotent local cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` and records its acknowledgement in owner-local durable storage. Temporal `workflowId` and run identity are execution trace only. Entity Management removes synthetic room-ground containers and containment rows; World Management cleans its owned runtime rows while retaining the lifecycle and cleanup evidence required for audit.
+- World Management marks the instance `TERMINATED` only after every required owner acknowledgement is durably present and its final `TERMINATING -> TERMINATED` compare-and-set succeeds. Missing, failed, or unknown owner state fails closed.
+- Any service that introduces a durable data family keyed by `gameInstanceId` must register that family and define its replacement-state classification, termination cleanup, stable operation identity, acknowledgement, retry, and retention behavior before launch paths may write it.
+- If cleanup fails after admission is closed, the world remains `TERMINATING` and the same termination workflow identity retries or awaits operator repair instead of restoring live admission.
+- If preparation instead reaches `FAILED_PRE_ACTIVATION`, its lifecycle remains admission-terminal while the same owner-scoped cleanup model records and drives cleanup independently; cleanup completion must not be inferred from the failure state.
+
+The current first implementation cut exposes termination synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination. It accepts the implemented active-instance path, invokes Entity Management cleanup, and then hard-deletes World-owned `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows while retaining `world_instance`. It does not yet implement `PREPARING` termination, separate cleanup acknowledgements, a complete owner registry, or all-owner finalization.
 
 `expires_at` jobs must enqueue this termination workflow; they must not hard-delete world rows for a `gameInstanceId` before cross-service cleanup convergence is confirmed.
 
@@ -176,9 +185,9 @@ Instance expiry and operator-driven shutdown must use an explicit cross-service 
 
 Activation and termination share one lifecycle fence per `(tenantId, gameInstanceId)`:
 
-- Activation acquires the fence before committing `PREPARING -> ACTIVE`.
-- Termination acquires the same fence before committing `ACTIVE -> TERMINATING`.
-- If both workflows race, only the workflow holding the current fence token may transition lifecycle state; stale-token attempts fail and must retry from fresh state.
+- Activation performs a storage-level compare-and-set before committing `PREPARING -> ACTIVE`.
+- Termination performs a storage-level compare-and-set under the same epoch before committing either `PREPARING -> TERMINATING` or `ACTIVE -> TERMINATING`.
+- If activation and termination race from `PREPARING`, only one compare-and-set can advance the lifecycle row. A stale activation never reopens an instance that termination fenced, and a stale termination must reread the authoritative state rather than guessing the winner from Temporal history.
 
 ## Version Switching and Instance Data
 
