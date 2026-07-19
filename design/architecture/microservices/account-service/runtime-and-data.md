@@ -4,7 +4,7 @@ This document defines the Account Service runtime model, persistent data ownersh
 
 ## Implementation Notes
 
-The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has live identity/authentication, profile, external-link, recovery/verification, payment, subscription, notification, and virtual-currency foundations, but lifecycle state transitions, purchased-entitlement fulfillment, and complete billing/subscription follow-through remain partial. The current successful deletion path immediately removes Account-owned rows, including payment transactions; that hard-delete behavior is direct implementation drift from the bounded erasure workflow below.
+The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has live identity/authentication, profile, external-link persistence, recovery/verification, payment, subscription, notification, and virtual-currency foundations, but lifecycle state transitions, genuine provider authentication, purchased-entitlement fulfillment, and complete billing/subscription follow-through remain partial. The current external-link route accepts caller-asserted provider identity and stores tenant scope; it is not a supported provider login and directly conflicts with [ADR 0049](../../decisions/adr-0049-optional-provider-specific-external-identity-linking.md). The current successful deletion path immediately removes Account-owned rows, including payment transactions; that hard-delete behavior is direct implementation drift from the bounded erasure workflow below.
 
 ## Architecture and Runtime Notes
 
@@ -31,11 +31,11 @@ The account lifecycle state machine, global deletion preconditions, full-account
 - `account` table stores username, password hash, email, and status flags for the global platform account.
 - `profile` table captures optional user details and preferences.
 - `achievement` table records earned achievements keyed by account and game.
-- `external_account` table links third-party OAuth IDs to platform accounts.
+- Target `external_account` records link a server-verified canonical `{provider, issuer, subject}` to one global platform account without tenant scope. The current tenant-scoped, caller-asserted row shape is implementation drift.
 - Tenant- and billing-related tables such as `subscription` and `payment_transaction` associate `accountId` with `tenantId` for hosted games and hosting plans.
 - Durable purchased-product grants are represented separately from raw payment attempts. One-time purchases that create ongoing player-visible value write `purchase_entitlement` rows keyed by `accountId`, `tenantId`, optional `characterId`, and `productCode`; payment rows remain the audit and provider-settlement record, not the entitlement authority.
 
-External accounts allow players to log in via Google, Discord, or Steam. Each link stores the provider name and external ID so the platform account can be resolved during authentication.
+Google, Discord, and Steam are optional provider-specific HTTPS integrations, not simultaneously promised launch capabilities. Initial delivery links a verified provider subject to an already authenticated global account; provider-first account creation is deferred. Provider email or display-name matches never merge accounts, every account retains Account-owned verified-email recovery and an ordinary login mode, and provider outage does not invalidate existing FireMUD sessions.
 
 ## Account Lifecycle State Model
 

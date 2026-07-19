@@ -53,7 +53,7 @@ Creator-focused design flows are described in the [Creator Journeys](./user-jour
 
 ## 1. Sign Up
 
-Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and the current password/verified-email-code login modes are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Players may also link external accounts such as **Google**, **Discord**, or **Steam** for simplified logins, as detailed in the Account Service documentation.
+Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and the baseline password/verified-email-code login modes are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Under [ADR 0049](./decisions/adr-0049-optional-provider-specific-external-identity-linking.md), **Google**, **Discord**, and **Steam** are planned optional HTTPS linking and sign-in integrations rather than baseline launch promises. Each provider is available only after its complete provider-specific security, recovery, collision, outage, and lifecycle contract is implemented and proven; provider-first account creation remains deferred.
 
 ```plaintext
 Player → Account Service

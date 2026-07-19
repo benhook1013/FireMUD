@@ -372,11 +372,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `ACCOUNT-01` - External identity providers are a product promise, not an implementation detail
 
 - **Capability:** Primary `AA-1.3`. Secondary `EA-3.1`.
-- **Decision / status / importance:** The player journey names Google, Discord, and Steam as external sign-up providers. Treat that list as an explicit product commitment requiring provider-linking, account-recovery, identity-collision, and availability policy; do not silently implement it as a generic OAuth placeholder. Status `needs-human-review`; `M/med`.
+- **Decision / status / importance:** Google, Discord, and Steam are planned optional provider-specific HTTPS linking and sign-in integrations, not baseline launch or simultaneous-availability promises. Initial delivery links a verified provider subject to an existing global account; provider-first account creation and email-based merging are deferred. Account-owned verified-email recovery and an ordinary login mode remain mandatory. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 1. Sign Up` and `§ 7. Password Resets & Account Recovery`; [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Authentication and Session Handling`.
-- **Strongest alternative:** Support only password/email authentication, or promise provider-neutral federation without naming supported providers.
-- **ADR recommendation:** Yes before implementation or public documentation; define provider scope, account linking, recovery fallback, and provider outage behavior.
-- **Human consultation:** Yes; product, security, legal, and support owners must approve the provider promise.
+- **Strongest alternative:** Support only password/email authentication permanently, or promise all three providers together with provider-first account creation.
+- **ADR recommendation:** [ADR 0049](../../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md) records the revised decision; each provider remains unavailable until its complete verification and lifecycle proof passes.
+- **Human consultation:** Human-led product and architecture review completed 2026-07-19; `revised`. Provider-specific legal/configuration review remains an implementation readiness obligation.
 
 #### `COMPLIANCE-01` - Tier A credential evidence is a measurable release and recovery gate
 
