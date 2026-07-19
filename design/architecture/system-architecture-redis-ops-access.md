@@ -4,25 +4,25 @@ This document expands on the access control and operational guardrails described
 
 ## Implementation Notes
 
-The target control-plane and CLI contract in this document is ahead of the currently shipped runtime surface:
+The target control-plane and maintenance contract in this document is ahead of the currently shipped runtime surface:
 
 - Game Session currently ships `PauseTicksForScope` / `ResumeTicksForScope` plus `GetRuntimeOwnershipStatus` on the control-plane gRPC surface.
 - The live implementation supports the current `{tenantId, gameInstanceId}` queue boundary; `region_id` is present in the proto contract but is currently rejected by the service implementation.
-- The documented `GetRegionTickStatus(scope)` surface and the `coordination-maintenance ...` CLI verbs remain the intended target-state operator contract, not a description of fully implemented repo-local tooling today.
+- The bounded `coordination-maintenance ...` public surface remains target state, not a description of fully implemented repo-local tooling today. Recovery phases may be implemented and tested behind the high-level operation without becoming separate public commands.
 
-Use this doc as the canonical target-state contract for later reset/replay tooling, but do not assume every verb below is already available in the running codebase.
+Use this doc as the canonical target-state contract for later reset/replay tooling, but do not assume every operation below is already available in the running codebase.
 
 ## Default Operator Surface
 
 - Using the **read-only ops user** for inspection and the **application user** (via supported tooling) for any coordination writes.
-- Running coordination maintenance exclusively through the **versioned maintenance CLI** and its documented commands.
+- Running coordination maintenance exclusively through the **versioned supported maintenance tooling** and its documented commands.
 
 Defining additional Redis users, ACL variations, or ad-hoc tools is considered **advanced** and should be avoided unless existing roles and tooling are clearly insufficient for a documented operational requirement.
 
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface**:
-  - All writes to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) go through registered Lua scripts and key-builder helpers in `firemud-common`.
+  - All writes to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) go through owned typed key and mutation helpers in `firemud-common`. Registered Lua scripts are required when an atomic multi-key mutation needs them, not for every ordinary single-key operation.
   - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
@@ -114,34 +114,18 @@ Operators interact with coordination state through **supported tools**, not raw 
 
 ### Canonical Control-Plane and CLI Contract
 
-To keep reset/replay behavior implementation-safe, the maintenance/tooling surface is not left to per-runbook invention. The first implementation must expose one canonical control-plane contract, whether that is delivered as a CLI, an admin API, or both:
+To keep reset/replay behavior implementation-safe, the maintenance/tooling surface is not left to per-runbook invention. Its initial supported public contract is deliberately small, whether delivered as a CLI, an admin API, or both:
 
-- Required control-plane operations:
-  - `PauseTicks(scope)`
-  - `ResumeTicks(scope)`
-  - `GetRegionTickStatus(scope)`
-  - `RunScopedCoordinationReset(scope)`
-  - `ReconcileTickLedger(scope, oldRegionEpoch)`
-  - `ConvergeCommandRecords(scope, oldRegionEpoch)`
-  - `InitializeRegionMeta(scope, regionEpoch, currentTickId, currentTickState, currentTickTerminalAtMs)`
-  - `RebindRegionSessions(scope, regionEpoch)`
-  - `RunPostResetSmokeCheck(scope)`
-- Required CLI verbs:
-  - `coordination-maintenance pause`
-  - `coordination-maintenance status`
-  - `coordination-maintenance reset`
-  - `coordination-maintenance reconcile-ledger`
-  - `coordination-maintenance converge-commands`
-  - `coordination-maintenance init-meta`
-  - `coordination-maintenance rebind-sessions`
-  - `coordination-maintenance session-cleanup`
-  - `coordination-maintenance smoke-check`
-  - `coordination-maintenance resume`
-  - `coordination-maintenance release-lock`
-- Scope grammar:
-  - `--scope region --tenant <tenantId> --region <regionId>`
-  - `--scope tenant --tenant <tenantId>`
-  - `--scope cluster`
+- `pause(scope)` fences new work and acquires the maintenance lock.
+- `status(scope)` reports the canonical state, affected inventory, and recovery progress.
+- `recover(scope, policy)` or equivalently named `reset` performs the required recovery phases in order and gates completion on the post-reset smoke check.
+- `resume(scope)` refuses to resume until the recovery and smoke gates pass.
+- `releaseMaintenanceLock(scope, reason)` is an audited exceptional operation and does not imply that the scope is safe to resume.
+
+The high-level recovery operation internally owns durable epoch handling, ledger and command convergence, Redis clearing, metadata initialization, session invalidation or rebinding, and post-reset verification. These phases may expose internal APIs for orchestration, resumability, and focused proof, but they are not required public operator verbs. Specialist public verbs are added only when a demonstrated incident workflow requires independently invoking that phase.
+
+The tool advertises and accepts only scope forms implemented and proved by the runtime. Unsupported region, tenant, or cluster scope must be rejected explicitly. A wider scope becomes supported only when its authoritative durable affected-region inventory, pause fencing, recovery ordering, audit output, and resume gate have end-to-end proof.
+
 - Scope inventory source:
   - The authoritative affected-region set comes from the durable Game Session control/status store, not Redis key enumeration.
   - The first fully region-scoped implementation must use a PostgreSQL-backed `RegionStatus` or equivalent runtime ownership table as the inventory source for every tenant and cluster operation.
@@ -150,54 +134,53 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - Cluster scope includes every active, paused, degraded, stalled, or draining region assigned to the Coordination Redis deployment at the inventory snapshot.
   - Redis `SCAN` is used only to enumerate keys for deletion/inspection after the durable scope has been established; it must not decide which regions exist.
   - Commands that auto-discover epoch maps must derive them from the same durable affected-region snapshot and emit that snapshot in audit output.
-- Required argument contract:
+- Internal recovery phase contract:
+  - The following detailed phase semantics apply inside the high-level `recover` or `reset` workflow. Equivalent internal methods or resumable steps may implement them; names and option spellings shown here are descriptive and are not an initial public compatibility requirement. References to scope mean one of the forms the runtime currently advertises as supported.
   - `coordination-maintenance pause`
-    - accepts only the scope grammar above.
+    - accepts only an advertised supported scope.
     - accepts `--operation <backup|restore|reset|cleanup|migration|topology-change>` and treats that value as the canonical maintenance-lock compatibility class; `backup` is reserved for exceptional backup-related maintenance that actually pauses or mutates coordination state.
     - is the canonical entrypoint that acquires the deployment maintenance lock for multi-step restore, reset, cleanup, migration, topology-changing scaling, and exceptional backup-related maintenance workflows. Routine online PostgreSQL backup neither calls this command nor pauses ticks.
     - blocks until the scope reaches the control-plane `PAUSED` state or exits non-zero on timeout/failure.
     - must emit a `maintenanceLockToken` plus the resolved affected-region inventory in audit output; downstream commands in the same workflow consume that token rather than reacquiring the lock independently.
   - `coordination-maintenance status`
-    - accepts the scope grammar above.
+    - accepts an advertised supported scope.
     - returns the control-plane status payload defined below for every affected region.
   - `coordination-maintenance reset`
-    - accepts the scope grammar above.
+    - accepts an advertised supported scope.
     - requires `--maintenance-lock-token <token>` from the corresponding `pause` step.
     - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
     - never infers session invalidation from scope alone when the design says it is optional.
     - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
     - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.
-  - `coordination-maintenance reconcile-ledger`
-    - accepts the scope grammar above.
+  - `reconcile-ledger` phase
+    - consumes the advertised supported scope selected by the recovery workflow.
     - requires `--maintenance-lock-token <token>`.
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
-    - is the canonical operator entrypoint for `replay_first` convergence as well as old-epoch reset convergence:
+    - owns `replay_first` convergence as well as old-epoch reset convergence:
       - without an epoch bump, it drives in-epoch `SCHEDULED` ledger rows toward `APPLIED` or `ABANDONED` for the selected current-epoch scope.
       - after an epoch bump, it drives old-epoch rows toward terminal reset outcomes for the selected reset scope.
     - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
-  - `coordination-maintenance converge-commands`
+  - `converge-commands` phase
     - requires `--maintenance-lock-token <token>`.
     - accepts the same epoch arguments and discovery behavior as `reconcile-ledger`.
-    - remains a distinct command in first implementation:
-      - operators run `reconcile-ledger` first and `converge-commands` second when both effect-ledger and command-status convergence are required.
-      - a future combined verb is intentionally out of scope for this contract unless the canonical CLI section is updated.
-  - `coordination-maintenance init-meta`
-    - accepts the scope grammar above.
+    - remains ordered after `reconcile-ledger` when both effect-ledger and command-status convergence are required, even when one high-level recovery operation invokes both.
+  - `init-meta` phase
+    - consumes the advertised supported scope selected by the recovery workflow.
     - requires `--maintenance-lock-token <token>`.
     - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
-  - `coordination-maintenance session-cleanup`
-    - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
+  - `session-cleanup` phase
+    - may operate only on a tenant scope until broader cleanup scopes are explicitly designed and proved.
     - requires `--maintenance-lock-token <token>`.
     - accepts `--dry-run`, `--resume-token <token>`, `--batch-size <n>`, and `--max-runtime-seconds <n>`.
     - walks only the documented tenant-scoped gameplay-session and bootstrap/session-context families for that tenant, using bounded `SCAN` windows and `UNLINK` where applicable.
     - must emit structured progress and completion audit output containing the tenant, prefixes visited, scanned count, deleted count, continuation or resume token, and the concrete abort/completion reason.
     - must fail closed when Redis latency/health exceeds the documented cleanup budget, when the maintenance lock is lost, or when the workflow encounters an unsupported schema family outside the explicit cleanup contract.
-  - `coordination-maintenance smoke-check`
-    - accepts the scope grammar above.
+  - `smoke-check` phase
+    - consumes the advertised supported scope selected by the recovery workflow.
     - requires `--maintenance-lock-token <token>`.
     - for tenant/cluster scopes, accepts an optional explicit sample-set argument; otherwise the tool must auto-select one representative region per affected executor/shard group and print which regions were sampled.
   - `coordination-maintenance resume`
-    - accepts only the scope grammar above.
+    - accepts only an advertised supported scope.
     - requires `--maintenance-lock-token <token>`.
     - exits non-zero unless the scope currently satisfies the resume gate: reset complete, old-epoch ledger converged, command convergence complete, and smoke check passing.
     - is the canonical success-path command that releases the deployment maintenance lock after the scope returns to `RUNNING`.
@@ -206,7 +189,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
     - is the canonical failure or operator-abort path for releasing the deployment maintenance lock when a multi-step workflow stops before `resume`.
     - must emit structured audit output recording the partial workflow state, actor, release reason, and whether the scope remains paused.
 - Required execution rule:
-  - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
+  - The bounded high-level maintenance operations are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call them rather than re-encoding reset logic or directly invoking internal recovery phases.
 - Epoch-bump ownership rule:
   - `RunScopedCoordinationReset(scope)` / `coordination-maintenance reset` is the canonical owner of the PostgreSQL `region_epoch` bump for reset and restore flows.
   - No separate runbook-only or ad hoc SQL step is allowed to silently bump `region_epoch` out of band from that reset operation.
@@ -215,8 +198,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
 - Maintenance-lock lifecycle rule:
   - One workflow owns one deployment maintenance lock from `coordination-maintenance pause` until either `coordination-maintenance resume` or `coordination-maintenance release-lock` completes.
-  - Later subcommands in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks.
-  - If a command loses the lock, every later mutating command must fail closed until an operator explicitly releases or restarts the workflow.
+  - Later phases in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks.
+  - If a phase loses the lock, every later mutation must fail closed until an operator explicitly releases or restarts the workflow.
 
 Canonical epoch-map examples:
 
@@ -316,7 +299,7 @@ Jobs, wrappers, and dashboards may present this state differently, but they must
 | Durable advancement | Durable commit/cleanup counters advance as expected and no inconsistent-state alert or duplicate-batch condition is raised. |
 | Scope sampling | For tenant- or cluster-scoped resets, the smoke check samples at least one representative region per affected executor/shard group rather than only one global region. |
 
-Runbooks may compose these verbs, but they must not invent alternate write paths or omit required steps such as command-record convergence.
+The high-level recovery workflow must compose these phases without inventing alternate write paths or omitting required steps such as command-record convergence.
 
 The table above is the canonical post-reset verification checklist. Other runbooks should reference this checklist directly rather than restating a partial subset of assertions in different words.
 
@@ -355,7 +338,7 @@ This ensures that operators use the same abstractions as application code and re
 
 ## Discovery and Version Discipline
 
-- The coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script, but runbooks and Helm hooks should reference the canonical command/verb names above so operators do not need to guess how to invoke it.
+- The coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script, but runbooks and Helm hooks should reference the bounded public operation names above so operators do not need to guess how to invoke it.
 - Operators must only use a CLI version that matches the deployed services and Lua registry:
   - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination recovery actions; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
   - Break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths.

@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 20 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 21 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **29** | **183** | `in-progress` |
+| **Total** | | **30** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -154,7 +154,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
 - [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
 - [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
-- [ ] `REDIS-06`
+- [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
 - [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
 - [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19 by [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) and [ADRs 0035–0038](../../architecture/decisions/README.md)
 
