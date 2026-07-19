@@ -28,7 +28,7 @@ Tick-driven automation and event handling never use synchronous sagas or Tempora
 
 ## Runtime Data Model
 
-- `script` holds compiled component definitions and version metadata.
+- `script` holds immutable compiled component definitions and exact version metadata. An admitted trigger resolves the graph identified by its `scriptPatchVersion`; cache misses or worker restarts must not substitute another version.
 - `npc_memory` stores persistent state for NPC behaviors.
 - Admitted script work items are persisted durably in a PostgreSQL-backed outbox keyed by Trigger Identity plus sequencing fields as needed, including the resolved binding `priorityTag` used for live tenant-budget reservation. For gameplay/runtime triggers, that Trigger Identity includes the resolved `playableStateScope` rather than inferring scope later from `gameInstanceId` conventions or payload internals.
 - `automation:queue:{tenantInstanceTag}:<entityId>` keys in Redis buffer work-item indexes or pointers after a script runs and its work item is persisted durably. Each entry includes enough identity to locate the durable work item and must not be treated as an authoritative log of commands.
@@ -51,13 +51,16 @@ Tick-driven automation and event handling never use synchronous sagas or Tempora
 
 - `NotifyScriptVersionUpdate` is a tenant-readiness ingestion signal, not an instance activation signal. It causes the service to ingest compiled graphs and bindings for `<tenantId, scriptPatchVersion>`, then run tenant-scoped readiness checks and `onLoad` before any running instance is allowed to pin that patch.
 - Tenant readiness uses the patch lifecycle `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`, plus terminal `SUPERSEDED` when a newer publish displaces an older pending patch for the same tenant.
-- Runtime scopes track only the patch observed as pinned for `<tenantId, gameInstanceId>` plus instance-scoped admission state such as `reloadState` and rollback pause.
-- When Game Session later pins a tenant-`READY` patch for a specific runtime scope, leaders set runtime-scope `pendingPatchVersion` and `reloadState=RELOADING` while keeping the previously observed `activePatchVersion` unchanged. Scheduling is paused for that runtime scope: in-flight executions complete under the existing patch, but new triggers are not admitted while reload is in progress.
-- Instance reload does not rerun `onLoad`. Leaders load the already validated tenant-`READY` definitions for the newly observed pin, reconcile version-scoped timers and other derived scheduler state, then atomically switch the runtime scope to the new observed patch and clear `reloadState=IDLE`.
-- If tenant readiness fails, the patch remains `FAILED` for that tenant and never becomes eligible for pinning. If instance reload of an already-`READY` patch fails, the service keeps `activePatchVersion` on the prior observed patch, marks the runtime scope `reloadState=FAILED`, discards partially loaded derived state, and resumes scheduling using the last known good configuration.
-- Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly with audit visibility and bounded failure reasons rather than falling back silently.
+- Tenant `onLoad` has no game-instance, region, epoch, entity, or gameplay-effect context. It may validate graphs and prepare ephemeral or recomputable candidate-local state, but it must not emit gameplay commands or mutate instance, entity, or shared gameplay state.
+- Before pin commit, Game Session may request candidate preparation or preload for the exact tenant-`READY` artifact. This state is non-authoritative and cannot admit candidate gameplay work; preparation failure leaves the current Game Session pin and epoch unchanged.
+- Runtime scopes track only the Game Session pin projection `(observedPinnedScriptPatchVersion, observedScriptPinEpoch)` plus instance-scoped workflow state such as `reloadState` and rollback pause. The projection and any loaded cache are not an Automation-owned active-version authority.
+- After Game Session commits a pin, leaders set `reloadState=RELOADING` for the observed exact version and epoch and pause new scheduling for that runtime scope while reconciling version-scoped timers and other derived state. Instance reload does not rerun `onLoad`.
+- In-flight executions may finish evaluation against the immutable graph and pin epoch captured at admission, but any later persistence, handoff, or gameplay effect must pass the current version-and-epoch fence. New work under a displaced epoch is rejected.
+- On successful reconciliation, leaders clear `reloadState=IDLE` and admit future work only with the committed Game Session version and epoch. This is convergence to the authoritative pin, not an Automation-owned active-version switch.
+- If tenant readiness or candidate preparation fails before commit, the patch remains ineligible and the existing instance pin is unaffected. If exact-version loading or reconciliation fails after Game Session commits the pin, the runtime scope remains fail-closed with `reloadState=FAILED`; it does not resume against a prior locally loaded graph. Recovery requires repair or an explicit Game Session repin to a still-`READY`, base-compatible patch, which creates a new pin epoch.
+- Triggers carrying an unknown, failed, mismatched, or stale `(scriptPatchVersion, scriptPinEpoch)` are rejected explicitly with audit visibility and bounded failure reasons rather than falling back or substituting another graph.
 
-This behavior ensures that a script patch either becomes the new active version for the targeted runtime scope or fails cleanly without affecting unrelated live automation behavior.
+This behavior preserves one active-selection authority while allowing Automation to retain readiness, preload, backpressure, and convergence workflow state.
 
 ## Redis Roles and Prefixes
 

@@ -122,7 +122,7 @@ The DSL supports a variety of **built-in lifecycle events** and **custom events*
 
 - **Timer and interval events**
   - `onInterval` and `onTimerExpire` events are driven by the scheduler and tick heartbeat. They are used to express “every N ticks” or “after a delay” behaviors.
-  - These events always execute against the script configuration pinned by the active `scriptPatchVersion` when they fire.
+  - These events carry the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` admitted when they fire and execute the immutable compiled graph for that version.
 
 See the Automation & Scripting Service README and service protos for the full, up-to-date list of event types and schemas.
 
@@ -133,18 +133,19 @@ See the Automation & Scripting Service README and service protos for the full, u
 `onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and script patch for a tenant, not once per NPC or player.
 
 - **When it fires**
-  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is the **pending** patch for the tenant, before it is promoted to the active `scriptPatchVersion` used by Game Session. In practice this means:
+  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is the tenant readiness candidate, before it becomes eligible for a Game Session pin. In practice this means:
     - When a script first becomes part of the tenant’s pending script set under a given `scriptPatchVersion` (lifecycle `PENDING_VALIDATION` → `ONLOAD_RUNNING`), and
     - After a successful hot reload that introduces a new pending patch for that tenant, `onLoad` fires once for each script in that pending patch.
-  - If reload or validation fails and the patch never reaches `READY`, `activePatchVersion` remains unchanged and no additional `onLoad` events are generated for that patch.
+  - If readiness validation fails and the patch never reaches `READY`, no Game Session instance pin changes and no additional `onLoad` events are generated for that patch.
 
 - **Per-script vs per-entity**
   - `onLoad` runs **without an entity context**; it executes once per `<tenantId, scriptId, scriptPatchVersion>`.
+  - It may validate graphs and prepare ephemeral or recomputable candidate-local state, but it must not emit gameplay commands, mutate instance or entity state, or create shared gameplay side effects.
   - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
 
 - **Interaction with reloads and recovery**
   - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
-  - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; `activePatchVersion` remains on the previous patch until all `onLoad` handlers succeed and the lifecycle transitions to `READY`. Scripts never run `onLoad` against a patch that is already the active `scriptPatchVersion` for a tenant.
+  - `onLoad` triggers are enqueued only while the tenant readiness candidate has lifecycle `ONLOAD_RUNNING`. Success advances only that candidate to `READY`; it does not activate the patch for any instance. Scripts never run `onLoad` as part of an instance pin or repin.
   - Tenant readiness allows only **one pending patch per tenant** at a time. If Game Design publishes a newer patch while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch is transitioned deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight `onLoad` executions for it must be prevented from later advancing the patch to `READY`.
   - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
 - Each `onLoad` trigger uses the tenant-readiness identity defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`: `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, with no `gameInstanceId`, `regionId`, `regionEpoch`, or `entityId`. Automation & Scripting generates `scriptEventId` deterministically from that tuple and reuses it for bounded infrastructure retries.
@@ -272,23 +273,23 @@ Two services collaborate to deliver scripting and automation:
     - Validates that referenced runtime assets such as abilities and actions are compatible with the target game version; if mismatches are detected, publication fails and the affected `scriptPatchVersion` is never eligible to become `READY` for that tenant.
     - Publishes the immutable design-time patch and calls `NotifyScriptVersionUpdate` so Automation & Scripting ingests the compiled definitions, event bindings, and any world-generation hooks for the target `<tenantId, scriptPatchVersion>`.
     - Automation & Scripting starts or reuses the durable Temporal `script-patch-readiness` workflow, which tracks validation and `onLoad` processing to terminal readiness without conflating publication with runtime admission.
-    - On readiness failure, the patch remains published but ineligible for runtime use, and the prior admitted `scriptPatchVersion` remains active for the game.
+    - On readiness failure, the patch remains published but ineligible for runtime use and no Game Session pin or epoch changes.
 
 - **Automation & Scripting Service**
-  - Owns the **compiled graph schema and runtime registry**: it stores compiled DSL graphs, per-tenant script metadata, and runtime flags (`runtimeStatus`, quotas, priorities) in its own database.
+  - Owns the **compiled graph schema and runtime registry**: it stores immutable exact-version compiled DSL graphs, per-tenant script metadata, and runtime flags (`runtimeStatus`, quotas, priorities) in its own database.
   - Enforces **runtime behavior**: sandbox execution, loop safety, per-script and per-tenant quotas (`ScriptQuotaService`), durable work-item execution, and scheduler/timer leadership.
   - Maintains **auditability and observability** for script execution via the `script_event_audit` feed and automation metrics (for example, `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`).
-  - Implements **hot reload and failure handling** for script patches, including `activePatchVersion`, `pendingPatchVersion`, and `reloadState` as described in [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md#hot-reload--resume-behavior).
+  - Implements **hot reload and failure handling** for script patches through candidate preparation, observed Game Session pin projections, `reloadState`, exact-version execution, and fail-closed reconciliation as described in [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md#hot-reload--resume-behavior).
 
 Because script definitions are stored in the Automation & Scripting Service database and loaded via `scriptPatchVersion`, designers can roll out script-only updates without redeploying the service binary; the service reloads definitions in place using its versioning and hot-reload flow.
 
 ### Runtime Version Behavior
 
 - Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
-- Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
+- Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service resolves the immutable compiled artifact named by each admitted exact patch version.
 - Script-only patches create a `scriptPatchVersion` (the logical/API name) tied to a `baseVersionId` so new behaviors can be loaded on the fly. In the Game Session Service database this is persisted as `script_patch_version`. See [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
-- The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to ingest and validate the patch for tenant readiness before any later pin-driven instance reload.
-- Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
+- The Game Session Service stores the authoritative `(scriptPatchVersion, scriptPinEpoch)` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to ingest and validate the patch for tenant readiness before any later explicit instance pin.
+- Timer events and scheduled evaluations carry the exact version and epoch admitted from the Game Session pin.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
 ### Version Authority & Consistency
@@ -297,12 +298,12 @@ At a high level:
 
 - The **Game Design Service** owns the *authoring* view of versions and drives the durable `publish` workflow.
 - The **Automation & Scripting Service** owns the *runtime* view of script patch readiness per tenant (for example, whether a patch is `READY` or `FAILED`).
-- The **Game Session Service** owns the *pinned* `scriptPatchVersion` for each game and is responsible for including that version in events sent to the Automation & Scripting Service.
+- The **Game Session Service** is the sole authority for the pinned `(scriptPatchVersion, scriptPinEpoch)` for each game and is responsible for including that tuple in events sent to the Automation & Scripting Service.
 
 The intended invariants are:
 
-- A script patch may be pinned as the active `scriptPatchVersion` for a game only after the Automation & Scripting Service has loaded and validated that patch for the tenant and marked it `READY` as part of the script-patch readiness workflow that follows publish ingestion.
-- When Game Session emits events, it includes the currently pinned `scriptPatchVersion`. The Automation & Scripting Service must **not** silently substitute a different version; if the supplied patch is unknown or is marked `FAILED` for that tenant, the trigger is rejected.
+- A script patch may be pinned for a game only after Automation & Scripting has loaded and validated the immutable patch for the tenant and marked it `READY`. Game Session may require exact candidate preparation before commit; preparation failure leaves the existing pin and epoch unchanged.
+- When Game Session emits events, it includes the current exact version and epoch. Automation & Scripting must **not** silently substitute a different graph, version, or epoch; unknown, failed, mismatched, or stale selections are rejected.
 
 From the Automation & Scripting Service’s point of view, each `<tenantId, scriptPatchVersion>` follows the lifecycle described in [Script Patch Lifecycle](#script-patch-lifecycle). All script-event audit entries include the effective `scriptPatchVersion` at the time of evaluation so operators can correlate failures with patch lifecycle and publish history.
 
@@ -323,14 +324,14 @@ Runtime execution must still remain **instance-aware** even though patch readine
 - Admission, timer scheduling, rollback pause, convergence checks, and plugin activation must evaluate the effective runtime scope as `<tenantId, gameInstanceId>`, even if implementations batch internal work by tenant.
 - If a deployment wants stronger coupling, it must explicitly declare the invariant that all instances in a tenant share one active script patch. Absent that declaration, instance isolation is the normative behavior.
 - Instance-scoped runtime state tracks only **pin observation and admission control** for the patch that an instance is trying to run (for example `observedPinnedScriptPatchVersion`, `reloadState`, convergence checkpoints, and rollback pause). It does **not** rerun tenant patch readiness or `onLoad`.
-- A single tenant-wide mutable `activePatchVersion` inside Automation & Scripting is therefore not sufficient. The service must keep tenant-scoped patch readiness separate from instance-scoped pin observation and scheduling state.
+- Automation & Scripting has no mutable active-version authority. It must keep tenant-scoped patch readiness separate from its instance-scoped Game Session pin projection and scheduling workflow state.
 
 Side-by-side lifecycle view:
 
 | Concern | Scope | Owner | Canonical states | What advances it |
 | --- | --- | --- | --- | --- |
 | Patch readiness | `<tenantId, scriptPatchVersion>` | Automation & Scripting | `PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY` / `FAILED`, terminal `SUPERSEDED` | Publish ingestion, static validation, tenant-scoped `onLoad`, newer accepted publish supersession |
-| Runtime pin observation | `<tenantId, gameInstanceId, scriptPatchVersion>` | Game Session pin plus Automation observation | Observed previous pin, `reloadState=RELOADING`, observed new pin, `reloadState=FAILED`, rollback pause / convergence checkpoints | `SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, pin-change events, reload reconciliation, rollback orchestration |
+| Runtime pin and observation | `<tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch>` | Game Session authority; Automation projection | Committed pin epoch, `reloadState=RELOADING` / `FAILED` / `IDLE`, rollback pause / convergence checkpoints | Game Session pin and repin commits, pin-change events, exact-version reconciliation, rollback orchestration |
 
 Interpretation rules:
 
@@ -342,7 +343,7 @@ The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
 - `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
-- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
+- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible for explicit instance pinning by Game Session but is not active merely because it is ready.
 - `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
 - `SUPERSEDED` – a newer publish for the same tenant was accepted while this patch was still non-terminal (`PENDING_VALIDATION` or `ONLOAD_RUNNING`). The superseded patch remains visible for audit/history but is no longer eligible for pinning or further readiness progression.
 
@@ -363,11 +364,12 @@ Automation & Scripting exposes this lifecycle to other services via:
 
 When a trigger arrives at the Automation & Scripting Service:
 
-- If the supplied `scriptPatchVersion` is `READY` for the tenant, the service must additionally compare it to a fresh-enough observed pin for `<tenantId, gameInstanceId>`. Admission proceeds only when the request patch matches the observed pinned patch for that instance.
+- If the supplied `scriptPatchVersion` is `READY` for the tenant, the service must additionally compare the supplied version and `scriptPinEpoch` to a fresh-enough Game Session pin projection for `<tenantId, gameInstanceId>`. Admission proceeds only when the exact tuple matches.
 - If pin visibility for the instance is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed with `pin_state_unavailable` and a bounded reason in the event-scope ingress audit record. If the failure happens after handler resolution, the handler-scoped `script_event_audit` row uses `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`.
-- If the supplied `scriptPatchVersion` is `READY` for the tenant but does not match the observed pinned patch for `<tenantId, gameInstanceId>`, admission is rejected with `version_unavailable` and a bounded mismatch reason such as `pin_state_mismatch_requested_vs_observed`. Automation & Scripting must not speculate or silently substitute either version.
+- If the supplied exact tuple does not match the observed Game Session pin for `<tenantId, gameInstanceId>`, admission is rejected with `version_unavailable` and a bounded mismatch reason such as `pin_state_mismatch_requested_vs_observed`. Automation & Scripting must not speculate or silently substitute a version or epoch.
 - If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected at admission with `version_unavailable` (or a specific bounded reason such as `onload_failed`). Pre-resolution rejections are recorded in ingress audit; handler-scoped rejections use `script_event_audit.finalStage=ADMISSION`. A drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
 - Automation & Scripting never silently falls back to an older patch for that trigger; callers must fix the pinned version, repin explicitly, or republish.
+- Already-started work may finish evaluation against its captured immutable graph, but persistence, handoff, and gameplay execution remain fenced by its captured version and epoch. A post-commit load or reconciliation failure remains fail-closed until repair or explicit Game Session repin.
 
 ---
 

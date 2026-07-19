@@ -94,8 +94,8 @@ This section summarizes common failure and rollback scenarios and how operators 
     - For a given `<tenantId, scriptPatchVersion>`, audit entries with `eventType=onLoad` and `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` (or other logical failures) so you can distinguish `onLoad` evaluation failures from downstream persistence/handoff problems.
     - Triggers referencing that patch produce `finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant) and drop metrics such as `automation_script_triggers_dropped_total{reason="version_unavailable"}`.
   - Behavior:
-    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; running instances remain on their previously pinned patch.
-    - No automatic rollback beyond "keep the last known good patch active" occurs.
+    - The Automation & Scripting Service marks the patch `FAILED` for that tenant. Because readiness and `onLoad` run before pinning and have no instance or gameplay side effects, no Game Session pin or epoch changes.
+    - No rollback is needed for that failed readiness candidate; running instances continue under their unchanged authoritative pin.
   - Operator actions:
     - Use Game Design tooling to inspect and fix the script configuration, then publish a new patch.
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
@@ -135,14 +135,14 @@ At a minimum, rollback consists of:
 
 1. **Fence new evaluation**
    - Pause tick execution and set Automation & Scripting admission to rollback pause mode for the affected scope before repin, so new triggers do not refill queues during cleanup.
-   - Repin the affected game instance(s) to the target `scriptPatchVersion` using Game Session / Logging & Admin control-plane APIs.
+   - Confirm the target is still tenant-`READY`, prepare the exact candidate if required, and repin the affected game instance(s) using Game Session / Logging & Admin control-plane APIs. Game Session commits a new `scriptPinEpoch` even for a previously used version.
    - Ensure Automation & Scripting rejects triggers for non-`READY` patches and records explicit outcomes (for example `version_unavailable`) rather than silently falling back.
 2. **Drain/purge queued automation work**
    - Drain or purge queued script work items and staging entries that carry the rolled-back patch so they cannot enqueue into tick queues after repin.
    - If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
    - Any purge must be scoped and auditable (tenant/region/script as appropriate) and must not require ad-hoc `redis-cli` deletes.
 3. **Enforce execution-time version fencing**
-   - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
+   - Game Session must reject any queued tick commands whose embedded `(scriptPatchVersion, scriptPinEpoch)` does not match the instance’s current tuple, and record the rejection so operators can diagnose rollback impact.
 4. **Resume in order**
    - Return Automation & Scripting admission to normal only after cancel/purge completes and rollback draining confirms that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, then resume ticks.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
@@ -154,7 +154,7 @@ Concrete rollback sequence example:
 1. Call `PauseTicks(tenantId=T1, gameInstanceId=G7, controlPlaneRequestId=RB-42)` so Game Session stops new tick scheduling and command intake for that instance.
 2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with rollback backpressure outcome `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and admission reason `rollback_paused`.
 3. Call `RollbackScriptPatchVersion(tenantId=T1, gameInstanceId=G7, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42)` to repin the instance to the known-good patch.
-4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21` and the latest observed `controlPlaneRequestId=RB-42`.
+4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21`, the epoch returned by the repin, and the latest observed `controlPlaneRequestId=RB-42`.
 5. Cancel or purge queued outbox work and staging entries that still carry the displaced patch `P22`, then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
 6. Expect a bounded number of old-epoch audit rows for executions that were admitted before pause and later fenced by the advanced `admissionEpoch`; these remain non-success outcomes, not silent loss.
 7. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42)` only after convergence and drain checks pass.
@@ -197,8 +197,8 @@ Operator actions:
      - Automation admission should remain paused for the affected scope while repin and cancel/purge steps run.
      - Queued automation work items and staging entries that carry the rolled-back `scriptPatchVersion` are drained/purged so they cannot enqueue or execute after repin.
      - If plugin versions are also being rolled back, disabled, or revoked, pending work for displaced `pluginVersionId` values is canceled before queue purge.
-     - Game Session enforces a version fence at execution time and must reject any tick-queue entries whose embedded `scriptPatchVersion` does not match the currently pinned value.
+     - Game Session enforces a version-and-epoch fence at execution time and must reject any tick-queue entries whose embedded tuple does not match the current pin.
      - These drops must be visible in `script_event_audit` and operator dashboards so rollback impact is diagnosable.
 4. Repair and republish.
    - Fix the underlying script configuration in the Game Design Service and publish a new script-only patch version.
-   - Verify that the new patch reaches `patchStatus=READY` for the tenant and that `onLoad` initialization succeeds before promoting it to the active `scriptPatchVersion` again.
+   - Verify that the new patch reaches `patchStatus=READY` for the tenant and that side-effect-free `onLoad` validation succeeds before explicitly pinning it through Game Session.

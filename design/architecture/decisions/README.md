@@ -113,6 +113,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0097](./adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md) | Accepted | `PO-3` | `PO-4`, `SF-1` | Machine-generated, Git-reviewed, CI-validated single-operator promotion evidence with explicit upgrade triggers |
 | [ADR 0098](./adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md) | Accepted | `AR-1` | `AR-3`, `GR-2`, `SF-2` | Request-bounded generator compatibility with committed-topology authority and explicit newest-policy regeneration |
 | [ADR 0099](./adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md) | Accepted | `GR-2` | `GR-1`, `SF-2`, `AS-1` | Atomic generation visibility through bounded local transactions or digest-checked staging for large output |
+| [ADR 0100](./adr-0100-single-authority-script-pins-with-exact-version-execution.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `GR-1` | Game Session-authoritative script pins with exact-version execution, epoch fencing, and explicit rollback |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
