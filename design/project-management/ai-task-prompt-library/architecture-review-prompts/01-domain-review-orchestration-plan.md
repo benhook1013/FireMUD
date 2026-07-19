@@ -4,7 +4,7 @@ Use this plan to run the architecture review prompts as a coordinated convergenc
 
 Scope for this pass:
 
-- Include the 15 domain prompts listed in the suggested lane split.
+- Include the 16 domain prompts listed in the suggested lane split.
 - Exclude `25-monetization-and-account-lifecycle.md` unless a blocker discovered elsewhere requires a billing or entitlement decision.
 - Use `30-per-service-deep-dive-template.md` only as a follow-up when a convergence pass identifies a service that still has unresolved implementation-blocking ambiguity.
 
@@ -36,8 +36,8 @@ Suggested lane split:
    Prompts: `17-scripting-dsl-and-runtime.md`, `18-designer-tooling-and-modding.md`, `19-world-and-content-authoring.md`
    Focus: authoring lifecycle, validation, packaging, publish semantics, rollback and designer workflows
 4. Data and platform lane
-   Prompts: `16-persistence-assets-and-migrations.md`, `22-environments-and-secrets.md`, `23-deployment-cicd-and-platform-security.md`
-   Focus: persistence ownership, asset handling, migrations, environment isolation, deployment and rollback safety, platform security
+   Prompts: `16-persistence-assets-and-migrations.md`, `22-environments-and-secrets.md`, `23-deployment-cicd-and-platform-security.md`, `24-saas-platform-and-product-coherence.md`
+   Focus: persistence ownership, asset handling, migrations, environment isolation, deployment and rollback safety, platform security, and SaaS/product coherence
 5. Access and client lane
    Prompts: `14-networking-protocols-and-reconnection.md`, `15-auth-sessions-and-multi-tenancy.md`, `26-user-journeys-and-ux.md`
    Focus: client entry flows, protocol handling, reconnection, session and tenant boundaries, whether user journeys are actually implementable

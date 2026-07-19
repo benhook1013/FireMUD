@@ -258,7 +258,7 @@ Key properties:
 - Session entries use a **derived physical Redis TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
 
   - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
-  - `session_expiration_ms` is only the server-side gameplay-binding/storage ceiling. It is not a JWT validity period and does not replace the JWT `exp` claim.
+  - `session_expiration_ms` derives the immutable logical gameplay-binding lifetime established at admission and the key's initial physical cleanup TTL. It is not a JWT validity period and does not replace the JWT `exp` claim.
   - On successful gameplay admission at `admissionAt`, the session value stores an immutable logical expiry anchor:
 
     `gameplaySessionExpiresAt = admissionAt + session_expiration_ms`
@@ -285,7 +285,7 @@ Session design assumes **reasonably synchronized clocks** on Game Session nodes 
 When changing authentication settings, keep these trade-offs in mind:
 
 - **Shorter JWT lifetime**
-  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the derived server-side binding/storage ceiling and the normal service-token lifetime. It does not make any individual JWT valid beyond its `exp` or permit token rotation to move an existing gameplay anchor.
+  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the derived logical gameplay-binding lifetime, initial physical cleanup TTL, and normal service-token lifetime for new admissions. It does not make any individual JWT valid beyond its `exp` or permit token rotation to move an existing gameplay anchor.
 - **Different disconnected-resume policy**
   - Adjust `firemud.reconnection.policy.resume-window-ms` through the canonical effective-settings path. Increasing it never permits resume beyond the remaining logical gameplay binding lifetime.
 - **Unsupported combinations**

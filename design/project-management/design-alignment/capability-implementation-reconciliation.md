@@ -18,7 +18,7 @@ This record summarizes the automated reconciliation from the complete product ca
 - Admission pointers and explicit routing bundles carry runtime target identity; consumers fail closed rather than reconstructing current scope from partial identifiers.
 - Game Session owns player transport/session orchestration, Game Logic owns cross-domain gameplay aggregation, and domain services remain authoritative for their persisted state.
 - Durable command, effect, scripting, and scheduler work preserve explicit identity and replay fencing; a replay hit must not bypass request-shape or scope validation.
-- Settings use platform defaults plus tenant/game overrides through canonical effective-settings readers; local service defaults are not a competing authority.
+- The target settings contract uses platform defaults plus tenant/game overrides through canonical effective-settings readers. Current implementation still combines service/operator defaults with persisted overrides; preset expansion and operator caps remain unresolved under `SET-01`.
 - gRPC application errors remain normal-response `ErrorDetail` values, while transport errors are reserved for infrastructure failures.
 - Operational evidence, deployment gates, recovery, and audit records are platform responsibilities fed by domain-owned health and lifecycle signals.
 
@@ -34,6 +34,7 @@ These are implementation or proof gaps, not silently competing target states:
 - Commerce and runtime entitlement reads exist, but provider fulfillment, purchased-entitlement lifecycle, quotas, donations, fees, and complete enforcement remain partial.
 - Multi-node session routing, regional execution, scheduler leadership, offline recovery, and downstream replay consumption need broader implementation and operational proof.
 - Player, creator, and operator applications remain partial scaffolds or API surfaces rather than complete first-party experiences.
+- Settings precedence remains unresolved under `SET-01`: current readers combine service/operator defaults and persisted tenant/game overrides, while target preset expansion and operator caps are not implemented.
 
 ## Enforcement
 

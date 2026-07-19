@@ -16,6 +16,10 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 | Cross-domain convergence | Complete and independently validated | [Capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Not started; explicitly outside automated completion | Human decisions and later canonical design/ADR updates |
 
+## Implementation Status
+
+`Complete` in the phase table means that the allocation, inventory, reconciliation, and validation work is complete; it does not mean every product capability is implemented or fully proven. The authoritative implementation totals, verification totals, drift, and active gaps remain in [Capability Implementation Reconciliation](./capability-implementation-reconciliation.md) and the permanent domain trackers.
+
 ## Authority Boundaries
 
 - The product capability taxonomy defines stable navigation and ownership categories, not runtime behavior.
