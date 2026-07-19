@@ -13,7 +13,7 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
 - `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
 - `SendNotification` – deliver account notifications asynchronously.
-- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
+- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by one `session:auth:token:<tokenHash>` registry record for meta/control APIs.
 - `RefreshGameplayServiceToken` – rotate the private Service JWT used by an active Game Session binding after validating the presented current token generation, binding identity, account and membership authority, and all applicable revocation watermarks. Game Session mTLS identity alone is not refresh authority.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` is reserved for the staff-visibility owner and cannot be set through profile writes.
@@ -58,9 +58,9 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
-| `POST` | `/auth/logout` | Idempotently revoke only the currently presented control-plane or player-bootstrap token (`session:auth:*:<tokenHash>` delete for that token); other devices and unrelated gameplay bindings remain active |
-| `POST` | `/auth/logout-all` | Idempotently revoke all control-plane, player-bootstrap, and active gameplay authority for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>` and emitting the account-security event; existing tenant/global allowlist keys may be cleaned up asynchronously |
+| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT after its single `session:auth:token:<tokenHash>` registry record exists |
+| `POST` | `/auth/logout` | Idempotently delete only the currently presented control-plane or player-bootstrap token record; other devices and unrelated gameplay bindings remain active |
+| `POST` | `/auth/logout-all` | Idempotently revoke all control-plane, player-bootstrap, and active gameplay authority for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>` and emitting the account-security event; older token records may be cleaned up asynchronously |
 | `POST` | `/auth/request-password-reset` | Request account-scoped password reset |
 | `POST` | `/auth/complete-password-reset` | Complete account-scoped password reset |
 | `POST` | `/auth/request-email-verification` | Send account-scoped verification email |

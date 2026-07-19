@@ -57,7 +57,7 @@ Event delivery is the fast path, but not the sole safety mechanism. Game Session
 
 FireMUD deliberately distinguishes between several types of sessions so that identity, gameplay continuity, and auth token lifetimes can evolve independently:
 
-- **Auth token sessions** – Represented by `session:auth:<scope>:<tokenHash>` entries in Coordination Redis, backing internal JWTs used for meta/control APIs.
+- **Auth token sessions** – Represented by one `session:auth:token:<tokenHash>` issued-token registry record per revocable JWT in Coordination Redis, backing meta/control and admission APIs.
 - **Bootstrap transport session contexts** – Current Game Session implementations store pre-auth socket context under the `sessionctx:*` key family. These records may exist before `LOGIN`, may have no account or membership authority, and are used only for bootstrap scope, locale, and reconnect lookup plumbing.
 - **Gameplay sessions** – Tenant-scoped bindings between a connected socket (or reconnect token) and a character in a specific tenant, backed by gameplay Redis keys.
 - **Control-plane UI sessions** – Browser or desktop admin/creator sessions that hold short-lived JWTs client-side and rely on auth token sessions on the server.
@@ -72,13 +72,10 @@ The Game Session Service is responsible for:
 
 FireMUD uses distinct lifetimes and invariants for each session type:
 
-- **Auth token allowlist entries**
-  - Keys: `session:auth:<scope>:<tokenHash>` on Coordination Redis, where `<scope>` is one of:
-    - `account:<accountId>` for the baseline session allowlist.
-    - `tenant:<tenantId>` for regular tenant-scoped operations and gameplay admission.
-    - `global:<accountId>` for cross-tenant and global-role operations.
-  - Purpose: server-side allowlist and immediate revocation surface for internal JWTs used by meta/control services.
-  - Lifetime: absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` entries force re-authentication for the affected scopes.
+- **Issued-token registry records**
+  - Key: `session:auth:token:<tokenHash>` on Coordination Redis, where `<tokenHash>` is a fixed-length SHA-256 digest of the complete compact JWT.
+  - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable Browser, player-bootstrap, or private Service JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
+  - Lifetime: absolute TTL through JWT `exp` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Records are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` force re-authentication.
 
 - **Gameplay session bindings**
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.
@@ -130,7 +127,7 @@ Long-lived gameplay sessions require periodic rotation of the private Service JW
 2. Single-flight concurrent refresh demand for the same binding. A transient failure while the current token remains valid retries with bounded jittered backoff and does not rewrite gameplay continuity deadlines.
 3. Present the current token identity, `iat`, binding identity, and idempotent request ID to the Account-owned refresh surface. Account revalidates the current token generation, account state, membership/version, and account/tenant/membership revocation watermarks before issuing a replacement. Concrete Game Session mTLS identity alone cannot refresh a revoked player generation.
 4. Treat auth-expired backend failure as an immediate refresh opportunity while the refresh authority remains valid. Auth-revoked failure requires authoritative reconciliation; logout-all, password reset, security lock, membership loss, or another blocking watermark cannot be crossed by minting a token with a newer `iat`.
-5. On success, atomically replace `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata in the gameplay binding before new calls use the replacement. The prior token may overlap only through the shorter of its original expiry or the maximum already-started internal RPC deadline, after which its allowlist entry is removed idempotently.
+5. On success, atomically replace `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata in the gameplay binding before new calls use the replacement. The prior token may overlap only through the shorter of its original expiry or the maximum already-started internal RPC deadline, after which its registry record is removed idempotently.
 6. Never rewrite the immutable `continuityBindingExpiresAt` anchor or disconnected `resumeDeadline` during token rotation.
 7. If refresh cannot establish authority before the current token expires, fail closed for backend-authenticated actions, terminate the affected gameplay authentication state with the canonical session-expired/revoked outcome, and require fresh login.
 
@@ -161,7 +158,7 @@ Subscription and billing state drives how aggressively sessions are revoked:
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
   - Existing gameplay authority is revoked. Game Session sends one bounded, non-sensitive game-unavailable notice, stops further gameplay admission, closes connected sockets, and prevents reconnect into that tenant. The notice flush is not a continuation grace period.
   - Instance processes may then use the separate five-minute maximum drain window for internal cleanup; they are not player-admissible during that drain.
-  - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+  - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to "now". The Account Service is the authoritative writer for this watermark and downstream services must not write the watermark key directly. Services must not rely on wildcard token-record scans or deletes in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
 
 Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
@@ -179,7 +176,7 @@ Control-plane logout for admin and creator UIs is implemented as explicit Accoun
 For per-token logout, clients call `POST /auth/logout` with the current JWT in the `Authorization` header. The Account Service:
 
 - Computes the `tokenHash` from the presented JWT.
-- Deletes the corresponding `session:auth:*:<tokenHash>` allowlist entries for that token (account-scoped, plus any global and tenant-scoped entries that were created for it).
+- Deletes the corresponding single `session:auth:token:<tokenHash>` registry record.
 - Emits a distinct idempotent per-token logout audit event so logout activity is observable without recording the raw token.
 
 This flow performs a per-token logout: it invalidates the current browser or device session without affecting other devices or unrelated gameplay bindings for the same account. A first-party player UI separately stops reconnect, closes its socket through gameplay `LOGOUT`, and then revokes that device's `player-bootstrap` token; Account does not discover sockets from the per-token endpoint.
@@ -188,7 +185,7 @@ For `POST /auth/logout-all`, the Account Service must:
 
 - Commit a durable account-wide logout event and audit record with distinct action type, actor, account, and request identity, then idempotently project `session:auth:revoked_after:account:<accountId>` to the logout generation without recording raw tokens.
 - Return success even when no active tokens remain (idempotent behavior).
-- Treat the account watermark as immediate authority for revocation; existing `session:auth:tenant:*` and `session:auth:global:*` keys may be removed by bounded background cleanup and must not be required for correctness.
+- Treat the account watermark as immediate authority for bulk revocation; older token records may be removed by bounded background cleanup and must not be required for correctness.
 - Terminate control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through the account-security event and bounded reconciliation contract in ADR 0030.
 
 See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
@@ -204,4 +201,4 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
   - `MEMBERSHIP_AUTH_UNAVAILABLE` – Billing-safe mutation authorization could not be established from live membership authority. Frontends keep auth state, show retriable availability feedback, and block billing-safe mutations until authority recovers.
   - `ADMISSION_POINTER_UNAVAILABLE` – Gameplay admission pointer state is unavailable or ambiguous. Frontends keep auth state and retry admission with bounded backoff instead of logging out.
   - `REALM_UNAVAILABLE` – The selected realm is explicitly `CLOSED` or in maintenance. Frontends keep auth state, show the realm state, and refresh discovery rather than treating closure as corrupt pointer authority.
-- Closing a browser tab or window does not automatically revoke auth token sessions; users must call explicit logout (or an operator must use "logout all devices") to revoke server-side allowlist entries before TTL expiry. On shared devices, UIs must encourage explicit logout from admin and creator sections.
+- Closing a browser tab or window does not automatically revoke auth token sessions; users must call explicit logout (or an operator must use "logout all devices") to revoke server-side registry records before TTL expiry. On shared devices, UIs must encourage explicit logout from admin and creator sections.

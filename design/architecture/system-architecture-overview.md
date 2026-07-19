@@ -253,7 +253,7 @@ Within Redis, keys are further partitioned by responsibility and, in production,
   - Examples: gameplay sessions, tick-region leases, command queues, timers, and automation tick coordination.  
   - Canonical prefixes include (non-exhaustive):  
     - `session:game:*` – gameplay session bindings and takeover metadata (Game Session-owned).
-    - `session:auth:*` – auth token allowlist and revocation-watermark prefixes (Account-owned).
+    - `session:auth:*` – issued-token registry and revocation/version prefixes (Account-owned).
     - `tick:*` – tick queues, region scheduling, and pacing-related state.  
     - `timer:*`, `retry:*`, `tick-executor-lease:*` – tick coordination helpers owned by Game Session.
     - `automation:*` – automation and scripting coordination keys owned by Automation & Scripting Service (other services interact via gRPC APIs rather than writing these keys directly).
@@ -469,7 +469,7 @@ If a future architecture introduces explicit edge shard routing or client-visibl
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On initial login, Game Session delegates full credential verification (including lockout and MFA rules) to the **Account Service**.
 On disconnect, clients reconnect by issuing `LOGIN` again, then re-binding gameplay scope with `PLAY <world> [realm] [character]` before gameplay commands are accepted. For Telnet and other credential-bearing transports this means `LOGIN <username> <secret>`; for first-party `/ws/game/**` clients that already completed the bootstrap/connect-token handshake, this means bare `LOGIN` backed by the verified connect context. Game Session uses Coordination Redis to decide whether to resume an existing gameplay session for the selected `{tenantId, gameInstanceId, characterId}` binding (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
-Session state is stored in Coordination Redis and reused for recovery when the Redis-backed gameplay session and auth token allowlist entries are still valid.
+Session state is stored in Coordination Redis and reused for recovery when the Redis-backed gameplay session and issued-token registry records are still valid.
 
 > 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format and session flow.
 

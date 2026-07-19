@@ -26,16 +26,16 @@ The current target already requires periodic refresh, atomic binding replacement
 - Game Session schedules planned refresh at approximately half of the current token lifetime with random jitter and always before `exp` by the configured safety margin.
 - A 60-second minimum retry interval may prevent a refresh storm only while sufficient validity remains. It cannot postpone the final safe attempt beyond expiry.
 - Concurrent refresh demand for one gameplay binding is single-flighted. Transient failure while the current token remains valid uses bounded jittered retry.
-- The Account-owned refresh request presents the current token identity and `iat`, the gameplay binding/account/tenant identity, and an idempotent request ID. Account validates the current allowlist generation, account state, membership/version, and applicable account, tenant, and membership watermarks.
+- The Account-owned refresh request presents the current token identity and `iat`, the gameplay binding/account/tenant identity, and an idempotent request ID. Account validates the current issued-token registry generation, account state, membership/version, and applicable account, tenant, and membership watermarks. [ADR 0035](./adr-0035-single-record-issued-token-registry.md) subsequently defines the one-record registry shape.
 - Game Session mTLS identity authorizes calling the refresh API but is not authority to mint for an arbitrary player or to cross a revoked token generation.
 - An auth-expired response may trigger immediate refresh while the current generation remains refresh-eligible. An auth-revoked response triggers authoritative reconciliation; logout-all, password reset, security lock, membership loss, or another blocking watermark cannot be bypassed by giving the replacement a newer `iat`.
-- Account creates the replacement allowlist entry before returning it. Game Session atomically replaces `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata before new calls use the token.
-- The old token may overlap only through the shorter of its original expiry or the maximum deadline of internal RPCs already started before the binding swap. Its allowlist entries are then removed idempotently.
+- Account creates the replacement token registry record before returning it. Game Session atomically replaces `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata before new calls use the token.
+- The old token may overlap only through the shorter of its original expiry or the maximum deadline of internal RPCs already started before the binding swap. Its single registry record is then removed idempotently.
 - Rotation never changes `continuityBindingExpiresAt` or `resumeDeadline`. If refresh cannot establish authority before expiry, backend-authenticated actions fail closed and the player must complete fresh login.
 
 ### Per-Token Logout
 
-- `POST /auth/logout` revokes only the presented Browser JWT or `player-bootstrap` token and is idempotent when its allowlist entries are already absent.
+- `POST /auth/logout` revokes only the presented Browser JWT or `player-bootstrap` token and is idempotent when its issued-token registry record is already absent.
 - Other devices and unrelated gameplay bindings for the account remain active.
 - A first-party player UI performs its local/device logout sequence separately: stop reconnect, gameplay `LOGOUT`, close the socket, revoke the current bootstrap token, and clear local state. Account does not locate gameplay sockets from the per-token endpoint.
 - The audit action is explicitly `token_logout` and records bounded actor, account, token-profile/hash identifier, request, and outcome metadata without the raw token.
@@ -43,7 +43,7 @@ The current target already requires periodic refresh, atomic binding replacement
 ### Account-Wide Logout
 
 - `POST /auth/logout-all` commits a durable account-wide logout event and distinct `account_logout_all` audit record, then idempotently projects `session:auth:revoked_after:account:<accountId>` to the new logout generation.
-- The account watermark, not deletion of every allowlist key, is immediate correctness authority. Bounded background cleanup may remove older account, global, and tenant token entries.
+- The account watermark, not deletion of every token record, is immediate correctness authority. Bounded background cleanup may remove older token records.
 - Logout-all is idempotently successful when no live tokens remain.
 - The event terminates all control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through ADR 0030. A later deliberate login with fresh credentials starts a new generation normally.
 - Password reset, security lock, and other account-wide revocations use distinct audit/event action types even when they share the same watermark mechanism.
