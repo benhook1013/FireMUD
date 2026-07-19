@@ -290,6 +290,7 @@ Launch and cutover preflight use one fail-closed predicate for a full-version re
 - `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, and `manifestHash` used by the launch/cutover proof.
 - `GetVersionAssetArtifactState(tenantId, versionId)` must return `artifactState=PUBLISHED`, the frozen `exportedVersionNumber`, the same `manifestHash` attested by the release bundle, and exported manifest asset keys containing every `requiredManifestAssetKeys[]` entry.
 - If any proof is missing, unsupported, stale, or mismatched, launch/cutover fails before gameplay admission or admission-pointer swap. Callers must not fall back to reconstructing release truth from object-store paths, local template tables, cached descriptors, or partial publish workflow state.
+- Realm admission returns only the content-addressed manifest for the matching fully attested `PUBLISHED` artifact. Private staged, unattested, failed, quarantined, or purge-state candidates never become a runtime fallback even when some candidate objects are readable.
 
 Illustrative launch-descriptor examples:
 

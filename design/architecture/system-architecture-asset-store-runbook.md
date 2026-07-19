@@ -103,7 +103,7 @@ leaves a version incomplete or unusable:
 - Failed versions may have partially written prefixes in the object store. Do
   not delete these manually unless the Game Design Service has already marked
   the version Failed and there is no intention to retry publish. Failed prefixes
-  should normally be marked `TOMBSTONED` and retained for diagnostics.
+  remain private and quarantined for the configured diagnostic retention period. When retry is abandoned or retention expires, mark them `TOMBSTONED` and use the CAS-guarded reachability/purge workflow; do not retain abandoned candidate bytes indefinitely.
 - State transitions for failed artifacts must follow the asset lifecycle contract:
   - `STAGED -> EXPORTED_UNATTESTED` when export succeeds but attestation has not yet committed.
   - `EXPORTED_UNATTESTED -> PUBLISHED` only after `published_release_bundle` commit succeeds.
@@ -132,3 +132,5 @@ leaves a version incomplete or unusable:
   the same safety checks as for Retired versions (including
   `CanDeleteVersionAssets(tenantId, versionId)`), then remove the corresponding
   `<tenant>/<version>/` prefix from the object store.
+
+Only terminal metadata is retained indefinitely after successful cleanup. Staged, unattested, failed, tombstoned, purging, missing, unsupported, stale, or mismatched artifact evidence is never launchable and must never supply the manifest returned by realm admission.

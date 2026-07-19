@@ -58,11 +58,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `ASSET-02` - Unattested or failed publishes are not launchable
 
 - **Capability:** Primary `AR-3.2` Release readiness, compatibility, and propagation. Secondary `AR-1.5`, `AR-1.4`, `PO-3.3`, and `SF-2.3`.
-- **Decision / status / importance:** A failed, partial, or `EXPORTED_UNATTESTED` prefix is never launchable. Retain terminal diagnostic metadata, retry only through the documented publish workflow, and make a missing or mismatched manifest hash a fail-closed condition for Published and Active versions. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Only authoritative `PUBLISHED` state with a supported immutable release attestation, matching manifest/object digests, schema, epoch, and required keys is launchable. Candidates remain private; failed bytes have configurable diagnostic retention before explicit abandonment and CAS/reachability-gated purge, while terminal metadata remains. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-asset-store-runbook.md](../../architecture/system-architecture-asset-store-runbook.md) `§ Health Checks` and `§ Handling Failed Publish Versions`; [system-architecture-promotion-attestation.md](../../architecture/system-architecture-promotion-attestation.md) `§ Validation Rules`.
-- **Strongest alternative:** Expose a partially exported version and repair it in place while runtime admission continues.
-- **ADR recommendation:** Yes. Tie launch admission to the attested artifact state and define the operator-visible retry and quarantine path.
-- **Human consultation:** Yes; content, release, and incident owners must define acceptable repair and retention windows.
+- **Strongest alternative:** Expose a complete-looking partial version and repair it in place, publish candidate bytes directly to a public prefix while gating only database admission, or retain failed bytes indefinitely.
+- **ADR recommendation:** [ADR 0096](../../architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md) records the revised human decision.
+- **Human consultation:** Completed through human-led adversarial review; fail-closed launch, private quarantine, configurable diagnostic retention, and explicit cleanup were accepted.
 
 #### `RECOVERY-01` - Evidence-gated player traffic opening
 

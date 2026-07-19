@@ -109,6 +109,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0093](./adr-0093-game-design-coordinated-digest-attested-content-publication.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `GR-2`, `AA-3` | Game Design-coordinated publication with domain-owned templates and actual-content digest attestation |
 | [ADR 0094](./adr-0094-explicit-cohesive-runtime-release-tuples.md) | Accepted | `AR-3` | `AR-1`, `AR-3`, `AA-3`, `GR-1`, `PO-3` | Explicit immutable base-release, patch, and plugin tuples with one-time channel resolution |
 | [ADR 0095](./adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `SF-2` | Content-addressed immutable published assets with mandatory byte digests and CAS lifecycle authority |
+| [ADR 0096](./adr-0096-attested-publication-gate-and-quarantined-failed-assets.md) | Accepted | `AR-3` | `AR-1`, `PO-3`, `SF-2` | Only fully attested Published assets are launchable; failed candidates remain privately quarantined with bounded retention |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

@@ -355,6 +355,7 @@ Transition enforcement contract:
 - Failed CAS means another workflow already changed state; callers must reload current state and re-evaluate.
 - The durable publish workflow and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
+- Candidate and failed bytes remain in the private staging/quarantine namespace and are never returned by realm admission. Runtime discovery receives only the content-addressed manifest of the matching attested `PUBLISHED` release.
 
 - For each `(tenantId, versionId)` the durable publish workflow runs an `ExportAssets` step that:
   - Selects assets by joining `version_asset` to `game_assets` for the target
@@ -388,6 +389,8 @@ Transition enforcement contract:
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and require an explicit repair or retry action before they can transition
   back to Draft or Published. Moving a failed artifact to `TOMBSTONED` is an explicit operator abandonment decision, not an automatic publish-failure transition.
+
+Failed candidate bytes are retained privately for a configurable diagnostic period rather than indefinitely. Terminal workflow identity, state epoch, known digests, and structured failure metadata remain durable after abandonment or physical purge. Expired candidates enter cleanup only through the CAS-guarded reachability workflow.
 
 Exact-bytes repair rule:
 
