@@ -279,11 +279,25 @@ routes:
     tenant_billing_generation_applies: false
     membership_generation_applies: true
     required_live_checks: [membership]
-    mutation_contract: shared_instrument_ack_required
     canonical_errors:
-      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, MEMBERSHIP_AUTH_UNAVAILABLE]
+      any_of: [MEMBERSHIP_AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
+  - service: account-service
+    route: PaymentInstrumentWalletAccount
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id
+    mutation_contract: explicit_subscription_binding_and_safe_detachment
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: PaymentInstrumentWalletCrossTenant
+    scope: cross_tenant
+    classification: cross_tenant_billing_safe
+    mutation_contract: audited_cross_tenant_billing_intervention
+    roles:
+      any_of: [billingAdmin, platformAdmin]
   - service: account-service
     route: BillingArtifactsCrossTenant
     scope: cross_tenant

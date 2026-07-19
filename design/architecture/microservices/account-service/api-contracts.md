@@ -251,7 +251,6 @@ The Game Session Service translates these codes into text-protocol `ERROR <CODE>
 Canonical non-login authorization/entitlement errors:
 
 - `MEMBERSHIP_AUTH_UNAVAILABLE` - authoritative membership/role lookup is unavailable for a billing-safe mutation; callers must fail closed.
-- `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED` - a tenant-scoped billing-safe mutation attempted to modify an account-shared payment instrument without explicit caller acknowledgement of cross-tenant impact; callers must re-submit only after the acknowledgement field is set.
 - `ENTITLEMENT_UNAVAILABLE` - authoritative entitlement snapshot could not be produced at required freshness/sequence guarantees.
 - `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` - account deletion was requested for an account that still owns at least one nonterminal tenant subscription; callers must cancel terminally or transfer billing ownership before retrying deletion.
 

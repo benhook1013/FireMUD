@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 25 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 26 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **34** | **183** | `in-progress` |
+| **Total** | | **35** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -163,7 +163,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
 - [x] `MS-AA-GLOBAL-TENANT-BOUNDARY` — `revised` on 2026-07-19; [ADR 0042](../../architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md)
 - [x] `MS-AA-LIFECYCLE-ERASURE` — `revised` on 2026-07-19; [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
-- [ ] `MS-AA-PAYMENT-INSTRUMENT`
+- [x] `MS-AA-PAYMENT-INSTRUMENT` — `revised` on 2026-07-19; [ADR 0044](../../architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md)
 - [ ] `MS-AA-LOGIN-FACTORS`
 - [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
 - [ ] `SEC-04`
