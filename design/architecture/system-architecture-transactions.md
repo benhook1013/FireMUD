@@ -122,6 +122,8 @@ Cross-service effect convergence has a single owner of record:
 
 - **Game Session Service** owns reconciliation orchestration and backlog durability for spatial/ambient effects.
 - World Management and Entity Management remain owners of their domain writes and idempotency guards, but they do not own cross-service retry scheduling.
+- Under [ADR 0057](./decisions/adr-0057-game-session-owned-reconciliation-with-isolated-workers.md), the expected participant set is frozen when the effect is admitted, and only Game Session derives whole-effect and player-command convergence.
+- Reconciliation workers are independently scalable and isolated from latency-sensitive tick threads through separate capacity, connection, scan, fairness, backoff, and circuit-breaker budgets.
 
 Durable backlog contract:
 
@@ -144,11 +146,13 @@ Retry and dead-letter policy:
 - Effects remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
 - Effects move to `DEAD_LETTER` only after retry exhaustion or explicit operator action; no destructive compensation is issued from this path.
 - Dead-letter rows remain replayable via explicit operator/API actions; replay must preserve original `EffectId`.
+- `DEAD_LETTER` pauses automatic retry; it is not success or permission to discard evidence. Operator retry/acknowledgement records actor, reason, time, prior state, and explicit player-outcome mapping.
 
 Retention and lifecycle policy:
 
-- `CONVERGED` rows are retained for 24 hours, then deleted by background GC.
-- `DEAD_LETTER` rows are retained for 30 days minimum (or longer by policy) for incident analysis.
+- `PENDING` rows are never collected while active.
+- `CONVERGED` rows are retained for 24 hours, then deleted by background GC only when durable command and audit evidence exists elsewhere.
+- `DEAD_LETTER` rows are retained for at least 30 days after terminal disposition; longer legal/support retention belongs in durable audit storage.
 - GC jobs must be idempotent and rate-limited per tenant to avoid write spikes.
 
 Required control-plane interfaces:

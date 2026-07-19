@@ -181,7 +181,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-04` — `revised` on 2026-07-19; [ADR 0054](../../architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md)
 - [x] `TICK-06` — `revised` on 2026-07-19; [ADR 0055](../../architecture/decisions/adr-0055-durable-cross-region-effects-with-static-live-topology.md)
 - [x] `HOTPATH-01` — `revised` on 2026-07-19; [ADR 0056](../../architecture/decisions/adr-0056-one-hot-path-fan-out-owner.md)
-- [ ] `RECON-01`
+- [x] `RECON-01` — `revised` on 2026-07-19; [ADR 0057](../../architecture/decisions/adr-0057-game-session-owned-reconciliation-with-isolated-workers.md)
 - [ ] `REDIS-01`
 - [ ] `ID-02`
 - [ ] `MS-GR-AMBIENT-STATE-AUTHORITY`
