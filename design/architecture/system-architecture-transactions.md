@@ -47,6 +47,17 @@ For cross-region gameplay commands, this also means:
 
 > 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide per-service transactional guarantees and cross-service convergence via idempotency.
 
+### Command-Level Required-Effect Contract
+
+Under [ADR 0053](./decisions/adr-0053-command-atomicity-by-invariant-class.md), per-effect terminality is necessary but not sufficient for command success. Every command type declares required effects, optional effects, permitted terminal combinations, and whether a partial result is a deliberate gameplay outcome.
+
+- `SUCCESS` requires every required effect to be durably applied or confirmed as an idempotent replay/no-op.
+- `PENDING` covers any unresolved required effect, remote leg, external handoff, or reconciliation.
+- `FAILURE` proves no required mutation succeeded or that the single authoritative transaction rejected without commit.
+- `PARTIAL` is valid only when the game rules explicitly permit that terminal subset; it never masks an invariant breach.
+
+If temporary partial state could violate unique ownership, conserved value/non-negative balance, mutually conditional exchange, irreversible consumption, premium entitlement, or an external commitment, independent tick effects are forbidden. The feature must co-locate the invariant in one service-local transaction or use a tick-adjacent reservation/escrow workflow with transactional outbox delivery. Routine gameplay does not use distributed two-phase commit.
+
 ### When Gameplay Commands Must *Not* Depend on Global Atomicity
 
 Gameplay features must **not** assume that a command is a single, all-or-nothing ACID transaction across services. In particular:

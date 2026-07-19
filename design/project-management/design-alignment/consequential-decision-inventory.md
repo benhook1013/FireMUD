@@ -177,7 +177,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 - [x] `TICK-01` — `revised` on 2026-07-19; [ADR 0051](../../architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md)
 - [x] `TICK-02` — `revised` on 2026-07-19; [ADR 0052](../../architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md)
-- [ ] `TICK-03`
+- [x] `TICK-03` — `revised` on 2026-07-19; [ADR 0053](../../architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md)
 - [ ] `TICK-04`
 - [ ] `TICK-06`
 - [ ] `HOTPATH-01`
