@@ -103,10 +103,13 @@ Redis caches hot rooms for active sessions to speed up lookups. Cached rooms use
 
 World Management must classify its runtime persistence surface for cutover and migration tooling:
 
+- `playableStateNamespaceId` is stable playable identity separate from `gameInstanceId`. Any World-owned durable playable state must use the resolved tenant-shared, stable isolated-realm, or fresh playtest namespace; replacement topology remains keyed to the new runtime instance.
+
 - `S2` world-owned durable state:
   - none are mandatory in the initial implementation slice;
   - any future world-bound metadata that survives beyond a single room-instance layout and references versioned templates.
 - `S3` world-owned ephemeral state:
+  - `world_instance` lifecycle rows;
   - `region_instance`, `zone_instance`, `room_instance`, `room_instance_exit`;
   - `character_location`, `npc_location`, and occupancy rows;
   - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped schedules;
@@ -116,10 +119,14 @@ World Management must classify its runtime persistence surface for cutover and m
 
 Initial-slice rule:
 
-- Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
+- Every World-owned family and unexpected row must be explicitly classified. Unknown, unowned, or unclassified state blocks cutover and is never treated as S3 by default.
+- Paid value, currency, unique ownership, progression, housing, and equivalent durable player value must not be discarded or classified as S3 merely because mapping it is difficult. Any such World-owned state is S1 when unchanged within the namespace or S2 when target-version mapping is required.
+- S2 survival requires the actual versioned mapping to be approved, validated against the exact source/target versions and rows, and applied idempotently by World Management. Presence of a `remapSetId` alone is insufficient.
 - World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance.
 - No World-owned initial-slice table is classified as mandatory `S2`.
-- The live first validation cut is still honest about that boundary, but it now does more than existence-check one row: replacement-instance preflight requires the source `world_instance` to be in a cutover-eligible lifecycle state and to retain `region_instance`, `zone_instance`, and `room_instance` topology before World Management returns `COMPATIBLE`.
+- Target validation returns a namespace-bound, durable participant summary containing exhaustive family classifications/counts, required mapping versions and validation/application results, the explicit S3 loss boundary, unknowns, and an owner-issued freshness epoch. Cutover must revalidate that evidence after source writes are fenced and immediately before the realm pointer swap; stale evidence fails closed.
+- The source instance and its explicit S3 rows remain retained while it drains. World cleanup starts only after the fenced pointer swap is durable, old admission is closed, sessions have drained or moved, and all participating owners acknowledge cleanup safety.
+- Current shallow implementation note: the live first validation cut does more than existence-check one row by requiring a cutover-eligible source `world_instance` and retained `region_instance`, `zone_instance`, and `room_instance` topology before reporting `COMPATIBLE`. It does not yet prove stable namespace identity, exhaustive classification, owner-applied S2 mappings, durable summary freshness, or the complete fenced cutover/retention contract.
 
 ## Digest Input Manifest
 

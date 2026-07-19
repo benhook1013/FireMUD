@@ -31,7 +31,7 @@ This means another Entity Management instance of the same type should be able to
 Entity Management maintains a clear separation between template/design data and live runtime entities so authoring workflows cannot corrupt active games:
 
 - Template tables (for example item and NPC definitions, balance curves) are stored as versioned design records keyed by `(tenantId, versionId)` and are updated only through design-time workflows orchestrated by the Game Design Service. Entity Management accepts template writes only for Draft versions; once a version is marked Published in the Game Design Service, the associated template rows for that `(tenantId, versionId)` are treated as immutable and may only be read by runtime flows.
-- Live runtime entities (characters, inventories, containers including room-ground containers) are stored in runtime tables keyed by `tenantId` plus runtime identifiers such as `entityId` and game-instance or shard identifiers. These rows are mutated only by tick-driven gameplay flows.
+- Live runtime entities are split by lifecycle. Durable playable state such as characters and player-owned inventory is keyed by `tenantId` plus a stable `playableStateNamespaceId`; instance-scoped actors, room-ground containers, and other explicitly ephemeral state also carry `gameInstanceId` or shard identifiers. These rows are mutated only by authorized runtime flows, normally under tick-driven gameplay coordination.
 - Publishing a version finalizes template rows for that `(tenantId, versionId)` and records them as immutable inputs for future game instances. Runtime entity state never changes those template rows; it only references them via stable identifiers.
 
 Template identifiers are stable within each version: a given template ID must not be repurposed to represent a different conceptual entity while any non-Retired version still references it. When switching a game instance to a new `runtime_version`, the Game Session Service and Entity Management treat missing or incompatible templates as a fatal configuration error for that launch; the version selection must be corrected rather than silently substituting defaults or partial data.
@@ -39,6 +39,9 @@ Template identifiers are stable within each version: a given template ID must no
 ### Replacement-Instance State Classification
 
 Entity Management must classify its runtime persistence surface for cutover and migration tooling:
+
+- `playableStateNamespaceId` is durable playable identity and is separate from replaceable `gameInstanceId` identity. Shared-state production realms resolve the stable tenant namespace, isolated-state realms resolve their stable realm namespace, and every new playtest lifecycle receives a new namespace. A replacement within the same logical realm or playtest retains its existing namespace.
+- S1/S2 reads and mutations must prove `{tenantId, playableStateNamespaceId}` plus the authorized active/source instance context. A globally unique `characterId`, entity id, or source `gameInstanceId` is not sufficient namespace authority.
 
 - `S1` entity-owned durable state:
   - `character` identity/account-ownership rows and equivalent progression/currency records that do not require version remapping when referenced templates remain valid;
@@ -54,8 +57,8 @@ Entity Management must classify its runtime persistence surface for cutover and 
 
 Initial-slice row-family inventory:
 
-- `character` rows are `S1` only within the resolved playable-state namespace. Shared-state realms use the tenant-live namespace, while isolated-state realms use the selected `gameInstanceId` namespace.
-- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `{tenantId, gameInstanceId, playableStateScope}` target as the character row. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
+- `character` rows are `S1` only within the resolved `playableStateNamespaceId`. Shared-state realms use the stable tenant namespace, isolated-state realms use a stable realm namespace independent of `gameInstanceId`, and each new playtest lifecycle uses a fresh namespace.
+- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `{tenantId, playableStateNamespaceId}` and authorized runtime context as the character row. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
 - Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
 - `equipment_bindings` rows are `S2`.
 - Durable learned-ability, class/archetype, starter-loadout, or similar template-reference rows are `S2`.
@@ -65,33 +68,39 @@ Initial-slice row-family inventory:
 
 Initial-slice rule:
 
-- If a row family is not explicitly documented as `S1` or `S2`, treat it as `S3` for cutover purposes.
-- Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity; only approved `remapSetId` mappings may satisfy `S2` compatibility.
+- Every persisted family and every unexpected row encountered by inventory must be owned and explicitly classified as `S1`, `S2`, or `S3`. Unknown, unowned, or unclassified state blocks cutover; it is never treated as S3 by default.
+- Paid value, currency, unique items, progression, account ownership, and equivalent durable player value must remain S1 or S2 as appropriate. Mapping difficulty, missing tooling, or migration cost is not permission to reclassify or discard it as S3.
+- Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity. S2 compatibility requires the actual versioned mapping to be approved, validated against the exact source/target versions and referenced rows, and applied idempotently by the service that owns those rows.
 
-Implementation notes:
+Current shallow implementation notes:
 
 - The cutover-validation RPC now exists as `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`.
 - The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
-- `character` and `character_friend` rows are supported `S1` survivor state at the current boundary. Their presence does not require a remap set by itself.
+- `character` and `character_friend` rows are reported as supported `S1` survivor state at the current boundary. Stable `playableStateNamespaceId` persistence and enforcement are not yet proved by this classification.
 - `inventory` and `character_equipment` rows are treated as current `S2` template-bound survivor state. If either family has rows and no approved `remapSetId` was frozen by launch resolution, validation returns `result=INCOMPATIBLE`, `hasS2Rows=true`, `remapSetRequired=true`, and `ENTITY_REMAP_REQUIRED`.
-- When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current implementation reports `COMPATIBLE` and echoes that id. Entity Management does not infer remaps and does not create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
+- When template-bound `S2` rows exist and the caller supplies the frozen `remapSetId`, the current implementation reports `COMPATIBLE` and echoes that id. It does not yet load and validate the mapping rows against every referenced template or apply the mapping to Entity-owned state. This identifier-presence check is intentionally documented as a shallow gap and does not satisfy the target compatibility contract.
 
 Entity upgrade validation minimum contract:
 
-- The service must expose a cutover-validation API that accepts `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
-- The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
+- The target service surface must accept or resolve `tenantId`, `playableStateNamespaceId`, `sourceGameInstanceId`, exact source and target versions, and the optional approved `remapSetId`. The current RPC shape without all of these fields is an implementation gap.
+- The response must enumerate every Entity-owned row family checked, its owner and S1/S2/S3 classification, row count, referenced template identifiers, and per-family outcome `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`. It must report unknown/unclassified rows explicitly.
+- For S2, the response must identify the exact mapping version, approval evidence, validation result, application result, and owner-issued freshness/fence identity. Merely echoing the requested `remapSetId` is not compatibility evidence.
 - If the service currently has no `S2` rows for a given source instance, it must report that explicitly rather than collapsing the result into a generic success.
+- The participant result must be durable or included unchanged in the durable cutover preflight summary so operators can see the namespace, state-family counts, classifications, mappings, data-loss boundary, and freshness evidence that authorized the decision.
 
 Cutover fence contract:
 
-- Replacement-instance validation and migration must run against a durable, fenced snapshot of Entity Management state for the source `gameInstanceId`; validating against Redis-staged or partially flushed deferred writes is not allowed.
+- Replacement-instance validation and migration must run against a durable, fenced snapshot of Entity Management state for the affected `playableStateNamespaceId` and the source `gameInstanceId`; validating against Redis-staged or partially flushed deferred writes is not allowed.
 - Before invoking entity cutover validation or snapshot/export for a source instance, Game Session must quiesce gameplay admission and mutation for that `gameInstanceId`.
-- Entity Management must then flush all deferred `S1` and `S2` writes for that source instance to PostgreSQL and return a committed fence token or epoch that identifies the durable state used for validation.
+- Entity Management must then flush all deferred S1/S2 writes admitted through that source and return a committed namespace-aware fence token or epoch that identifies the complete durable family inventory used for validation.
+- If other realms may write the same shared tenant namespace, any relevant concurrent mutation must advance the owner freshness epoch. S2 validation and application must either run under an owner-controlled namespace fence or fail freshness revalidation; the cutover workflow must not assume that quiescing one `gameInstanceId` freezes every writer of shared state.
+- Mapping application must be idempotent and fenced to the exact namespace, source/target versions, mapping version, and validated owner epoch. Partial application is incompatible until the owner has reconciled it.
 - The validation response must either include that fence token/epoch or be bound to an API contract that makes the same durable fence observable to the caller.
 - `durableFenceToken` is an opaque server-issued value. Callers may persist and compare it for equality/identity, but they must not infer ordering, encode semantics, or generate successor tokens client-side unless a future API explicitly adds those guarantees.
 - If Entity Management cannot flush deferred durable state for the source instance, cutover validation must fail closed rather than validating stale database rows.
+- Immediately before admission-pointer swap, Entity Management must revalidate the persisted participant result against current namespace state, mapping approval/application status, and the owner fence. Stale evidence returns `INCOMPATIBLE` or `UNAVAILABLE` and requires a new preflight.
 
-Illustrative responses for the current live first slice:
+Illustrative response from the current shallow first slice:
 
 - Current first-cut response with only instance-scoped `S3` families:
 
@@ -113,24 +122,28 @@ Illustrative responses for the current live first slice:
 }
 ```
 
-Target-state illustrative responses:
+This payload shape does not prove exhaustive classification or stable namespace enforcement. Target-state illustrative responses follow.
 
-- Durable rows present but no remap required:
+- S1 rows present and unchanged within the namespace:
 
 ```json
 {
   "tenantId": "t1",
+  "playableStateNamespaceId": "psn-realm-main",
   "sourceGameInstanceId": "g-old",
+  "sourceVersionId": "v1",
   "targetVersionId": "v2",
   "durableFenceToken": "entity-cutover-fence:g-old:184",
   "checkedFamilies": [
     {
-      "family": "equipment_bindings",
-      "referencedTemplateIds": ["itemTemplateId:iron-sword"],
+      "family": "character_progression",
+      "stateClass": "S1",
+      "rowCount": 12,
       "outcome": "COMPATIBLE"
     }
   ],
-  "hasS2Rows": true,
+  "hasS2Rows": false,
+  "classificationComplete": true,
   "result": "COMPATIBLE",
   "remapSetRequired": false
 }
@@ -297,7 +310,9 @@ Operators and later fraud/dupe-detection tooling should also be able to derive l
 Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the durable Temporal `world-lifecycle` termination flow described in World Management docs:
 
 - Game Session must already have closed admissions for the target instance before cleanup starts.
-- Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.
+- During replacement, the old instance remains retained and draining until the fenced realm pointer swap is durable, source admission is closed, connected sessions have drained or moved under the lifecycle contract, and all owners acknowledge cleanup safety.
+- Entity Management owns cleanup only of containers, items, and other row families explicitly classified as S3 for the terminating `gameInstanceId`. S1/S2 namespace state is not instance cleanup payload.
+- An unexpected or unclassified Entity-owned row blocks cleanup and cutover; cleanup must not delete it under a generic instance-key rule.
 - Cleanup must be idempotent and guarded by a durable workflow step key so retries converge without double-deletes.
 - Entity Management must not treat world row deletion as implicit cleanup confirmation; World Management marks an instance `TERMINATED` only after this service confirms cleanup completion.
 

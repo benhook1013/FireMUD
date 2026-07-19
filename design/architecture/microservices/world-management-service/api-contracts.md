@@ -69,16 +69,18 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 
 `ValidateWorldUpgradeMappings` must expose enough detail for replacement-instance cutover tooling to reason about world-owned durable references:
 
-- Input identifies `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
-- Response enumerates the checked world-owned row families, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
+- The target input identifies `tenantId`, stable `playableStateNamespaceId`, `sourceGameInstanceId`, exact source and target versions, and optional approved `remapSetId`. Shared realms use the tenant namespace, isolated realms retain a stable realm namespace, and every new playtest uses a new namespace; none use replaceable `gameInstanceId` as durable playable identity.
+- Response exhaustively enumerates every checked World-owned row family, its owner, S1/S2/S3 classification, row count, referenced template identifiers, outcome, and any unknown/unclassified row. Unknown state blocks cutover; only explicitly classified S3 state may be discarded.
+- For S2, World Management must validate the actual approved versioned mapping against the exact versions and rows, apply it idempotently to World-owned state, and report mapping version plus validation/application outcome. Echoing `remapSetId` is insufficient. Paid value, unique ownership, progression, housing, or equivalent durable state cannot become S3 merely because mapping is difficult.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
+- The participant result includes an owner freshness epoch and contributes unchanged to the durable cutover preflight summary. Cutover revalidates namespace, classifications, mappings, lifecycle, and freshness after source writes are fenced and immediately before pointer swap.
 
 Current live first slice:
 
 - The RPC now exists and returns the canonical cutover-validation payload shape.
 - The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting the initial World-owned `S3` families only.
 - World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
-- Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
+- This remains a shallow implementation boundary: it does not yet prove stable namespace identity, exhaustive unknown-state blocking, actual S2 mapping validation/application, durable summary completeness, or owner freshness at fenced cutover. Later World-owned durable metadata requires the target contract above and may require the RPC schema to widen.
 
 Illustrative responses:
 

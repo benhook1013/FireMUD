@@ -114,6 +114,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0098](./adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md) | Accepted | `AR-1` | `AR-3`, `GR-2`, `SF-2` | Request-bounded generator compatibility with committed-topology authority and explicit newest-policy regeneration |
 | [ADR 0099](./adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md) | Accepted | `GR-2` | `GR-1`, `SF-2`, `AS-1` | Atomic generation visibility through bounded local transactions or digest-checked staging for large output |
 | [ADR 0100](./adr-0100-single-authority-script-pins-with-exact-version-execution.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `GR-1` | Game Session-authoritative script pins with exact-version execution, epoch fencing, and explicit rollback |
+| [ADR 0101](./adr-0101-stable-playable-state-namespaces-for-runtime-replacement.md) | Accepted | `AR-3` | `GR-2`, `GR-3`, `AR-3`, `SF-2` | Stable playable-state namespaces with explicit preservation, owner-applied mappings, and fail-closed replacement |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

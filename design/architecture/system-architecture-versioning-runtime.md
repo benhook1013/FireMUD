@@ -326,16 +326,18 @@ Normalized-template dependency checks require explicit phase enforcement:
 
 Replacement-instance cutover is not allowed to infer runtime-state behavior. The system must classify persistent state before any version cutover workflow is considered complete:
 
-- **Class S1: account-scoped durable state** – state expected to survive version replacement by default (for example character identity, progression, account ownership, currency balances, stable inventory contents where the referenced templates remain valid).
-- **Class S2: version-mapped durable state** – state that may survive only through an explicit upgrade mapping validated against the target version (for example equipment slots tied to item templates, learned abilities tied to ability identifiers, starter-loadout references, housing metadata keyed to world templates).
-- **Class S3: instance-scoped ephemeral state** – state that never survives replacement-instance cutover unless a feature-specific migration contract says otherwise (for example room-ground containers, transient ambient world state, temporary dungeon topology, in-flight instanced events, and other data keyed to the source `gameInstanceId`).
+- Every playable realm resolves a stable `playableStateNamespaceId` separate from `gameInstanceId`. Shared-state production realms use the tenant namespace, isolated-state realms use a stable realm namespace across replacements, and each new playtest lifecycle receives a new namespace. A replacement within the same logical realm or playtest retains its namespace.
+- **Class S1: namespace-scoped durable state** – state that survives unchanged within the same playable-state namespace (for example character identity, progression, account ownership, currency balances, and stable inventory contents whose references remain valid). It is not copied to the replacement instance.
+- **Class S2: version-mapped durable state** – state that survives only through an actual versioned mapping approved, validated against the exact source/target versions and rows, and applied by the domain owner (for example equipment, learned abilities, starter loadouts, or housing metadata tied to versioned templates).
+- **Class S3: explicitly instance-scoped ephemeral state** – owner-classified state that is discarded with the source instance (for example room-ground containers, transient ambient state, temporary topology, and in-flight instanced events).
+- Unknown, unowned, or unclassified state blocks cutover and is never S3 by default. Paid value, currency, unique items, progression, account ownership, and equivalent durable player value cannot become S3 merely because mapping is difficult, missing, or expensive.
 
 Required cutover workflow additions:
 
 - Game Session owns a pre-admission `PrepareVersionUpgrade(tenantId, sourceGameInstanceId, targetVersionId)` compatibility workflow.
 - Entity Management must expose an upgrade surface that validates entity-owned S1/S2 runtime entities against the target version and returns deterministic outcomes: `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
 - World Management must expose `ValidateWorldUpgradeMappings`, which validates world-owned S2 references and persistent world-bound metadata against the target version using the same outcome vocabulary.
-- Any S2 data that survives must do so through explicit versioned remap records owned by the domain service that owns the referenced template identifiers. The system must not infer remaps from names, slugs, or “closest match” heuristics.
+- Any S2 data that survives must do so through explicit versioned remap records applied by the domain service that owns the state and referenced template identifiers. The system must not infer remaps from names, slugs, or “closest match” heuristics, and presence of a `remapSetId` alone is not compatibility proof.
 - Game Design control-plane metadata is the source of truth for approved version-to-version remap set identities and audit history when a cutover depends on remapped template references across services.
 - Remap sets must be persisted explicitly in Game Design control-plane storage (for example `version_template_remap_set` and child mapping rows) and exposed through APIs such as:
   - `CreateTemplateRemapSet(sourceVersionId, targetVersionId, mappings...)`
@@ -347,13 +349,13 @@ Required cutover workflow additions:
 - Once `ExecutePreparedVersionCutover` succeeds, that same durable artifact now records execution state as well (`executedTargetGameInstanceId`, `executedPointerVersion`, `executedAt`, `executionControlPlaneRequestId`) so later reads can prove which prepared cutover actually ran.
 - The first canonical cutover-execution substrate is now live too: `ExecutePreparedVersionCutover` consumes one durable `prepared_version_upgrade` id plus the replacement `gameInstanceId`, revalidates the proof against the current admission pointer and target instance, and performs the pointer swap under the same CAS/audit surface instead of leaving operators to stitch preparation and pointer mutation manually. Retrying the same execution request after the pointer has already moved is idempotent when the durable preparation execution state matches the requested target and request id.
 - `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
-- If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
-- S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.
+- Each owning domain must validate the mapping contents against its complete S2 inventory, apply them idempotently under its freshness fence, and attest the exact mapping/application result. If any row is unmapped, partially applied, unknown, or incompatible, cutover fails closed before admission-pointer swap.
+- Only explicitly classified S3 state is discarded with the source instance through standard termination workflows. No component may silently copy it to the target `gameInstanceId`, and no generic instance cleanup may delete S1/S2 or unclassified state.
 - The owning domain service docs must publish a table-family classification for their persistence slice:
   - `S1` rows that survive by default,
   - `S2` rows that survive only with a validated remap,
   - `S3` rows that never survive cutover.
-  Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current supported boundary.
+  Cutover preflight is incomplete until every owning domain has documented this mapping, inventoried every actual row family, and explicitly reported unknowns or that a class has no rows.
 
 Current row-family references used by preflight:
 
@@ -370,7 +372,8 @@ These names are the canonical initial-slice preflight vocabulary until service i
 Initial-slice notes:
 
 - In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore still reports `stateClassesChecked=["S3"]` and `hasS2Rows=false`, but it now proves more than one row exists: the source world must be in a cutover-eligible lifecycle state and still have retained `region_instance`, `zone_instance`, and `room_instance` topology before it reports `COMPATIBLE`.
-- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks tenant-surviving `character`, `inventory`, `character_equipment`, and `character_friend` families plus the current instance-scoped `S3` families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`). `character` and `character_friend` are supported `S1` survivor state. `inventory` and `character_equipment` are treated as current `S2` template-bound survivor state: if either family has rows, cutover requires the frozen approved `remapSetId`; without that id Entity returns `INCOMPATIBLE` with `ENTITY_REMAP_REQUIRED`, and with it Entity reports `COMPATIBLE` while echoing the exact id bound into the prepared cutover proof.
+- In the first live Entity Management implementation slice, the validation surface enumerates tenant-surviving and instance-scoped families and requires a frozen `remapSetId` when current inventory/equipment rows are treated as S2. With an id it currently reports `COMPATIBLE` and echoes it, but does not yet validate every mapping row or apply the mapping.
+- These live slices are shallow. They do not prove stable namespace persistence, exhaustive classification and unknown-state blocking, actual owner-applied S2 mappings, complete durable preflight summaries, freshness revalidation, or fenced end-to-end cutover.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
 
@@ -403,15 +406,15 @@ a stricter lifecycle than scripts:
   the Retired state and migrations have followed the guidelines in
   [Database Migrations](./system-architecture-database-migrations.md).
 
-For non-script content, there is no cross-version reuse of instance data. A given `gameInstanceId` is always tied to a single `runtime_version`, and all `*_instance` rows for that instance must be derivable from that version’s templates. Migrating a game to a different version is modeled as starting a new game instance with its own `gameInstanceId` (and fresh world creation workflow) rather than reusing existing world instance rows across versions.
+For non-script content, there is no cross-version reuse of instance-scoped S3 data. A given `gameInstanceId` is tied to one `runtime_version`, and its `*_instance` rows derive from that version’s templates. Replacement starts a new instance and world creation workflow while retaining the realm's `playableStateNamespaceId`; S1 remains unchanged in that namespace and S2 crosses versions only through its approved owner-applied mapping.
 
 Replacement-instance cutover requires an explicit compatibility preflight before admission-pointer swap:
 
 - Game Session Service is the authoritative owner of cutover preflight orchestration and now exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
-- The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
+- The API must persist and return a deterministic summary bound to the tenant, `playableStateNamespaceId`, source/target instances and versions, family owners/counts/classifications, S1 continuity, S2 mapping versions and validation/application results, explicit S3 loss boundary, unknowns, participant freshness epochs, result, reasons, and `checkedAt`.
 - `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
 - Minimum required checks:
-  - S1/S2 runtime-state compatibility passes in every owning domain and all required remap sets are present, versioned, and approved.
+  - Every owning domain reports exhaustive classification; S1 remains in the same namespace; every S2 mapping is present, versioned, approved, validated, and applied; and no unknown state exists.
   - All template identifiers referenced by the target launch path resolve in owning domain services for `(tenantId, targetVersionId)`.
   - Entity/runtime bootstrap compatibility passes (starter inventory, class/archetype mappings, required item/NPC templates, balance schema compatibility).
   - World/runtime bootstrap compatibility passes (required region/room templates, persistent world-bound metadata mappings, generation config revision resolution, required script patch readiness when pinned).
@@ -422,8 +425,9 @@ Replacement-instance cutover requires an explicit compatibility preflight before
   - Game Session then fails closed if target Game Design version-state or published-release-bundle proof is missing/invalid.
   - Game Session gathers World and Entity participant attestations into one canonical response.
   - `PrepareVersionUpgrade` persists that same proof bundle as a durable `prepared_version_upgrade` control-plane record for later cutover consumers.
-  - World currently reports the honest first-cut `S3` row-family view described above. Entity now enumerates both survivor and instance-scoped row families, accepts current `S1` survivor rows, and requires the frozen approved `remapSetId` whenever current `S2` inventory/equipment rows exist.
+  - World currently reports the first-cut S3 row-family view. Entity enumerates selected survivor and instance-scoped families and checks for a frozen `remapSetId` when selected S2 rows exist. These are shallow presence/enumeration checks, not proof of the target namespace, mapping-application, completeness, or freshness contract.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
+- After fencing source admission and flushing admitted durable writes, `ExecutePreparedVersionCutover` revalidates every participant's namespace, state inventory, mapping status, and freshness epoch against the durable summary immediately before pointer swap. Any change makes the preparation stale and blocks cutover.
 
 Illustrative compatibility responses:
 
