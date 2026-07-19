@@ -96,10 +96,17 @@ Movement, drops, pickups, and room presence are cross-service by design:
 To prevent cross-instance collisions and make retries safe, spatial tick effects must follow these invariants:
 
 - Every spatial effect includes the `RoomInstanceRef` it targets (and, where applicable, `fromRoomInstanceRef` and `toRoomInstanceRef`), not a bare `roomId`.
-- The same `EffectId` is propagated to both World Management and Entity Management mutations for the effect, and both services implement durable idempotency guards so partial success can be safely retried.
+- One stable root `EffectId` correlates the logical effect. Each participant derives a deterministic guard identity from that root, its typed operation, and target aggregate, then durably binds the guard to an immutable request digest and stored outcome. Same identity with a different operation, target, or digest fails closed; derived reactions receive deterministic child identities.
 - A participant acknowledgement is emitted only after that service has durably committed the `EffectId` guard and the effect-visible rows required for its side of the contract. Redis-staged or in-memory state alone is never sufficient to acknowledge convergence.
 - Game Session persists (or can deterministically reconstruct) the intended pre/post state for the effect so a reconciliation pass can re-drive the missing side if one service commits and another fails.
 - Reconciliation behavior is documented per effect type. The default policy is “retry until convergence” using the original `EffectId`, not “best-effort compensate” with a new effect identity.
+
+Spatial reads use two distinct consistency contracts under [ADR 0054](./decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md):
+
+- correctness-sensitive mutations carry exact expected room/epoch and relevant location or aggregate versions and fail closed when stale; and
+- presentation composition such as `LOOK` requests a common causal floor `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`, requires every component to serve that scope/epoch at or beyond the floor, and returns a composite identity containing the actual World and Entity component versions.
+
+Presentation may contain bounded component skew newer than the floor. It must never claim that equality of room-scope strings proves one exact cross-database historical snapshot.
 
 Ambient world mutations (doors, hazards, weather) are treated as spatial effects for replay and idempotency purposes:
 

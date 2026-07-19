@@ -47,19 +47,18 @@ World Management may use a numeric room row key as `roomInstanceId` only when it
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
+- `EffectId` – the canonical root identity derived from region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. Participant guard identities deterministically project this root with typed operation and target aggregate, and bind it to an immutable request digest and durable outcome. Same guard identity with a different operation, target, or digest is a conflict, not a replay.
 
 ## Cross-Service Read Fence Identity
 
-Cross-service read composition (for example `LOOK` world + entity joins) must use a shared fence token to prevent mixed-tick snapshots:
+Cross-service read composition distinguishes correctness preconditions from presentation causality:
 
-- Read-fence token – canonical room-read fence emitted by the authoritative source read, currently World Management `worldSnapshotId` / `world_snapshot_id`, and compared with the participant fence returned by Entity Management as `entitySnapshotId` / `entity_snapshot_id`.
-- Scope: the read-fence token is valid only within `(tenantId, gameInstanceId, roomInstanceId)` scope for room-composition APIs such as `LOOK`, and must not be compared across scopes.
-- Monotonicity: future tick-ledger-backed values must be non-decreasing for a given scope as observed by a caller; the current live snapshot-id fence is an equality token for same-scope composition.
-- Comparison contract:
-  - Downstream services must either return a matching same-scope fence, or
-  - Fail with `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE`.
-- Composition contract: callers must reject mixed-fence payloads; retries must preserve requested scope and fence semantics.
+- Mutation precondition – exact expected room/epoch and relevant location or aggregate version used by an owning service to fail closed on stale correctness-sensitive writes.
+- Causal read floor – minimum `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)` requested for presentation composition such as `LOOK`.
+- Component version – the actual World or Entity snapshot/version served at or beyond that floor.
+- Composite snapshot identity – the requested causal floor plus every component version included in the response.
+
+Components must match tenant, game instance, room, and epoch and must have reached the requested floor. Bounded component skew newer than the floor is allowed for presentation and remains visible in the composite identity. Equality of scope strings is not temporal snapshot equality. Callers reject mixed scope/epoch, a component below the floor, or unavailable version evidence with the bounded read-fence error family.
 
 ## Short Synchronous Saga Identity
 
