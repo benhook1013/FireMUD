@@ -321,6 +321,15 @@ FireMUD now has an explicit shared boundary:
 - `common-temporal` is for long-running durable control-plane workflows that must survive process restarts, support durable timers/signals/queries/updates, and expose operator-visible workflow lifecycle.
 - Gameplay ticks and Redis-backed runtime coordination remain outside both of these workflow substrates and continue to use the tick/idempotency/reconciliation model.
 
+Every adopter applies this substrate test before implementation:
+
+1. Gameplay mutation stays in tick effect, idempotency, and reconciliation handling.
+2. An owner-local transaction followed by simple asynchronous idempotent delivery with no durable wait state uses a transactional outbox worker.
+3. Short orchestration that completes in one bounded caller/worker-owned pass and can be retried from stable business and step identities may use `common-saga`.
+4. Work whose correctness requires continuation after the original process disappears, a durable timer/wait/signal, or independently meaningful operator-managed in-flight state uses Temporal.
+
+Persisted `common-saga` rows provide stable step identity, retry/compensation evidence, and audit; they do not turn a caller-owned pass into autonomous restart-independent workflow continuation. “Long-running” alone is not the decision criterion.
+
 ---
 
 ## When Not to Use Sagas
