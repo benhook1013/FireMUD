@@ -176,7 +176,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 3 P0
 
 - [x] `TICK-01` — `revised` on 2026-07-19; [ADR 0051](../../architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md)
-- [ ] `TICK-02`
+- [x] `TICK-02` — `revised` on 2026-07-19; [ADR 0052](../../architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md)
 - [ ] `TICK-03`
 - [ ] `TICK-04`
 - [ ] `TICK-06`

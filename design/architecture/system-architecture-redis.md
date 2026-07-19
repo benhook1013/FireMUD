@@ -164,7 +164,9 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Lua scripts must treat Redis as the single coordination state for their keys, re‑deriving their desired state from current contents and arguments rather than relying on in‑process history.
 
 - **Region authority**
-  - For each `<tenantId, regionId>` there is at most **one active tick executor** at a time, guarded by a region‑scoped lease key.
+  - For each `<tenantId, regionId>` there is at most **one active tick executor** at a time, guarded by the region-scoped Redis liveness lease plus the PostgreSQL durable executor fence defined by [ADR 0052](./decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md).
+  - New ownership acquires a unique Redis token, installs one new durable fence against the expected region epoch, then revalidates the same Redis token before staging. Renewal does not advance the fence.
+  - Redis scripts compare the expected lease token and epoch; durable tick-control writes compare the expected epoch and fence. Redis uncertainty stops execution, and PostgreSQL uncertainty prevents new durable batches or effect dispatch.
   - All tick queues, locks, timers, and pending sets for that region live in a single hash‑slot‑compatible keyspace (see [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)).
 
 - **Session binding**

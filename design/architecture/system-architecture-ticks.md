@@ -185,18 +185,22 @@ Lease ownership is enforced through a two-part fence:
 
 - Redis remains the fast-path lease and liveness mechanism.
 - PostgreSQL `RegionStatus.executorFence` is the durable ownership fence for tick-control writes:
-  - Every successful lease acquisition increments `executorFence` exactly once for that `<tenantId, regionId>`.
+  - Every successful new lease ownership generation installs one never-reused `executorFence` for that `<tenantId, regionId>`; renewal does not change it.
   - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records and compares that fence.
   - Rows written under an older fence are stale by definition and must not advance or continue tick execution.
 
 This durable fence is the canonical protection against stale executors that lost Redis lease ownership but still have in-flight SQL work.
 
-Canonical ownership sequence:
+Canonical ownership sequence under [ADR 0052](./decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md):
 
-1. The executor acquires or renews the Redis region lease.
-2. On successful ownership acquisition, Game Session advances `RegionStatus.executorFence` exactly once for that ownership generation.
-3. The executor creates `tick_batch` rows and other durable tick-control state using that new `executorFence`.
-4. Any later durable write for the same region must compare-and-match the current `executorFence`; stale writers fail closed and do not advance commit state.
+1. The executor acquires the Redis region lease with a unique opaque token and bounded TTL.
+2. Game Session compare-and-sets a new `RegionStatus.executorFence` against the expected `regionEpoch` and prior owner, recording the owner and a non-secret correlation of that Redis token.
+3. The executor revalidates that the same Redis token still owns the lease. A claimant that lost the lease before this check remains inert even if its fence transaction committed.
+4. Only then may it stage work. Redis Lua mutations compare token and epoch; every durable tick-control mutation compare-and-matches epoch and fence.
+5. Lease renewal preserves the installed fence. Immediately before authoritative effect dispatch, the executor revalidates Redis possession.
+6. A successor must acquire Redis, install a newer fence, and reconcile prior-fence work before staging.
+
+Redis uncertainty stops execution immediately. PostgreSQL unavailability permits no new durable batch or effect dispatch even if bounded Redis renewal continues. Reset advances the durable epoch and invalidates ownership before Redis is cleared; ordinary handoff changes the fence without changing `regionEpoch`.
 
 ---
 
