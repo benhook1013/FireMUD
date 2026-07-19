@@ -1,3 +1,4 @@
 # Add URLs or regex patterns to skip during link checking
 http://localhost
 http://127.0.0.1
+https://img\.shields\.io/.*
