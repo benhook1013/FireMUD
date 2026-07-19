@@ -110,6 +110,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0094](./adr-0094-explicit-cohesive-runtime-release-tuples.md) | Accepted | `AR-3` | `AR-1`, `AR-3`, `AA-3`, `GR-1`, `PO-3` | Explicit immutable base-release, patch, and plugin tuples with one-time channel resolution |
 | [ADR 0095](./adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `SF-2` | Content-addressed immutable published assets with mandatory byte digests and CAS lifecycle authority |
 | [ADR 0096](./adr-0096-attested-publication-gate-and-quarantined-failed-assets.md) | Accepted | `AR-3` | `AR-1`, `PO-3`, `SF-2` | Only fully attested Published assets are launchable; failed candidates remain privately quarantined with bounded retention |
+| [ADR 0097](./adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md) | Accepted | `PO-3` | `PO-4`, `SF-1` | Machine-generated, Git-reviewed, CI-validated single-operator promotion evidence with explicit upgrade triggers |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

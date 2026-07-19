@@ -103,11 +103,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `PROMO-01` - Git-reviewed promotion evidence is the current trust root
 
 - **Capability:** Primary `PO-3.1`. Secondary `PO-4.4` and `SF-1.1`.
-- **Decision / status / importance:** In the current single-admin/operator model, the exact in-repository JSON promotion attestation committed with the production overlay is the trust root: it records staged digest lineage, approval or ticket, and the exact release manifest, and forbids rebuild during promotion. Detached signatures or SLSA-style provenance remain future alternatives rather than current prerequisites. Status `accepted-implicit`; `H/med`.
+- **Decision / status / importance:** In the current single-admin/operator model, tooling machine-generates promotion evidence from observed staging state and the operator reviews the Git change; CI validates exact staged digest lineage, required evidence/schema/cross-references, and no rebuild. This protects against mistakes and drift, not compromise of the shared admin/repository/CI trust domain. Missing evidence fails. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-promotion-attestation.md](../../architecture/system-architecture-promotion-attestation.md) `§ Artifact Format`, `§ Validation Rules`, `§ Storage and Retention`, and `§ Ownership`; [system-architecture-deployment-runbook.md](../../architecture/system-architecture-deployment-runbook.md) `§ Overlay Deployment Flow (Staging and Production)` and `§ Rollback`.
 - **Strongest alternative:** Require detached cryptographic signatures, an external transparency log, or SLSA provenance before any production promotion.
-- **ADR recommendation:** Yes. Record why Git-reviewed immutable evidence is sufficient now and the trigger for upgrading the trust root before multi-party or untrusted promotion.
-- **Human consultation:** Yes; security and release-governance owners must accept the current trust model.
+- **ADR recommendation:** [ADR 0097](../../architecture/decisions/adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md) records the revised human decision and measurable upgrade triggers.
+- **Human consultation:** Completed through human-led adversarial review; the limited single-operator threat model and operational evidence overhead were explicitly accepted.
 
 ### Frontend, Protocol, Authoring, And Observability
 

@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 4 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 5 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **84** | **183** | `in-progress` |
+| **Total** | | **85** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -230,7 +230,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `CONTENT-02` — `revised` on 2026-07-20; [ADR 0094](../../architecture/decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md)
 - [x] `ASSET-01` — `revised` on 2026-07-20; [ADR 0095](../../architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md)
 - [x] `ASSET-02` — `revised` on 2026-07-20; [ADR 0096](../../architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md)
-- [ ] `PROMO-01`
+- [x] `PROMO-01` — `revised` on 2026-07-20; [ADR 0097](../../architecture/decisions/adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md)
 - [ ] `PROC-02`
 - [ ] `PROC-04`
 - [ ] `MS-AS-PATCH-READINESS-PIN`

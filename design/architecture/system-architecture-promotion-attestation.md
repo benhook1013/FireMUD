@@ -18,8 +18,9 @@ Canonical storage path:
 
 Current trust model:
 
-- For the current single-admin/operator phase, the Git-reviewed in-repo evidence chain is the promotion trust root. CI validates the attestation, referenced staging deployment record, live-state evidence shape, immutable secret-compliance evidence references, and digest equality deterministically from repository state plus registry image availability.
-- The attestation record is not a detached cryptographic signature. If FireMUD later requires multi-party release approval or stronger provenance, add signed/SLSA-style attestations as a new evidence layer without replacing the canonical in-repo promotion index.
+- For the current single-admin/operator phase, the Git-reviewed, CI-validated in-repo evidence chain is the promotion trust root. Promotion tooling machine-generates its candidate fields from observed staging state, and the operator reviews and approves the resulting Git change. CI validates the attestation, referenced staging deployment record, live-state evidence shape, immutable secret-compliance evidence references, and digest equality deterministically from repository state plus registry image availability.
+- The attestation prevents accidental rebuilds, drift, missing staging proof, and undocumented promotion and supplies an audit record. It does not protect against a compromised administrator, repository authority, or CI operating in that same trust domain.
+- The attestation record is not a detached cryptographic signature. Add an independent signed/SLSA-style evidence layer before introducing independent approvers, untrusted build or promotion actors, externally supplied production artifacts, regulatory separation of duties, or multiple administrative trust domains; retain the canonical in-repo promotion index as its reference surface.
 - Operator-authored evidence is acceptable only when it points to immutable artifacts or observed live-state values. Free-form notes can provide context, but they must not be the only proof for digest, smoke, live-state, or secret-compliance decisions.
 
 Required fields:
@@ -49,7 +50,7 @@ Optional fields:
 
 ## Validation Rules
 
-- Production overlay PRs must include exactly one in-repo attestation artifact.
+- Production overlay PRs must include exactly one in-repo attestation artifact. A production overlay change with no attestation fails validation; it must never cause promotion preflight to be skipped.
 - Every production overlay digest must match the digest in `serviceDigests`.
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
@@ -87,10 +88,11 @@ External-only attestation storage is not allowed for production promotions becau
   - `secretComplianceEvidenceRef`
   - `smokeEvidence` list
 - Producer contract:
+  - Promotion tooling creates the candidate attestation and related deterministic fields from the staging deployment record and observed live-state evidence. Operators review and approve the generated evidence rather than manually reconstructing digests.
   - Operators create/update the deployment record as part of staging apply in the deployment runbook flow.
   - CI promotion validation must fail if the referenced deployment record is missing, malformed, or digest-mismatched.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
-- Rollback PRs should reference the original attestation used for the digest set being restored.
+- Rollback PRs reference the original attestation used for the digest set being restored. New current-environment compatibility or recovery evidence does not replace that original artifact-lineage proof.
 
 ## Ownership
 
