@@ -169,7 +169,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SEC-04` — `revised` on 2026-07-19; [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md)
 - [x] `ADMIN-01` — `revised` on 2026-07-19; [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md)
 - [x] `ACCOUNT-01` — `revised` on 2026-07-19; [ADR 0049](../../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md)
-- [ ] `DATA-01`
+- [x] `DATA-01` — `revised` on 2026-07-19; [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md)
 
 ### Packet 3: Execution Correctness And Durability
 

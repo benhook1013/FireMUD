@@ -50,6 +50,7 @@ Canonical current-state note:
 - Dumps are written to `firemud-pg-dumps` and may also upload to object storage when `PG_DUMP_BUCKET` is configured.
 - In production, skipped object-storage uploads are a misconfiguration even if short-term dumps remain on PVC.
 - Velero schedules back up Kubernetes manifests only, with `snapshotVolumes: false`.
+- Backups are immutable until normal expiry and may contain subject data erased after their snapshot time. Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), restore quarantine must replay durable erasure and tombstone state through the restored boundary before traffic reopens so deleted identity and authority are not resurrected.
 
 ### Online Snapshot Contract
 
