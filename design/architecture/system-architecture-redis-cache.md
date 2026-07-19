@@ -257,38 +257,29 @@ Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestR
 
 Helpers for rate limiting must distinguish between:
 
-- **Single-bucket operations** (default): commands or scripts that operate on exactly one `ratelimit:*` key at a time and never attempt cross-key atomicity. These are the only operations that may live on the hot path.
-- **Multi-bucket inspection** (advanced): best-effort tooling that scans or inspects multiple buckets and must tolerate:
+- **Single-bucket operations** (default): each Redis command or script operates on exactly one `ratelimit:*` key and never attempts cross-key atomicity. These are the only Redis rate-limit operations that may live on a latency-sensitive path.
+- **Bounded multi-signal policy evaluation**: an owning edge or credential policy may inspect a small declared set of independently updated subject and coarse-pressure buckets, then combine them while accepting bounded inter-read skew. Each mutation remains single-key; the result is not an exact cross-key quota.
+- **Bulk multi-bucket inspection** (advanced): best-effort tooling that scans many buckets and must tolerate:
   - `CROSSSLOT` errors when running against Redis Cluster.
   - Non-atomic views of rate-limit state (for example, two keys changing while they are being read).
 
-Shared helper APIs should make this explicit by providing separate entrypoints (for example, `RateLimitBucketHelper.singleBucket(...)` vs `RateLimitBucketHelper.inspectBuckets(...)`) and by documenting that the latter is **observability-only**, not a control-plane primitive.
+Shared helper APIs distinguish single-bucket mutation, bounded policy evaluation, and bulk observability. Bulk inspection remains observability-only; bounded policy evaluation is allowed only for an explicitly owned abuse policy and never promises a cross-slot atomic result.
 
 #### Rate-Limit Bucket Design
 
-To keep rate limiting robust under high cardinality and load, `bucket` values should follow a simple, predictable scheme:
+Under [ADR 0087](decisions/adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md), an individual enforcement bucket represents one actual client, connection, account candidate, credential, token, source, or other declared subject. Its `bucket` segment is a normalized opaque stable hash that preserves one-to-one subject isolation; it is not `H(subject) mod N`, and raw credential or address material does not appear in keys or metric labels.
 
-- **Small/self-hosted deployments**
-  - Per-client or per-token buckets (for example `bucket = clientId` or a normalized token ID) are acceptable when the number of active clients is small and overall throughput is modest.
-  - Even in this mode, services should reuse shared helper builders so bucket shapes stay consistent across codebases.
-- **Higher-cardinality or multi-tenant deployments**
-  - Use a **stable hash** of the client/token into a bounded number of buckets per tenant:
-    - Example: `bucket = H(clientId) mod N`, where `N` is a small fixed number (for example 64 or 256) chosen per deployment, not per tenant.
-    - This caps the number of keys per the `(tenantId, timeWindow)` pair while avoiding single-key hotspots.
-  - Introduce `<shard>` only when profiling shows that individual buckets are still too hot:
-    - For example, split each logical bucket into a small number of shards (`0..S-1`) using `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>` where `shard = H(requestId) mod S`.
-    - Keep `S` small and fixed so the total key count remains predictable.
-- **Key count and rotation**
-  - Choose `N` (and optional `S`) so the total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a comfortable range for the deployment.
-  - Allow old `timeWindow` keys to expire naturally via TTL; do not attempt to retain historical rate-limit keys in Redis for analytics or debugging.
+Bound active key count through TTLs, a fixed number of live windows, active-subject/admission limits, per-tenant and deployment memory budgets, and explicit overload behavior. Do not obtain boundedness by making unrelated subjects consume one another's allowance.
 
-This approach gives small games straightforward per-client buckets by default while providing a clear, hash-based pattern for larger or noisier workloads without introducing many configuration knobs.
+A small fixed shared bucket is allowed only when it deliberately represents a coarse tenant, endpoint, source-class, or global pressure signal. It cannot be described as per-subject fairness or act alone as an individual security consequence. Request-based sharding must not multiply an individual's effective enforcement allowance.
+
+Every limiter declares its subject and owner, privacy-preserving key shape, window/TTL, cardinality and memory envelope, deliberately shared collision behavior, reset/eviction effect, store-unavailable behavior, and whether it is a heuristic or hard gate. A hard authorization, financial, durable-quota, or similar invariant cannot rely solely on evictable Cache/Rate-Limit Redis. Ordinary gameplay command limiting remains the in-process session-front-end mechanism defined by ADR 0034 and performs no Redis call per command solely for rate limiting.
 
 Cluster slotting implications:
 
-- Rate-limit keys are treated as **single-key operations** from the cluster’s perspective; scripts or commands should not attempt atomic multi-key updates across different buckets or time windows.
+- Rate-limit keys are treated as **single-key mutations** from the cluster’s perspective; scripts or commands do not attempt atomic multi-key updates across different buckets or time windows.
 - Rate-limit keys are treated as single-key operations; the design intentionally does not rely on Redis Cluster hash tags for rate limiting.
-- Multi-key operations over rate-limit data (for example, bulk inspection of multiple buckets) must tolerate `CROSSSLOT` errors and fall back to per-key operations; the design does not rely on cross-slot multi-key transactions for rate limiting.
+- Bounded multi-signal policy reads and bulk inspection tolerate `CROSSSLOT` and fall back to per-key operations; the design does not rely on cross-slot multi-key transactions for rate limiting.
 
 ### Key Naming and Overwrite Expectations
 

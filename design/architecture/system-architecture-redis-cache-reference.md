@@ -69,7 +69,7 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | TTL-only (Class B) | Reset-tolerant | Legacy reconnect-adjacent rendered-room snapshot helper. This prefix is not authoritative for fresh `LOOK`, is not part of the canonical target-state read model, and remains implementation debt pending fuller cleanup. |
 | `chat:say:<tenantId>:<characterId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | TTL-only (Class B) | Reset-tolerant | Social & Groups short-lived chat history buffers. |
 | `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*` | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Automation & Scripting queued work items, per-script quota counters, per-tenant live execution budget counters, and tenant/cluster dry-run/test capacity leases. Durable triggers/effect tables in PostgreSQL, not Redis, guarantee eventual execution and quota correctness. |
-| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Spring Cloud Gateway rate-limit buckets and optional sharded buckets. Reset-induced fairness shifts are acceptable because gateway logic, not Redis persistence, remains authoritative. |
+| `ratelimit:<tenantId>:<subjectType>:<opaqueSubjectHash>:<timeWindow>` or a separately named deliberately shared pressure bucket | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Isolated edge/credential/reconnect subjects and declared coarse pressure signals under ADR 0087. Eviction/reset semantics and unavailable-store behavior are explicit per limiter; ordinary gameplay commands use in-process limiting. |
 
 CI and code review checks are expected to:
 
@@ -93,7 +93,7 @@ CI and code review checks are expected to:
 - Each cache prefix should document an expected key-count envelope per tenant, not just a generic “bounded” claim.
 - Lists, sets, or sorted sets must declare a maximum length and enforce it via trimming or eviction logic.
 - Serialized payloads should stay within a predictable size envelope, typically in the “tens of kilobytes” range rather than unbounded blob storage.
-- Rate-limit prefixes should document a modest per-tenant active-key envelope across all live time windows so profiling can catch runaway bucket growth.
+- Rate-limit prefixes document active-subject admission, live-window count, TTL, and per-tenant/deployment key and memory envelopes so profiling and overload controls catch runaway growth without modulo-colliding unrelated subjects.
 
 ### Recommended Cache Metrics by Prefix Family
 
