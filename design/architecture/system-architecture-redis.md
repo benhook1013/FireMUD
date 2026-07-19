@@ -338,11 +338,13 @@ Redis is used **exclusively** for non‑authoritative, transient data, including
 - Gameplay session state and live coordination (session bindings, queue participation).
 - Best‑effort caches for hot‑path aggregates and chat history in Cache/Rate‑Limit Redis.
 - Automation queues and coordination hints that can be reconstructed from durable domain state.
+- Redis Streams, lists, and pub/sub used as disposable wakes, durable-row pointers, or observability signals; they are never the only event, delivery checkpoint, or replay authority.
 
 Implications:
 
 - Losing keys within the tail‑loss envelope must behave like lost/reordered messages or delayed timers, not permanent data corruption.
 - Designs must **never** put the only record of a critical effect (for example, a currency transfer) exclusively in Redis.
+- Durable asynchronous delivery follows [ADR 0083](decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md): PostgreSQL outbox and per-consumer delivery state remain authoritative, and Redis loss can delay discovery but cannot erase accepted work.
 - Every new use of Redis must explicitly state:
   - Which role it targets (Coordination vs Cache/Rate‑Limit).
   - Whether it is reset‑tolerant, reset‑sensitive, or reset‑forbidden.

@@ -10,20 +10,22 @@ All events must be:
 
 ## Event Transport Contract (Required)
 
-To keep control-plane behavior predictable, transport and ordering guarantees must be explicit:
+FireMUD has no implicit general event bus. Under [ADR 0083](decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md), each producer captures these events in a PostgreSQL transactional outbox with its authoritative state change, retains durable per-consumer delivery progress, delivers through idempotent workers, and exposes an authoritative reconstruction API. Redis may carry only disposable wakes or durable-row pointers.
+
+To keep control-plane behavior predictable, every event family records its concrete delivery transport, retention, ordering, reconstruction, and backpressure behavior:
 
 - **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
 - **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
-- **Ordering**: consumers may assume per-partition order within each event family and scope, but must not assume global order across tenants or instances.
+- **Ordering**: delivery may duplicate or reorder events. Consumers apply the monotonic sequence within each event family and scope and use the authoritative reconstruction API when they detect a gap; no global order exists across tenants or instances.
 - **Monotonic sequencing (required)**:
   - All instance-scoped event families must carry `instanceSequence` (monotonic per `(tenantId, gameInstanceId)`).
   - Tenant-scoped patch readiness events must carry `tenantSequence` (monotonic per `tenantId`).
   - Read models must apply events by sequence (not arrival time) and ignore stale or duplicate sequence numbers.
-- **Replay**: new consumers must be able to replay at least N days of control-plane events (or reconstruct state from durable service APIs) so operator UIs can be rebuilt without data loss.
+- **Replay and reconstruction**: each family declares a concrete retained replay window. New or lagging consumers reconstruct from durable service APIs when that window is exhausted; no unspecified `N`-day broker retention is implied.
 - **Idempotency**: consumers must treat `controlPlaneRequestId` as the primary idempotency key for operator-driven events and must be safe under at-least-once delivery.
 
-## `ScriptPatchPinChanged` (Game Session -> Event Bus)
+## `ScriptPatchPinChanged` (Game Session -> Durable Event Delivery)
 
 Emitted whenever the pinned patch changes.
 
@@ -39,11 +41,11 @@ Fields:
 - `actor` and `reason`
 - `occurredAt`
 
-## `ScriptPatchRollbackRequested` (Game Session -> Event Bus)
+## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Delivery)
 
 Optional dedicated event. If not used, `ScriptPatchPinChanged(changeType=ROLLBACK)` is required.
 
-## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Event Bus)
+## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Durable Event Delivery)
 
 Emitted whenever tenant-scoped readiness lifecycle changes.
 
@@ -63,7 +65,7 @@ Operator consumption rule:
 
 - Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
 
-## `PluginVersionStatusChanged` (Game Design -> Event Bus)
+## `PluginVersionStatusChanged` (Game Design -> Durable Event Delivery)
 
 Emitted whenever immutable design-time publication status changes for one plugin version.
 
@@ -83,7 +85,7 @@ Operator consumption rule:
 - Use this event family for creator/operator publication history and design-time eligibility changes only.
 - Do not infer runtime activation, drain, or disablement from this event family; those remain instance-scoped runtime events.
 
-## `ScriptPatchInstanceRolloutChanged` (Game Session -> Event Bus)
+## `ScriptPatchInstanceRolloutChanged` (Game Session -> Durable Event Delivery)
 
 Emitted whenever instance rollout history changes for a patch.
 
@@ -104,7 +106,7 @@ Operator consumption rule:
 
 - Use this event family for instance rollout history, rollback audit trails, and per-instance pin progression.
 
-## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Event Bus)
+## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Durable Event Delivery)
 
 Emitted when operator actions change plugin active versions or disablement state.
 
@@ -126,7 +128,7 @@ Operator consumption rule:
 - Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
 - Automation's operator read model must persist an append-only instance-scoped history for this family so `ListPluginRuntimeEvents` can expose real transition chronology without inferring it from the latest registry row.
 
-## `SignerPolicyVersionObserved` (Automation & Scripting -> Event Bus)
+## `SignerPolicyVersionObserved` (Automation & Scripting -> Durable Event Delivery)
 
 Emitted when Automation & Scripting observes or refreshes plugin signer policy for a scope.
 
@@ -138,7 +140,7 @@ Fields:
 - `observedAt`
 - `policySource` (for example `signed_config_artifact`)
 
-## `SignerRevocationApplied` (Automation & Scripting -> Event Bus)
+## `SignerRevocationApplied` (Automation & Scripting -> Durable Event Delivery)
 
 Emitted when signer revocation enforcement transitions one or more plugins to disabled state.
 
@@ -152,7 +154,7 @@ Fields:
 - `controlPlaneRequestId` (optional when operator-driven rollout change is correlated)
 - `occurredAt`
 
-## `ScriptRollbackConvergenceTimedOut` (Game Session -> Event Bus)
+## `ScriptRollbackConvergenceTimedOut` (Game Session -> Durable Event Delivery)
 
 Emitted when rollback orchestration reaches terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
 
