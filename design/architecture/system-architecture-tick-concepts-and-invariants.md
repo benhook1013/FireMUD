@@ -258,12 +258,16 @@ Tick work is scoped to **regions** so that:
 
 Two additional behaviors complete the mental model:
 
-- **Global or multi-region effects use fan-out**:
-  - World-wide or multi-region events are implemented by Game Session injecting commands into each affected region and forcing a tick there.
-  - This ensures the effect is applied even if a region would otherwise be idle; the work still runs under that region’s normal lease, locks, and fairness rules.
-- **Idle regions still advance time via lightweight ticks**:
+- **Global or multi-region effects use durable fan-out**:
+  - One durable parent identity freezes the affected-region set and topology generation at acceptance. Idempotent durable child/injection rows are created for those regions before disposable wake hints are published; retry never re-expands from current topology.
+  - Game Session owns partial-injection reconciliation unless a feature explicitly names another durable coordinator. The parent exposes waiting, injected, terminal, delayed, and rejected child outcomes.
+  - A bounded global outstanding-work cap, backpressure, and deterministic fair regional admission prevent a large fan-out or hot region from monopolizing injection capacity.
+  - A wake means process the next canonical cadence boundary under the region's normal lease, fence, epoch, lanes, and fairness. It never creates an off-cadence tick or bypasses `PAUSED`/`STALLED`; affected children wait for recovery or terminalize under declared feature policy.
+- **Idle regions advance through lightweight physical ticks initially**:
   - Idle/background behavior does not create a second slower canonical tick cadence inside the same live `region_epoch`.
-  - Regions continue to use the configured `tick_interval_ms` timeline for timer ordering and `tickId` advancement; “background” means reduced work and wake-up pressure when there are no due commands or timers, not a different epoch-local clock.
+  - A truly empty cadence boundary performs one durable fenced watermark/heartbeat advance without domain RPCs, entity locks, Redis `pending`, or an effect batch.
+  - Tick/game time continues while merely idle and freezes only when the region is explicitly `PAUSED` or `STALLED`. Wall-clock due intent follows its ADR 0072 timer class instead of being reinterpreted as tick/game time.
   - Any true cadence change for an idle region still requires the same explicit epoch bump and timer re-derivation rules described above.
+  - Sleeping and fast-forwarding a logical empty range is deferred until measured cost justifies a separate ADR proving complete durable due-work indexes, pause accounting, deterministic range materialization/replay, wake-loss recovery, and migration of every heartbeat consumer.
 
 The underlying Redis key layout and shard-locality rules for these behaviors are documented in the Redis architecture; this section captures the conceptual guarantees for designers and implementers.

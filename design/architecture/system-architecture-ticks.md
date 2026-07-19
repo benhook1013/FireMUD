@@ -83,6 +83,7 @@ Heartbeat emission and consumer semantics are tied to `durable_committed`, not t
 
 - A heartbeat `(regionEpoch, tickId)` is emitted only after `durable_committed` has been reached.
 - Consumers treat heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` state.
+- A truly empty cadence boundary may reach `durable_committed` through the lightweight fenced watermark transition without an effect batch or Redis coordination, because there are no effect rows to converge. It still advances exactly one canonical tick and emits the ordinary deduplicable heartbeat.
 
 If a crash occurs after `durable_committed` but before `coordination_cleared`, recovery finishes cleanup under idempotent replay rules. This is an operational lag window, not a commit regression.
 

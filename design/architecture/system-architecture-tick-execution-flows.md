@@ -224,6 +224,7 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Pulls actor-action candidates and separately bounded passive/inbound-effect candidates into their deterministic lanes.
    - Pulls a bounded number of due timers and retries (up to configured caps per tick).
    - Optionally includes a bounded “remote follow-up drain” step (see below); due remote follow-up rows are durably claimed for the target tick batch and then mapped into the same per-entity worklist as local commands at the target region. Redis queue entries or `remote:*` markers may wake the region, but they are not the source of truth for remote follow-up ownership.
+   - Includes due global-effect child rows from a durable parent that froze the affected-region set and topology generation. Region wake hints are disposable; per-region child identity and partial-injection reconciliation remain authoritative in PostgreSQL.
    - Selection alone does **not** make work exclusive yet. Until the tick batch and durable claims exist, the selected work remains recoverable from its source queues/indexes.
 2. Orders fairly:
    - Selects **at most one intentional actor action** per entity across queued player/AI/automation commands, actor-action timers, and their retries. Passive conditions, environmental work, incoming remote effects, actor-generated consequences, and their retries use the separately bounded effect lane and do not consume the target's actor-action slot.
@@ -240,6 +241,8 @@ At each tick for a `<tenantId, regionId>`, the executor:
 4. Commits and clears coordination:
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
    - Does not stage the next regional tick until the current tick is durably terminal and matching epoch/tick/lease/fence cleanup has completed.
+
+If collection proves the cadence boundary is truly empty, Game Session uses the fenced empty-tick fast path: advance the durable region watermark and heartbeat for exactly that next tick without creating an effect batch, Redis `pending`, entity locks, or domain RPCs. A wake for injected global work targets this next canonical boundary and cannot bypass `PAUSED` or `STALLED` health state.
 
 ### Per-Entity Work Ordering and Fair Entity Selection
 

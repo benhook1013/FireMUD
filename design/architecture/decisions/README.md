@@ -90,6 +90,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0074](./adr-0074-one-entity-lock-per-redis-script.md) | Accepted | `GR-1` | `SF-2`, `GR-4`, `PO-4` | Hard initial one-entity-lock boundary for Redis tick scripts |
 | [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md) | Accepted | `GR-4` | `GR-1`, `AS-1`, `PO-4` | Deterministic depth, count, cost, and per-target bounds for generated effect chains |
 | [ADR 0076](./adr-0076-failure-class-specific-durable-tick-retries.md) | Accepted | `GR-1` | `PO-2`, `PO-4`, `SF-2` | Failure-class-specific durable retries through the deterministic fair tick scheduler |
+| [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md) | Accepted | `GR-1` | `GR-2`, `AS-1`, `SF-1`, `PO-4` | Durable bounded global-effect fan-out with lightweight physical idle ticks |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
