@@ -26,7 +26,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Category | Example key families | Shard-locality rules |
 | --- | --- | --- |
 | Region lease | `tick-executor-lease:{tenantRegionTag}` | Single-key scripts scoped to a single `{tenantRegionTag}` hash tag. |
-| Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
+| Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | A lock-acquiring invocation touches at most one entity-lock key. Multi-entity commands use owner transactions or durable effect legs rather than multi-lock Lua. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
 | Session CAS / bindings | `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` plus `session:game:index:*:{tenantGameplayTag}:*`, and `session:auth:token:<tokenHash>` | Gameplay session CAS/update scripts may be shard-local multi-key scripts where all gameplay-session keys share `{tenantGameplayTag}`. Issued-token registry operations and set-if-greater auth-generation projections remain single-key. Session scripts are never mixed with tick keys in the same invocation. |

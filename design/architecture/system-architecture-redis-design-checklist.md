@@ -80,6 +80,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Multi‑key scripts operating on this prefix:
   - [ ] Only touch keys that share the same hash tag and slot.
   - [ ] Do not mix coordination and cache prefixes in one invocation.
+  - [ ] If the script acquires an entity lock, it acquires at most one entity-lock key; no piecemeal or multi-entity lock acquisition is permitted.
 - [ ] If a coordination flow uses session-to-region bridge scripts, that category is called out explicitly in the Lua Script Registry and service docs rather than treated as an unnamed region-lease special case.
 - [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
 
@@ -87,8 +88,8 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 
 - [ ] The design explicitly states:
   - [ ] Whether the prefix is **reset‑tolerant**, **reset‑sensitive**, or **reset‑forbidden**.
-  - [ ] How losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of entries per region affects gameplay.
-  - [ ] Whether tail‑loss is acceptable for all flows that depend on this prefix.
+  - [ ] How the environment-measured unreplicated-write exposure affects each ADR 0058 work class and its player-visible outcome.
+  - [ ] Whether coordination loss is acceptable for all flows that depend on this prefix and which durable intent or terminalization path applies when it is not.
 - [ ] The design defines a hard growth bound for the prefix and how it is enforced (`TTL`, `MAXLEN`, max cardinality, or equivalent), including default values for new deployments.
 - [ ] Flows that are **not** tail‑loss compatible (for example, real‑money or cross‑tenant transfers) use durable domain mechanisms and do not rely solely on Redis.
 - [ ] The appropriate reset scope (region/tenant/cluster) is documented in the service design and referenced from **Redis Reset & Recovery**.

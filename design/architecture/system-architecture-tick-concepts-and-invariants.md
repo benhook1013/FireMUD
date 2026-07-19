@@ -98,25 +98,20 @@ Consequently, passive poison may prevent an actor action and a confirmed attack 
 
 ## Locking and Multi-Entity Commands (Conceptual)
 
-Distributed locking in the tick system is designed to avoid deadlocks and keep Lua scripts small and predictable:
+Distributed locking in the initial tick system uses a hard one-entity-lock boundary so Lua scripts remain small and Redis coordination is not mistaken for domain atomicity:
 
-- **Default: one entity lock per script**
-  - Tick Lua scripts are written, by default, to acquire at most one `tick:{tenantRegionTag}:lock:<entityId>` per invocation.
+- **Exactly one entity lock per lock-acquiring script**
+  - A tick Lua invocation acquires at most one `tick:{tenantRegionTag}:lock:<entityId>`. There is no initial multi-entity whitelist or cap above one, and piecemeal acquisition across invocations is prohibited.
   - Multi-entity commands decompose into per-entity legs keyed by the same region-scoped timeline `(region_epoch, tickId)` plus effect identifiers; cross-entity consistency is enforced at the PostgreSQL layer via idempotency guards and coordinator records rather than by holding multiple Redis locks at once.
+  - When affected aggregates share one domain owner, that owner may enforce the complete invariant in one PostgreSQL transaction. Split-authority work uses exact identity/version/location preconditions, durable effect legs, bounded retry, and reconciliation or saga/outbox handling appropriate to its invariant class.
 - **Registry-backed lock and lease management only**
   - Tick and lease keys such as `tick:{tenantRegionTag}:lock:<entityId>` and `tick-executor-lease:{tenantRegionTag}` are created, renewed, and released exclusively via Lua scripts registered in the shared Lua Script Registry.
   - Ad-hoc Redis commands (for example `SET NX PX` or direct deletes) must not be used to manipulate these coordination keys; all flows go through the registry helpers so lock tokens and lease epochs are validated and updated consistently across services.
-- **Strict limits on multi-lock scripts**
-  - Commands that truly cannot be decomposed and must lock multiple entities inside a single script must:
-    - Acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire in ascending order).
-    - Operate entirely within a single `<tenantId, regionId>`; cross-region multi-lock scripts are not allowed.
-  - If any required lock cannot be acquired, the script immediately releases all previously acquired locks and returns a contention result; no partial logical effects are applied for that command.
 - **Registry and CI enforcement (see Redis docs)**
-  - The Lua Script Registry records, per script, a declared `max_entity_locks` value (default `1`) and enforces a small hard cap for multi-lock scripts.
-  - Only an explicit whitelist of scripts may set `max_entity_locks > 1`; adding a new multi-lock script is treated as an architectural change and must update the whitelist and documentation.
-  - CI fails builds when a script attempts to use more entity-lock keys than declared or sets `max_entity_locks > 1` without being on the whitelist.
+  - The Lua Script Registry records `max_entity_locks` and requires it to be `0` or `1`; CI rejects any script or call shape that can acquire more than one entity lock.
+  - Redis locking remains a coordination optimization. It never replaces the current executor fence, exact owner preconditions, request-digest idempotency, or the owning database transaction.
 
-These rules keep deadlock scenarios rare, move complex coordination into transactional domain services, and make it clear when a feature is relying on exceptional multi-lock behavior.
+Trades, grapples, group movement, capacity checks, and multi-target combat remain expressible through owner transactions and durable effects. What is initially forgone is only a low-latency multi-entity Redis reservation optimization. Adding atomic bounded multi-lock Lua later requires a new ADR with measured concurrent contention, Redis event-loop/TTL/failure proof, and the dependency-wave model for concurrent regional execution; piecemeal acquisition remains forbidden.
 
 ## Timers and Time Scaling (Conceptual)
 

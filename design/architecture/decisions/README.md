@@ -87,6 +87,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0071](./adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | Durable tick commit before exact fenced Redis coordination cleanup |
 | [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md) | Accepted | `AS-1` | `GR-1`, `GR-2`, `SF-1` | Class-specific timer durability, missed-occurrence policy, and bounded recovery |
 | [ADR 0073](./adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md) | Accepted | `SF-1` | `GR-1`, `PO-4`, `AR-2` | Evidence-calibrated tick budgets and lock TTLs with shared bounded bootstrap defaults |
+| [ADR 0074](./adr-0074-one-entity-lock-per-redis-script.md) | Accepted | `GR-1` | `SF-2`, `GR-4`, `PO-4` | Hard initial one-entity-lock boundary for Redis tick scripts |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
