@@ -78,21 +78,23 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 
 ## Error Handling
 
-- For internal FireMUD RPCs, return application-level failures in the response `ErrorDetail` field (for example `INVALID_ARGUMENT`, `NOT_FOUND` codes in the shared error catalog) while keeping the gRPC transport status `OK`.
-- Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
-- Prefer returning structured errors over using gRPC metadata for application faults.
-- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures only.
+- [ADR 0092](decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md) separates successfully evaluated domain results from request/infrastructure failure. Transport status states whether the RPC produced its declared domain result; response outcomes describe expected business decisions inside successful processing.
+- Return transport `OK` with a typed outcome for expected domain results such as gameplay rejection, admission/quota decisions, version-fence outcomes, and other successfully evaluated business decisions. Use a `oneof` or equivalent invariant so success data and failure outcome cannot both be populated.
+- Return canonical non-OK status when no domain result was produced, including request decoding/validation, unauthenticated or unauthorized caller, missing query resource when absence is not the declared result, unsupported precondition before business processing, admission-preventing exhaustion, deadline/cancellation, unavailable dependency, and unexpected internal failure.
+- Attach bounded structured status details from the shared error catalog to non-OK statuses. Do not routinely convert downstream `UNAVAILABLE`, `DEADLINE_EXCEEDED`, cancellation, or internal failure into transport-`OK` application responses.
+- Mutations use stable idempotency identity. When transport fails after commit may have occurred, callers retry with the same identity or query the durable status/reconciliation surface rather than guessing from status or minting another request.
+- Batch/stream messages carry expected per-item domain outcomes; inability to continue the RPC uses the canonical non-OK stream status. Every RPC documents domain outcomes, status mapping, retryability, idempotency, deadline/cancellation, and batch/stream semantics.
 - Metric contract:
-  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
-  - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
+  - Expected typed domain outcomes use the Micrometer meter name `grpc.app_error` / Prometheus `grpc_app_error_total`; transport failures use the standard bounded gRPC status metric family.
+  - Required application-outcome labels: `service` and bounded `code` from the shared error catalog.
     - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
   - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `characterId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
-  Shared logging, metrics, and tracing interceptors implement this contract; services must register them for every gRPC server.
+  Shared logging, metrics, tracing, status-detail, and typed-outcome helpers implement this contract; services register them for every gRPC server.
 
 Example implementation:
 
 ```java
-private ErrorDetail error(String code, String message) {
+private ErrorDetail domainOutcome(String code, String message) {
   // If the shared Micrometer common-tags configuration is enabled, `service` is added automatically.
   meterRegistry.counter("grpc.app_error", "code", code).increment();
   return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();

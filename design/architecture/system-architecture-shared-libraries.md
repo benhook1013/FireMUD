@@ -13,6 +13,8 @@ These classes define FireMUD's basic shared request/response shapes:
 - **`ErrorDetail`** – Structured error information for validation problems or failed operations.
 - **`GlobalExceptionHandler`** – Captures exceptions and converts them into `ApiResponse<ErrorDetail>` objects.
 
+For gRPC, [ADR 0092](decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md) governs use of these shared details. Expected business decisions after successful evaluation remain typed response outcomes over transport `OK`; request-level, authentication/authorization, exhaustion, dependency, deadline/cancellation, and internal failures use canonical non-OK gRPC status with bounded structured details. Shared helpers must not force every failure into one channel.
+
 DTO records for common tasks (paging, IDs, basic metadata) live here so services share a consistent contract.
 
 ---
