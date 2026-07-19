@@ -95,6 +95,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0079](./adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md) | Accepted | `SF-2` | `SF-1`, `PO-3` | Flyway-owned schema evolution with generated jOOQ persistence by default and a bounded SQL escape hatch |
 | [ADR 0080](./adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md) | Accepted | `SF-2` | `SF-2`, `PO-3` | Service-owned schemas and Flyway histories with adopter-local reusable shared migrations |
 | [ADR 0081](./adr-0081-objective-compatibility-gates-for-database-evolution.md) | Accepted | `SF-2` | `AR-3`, `PO-3` | Objective binary-overlap and retained-data gates for direct replacement or expand/migrate/contract |
+| [ADR 0082](./adr-0082-semantic-boundary-for-cross-service-identifier-migration.md) | Accepted | `SF-2` | `SF-2`, `AR-1`, `AR-3` | Preserve IDs across representation changes and map new identities for semantic replacement, scope change, split, or merge |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

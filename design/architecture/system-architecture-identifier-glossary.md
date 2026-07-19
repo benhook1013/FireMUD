@@ -41,7 +41,7 @@ World Management may use a numeric room row key as `roomInstanceId` only when it
 - `entityId` – identifies a live runtime entity (character, NPC, item instance, container entity) within `(tenantId, gameInstanceId)` and may be a stable scoped number.
 - `entityTemplateId` – identifies a versioned entity template (items, NPC definitions, equipment templates) scoped by `(tenantId, versionId)` and is a UUID logical identity.
 - Stable numeric `entityId` values may be presented to authorized players as disambiguators and accepted in gameplay commands. Resolution still enforces tenant, game-instance, location/visibility, and authorization scope.
-- Continuing the same logical authored object across versions may preserve `entityTemplateId`; `versionId` pins the exact representation. Forks and semantically new replacements receive new template IDs and use explicit mappings when state migration is intended.
+- Continuing the same logical authored object across versions or changing only its storage/wire representation preserves `entityTemplateId`; `versionId` pins the exact representation. Forks, semantically new replacements, scope changes, splits, and merges receive new template IDs and explicit durable mappings under [ADR 0082](decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md).
 
 ## Cross-Service Effect Identity
 
