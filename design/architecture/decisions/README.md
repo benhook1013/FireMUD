@@ -79,6 +79,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0063](./adr-0063-durable-per-dispatch-script-handoff.md) | Accepted | `AS-1` | `SF-2`, `GR-1`, `PO-4` | PostgreSQL-authoritative script work items with durable per-command dispatch children |
 | [ADR 0064](./adr-0064-stage-qualified-script-outcomes.md) | Accepted | `AS-1` | `PO-4`, `SF-2`, `SF-1` | Stage-qualified scripting outcomes with authoritative per-command gameplay results |
 | [ADR 0065](./adr-0065-deterministic-fair-entity-tick-scheduling.md) | Accepted | `GR-1` | `SF-2`, `GR-4`, `PO-4` | Deterministic fair per-entity scheduling with one in-flight tick through cleanup |
+| [ADR 0066](./adr-0066-durable-asynchronous-cross-region-result-arbitration.md) | Accepted | `GR-1` | `SF-2`, `GR-2`, `PO-4` | Durable asynchronous cross-region result arbitration with immutable terminal outcomes |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

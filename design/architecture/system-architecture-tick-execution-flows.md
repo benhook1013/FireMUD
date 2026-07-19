@@ -57,7 +57,7 @@ Within a region’s tick, each command proceeds through several phases:
        - Writers must persist `target_region_epoch` and `due_tick_id` from the same status read so retries and failover cannot shift eligibility non-deterministically.
      - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
      - If the command needs to wait for remote completion, the origin region creates or updates a separate durable cross-region coordinator record. This waiting state is **not** kept as a non-terminal row inside the origin tick batch.
-       - Minimum coordinator fields include coordinator identity (`tenantId`, `gameInstanceId`, `commandId`), origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`), target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`), lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
+       - Minimum coordinator fields include coordinator identity (`tenantId`, `gameInstanceId`, `commandId`), origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`), target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`), coordinator state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`), separately recorded late-result disposition when applicable (`LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
        - Target completion is returned through one durable origin-owned result path, not an unspecified transient message:
          - the target leg writes an origin-addressed result or inbox row keyed to the coordinator identity (for example `commandId` plus origin/target scope),
          - the row records the target terminal outcome, target ledger identity, and any command-specific result payload needed by origin reconciliation,
@@ -438,23 +438,25 @@ To avoid ambiguity around timeouts and late replies, every cross-region command 
 2. `REMOTE_APPLIED` – target reported terminal success for the leg.
 3. `REMOTE_ABANDONED` – target reported terminal failure (`ABANDONED`) for the leg.
 4. `REMOTE_TIMEOUT_ABANDONED` – origin reached deadline without terminal remote result and marked the leg `ABANDONED`.
-5. `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED` – terminal policy when a remote success/failure arrives after timeout.
+
+Late-result disposition is recorded separately as `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED`; it is not a replacement coordinator terminal state.
 
 Required policy defaults:
 
 - Deadlines are tick-based on the origin region timeline and recorded durably with the origin coordinating effect (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), not inferred from wall-clock timers.
 - The origin region is the only clock that evaluates remote completion timeouts. Target-region `dueTickId` controls when the remote leg first becomes eligible to run; it does not define when the origin gives up waiting for the result.
-- If the origin scope is canonical `PAUSED` or `STALLED`, normal tick-clock timeout progression is suspended. A durable recovery/controller path may still converge overdue coordinators to `REMOTE_TIMEOUT_ABANDONED` using the stored origin deadline plus control-plane health evidence when normal origin ticks are not advancing.
+- If the origin scope is canonical `PAUSED` or `STALLED`, normal tick-clock timeout progression is suspended. A separate durable operational maximum-real-wait policy may terminalize stranded coordination using control-plane health evidence, but records an operational reason and must not claim that the gameplay tick deadline elapsed.
 - The coordinator lifecycle above is outside the committing origin tick batch:
   - The origin tick that creates the remote follow-up still commits normally once its own batch rows are terminal.
   - Later remote results or timeouts enqueue subsequent origin-region work or update the separate coordinator record; they do not retroactively keep the original tick non-terminal.
 - Remote result return-path contract:
   - target regions do not mutate origin coordinator rows directly through ad hoc RPCs or transient bus messages;
   - they write one durable origin-addressed result row keyed by coordinator identity;
-  - origin-side reconciliation is the only component that advances the coordinator from `PENDING_REMOTE` to `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, or `LATE_RESULT_RECONCILED`.
+  - origin-side reconciliation is the only component that advances the coordinator from `PENDING_REMOTE` to `REMOTE_APPLIED`, `REMOTE_ABANDONED`, or `REMOTE_TIMEOUT_ABANDONED`;
+  - result admission and timeout evaluation serialize in one coordinator transaction and lock domain: a result durably admitted before arbitration wins, while a timeout that wins atomically makes any later result late.
 - If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
   - Default: record `LATE_RESULT_IGNORED` for observability and keep origin terminal state unchanged.
-  - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.
+  - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature creates a new lineage-linked reconciliation/compensation workflow with its own identity and audit trail.
 - Every cross-region command type must explicitly declare one of two late-result classes in its design:
   - `late_result_safe_to_ignore`
   - `late_result_requires_reconciliation`

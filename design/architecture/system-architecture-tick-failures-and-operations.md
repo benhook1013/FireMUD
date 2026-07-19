@@ -527,6 +527,8 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
     - `tenant_id`, `target_region_id`, `target_region_epoch`
     - `due_tick_id` in the target region timeline (preferred; do not use wall-clock due-time fields for cross-region follow-up eligibility)
     - `effect_key` (stable, deterministic) and any additional EffectId projection fields needed for traceability.
+    - exact target entity or aggregate identity plus the feature-required expected ownership, location, and aggregate-version preconditions.
+  - Target execution requires both the recorded timeline and the exact feature preconditions to remain valid under the current authoritative state and executor fence; a matching epoch alone is insufficient.
   - `due_tick_id` is computed from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`), not from Redis hint keys:
     - Canonical baseline: `due_tick_id = target_last_committed_tick_id + delta_ticks` (for immediate eligibility, `delta_ticks = 1`).
     - The writer must persist `target_region_epoch` and `due_tick_id` together from the same read so eligibility is deterministic across retries and failover.
