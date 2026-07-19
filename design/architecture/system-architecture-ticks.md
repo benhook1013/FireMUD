@@ -332,7 +332,7 @@ Tick execution uses a **staging/commit pattern**:
 
 Full commit-pattern details are in `system-architecture-tick-execution-flows.md` and the Redis docs.
 
-The Game Session Service and Redis own the full tick transaction lifecycle (staging, commit, and cleanup/abandon semantics); the Game Logic Service remains stateless with respect to tick transactions and is responsible only for deterministic resolution of actions, not for managing tick commit or post-failure cleanup.
+The Game Session Service owns the full tick transaction lifecycle, including staging intent, durable commit, and cleanup/abandon semantics. Redis holds disposable coordination state inside that lifecycle but is not a co-owner or proof of commit. The Game Logic Service remains stateless with respect to tick transactions and is responsible only for deterministic resolution of actions, not for managing tick commit or post-failure cleanup.
 
 Some commands (for example, heavy runtime procedural generation) declare `requiresSoloTick: true`. For these commands:
 

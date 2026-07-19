@@ -51,6 +51,7 @@ Failure handling assumes the same two-boundary model defined in the main tick de
   - `RegionStatus.lastCommittedTickId` has advanced.
 - `coordination_cleared`:
   - Redis `pending`/lock coordination for that tick is no longer in flight.
+  - Cleanup used exact epoch, tick, batch, digest/count, ownership-token, and fence comparisons; Redis absence by itself never proves durable commit.
 
 Crash-window behavior:
 
@@ -58,6 +59,7 @@ Crash-window behavior:
   - Tick work remains replayable; recovery replays remaining `SCHEDULED` effects using idempotent handlers and ledger rules.
 - Crash after `durable_committed` but before `coordination_cleared`:
   - Recovery must finish coordination cleanup before allowing the next tick to stage new work.
+  - A successor may remove old-owner coordination only through the dedicated fenced cleanup path and may not reinterpret or advance the already committed outcome.
   - The durable watermark does not regress, and heartbeat chronology does not rewind.
 
 ### Tick Effect Ledger and Replay Guarantees

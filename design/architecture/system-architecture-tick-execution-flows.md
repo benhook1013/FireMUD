@@ -348,10 +348,12 @@ Conceptually, tick commit proceeds through these phases:
    - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
    - Game Session records the outcome of each effect in its tick effect ledger (`SCHEDULED` → `APPLIED` or `ABANDONED`) based on the domain calls’ return semantics. Domain services do not write to the Game Session ledger directly.
 4. **Commit visibility**
-   - Once all ledger rows that belong to that tick batch are terminal (`APPLIED` or `ABANDONED`), Game Session advances the durable commit watermark for the region (for example updating `RegionStatus.lastCommittedTickId` for the current `region_epoch`) under the same `executorFence`, and only then emits the tick heartbeat for that `(region_epoch, tickId)`.
+   - Once all ledger rows that belong to that tick batch are terminal (`APPLIED` or `ABANDONED`), one Game Session database transaction marks the batch `COMMITTED` and advances the durable commit watermark (for example `RegionStatus.lastCommittedTickId`) under the same current `executorFence`. Only after that transaction commits may Game Session emit the tick heartbeat for `(region_epoch, tickId)`.
+   - Heartbeat delivery is recoverable either from an outbox written with the durable watermark or by deterministic successor synthesis from `RegionStatus`. Consumers deduplicate by `(tenantId, regionId, region_epoch, tickId)` and never interpret heartbeat receipt as coordination clearance.
    - Cross-region coordinator rows such as `PENDING_REMOTE` are not part of this terminal set; they are durable workflow state outside the committing tick batch.
 5. **Coordination cleanup**
-   - A final commit/cleanup script clears the `pending` entry for the tick and releases any entity locks for that region.
+   - A final commit/cleanup script clears `pending` and releases locks only after comparing the exact region epoch, tick ID, tick-batch ID, expected-effect digest/count where present, pending and lock ownership tokens, and executor-fence relationship.
+   - A stale executor cannot delete a successor's coordination. Successor recovery uses a dedicated fenced cleanup path that proves the old pending and lock values belong to the already committed old-owner batch before removing them.
    - Cleanup is a required part of “tick is no longer in flight”; if an executor crashes after commit visibility but before cleanup, crash recovery must clear/abandon the `pending` entry before any subsequent tick stages new work.
 
 From the perspective of the `(region_epoch, tickId)` timeline:
@@ -361,6 +363,7 @@ From the perspective of the `(region_epoch, tickId)` timeline:
   - The durable commit watermark (for example `RegionStatus.lastCommittedTickId`) has advanced to that `(region_epoch, tickId)` under the same `executorFence`.
 - A tick is `coordination_cleared` once:
   - There is no remaining `pending` entry for that tick in Redis and lock cleanup for that tick has completed.
+  - A durable cleanup-complete timestamp may be retained for diagnostics and SLO history, but it does not make mismatched Redis state safe and is not required as a second commit authority.
 - Any state before `durable_committed` is **replayable**:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
   - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
@@ -377,7 +380,7 @@ From the perspective of the `(region_epoch, tickId)` timeline:
 
 The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant and derives tick positions from durable state:
 
-- A region is considered busy while prior tick coordination state has not reached `coordination_cleared` (in practice, while `tick:{tenantRegionTag}:pending` exists for an in-flight `tickId`).
+- A region is considered busy while an unresolved durable batch exists or prior tick coordination has not reached `coordination_cleared`; Redis `pending` presence alone is not the complete admission gate.
 - The scheduler does not start a new tick for that `<tenantId, regionId>` until the previous tick is `coordination_cleared` as part of normal cleanup or explicitly handled during crash recovery.
 - The scheduler obtains the current `(region_epoch, tickId)` baseline for each region from PostgreSQL (for example, a `RegionStatus` table and/or the tick effect ledger); it **does not** use `tick:{tenantRegionTag}:meta.current_tick_id` to decide which tick to run next.
 - The scheduler and recovery tooling treat `RegionStatus.executorFence` as the durable owner generation; any batch or commit attempt that carries an older fence must stop rather than trying to race the new owner.
