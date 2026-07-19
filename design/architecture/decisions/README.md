@@ -72,6 +72,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0056](./adr-0056-one-hot-path-fan-out-owner.md) | Accepted | `GR-1` | `GR-2`, `GR-3`, `SF-2`, `PO-4` | One hot-path fan-out owner with at most two authoritative participants |
 | [ADR 0057](./adr-0057-game-session-owned-reconciliation-with-isolated-workers.md) | Accepted | `GR-1` | `SF-2`, `GR-2`, `GR-3`, `PO-4` | Game Session-owned effect reconciliation with independently scalable isolated workers |
 | [ADR 0058](./adr-0058-class-specific-redis-loss-outcomes.md) | Accepted | `SF-2` | `GR-1`, `PO-3`, `PO-4` | PostgreSQL-backed durable intent with class-specific outcomes after Redis loss |
+| [ADR 0059](./adr-0059-causal-floor-cross-service-presentation-reads.md) | Accepted | `SF-1` | `SF-2`, `GR-2`, `GR-3` | Common causal floor with distinct component versions for presentation reads |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
