@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 22 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 23 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **31** | **183** | `in-progress` |
+| **Total** | | **32** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -160,7 +160,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 2 P1
 
-- [ ] `TENANT-02`
+- [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
 - [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
 - [ ] `MS-AA-LIFECYCLE-ERASURE`
 - [ ] `MS-AA-PAYMENT-INSTRUMENT`

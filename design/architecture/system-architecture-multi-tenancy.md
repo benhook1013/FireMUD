@@ -151,7 +151,7 @@ Pointer freshness and cutover rules:
 - All microservices connect to a single PostgreSQL instance and store data in
   service-specific schemas.
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
-- Databases are **shared across tenants**, with a `tenantId` column on each table to isolate data. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
+- Databases are **shared across tenants**. Tenant-owned records carry and enforce `tenantId`; genuinely platform-global records such as the core account identity do not acquire a placeholder tenant merely to satisfy this convention. Relationships between a global record and a game live in explicit tenant-scoped tables. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
 - Services enforce the `tenantId` filter on all queries to prevent cross-game
   access.
 - Redis keys prefix the `tenantId` as described in the
@@ -176,12 +176,13 @@ Pointer freshness and cutover rules:
 - Creating a new game world triggers a Saga across services.
   The steps are outlined in
   [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md).
-- All microservices run as shared deployments; there is
-  **no tenant-specific infrastructure** or dedicated clusters.
+- All microservices run as shared deployments; there is **no tenant-specific infrastructure**, selectively dedicated data plane, or dedicated tenant cluster in the supported multi-tenant topology.
 - Game Session Service instances scale horizontally based on overall load.
 - Operations may run more than one instance per tenant. The player-facing contract exposes whichever realms the caller is authorized to see, and each open realm resolves to exactly one admissible `gameInstanceId` at a time. One shared world scales through Game Session pods, region partitioning, and fenced lease rebalancing inside that instance; intentionally separate worlds or shards use separately addressable realms.
 - Per-game resource quotas ensure one tenant cannot exhaust cluster capacity.
   Quota thresholds are configured per tenant, derived from the active subscription plan and entitlements returned by `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service. Metrics expose current usage so operators can track `active_sessions`, quota denials, and the impact of billing state on availability (for example, `suspended` or `canceled` tenants cannot start new instances or admit new player sessions even if raw capacity is available).
+
+This topology deliberately accepts an environment-wide infrastructure, backup, restore, and major-incident blast radius. FireMUD does not promise tenant-local upgrades, maintenance windows, data residency, cryptographic isolation, or disaster recovery inside one environment. If a demonstrated contractual or regulatory requirement later needs hard infrastructure isolation, the bounded escape path is a separately operated complete FireMUD environment after explicit review, not tenant-aware routing among selectively dedicated databases, Redis deployments, or services inside the shared environment.
 
 ### Quota Enforcement Responsibilities
 
