@@ -32,7 +32,7 @@ When designing new tick-driven features, keep these invariants in mind:
 
 - **Single authoritative executor per region** – all tick-side state for a `<tenantId, regionId>` is owned by one executor at a time.
 - **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
-- **One action per entity per tick** – fairness is enforced by limiting how many **tick work items** (player commands, AI/automation commands, due timers, retries, and remote follow-ups) a single entity can execute per tick. The scheduler and tick-execution flow choose at most one such work item per entity per tick; any additional due work for that entity is deferred to later ticks according to the retry and scheduling rules. This applies equally to player commands, AI scripts, automation, and remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
+- **One intentional actor action per entity per tick** – under [ADR 0051](./decisions/adr-0051-separate-actor-action-and-effect-lanes.md), player commands, AI decisions, automation commands, actor-action timers, and their retries compete for one actor-action slot. Passive status/environmental work, incoming remote effects, actor-generated consequences, and their retries use a separate bounded effect lane and do not consume the target's action slot. Both lanes retain deterministic persisted ordering plus per-entity and region-wide count/cost budgets.
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
@@ -51,7 +51,7 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 
 ### Fairness Under Tail-Loss and Resets
 
-Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
+Fairness and the actor-action/effect-lane rules apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
 - Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
 - In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
