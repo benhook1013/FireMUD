@@ -56,7 +56,7 @@ Suspected compromise and player-facing post-restore hardening use a hard cutover
 1. Quarantine new JWT issuance and JWT-protected admission/control-plane traffic.
 2. Generate and publish a replacement key generation.
 3. Remove the compromised or restored public key from authoritative JWKS immediately; do not retain it for overlap or rollback.
-4. Invalidate outstanding authority for the environment-wide issuer, including an issuer-wide revocation watermark and required session/allowlist cleanup. Watermarks are defense in depth: an attacker holding the old private key can choose fresh claims, so key removal and validator convergence remain mandatory.
+4. Invalidate outstanding authority for the environment-wide issuer by advancing its Account-owned auth generation and completing required issued-token/session cleanup. The generation is defense in depth: an attacker holding the old private key can choose fresh generation claims, so key removal, default-deny registry enforcement, and validator convergence remain mandatory.
 5. Force refresh or restart every validator, prove the compromised `kid` is rejected and the replacement `kid` is accepted, and record the exact validator inventory and results.
 6. Reopen protected traffic only after the hard-cutover, invalidation, convergence, and evidence gates pass.
 

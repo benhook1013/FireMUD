@@ -1,6 +1,6 @@
 # FireMUD System Architecture: JWT and Token Contracts
 
-This document defines the JWT profiles, claim requirements, issued-token registry, revocation watermarks, and token-validation behavior used by FireMUD services. It complements [Authentication & Authorization](./system-architecture-authentication.md), which defines how these token contracts are applied to route classification, gameplay admission, and tenant authorization.
+This document defines the JWT profiles, claim requirements, issued-token registry, revocation generations, and token-validation behavior used by FireMUD services. It complements [Authentication & Authorization](./system-architecture-authentication.md), which defines how these token contracts are applied to route classification, gameplay admission, and tenant authorization.
 
 Each revocable Browser, player-bootstrap, or private Service JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`.
 
@@ -16,30 +16,29 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 
 Token validity semantics:
 
-- A JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, generation, and time fields agree with the verified claims.
-- For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable Account-owned revocation/version state. The issued-token record does not grant scope independently.
+- A JWT must be cryptographically valid (signature, required identity, profile, time, and auth-generation claims) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, generation, and time fields agree with the verified claims.
+- For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable current Account-owned auth generations. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
 - The single-use connect token and Gateway signed connect context use their separate bounded replay/verification contracts and do not create Account issued-token records.
 - During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the registry check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side token record to be present.
 
-Bulk revocation (for example “logout all devices”, account bans, or tenant-wide billing suspensions) must not rely on wildcard deletes or key scans. Instead, the platform uses **revocation watermarks** in addition to per-token registry records:
+Bulk revocation (for example “logout all devices”, account bans, membership loss, or tenant-wide billing suspensions) must not rely on wildcard deletes, key scans, or wall-clock ordering. [ADR 0036](./decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md) defines Account-owned positive monotonic generations:
 
-- `session:auth:revoked_after:account:<accountId>` – tokens with `iat` older than this timestamp are treated as revoked for this account, even if their registry records still exist.
-- `session:auth:revoked_after:tenant:<tenantId>` – tokens with `iat` older than this timestamp are treated as revoked for tenant-scoped operations targeting this tenant.
-- `session:auth:revoked_after:membership:<accountId>:<tenantId>` – tokens with `iat` older than this timestamp are treated as revoked for caller-bound tenant operations for this account and tenant, even if the tenant remains otherwise available.
-- `session:auth:revoked_after:issuer:<issuerId>` – tokens with `iat` older than this timestamp are treated as revoked across the environment-wide Account issuer. This is reserved for signing-key compromise, post-restore trust reset, or another explicitly global issuer event.
+- `session:auth:generation:issuer:<issuerId>` – environment-wide Account issuer authority, advanced for signing-key compromise, post-restore trust reset, or another explicitly global issuer event.
+- `session:auth:generation:account:<accountId>` – account-wide authority, advanced for logout-all, security lock, password reset, or another account-wide cutoff.
+- `session:auth:generation:tenant:<tenantId>` – regular tenant authority, advanced for tenant-wide gameplay/billing cutoff.
+- `session:auth:generation:membership:<accountId>:<tenantId>` – caller-bound tenant authority, advanced when membership or tenant roles change.
 
-Revocation watermark contract requirements:
+Revocation-generation contract requirements:
 
-- Watermark values are UTC epoch seconds so they can be compared directly to JWT `iat` without unit conversion drift.
-- Watermark keys must have TTL at least `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` after the last relevant event so all tokens that could still be valid are covered.
-- Account Service is the authoritative writer for watermark updates triggered by account-security and billing-state events.
-- Account Service is also the authoritative writer for `session:auth:revoked_after:membership:<accountId>:<tenantId>` updates triggered by membership or tenant-role changes that affect caller-bound tenant authority.
-- Account Service is the authoritative writer for the issuer-wide watermark. Advancing it is mandatory when the environment-wide Account signing key is compromised or replaced during player-facing post-restore hardening.
-- Services validating tokens should allow small bounded clock skew (for example up to 60 seconds) when comparing `iat` to wall-clock checks, but not when comparing `iat` to revocation watermark values.
-- An issuer watermark is defense in depth and cannot contain an attacker who can sign a token with a fresh or future `iat`. Compromise correctness therefore depends on removing the compromised `kid`, forcing validator convergence, and proving rejection before protected traffic reopens.
+- Account Service owns durable current generations and is the sole writer of their Coordination Redis projections.
+- Account advances the applicable durable generation in the same transaction as the authority change and monotonic outbox event. Projection is idempotent set-if-greater and cannot regress.
+- Every revocable token captures current issuer and account generations. Tokens containing tenant-scoped claims also capture tenant and membership generations for exactly those bounded scopes.
+- After signature/profile and issued-token registry validation, a protected route requires exact equality with every current generation applicable to that route. Missing, malformed, unavailable, or regressed projection state fails closed.
+- `iat` remains required for audit and lifetime validation but is not revocation ordering authority. Normal bounded clock skew applies only to wall-clock claims such as `iat`, `nbf`, and `exp`.
+- Advancing the issuer generation is mandatory after environment-wide Account signing-key compromise or player-facing post-restore hardening. This is defense in depth: the affected `kid` must still be removed and validator rejection proved before protected traffic reopens.
 
-Per-token logout is a single-key delete of the token record; bulk revocation uses watermarks and relies on TTL for eventual registry cleanup.
+Per-token logout is a single-key delete of the token record; bulk revocation advances generations and relies on TTL for eventual registry cleanup.
 
 Coordination Redis outage behavior must be deterministic:
 
@@ -60,7 +59,11 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 | `jti` | Unique token identifier for audit/correlation |
 | `accountId` | Identity of the authenticated account |
 | `aud` | Audience/profile marker used to separate Browser, player-bootstrap, and Service tokens |
-| `iat` | Issued-at timestamp (UTC epoch seconds), required for revocation watermark checks |
+| `iat` | Issued-at timestamp (UTC epoch seconds), required for audit and token lifetime validation but not revocation ordering |
+| `issuerAuthGeneration` | Current issuer generation captured at issuance |
+| `accountAuthGeneration` | Current account generation captured at issuance |
+| `tenantAuthGenerations` | Bounded map aligned exactly with tenant entries in `scopedRoles` |
+| `membershipAuthGenerations` | Bounded map aligned exactly with tenant entries in `scopedRoles` |
 | `nbf` | Not-before timestamp |
 | `exp` | Expiration timestamp |
 | `globalRoles` | Cross-tenant privileges (for example `platformAdmin`, `billingAdmin`, `support`) |
@@ -70,10 +73,14 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 
 - `accountId`: `"user-123"`
 - `iat`: `1735689600`
+- `issuerAuthGeneration`: `7`
+- `accountAuthGeneration`: `12`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
   - `"tenant-abc"` -> `["tenantAdmin", "designer"]`
   - `"tenant-def"` -> `["moderator"]`
+- `tenantAuthGenerations`: `{ "tenant-abc": 4, "tenant-def": 9 }`
+- `membershipAuthGenerations`: `{ "tenant-abc": 18, "tenant-def": 3 }`
 
 Tokens are short-lived and internal only. Gameplay context (for example `characterId` and `tenantId`) is stored in Redis and sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in end-user JWT contracts.
 
@@ -100,7 +107,7 @@ To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles
   - Carried only over mTLS-protected service-to-service links.
   - Lifetime: also short-lived and backed by one `session:auth:token:<tokenHash>` registry record; services must not cache them beyond their expiry or ignore registry revocation.
   - An active gameplay binding rotates its private Account/control-plane Service JWT through the Account-owned refresh contract in ADR 0031. Refresh authority includes the still-valid current token generation and cannot be derived from Game Session mTLS identity plus an account ID alone.
-  - Account rejects rotation when the current generation is blocked by account, tenant, or membership revocation. A replacement with a newer `iat` must not cross a logout-all, password-reset, security-lock, or membership-loss watermark.
+  - Account rejects rotation when an issuer, account, tenant, or membership generation no longer matches. A replacement with a newer `iat` must not cross logout-all, password reset, security lock, tenant cutoff, or membership loss.
 
 Services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs, or a player-bootstrap JWT presented to an admin API).
 
@@ -118,6 +125,10 @@ Services must enforce this claim contract before role/tenant authorization:
 | `iat` | Required | Required | Required | UTC epoch seconds |
 | `nbf` | Required | Required | Required | Token not usable before this time |
 | `exp` | Required | Required | Required | Token unusable after this time |
+| `issuerAuthGeneration` | Required | Required | Required | Positive monotonic Account-owned issuer generation |
+| `accountAuthGeneration` | Required | Required | Required | Positive monotonic Account-owned account generation |
+| `tenantAuthGenerations` | As scoped | As scoped | As scoped | Keys must exactly match relevant bounded `scopedRoles` entries |
+| `membershipAuthGenerations` | As scoped | As scoped | As scoped | Keys must exactly match relevant bounded `scopedRoles` entries |
 | `globalRoles` | Optional | Optional | Optional | Empty list when none |
 | `scopedRoles` | Optional | Optional | Optional | Empty map when none |
 
@@ -139,6 +150,6 @@ JWT verification model (normative):
 
 Normal rotation preserves existing sessions. Signer rollback after promotion must keep public keys for every key used by either application version until all affected tokens expire plus skew.
 
-Compromise and post-restore hardening instead quarantine JWT issuance and protected admission/control-plane traffic, remove the affected public key without overlap, advance the issuer-wide watermark, force every validator to converge, and require proof that the old `kid` is rejected and the replacement is accepted before traffic reopens. The Account key ring is per environment rather than per tenant, so compromise of that key has environment-wide invalidation scope.
+Compromise and post-restore hardening instead quarantine JWT issuance and protected admission/control-plane traffic, remove the affected public key without overlap, advance the issuer auth generation, force every validator to converge, and require proof that the old `kid` is rejected and the replacement is accepted before traffic reopens. The Account key ring is per environment rather than per tenant, so compromise of that key has environment-wide invalidation scope.
 
 Player-facing readiness requires focused proof of both planned rotation through pruning and compromise hard cutover. Mounted signing/JWKS files, raw JWKS serving, or direct-file watcher callbacks do not independently satisfy this contract.

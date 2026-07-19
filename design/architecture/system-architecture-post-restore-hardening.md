@@ -33,7 +33,7 @@ The hardening automation should use least-privilege service accounts:
 - run restore-hardening JWT rotation with compromise-style key cutover semantics
 - remove restored keys from active trust material rather than retaining overlap from snapshot-era keysets
 - keep JWT issuance and JWT-protected admission/control-plane traffic quarantined during cutover
-- publish a fresh Account signing generation and `jwks.json`, then advance the environment issuer-wide revocation watermark and complete required session invalidation
+- publish a fresh Account signing generation and `jwks.json`, then advance the environment issuer auth generation and complete required session invalidation
 - refresh or restart every declared validator and prove that each rejects every restored `kid` and accepts the replacement `kid`
 - verify Account Service health, immutable cutover evidence, and validator convergence before traffic reopen
 

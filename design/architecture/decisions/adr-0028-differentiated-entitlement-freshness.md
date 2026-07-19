@@ -54,7 +54,7 @@ A fresh snapshot is necessary but not sufficient: its operation-specific flag mu
 - Reconnecting the same still-resumable gameplay session may use eligible last-known-good state when Account refresh is unavailable.
 - Restart, rollback, or recovery of already-entitled capacity may use eligible last-known-good state only when it does not increase the tenant's admitted capacity or quota consumption.
 - A reconnect that resolves to a different realm target or creates a fresh gameplay binding is new admission and remains strict.
-- Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant-revocation-watermark path, while periodic batched reconciliation bounds a missed event to 60 seconds under ADR 0030.
+- Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant auth-generation path, while periodic batched reconciliation bounds a missed event to 60 seconds under ADR 0030.
 - Use of last-known-good is logged and metered by operation class and snapshot age without unbounded tenant labels in public metrics.
 
 ### Discovery

@@ -16,9 +16,9 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 
 The following contract decisions are mandatory and resolve cross-document ambiguity:
 
-- **Revocation writer authority** – The Account Service is the sole writer of `session:auth:revoked_after:*` watermarks. Other services must publish billing/security events and must not write these watermark keys directly.
-- **Tenant watermark scope** – `session:auth:revoked_after:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
-- **Membership revocation scope** – `session:auth:revoked_after:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and is used when membership or tenant roles change without triggering a tenant-wide billing cutoff.
+- **Revocation writer authority** – The Account Service owns durable monotonic auth generations and is the sole writer of `session:auth:generation:*` projections. Other services publish billing/security events and must not write these generation keys directly.
+- **Tenant generation scope** – `session:auth:generation:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
+- **Membership generation scope** – `session:auth:generation:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and advances when membership or tenant roles change without triggering a tenant-wide billing cutoff.
 - **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal gameplay delegation boundary** – Gameplay services authenticate the concrete mTLS workload identity, enforce an exact method-level caller allowlist, and validate a typed `PlayerExecutionContext` against request and domain scope.
@@ -33,11 +33,11 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Game Session Service** – Fronts the `LOGIN` command, stores gameplay session context in Redis, and rebinds sockets on reconnect.
 - **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected control-plane routes but does not validate control-plane JWTs. The deliberate exception is `/ws/game/**` edge admission: Gateway validates short-lived gameplay connect tokens, performs replay checks, and emits a signed connect context for Game Session as specified in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
 
-[ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) is the authority for this ownership split. Current implementation gaps in watermark enforcement, monotonic membership versions, or gameplay token storage do not transfer authority to another service.
+[ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) is the authority for this ownership split. Current implementation gaps in generation enforcement, monotonic membership versions, or gameplay token storage do not transfer authority to another service.
 
 The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
 
-Issued JWTs, registry records, revocation watermarks, and token-profile validation rules are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). This document still defines how those token contracts are applied to route classification, gameplay admission, and tenant authorization, but it no longer carries the full token catalog inline.
+Issued JWTs, registry records, revocation generations, and token-profile validation rules are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). This document still defines how those token contracts are applied to route classification, gameplay admission, and tenant authorization, but it no longer carries the full token catalog inline.
 
 ---
 
@@ -107,22 +107,22 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 
 1. **Validate the JWT** – Verify signature (JWKS), time-based claims (`exp`, `nbf`), and the expected token profile/audience (`aud`). Reject tokens with an unexpected profile (for example a Browser JWT presented to an internal-only endpoint).
 2. **Check issued-token registry** – Compute `tokenHash` and require one matching `session:auth:token:<tokenHash>` record in Coordination Redis. Validate its account, profile, `jti`, generation, and time fields against the already verified token. Missing or mismatched state means the token is revoked or unregistered and returns the canonical “session revoked” error (`AUTH_SESSION_REVOKED` or equivalent).
-3. **Check revocation watermarks** – Enforce bulk revocation without relying on wildcard deletes or key scans:
-   - If `session:auth:revoked_after:issuer:<issuerId>` exists and the token’s `iat` is older than that value, treat the session as revoked for every protected route. This environment-wide watermark is mandatory for Account signing-key compromise and player-facing post-restore trust reset, but it does not replace rejection of the affected `kid`.
-   - If `session:auth:revoked_after:account:<accountId>` exists and the token’s `iat` is older than that value, treat the session as revoked.
-   - For routes classified as tenant-scoped regular or gameplay-affecting, if `session:auth:revoked_after:tenant:<tenantId>` exists and the token’s `iat` is older than that value, treat the token as revoked for that tenant-scoped operation.
-   - For routes classified as tenant-scoped regular or billing-safe tenant-scoped, if `session:auth:revoked_after:membership:<accountId>:<tenantId>` exists and the token’s `iat` is older than that value, treat the token as revoked for that caller-bound tenant operation.
-   - For routes classified as billing-safe or support-safe, tenant revocation watermarks do not by themselves revoke access; role checks and route classification still apply.
+3. **Check revocation generations** – Enforce bulk revocation without relying on clocks, wildcard deletes, or key scans:
+   - Require the token's `issuerAuthGeneration` to equal `session:auth:generation:issuer:<issuerId>` and its `accountAuthGeneration` to equal `session:auth:generation:account:<accountId>` for every protected route.
+   - For tenant-scoped regular or gameplay-affecting routes, require the token's target-tenant generation to equal `session:auth:generation:tenant:<tenantId>`.
+   - For tenant-scoped regular or billing-safe tenant-scoped routes, require the token's target-membership generation to equal `session:auth:generation:membership:<accountId>:<tenantId>`.
+   - Billing-safe and support-safe routes do not apply the tenant billing generation merely because they target a tenant; role, membership-generation, live-authority, and route-classification checks still apply as declared.
+   - Missing, malformed, unavailable, or lower-than-durable projection state fails closed; consumers never infer an initial generation locally.
 4. **Apply route classification** – Every protected route is classified as one of the following, and the middleware must enforce the corresponding registry and role rules:
 
-| Route classification | Required issued-token state | Required role checks | Tenant watermark applied? | Tenant validation rules |
+| Route classification | Required issued-token state | Required role checks | Tenant generation applied? | Tenant validation rules |
 | --- | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | No | *(none)* |
 | Account-scoped | One matching token record | Require authenticated caller; enforce subject binding (`accountId` path/body must match caller) unless route explicitly allows `platformAdmin` override | No | No tenant scope for auth |
 | `player_bootstrap_tenant` | One matching token record | Require a valid player-bootstrap token profile for the authenticated account | No | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; tenant access is established by live membership, entitlement, and admission-pointer checks during connect-token issuance |
 | Pre-tenant discovery | One matching token record | Require authenticated caller; no caller-supplied `tenantId` is trusted yet | No | Used only for authenticated lobby/discovery surfaces such as `WORLDS`; services must derive visible tenants by filtering authoritative membership/entitlement data server-side. Global roles do not widen gameplay discovery. |
 | Tenant-scoped (regular) | One matching token record | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) or an explicitly documented route-level `platformAdmin` allowance | Yes | `tenantId` must be in `scopedRoles` for tenant-role callers unless a specific route explicitly allows a global-role override. `billingAdmin` and `support` must be rejected for `tenant_regular`. Gameplay admission/switching routes must not use `platformAdmin` as an implicit override and must enforce caller-bound gameplay membership plus DB/query scoping by `tenantId`. |
-| Billing-safe (tenant-scoped) | One matching token record | Require caller-bound tenant membership with `tenantAdmin` for the target tenant | No tenant-billing watermark; yes membership watermark | `tenantId` must be validated against caller tenant scope; services must perform a live caller-bound membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay, but it must fail immediately after caller membership/role revocation via the membership watermark or the live membership check |
+| Billing-safe (tenant-scoped) | One matching token record | Require caller-bound tenant membership with `tenantAdmin` for the target tenant | No tenant-billing generation; yes membership generation | `tenantId` must be validated against caller tenant scope; services must perform a live caller-bound membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay, but it must fail immediately after caller membership/role revocation via the membership generation or the live membership check |
 | Cross-tenant (support-safe) | One matching token record | Require `support` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a cross-tenant support role; responses must be limited to high-level, troubleshooting-safe data (for example derived entitlements and subscription status, not invoices/payment methods); log/audit the target tenant |
 | Cross-tenant (billing-safe) | One matching token record | Require `billingAdmin` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
 | Cross-tenant (data-bearing) | One matching token record | Require `platformAdmin` | Yes when operation targets tenant-scoped data | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
@@ -134,7 +134,7 @@ Billing-safe mutation membership contract (normative):
 - Billing-safe tenant mutations must perform an authoritative, live membership/role check via Account Service API (`GetCallerTenantMembership(tenantId)` or protocol-equivalent) before mutation.
 - JWT role claims are sufficient for routing and preliminary checks but are not sufficient alone for billing-safe mutations.
 - If membership authority is unavailable, billing-safe mutations fail closed with canonical error `MEMBERSHIP_AUTH_UNAVAILABLE`; read-only billing-safe surfaces may return a retriable unavailable response using the same code.
-- Immediate caller-bound revocation for tenant membership/role changes is enforced by `session:auth:revoked_after:membership:<accountId>:<tenantId>` in addition to the live membership check; implementers must not rely on JWT expiry alone.
+- Immediate caller-bound revocation for tenant membership/role changes is enforced by `session:auth:generation:membership:<accountId>:<tenantId>` in addition to the live membership check; implementers must not rely on JWT expiry alone.
 - Tenant-scoped membership checks use `GetCallerTenantMembership(tenantId)` and must bind the subject to the authenticated caller (`accountId` from token); clients must not provide an arbitrary target `accountId` on this path.
 - Global billing roles (`billingAdmin`/`platformAdmin`) must use explicitly cross-tenant billing-safe route variants and must not rely on caller-bound tenant membership endpoints intended for `billing_safe_tenant`.
 - Cross-tenant membership checks for billing/reporting use a separate admin API (`GetTenantMembershipForAccount(tenantId, accountId)` or equivalent) restricted to `billingAdmin`/`platformAdmin`.
@@ -146,7 +146,7 @@ Billing-safe mutation membership contract (normative):
    - Last-known-good continuity is forbidden after observed `suspended`/`canceled`, revocation, explicit denial, a newer billing sequence, a sequence gap, or when no prior positive snapshot exists. Five minutes is a platform hard maximum; operators may only shorten or disable it.
    - Last-known-good entitlement continuity does not relax revocation-authority freshness. If the separate batched revocation reconciliation lease cannot be renewed, active authority terminates at its stricter 60-second bound.
    - On detected sequence gaps, services must reconcile by calling `GetTenantEntitlementsForRuntime(tenantId)` before retrying admission.
-   - Existing uninterrupted sessions do not re-read entitlement state per action. Observed hard billing states still revoke them through sequenced events and tenant revocation watermarks, with batched reconciliation bounding missed-event exposure to 60 seconds as defined in Session Behavior.
+   - Existing uninterrupted sessions do not re-read entitlement state per action. Observed hard billing states still revoke them through sequenced events and tenant auth-generation advancement, with batched reconciliation bounding missed-event exposure to 60 seconds as defined in Session Behavior.
 
 Support-safe routes are an explicit allowlist and must not be inferred broadly from role names. The current support-safe allowlist is:
 
@@ -591,7 +591,7 @@ Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameI
 
 The detailed token and lifecycle contracts now live in focused sibling docs:
 
-- [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) defines JWT claim requirements, token profiles, issued-token registry records, revocation watermarks, and Redis-outage behavior for token validation.
+- [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) defines JWT claim requirements, token profiles, issued-token registry records, revocation generations, and Redis-outage behavior for token validation.
 - [Session Behavior](./system-architecture-session-behavior.md) defines gameplay takeover, session rebinding, mid-session role refresh, membership-version handling, and control-plane logout behavior.
 
 ---

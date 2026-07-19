@@ -629,7 +629,7 @@ To remove ambiguity around “bans,” FireMUD uses the following canonical taxo
 
 Implementation notes:
 
-- Account Service remains the sole writer for auth revocation watermarks and account-security lockout/ban state.
+- Account Service remains the sole writer for auth generations and account-security lockout/ban state.
 - Logging & Admin defines moderation policy and audit trails for gameplay/chat moderation; enforcement services consume that policy through the moderation propagation contract above.
 - “Bans” in docs and APIs must name the specific taxonomy type above instead of using an unqualified `ban` term.
 

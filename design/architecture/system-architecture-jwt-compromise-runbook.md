@@ -20,7 +20,7 @@ Run this flow when any of the following is true:
    - Generate a new asymmetric signing keypair and Account signing generation.
    - Regenerate `jwt-jwks` with only uncompromised keys. Do not overlap, retain, or roll back to a compromised key.
 3. Invalidate environment-wide issuer authority.
-   - Advance `session:auth:revoked_after:issuer:<issuerId>` through Account authority and perform the required bounded session/allowlist cleanup so reauthentication is mandatory.
+   - Advance `session:auth:generation:issuer:<issuerId>` through Account authority and perform the required bounded issued-token/session cleanup so reauthentication is mandatory.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
    - Do not treat the watermark as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.

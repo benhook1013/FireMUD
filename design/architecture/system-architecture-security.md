@@ -115,7 +115,7 @@ When a JWT signing key is suspected to be compromised, operators follow a more a
 - Quarantine new JWT issuance and JWT-protected admission/control-plane traffic before changing trust material.
 - Immediately run compromise-mode key rotation to generate a new signing keypair and update the Account-only `jwt-signing-keys` bundle.
 - Regenerate `jwt-jwks` with **only uncompromised keys**. Do not retain a compromised key in any overlap or rollback slot during compromise response.
-- Treat compromise of the environment-wide Account signing key as global for that issuer. Advance the issuer-wide revocation watermark and perform required session/allowlist invalidation so reauthentication is mandatory; tenant-selective cleanup is not sufficient containment.
+- Treat compromise of the environment-wide Account signing key as global for that issuer. Advance the issuer auth generation and perform required issued-token/session invalidation so reauthentication is mandatory; tenant-selective cleanup is not sufficient containment.
 - Restart or force reload JWT validators where needed, then verify validator cache convergence by checking that no service is accepting tokens signed by the compromised `kid`.
 - Optionally tighten `FIREMUD_AUTH_JWT_EXPIRATION_MS` for a short containment window after cutover to reduce exposure from any residual stale clients.
 - Monitor authentication and authorization metrics/logs (failed validations, unexpected 401/403 patterns) to confirm new-key adoption and incident stabilization.

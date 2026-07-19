@@ -8,8 +8,8 @@ Every protected route must be listed here with:
 - classification (`public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`),
 - whether a matching Account issued-token registry record is required,
 - required role checks,
-- tenant-billing watermark applicability,
-- caller-bound membership watermark applicability where relevant,
+- tenant-billing generation applicability,
+- caller-bound membership generation applicability where relevant,
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
@@ -59,11 +59,11 @@ Critical-domain inventory artifacts (required):
 | --- | --- | --- | --- |
 | `public` | none | No | No JWT required |
 | `account_scoped` | One matching token record | No | Account-level control-plane routes with subject binding (`accountId == caller`), plus explicit route-level admin overrides |
-| `player_bootstrap_tenant` | One matching token record | No tenant-billing watermark; No membership watermark | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete (for example `POST /auth/connect-token`); must declare live membership, entitlement, and admission-pointer checks |
+| `player_bootstrap_tenant` | One matching token record | No tenant-billing generation; No membership generation | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete (for example `POST /auth/connect-token`); must declare live membership, entitlement, and admission-pointer checks |
 | `pre_tenant_discovery` | One matching token record | No | Authenticated discovery surfaces that run before a single `tenantId` is selected (for example `WORLDS`) |
-| `public_production_onboarding` | One matching token record after authentication | No tenant-billing watermark before join; membership watermark applies after join | Discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`; non-public realms require Account-owned grants |
-| `tenant_regular` | One matching token record | Tenant-billing watermark: Yes; membership watermark: Yes | Gameplay-affecting and regular tenant control-plane operations |
-| `billing_safe_tenant` | One matching token record | Tenant-billing watermark: No; membership watermark: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
+| `public_production_onboarding` | One matching token record after authentication | No tenant-billing generation before join; membership generation applies after join | Discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`; non-public realms require Account-owned grants |
+| `tenant_regular` | One matching token record | Tenant-billing generation: Yes; membership generation: Yes | Gameplay-affecting and regular tenant control-plane operations |
+| `billing_safe_tenant` | One matching token record | Tenant-billing generation: No; membership generation: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
 | `cross_tenant_support_safe` | One matching token record | No | High-level troubleshooting only |
 | `cross_tenant_billing_safe` | One matching token record | No | Billing operations for global billing roles |
 | `cross_tenant_data_bearing` | One matching token record | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
@@ -78,8 +78,8 @@ Without these fields, a route classification is incomplete for internal-only API
 
 Critical routes may also require explicit machine-readable fields for:
 
-- `membership_watermark_applies`
-- `tenant_billing_watermark_applies`
+- `membership_generation_applies`
+- `tenant_billing_generation_applies`
 - `required_live_checks` such as `membership`, `runtime_entitlements`, `admission_pointer`
 - `mutation_contract` such as `shared_instrument_ack_required`
 - `canonical_errors` that CI and contract tests must expect for route-specific security rejections
@@ -115,7 +115,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | `ListSubscriptionsTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `ListSubscriptionsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `ListSubscriptionsCrossTenantBillingSafeReports` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
-| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership watermark applies |
+| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership generation applies |
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |

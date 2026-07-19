@@ -31,7 +31,7 @@ A simple failed-password threshold that durably locks an account lets an attacke
 
 - Ordinary failed attempts feed graduated, bounded throttles using a combination of canonical source, normalized account candidate, and coarse global pressure. No one bucket is treated as proof of compromise.
 - A failed-attempt threshold may delay or temporarily reject further attempts, but it must not transition an account to durable `security_locked`. This prevents an attacker from locking a victim by repeatedly submitting bad credentials.
-- Durable `security_locked` is reserved for a verified or high-confidence compromise signal, an explicit account-security policy, or an audited operator action. Entering that state advances the account revocation watermark and follows the established recovery lifecycle.
+- Durable `security_locked` is reserved for a verified or high-confidence compromise signal, an explicit account-security policy, or an audited operator action. Entering that state advances the account auth generation and follows the established recovery lifecycle.
 - Unknown account, wrong secret, ineligible login mode, and ordinary candidate throttling use non-enumerating public behavior. `AUTH_ACCOUNT_LOCKED` is exposed only after sufficient identity proof or through the recovery path; it is not an account-existence oracle for arbitrary failed attempts.
 - Account credential paths return stable bounded outcomes including invalid credentials, retry-later with bounded retry metadata, durable security lock, and abuse-control unavailable.
 

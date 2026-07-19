@@ -16,7 +16,7 @@ Accepted
 
 FireMUD exposes HTTP, gRPC, WebSocket, text-protocol, and operator surfaces across many services. Service-local role checks or broad edge routing can silently diverge on token profile, tenant scope, revocation, cross-tenant access, and redaction. A newly added endpoint must not become reachable merely because it matches a Gateway prefix or inherits an approximate role check.
 
-The repository contains a machine-readable authorization matrix and substantial static Gateway route/blocking tests, but the matrix is not currently consumed by CI or shared middleware. Several Gateway routes remain broad families, and current JWT middleware does not implement the documented route-class, token-profile, watermark, and cross-tenant distinctions. The governance contract is therefore accepted target state, not completed proof.
+The repository contains a machine-readable authorization matrix and substantial static Gateway route/blocking tests, but the matrix is not currently consumed by CI or shared middleware. Several Gateway routes remain broad families, and current JWT middleware does not implement the documented route-class, token-profile, auth-generation, and cross-tenant distinctions. The governance contract is therefore accepted target state, not completed proof.
 
 ## Decision
 
@@ -29,7 +29,7 @@ The repository contains a machine-readable authorization matrix and substantial 
 - accepted token profile and audience;
 - caller/service identity requirements;
 - account, tenant, membership, or cross-tenant scope;
-- roles/capabilities and applicable revocation watermarks;
+- roles/capabilities and applicable auth generations;
 - required live authority checks; and
 - response redaction, mutation acknowledgement, and canonical security errors where applicable.
 
@@ -39,7 +39,7 @@ The Markdown matrix is its human-readable companion. Generated inventories, midd
 
 - CI derives candidate route inventories from OpenAPI, protobuf, protocol-command, and explicitly registered operator surfaces and fails if a protected or externally reachable route is missing, stale, or inconsistently classified.
 - Runtime middleware rejects an unclassified protected route. It must not approximate the route as `tenant_regular` or another permissive class.
-- Shared middleware enforces route-level token profile, allowlist/watermark, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
+- Shared middleware enforces route-level token profile, issued-token registry, auth-generation, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
 - Cross-tenant support-safe, billing-safe, and data-bearing behavior uses separate classified APIs and response profiles rather than optional flags on one ambiguous endpoint.
 - Gateway routes only reviewed external surfaces. Prefix routing may be a transport convenience only when the exact reachable endpoint inventory is generated and unclassified/internal endpoints are denied; a broad wildcard is not itself an exposure policy.
 - Logging & Admin remains the external ingress for sensitive operator writes unless a separate owned surface is explicitly classified.
@@ -76,7 +76,7 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 - Build candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
-- Enforce strict token profile/audience, allowlist, watermark, tenant, role, and cross-tenant response-profile rules.
+- Enforce strict token profile/audience, issued-token registry, auth-generation, tenant, role, and cross-tenant response-profile rules.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.
 - Correct implementation trackers that currently describe route-matrix enforcement as proven before these checks exist.
 - Prove representative public, account-scoped, tenant, billing-safe, support-safe, cross-tenant data-bearing, internal-service, gameplay-admission, and operator-write routes, including negative wrong-profile/wrong-scope cases.

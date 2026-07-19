@@ -18,7 +18,7 @@ FireMUD combines locally verifiable JWTs with server-side issued-token state so 
 
 Tenant and global authorization already comes from strictly validated signed claims plus Account-owned account, tenant, and membership revocation/version authority. Duplicating those scopes into per-token Redis key names adds cardinality and partial-update cases without adding a distinct authorization boundary.
 
-The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Global entries, full watermark enforcement, and end-to-end revocation proof remain incomplete.
+The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Auth-generation enforcement and end-to-end revocation proof remain incomplete.
 
 ## Decision
 
@@ -34,7 +34,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 - A consumer first validates signature and `kid`, issuer, exact audience/profile, required claims, time bounds, and claim types locally.
 - A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record matches the token hash, account, profile, `jti`, generation, and time claims. Missing or mismatched state denies the token.
-- The registry proves that Account issued this exact still-active token; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the separate Account-owned revocation/version contract reviewed under JWT-02.
+- The registry proves that Account issued this exact still-active token; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the Account-owned monotonic generation contract in [ADR 0036](./adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md).
 - Registry lookup is not part of ordinary gameplay-command processing. Gameplay-domain delegation retains the mTLS workload and typed execution-context boundary from ADR 0024.
 
 ### Profile Boundaries
@@ -46,7 +46,7 @@ The current implementation writes account and tenant keys but does not consisten
 ### Revocation And Rotation
 
 - Per-token logout deletes the single token record idempotently. Other devices, tokens, and gameplay bindings remain unaffected.
-- Bulk account, tenant, and membership revocation uses monotonic watermarks/versions rather than scanning token records or encoding every scope in the token key.
+- Bulk issuer, account, tenant, and membership revocation uses monotonic auth generations rather than scanning token records, relying on clocks, or encoding every scope in the token key.
 - Generation-bound Service-token rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
 - Registry absence is default denial. Coordination reset therefore forces reauthentication/reissuance rather than making unregistered but cryptographically valid tokens acceptable.
 

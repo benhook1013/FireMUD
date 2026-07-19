@@ -266,7 +266,7 @@ Required top-level fields:
 Nested control-group requirements:
 
 - `restoreSafeMode` includes evidence that player ingress was disabled, normal background processors and outbound integrations were stopped or restore-safe-fenced, Game Session tick execution and command intake could not create fresh coordination state before the coordination recovery gate, and only approved maintenance Jobs ran before quarantine release
-- `jwtHardening` includes rotation job reference, resulting key IDs, revocation watermark evidence, and validator-convergence evidence
+- `jwtHardening` includes rotation job reference, resulting key IDs, issuer auth-generation evidence, and validator-convergence evidence
 - `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence
 - `certificateReissuance` includes workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
 - `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref
