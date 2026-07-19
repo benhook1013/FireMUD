@@ -61,6 +61,71 @@ cat >"$TMP_DIR/pass.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/submitted-review.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-19T05:30:00Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "benhook1013"
+              },
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-19T05:45:00Z",
+              "url": "https://example.test/review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "<!-- walkthrough_start -->",
+              "createdAt": "2026-07-17T14:16:20Z",
+              "url": "https://example.test/retained-summary"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "**Actionable comments posted: 1**\n\n<summary>Duplicate comments (1)</summary>",
+              "createdAt": "2026-07-19T05:50:00Z",
+              "url": "https://example.test/old-actionable-summary"
+            }
+          ]
+        },
+        "reviews": {
+          "nodes": [
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "**Actionable comments posted: 1**\n\n<summary>♻️ Duplicate comments (4)</summary>",
+              "submittedAt": "2026-07-19T06:02:35Z",
+              "url": "https://example.test/submitted-review"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/unresolved-outdated.json" <<'JSON'
 {
   "data": {
@@ -617,6 +682,19 @@ grep -q "retrigger_review_allowed=true" <<<"$pass_output"
 grep -q "manual_thread_resolution_required=false" <<<"$pass_output"
 grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
+
+expect_failure_output "$TMP_DIR/submitted-review.json" "$TMP_DIR/submitted-review.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_coderabbit_review_finished_at=2026-07-19T06:02:35Z" "$TMP_DIR/submitted-review.out"
+grep -q "review_finished_after_latest_request=true" "$TMP_DIR/submitted-review.out"
+grep -q "substantive_review_after_latest_commit=true" "$TMP_DIR/submitted-review.out"
+grep -q "latest_review_request_rate_limited=false" "$TMP_DIR/submitted-review.out"
+grep -q "latest_review_request_noop=false" "$TMP_DIR/submitted-review.out"
+grep -q "outside_diff_actionable_comments=0" "$TMP_DIR/submitted-review.out"
+grep -q "duplicate_actionable_comments=4" "$TMP_DIR/submitted-review.out"
+grep -q "latest_actionable_comment_url=https://example.test/submitted-review" "$TMP_DIR/submitted-review.out"
+grep -q "reason=4 top-level duplicate CodeRabbit comment(s) remain from the latest review; verify and fix them before calling the PR review-clean" "$TMP_DIR/submitted-review.out"
+grep -q "ok=false" "$TMP_DIR/submitted-review.out"
 
 expect_failure_output "$TMP_DIR/unresolved-outdated.json" "$TMP_DIR/unresolved-outdated.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
