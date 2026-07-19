@@ -6,7 +6,7 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
-The bounded player-access and session paths are implemented across Account, Common Security, TCP Proxy, Gateway, Game Session, and the gameplay runtime services. The live model is account-first bootstrap followed by explicitly authorized gameplay admission, shared Telnet/WebSocket text handling, deliberate lifecycle separation between fresh entry, resume, takeover, and logout, and bounded continuity through the Gateway bridge. Account lifecycle, commerce, entitlement follow-through, generic prompt login, and full control-plane revocation/logout remain partial. Focused automated proofs exist for the principal paths; manual end-to-end QA and a small number of broader continuity/validation follow-ups remain.
+The bounded player-access and session paths are implemented across Account, Common Security, TCP Proxy, Gateway, Game Session, and the gameplay runtime services. The live model is account-first bootstrap followed by explicitly authorized gameplay admission, shared Telnet/WebSocket text handling, and bounded continuity through the Gateway bridge. Generic paths distinguish fresh entry, resume, takeover, and logout, but the first-party post-logout replay path remains a documented convergence gap. Account lifecycle, commerce, entitlement follow-through, generic prompt login, and full control-plane revocation/logout remain partial. Focused automated proofs exist for the principal paths; manual end-to-end QA and a small number of broader continuity/validation follow-ups remain.
 
 ## Capability Status
 

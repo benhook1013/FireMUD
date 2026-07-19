@@ -46,7 +46,7 @@ reviews:
     - path: "design/**/*.md"
       instructions: |
         Review docs for canonical-current-state consistency.
-        Flag obsolete transitional guidance, conflicts between architecture docs, or broken repo links.
+        Flag obsolete transitional guidance, conflicts between architecture docs, broken repo links, or instructions that contradict AGENTS.md.
         Architecture owns technical target state; AGENTS.md owns only repository-wide AI authority, safety, and workflow routing.
 knowledge_base:
   code_guidelines:

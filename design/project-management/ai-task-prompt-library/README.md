@@ -20,7 +20,7 @@ Review work:
 6. Define how opportunistic discovery, exhaustive bounded review, independent verification, and main-thread synthesis divide across available agent roles without delegating human design decisions.
 7. Run an independent coverage review before treating the revised library as the standard whole-app audit suite.
 
-Completion requires every meaningful application and platform domain, service, and major cross-service boundary to have an explicit review home without unexplained duplication; current canonical sources throughout; distinct architecture, implementation, proof, operations, security, and product outcomes; and an orchestration plan that can produce one reconciled whole-app result.
+Completion requires every meaningful application and platform domain, service, and major cross-service boundary to have an explicit review home without unexplained duplication; current canonical sources throughout; distinct architecture, implementation, proof, operations, security, and product outcomes; and an orchestration plan that can produce one reconciled whole-app result. Required validation evidence must be classified as `confirmed`, `unrun`, `partial`, or `unavailable`; non-confirmed states remain visible and prevent an unqualified complete claim.
 
 ## Review Setup
 

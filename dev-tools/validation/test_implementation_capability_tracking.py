@@ -273,7 +273,8 @@ def main() -> None:
                 ],
                 "audited-proof-absence-negative",
             ),
-            "audited or unverified rows without one must use No focused executable proof:",
+            "audited, unverified, or not-applicable rows without one must use "
+            "No focused executable proof:",
         )
         validator.validate_evidence_presence(
             "not-implemented",
@@ -297,7 +298,33 @@ def main() -> None:
                 ],
                 "unverified-proof-absence-negative",
             ),
-            "audited or unverified rows without one must use No focused executable proof:",
+            "audited, unverified, or not-applicable rows without one must use "
+            "No focused executable proof:",
+        )
+        validator.validate_evidence_presence(
+            "not-applicable",
+            "not-applicable",
+            [
+                "[design](x)",
+                "No production anchor: capability is outside the product boundary.",
+                "No focused executable proof: verification is not applicable.",
+            ],
+            "not-applicable-proof-absence-positive",
+        )
+        expect_failure(
+            "not-applicable row without explicit proof absence",
+            lambda: validator.validate_evidence_presence(
+                "not-applicable",
+                "not-applicable",
+                [
+                    "[design](x)",
+                    "No production anchor: capability is outside the product boundary.",
+                    "Verification is not applicable.",
+                ],
+                "not-applicable-proof-absence-negative",
+            ),
+            "audited, unverified, or not-applicable rows without one must use "
+            "No focused executable proof:",
         )
         expect_failure(
             "missing production anchor without explicit rationale",

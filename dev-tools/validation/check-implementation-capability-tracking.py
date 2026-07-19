@@ -45,6 +45,7 @@ MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx"}
 AUDIT_CONTEXT_NAMES = {"README.md", "package.json"}
 NO_FOCUSED_PROOF_MARKER = "No focused executable proof:"
 PRODUCTION_ANCHOR_OPTIONAL_STATES = {"not-implemented", "design-unresolved", "not-applicable"}
+PROOF_ANCHOR_OPTIONAL_STATES = {"audited", "unverified", "not-applicable"}
 CANONICAL_PROOF_TOOLS = {
     "dev-tools/backups/verify-backups.sh",
     "dev-tools/deploy/preflight.py",
@@ -317,13 +318,14 @@ def validate_evidence_presence(
             if executable_links:
                 continue
             if (
-                verification in {"audited", "unverified"}
+                verification in PROOF_ANCHOR_OPTIONAL_STATES
                 and NO_FOCUSED_PROOF_MARKER.casefold() in cell.casefold()
             ):
                 continue
             fail(
                 f"{context}: proof evidence must include an executable repository link; "
-                f"audited or unverified rows without one must use {NO_FOCUSED_PROOF_MARKER}"
+                "audited, unverified, or not-applicable rows without one must use "
+                f"{NO_FOCUSED_PROOF_MARKER}"
             )
         if links:
             continue
