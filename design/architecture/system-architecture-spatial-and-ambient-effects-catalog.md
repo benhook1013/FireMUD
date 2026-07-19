@@ -8,7 +8,9 @@ Effects described here are **not** optional guidance: any new implementation tha
 
 - Every effect has a canonical `EffectId` computed by Game Session and propagated unchanged to all participating services. See `design/architecture/system-architecture-transactions.md`.
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
-- Every participating service must implement a **durable idempotency guard** keyed by `EffectId` so retries become no-ops rather than double-application.
+- Every authoritative participant derives a durable guard identity from the root `EffectId`, typed operation, and target aggregate, and binds it to an immutable request digest and durable result. Same guard plus the same request replays that result; reuse with a different operation, target, or digest fails closed.
+- Correctness-sensitive mutations carry exact scope, epoch, and relevant owner-state preconditions such as current location, holder, and aggregate version. A presentation read fence is not a mutation precondition.
+- Single-owner mutations name only their actual mutation owner. Derived reactions use deterministic child effect identities and declare whether they are required or optional; optional reactions do not delay logical player success.
 - The default reconciliation policy is **retry until convergence using the same `EffectId`**. Do not generate compensating deletes inside the tick loop.
 - Cross-service room reads used to render player-visible outcomes (for example `LOOK`) carry one causal floor containing tenant, game instance, room, region epoch, and committed tick. World Management and Entity Management must match that scope and epoch, prove that they have applied through at least the requested tick, and return their distinct actual component versions. Component-version equality is neither required nor meaningful; bounded newer skew is exposed in the composite snapshot identity. Services return `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE` for mixed scope/epoch, below-floor data, unavailable evidence, or bounded-policy expiry rather than mixing invalid data. Correctness-sensitive mutations use exact owner-specific preconditions instead. Canonical semantics are defined in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md) and `design/architecture/system-architecture-identifier-glossary.md`. The current same-token comparison seam does not yet implement this contract.
 
@@ -23,6 +25,7 @@ Required inputs:
 - `EffectId`
 - `actorEntityId` (the character/NPC entity id)
 - `fromRoomInstanceRef`, `toRoomInstanceRef`
+- expected `regionEpoch`, current World location, and relevant World location/aggregate version
 
 Required writes:
 
@@ -34,8 +37,7 @@ Required writes:
 
 Reconciliation:
 
-- If EMS succeeds but WMS fails, retry WMS using the same `EffectId` until WMS converges.
-- If WMS succeeds but EMS fails, treat EMS as no-op (movement does not require containment writes).
+- Retry World Management with the same participant guard until the World transaction converges or the durable effect is terminalized. Pure movement has no Entity mutation or acknowledgement to reconcile.
 
 ### Drop (Inventory → Ground)
 
@@ -45,6 +47,8 @@ Required inputs:
 - `actorEntityId`
 - `itemEntityId`
 - `roomInstanceRef` (where the drop occurs)
+- World-authoritative actor-location evidence for the admitted room and epoch
+- expected current holder and relevant Entity aggregate version
 
 Required writes:
 
@@ -55,7 +59,7 @@ Required writes:
 
 Reconciliation:
 
-- If the EMS move succeeds and any follow-up ambient effects fail, retry ambient effects using their effect ids. Do not undo the item move.
+- Retry the Entity mutation with the same participant guard until it converges or is terminalized. Derived ambient reactions have deterministic child effect identities and explicit required/optional classification; do not undo a committed item move to compensate for an optional reaction.
 
 ### Pickup (Ground → Inventory)
 
@@ -65,6 +69,8 @@ Required inputs:
 - `actorEntityId`
 - `itemEntityId`
 - `roomInstanceRef`
+- World-authoritative actor-location evidence for the admitted room and epoch
+- expected room-ground holder and relevant Entity aggregate version
 
 Required writes:
 
@@ -75,7 +81,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry the EMS move using the same `EffectId` until applied. If the item is already moved, treat as replay/no-op.
+- Retry the Entity mutation using the same participant guard until it converges or is terminalized. Return replay/no-op only when the stored operation, target, and request digest match; a different intervening move is stale/conflict rather than replay.
 
 ## Ambient Effects (World Management Authoritative)
 

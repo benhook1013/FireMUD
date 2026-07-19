@@ -34,8 +34,8 @@ Movement, drops, pickups, and room presence are cross-service by design:
 
 - World Management is authoritative for occupancy/location and persistent ambient room state keyed by runtime `RoomInstanceRef`.
 - Entity Management is authoritative for containment and item instances, including synthetic room-ground containers keyed by the same `RoomInstanceRef`.
-- All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`.
-- Both services must implement durable idempotency guards so partial success can be retried safely until convergence.
+- All spatial effects must carry the target `RoomInstanceRef` and a canonical tick root `EffectId`. Correctness mutations also carry exact epoch and relevant owner-state preconditions.
+- Each actual mutation participant derives an operation/aggregate-specific durable guard from the root effect and binds it to the immutable request digest and result. A service that supplies evidence but performs no mutation is not added as an artificial mutation participant.
 - Cross-service retry orchestration is owned by the Game Session reconciliation backlog. World Management exposes participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
 - Ambient world mutations such as doors, hazards, and weather are applied only via typed effect-shaped commands carrying the root `EffectId`, runtime scope, expected epoch/version, operation and target identity, and immutable request digest. World owns the durable fact and authoritative version; Game Logic owns its gameplay interpretation. Correctness-bearing player, automation, script, and operator changes use Game Session's durable effect-admission and outcome path. Operators and scripts must not write World Management instance tables directly.
 
