@@ -91,6 +91,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md) | Accepted | `GR-4` | `GR-1`, `AS-1`, `PO-4` | Deterministic depth, count, cost, and per-target bounds for generated effect chains |
 | [ADR 0076](./adr-0076-failure-class-specific-durable-tick-retries.md) | Accepted | `GR-1` | `PO-2`, `PO-4`, `SF-2` | Failure-class-specific durable retries through the deterministic fair tick scheduler |
 | [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md) | Accepted | `GR-1` | `GR-2`, `AS-1`, `SF-1`, `PO-4` | Durable bounded global-effect fan-out with lightweight physical idle ticks |
+| [ADR 0078](./adr-0078-digest-bound-workflow-and-step-retry-identities.md) | Accepted | `SF-2` | `SF-2`, `SF-1` | Digest-bound stable workflow and logical-step identities across retries and run replacement |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

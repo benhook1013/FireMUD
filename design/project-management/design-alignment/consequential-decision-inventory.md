@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 28 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 29 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **65** | **183** | `in-progress` |
+| **Total** | | **66** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -206,7 +206,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-11` — `revised` on 2026-07-20; [ADR 0075](../../architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md)
 - [x] `TICK-12` — `revised` on 2026-07-20; [ADR 0076](../../architecture/decisions/adr-0076-failure-class-specific-durable-tick-retries.md)
 - [x] `TICK-18` — `revised` on 2026-07-20; [ADR 0077](../../architecture/decisions/adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md)
-- [ ] `ID-03`
+- [x] `ID-03` — `revised` on 2026-07-20; [ADR 0078](../../architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md)
 - [ ] `DB-01`
 - [ ] `DB-02`
 - [ ] `DB-03`

@@ -133,6 +133,8 @@ These tables live in each adopting service's own schema (for example `${serviceS
 Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migration/saga` and run alongside the owning service's local `classpath:db/migration` chain.
 `SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
 
+Retryable steps use the digest-bound workflow and step identities defined in [ADR 0078](decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md). Each adopter persists and atomically checks the stable workflow scope, step name, deterministic occurrence key, forward/compensation role, immutable request digest, and recorded outcome. Execution-instance, attempt, process, and delivery identifiers remain diagnostic metadata and cannot substitute for that guard.
+
 `common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead.
 
 ## SQL Persistence Direction

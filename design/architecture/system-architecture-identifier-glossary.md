@@ -64,9 +64,13 @@ Components must match tenant, game instance, room, and epoch and must have reach
 
 Short synchronous `common-saga` orchestration uses persisted step identity and must be idempotent per step when retries are possible:
 
-- `sagaInstanceId` – identifies a specific synchronous saga execution.
+- `sagaInstanceId` – identifies a specific synchronous saga execution and is trace metadata, not retry authority.
 - `sagaStepName` – stable step name within the saga definition.
-- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope; `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
+- `sagaStepOccurrenceKey` – deterministic semantic position for a repeated or branched occurrence of the step; attempt, worker, and delivery numbers do not qualify.
+- `sagaStepRole` – distinguishes forward work from compensation for the same step occurrence.
+- `SagaStepGuardKey` – the durable owning-service guard identity built from the stable workflow/business scope, `sagaStepName`, `sagaStepOccurrenceKey`, and `sagaStepRole`.
+
+The guard record binds that identity to an immutable canonical request digest and recorded outcome. The same guard identity and digest is a replay; the same guard identity with a different digest is a conflict that fails closed.
 
 ## Temporal Workflow Identity
 
@@ -76,8 +80,8 @@ Durable Temporal workflows use explicit workflow and step identity independent o
 - `workflowFamily` – the stable workflow class/family name such as `world-lifecycle`, `publish`, or `script-patch-readiness`.
 - `scopeKey` – the narrow business scope for the workflow, such as `world-instance`, `version`, or `game-instance`.
 - `businessKey` – the stable request or domain identity that makes workflow start/retry idempotent.
-- `businessStepKey` – the durable activity/update-side idempotency key. FireMUD formats it as `<workflowId>#<stepName>#<businessKey>`.
+- `businessStepKey` – the durable activity/update-side guard identity, formed from `workflowId`, stable step name, deterministic occurrence key, and forward/compensation role, and bound in durable storage to an immutable canonical request digest and outcome.
 
-Temporal adopter slices must use these identifiers directly rather than inventing service-local workflow-id formats.
+Temporal adopter slices must use these identities directly rather than inventing service-local workflow-id formats. Temporal run IDs, activity attempt IDs, process IDs, and delivery IDs remain trace metadata only. Same-identity same-digest replay returns the guarded outcome; same-identity different-digest reuse fails closed.
 
 See `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for the full effect identity contract and replay semantics.
