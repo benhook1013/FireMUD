@@ -128,9 +128,18 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Drained with bounded work per tick (for example, up to `game.tick-max-timers` timers per region per tick) so delayed or bursty timers do not turn a single tick into unbounded work.
 - Implemented using deterministic, idempotent Lua scripts that accept `now_ms` as a caller-supplied `ARGV` value; scripts must not call Redis `TIME`, and AOF replay reuses the same `ARGV` values.
 
+Every authored timer declares its clock unit and recovery class:
+
+- Clock is `wall_clock` (persisted absolute due time) or `tick_game_time` (committed tick cadence). A cadence change does not rescale an existing absolute wall-clock deadline; future tick/game-time intervals intentionally follow the new real-world cadence.
+- `correctness_one_shot` persists intent outside Redis and converges to one logical execution or an explicit terminal outcome.
+- `durable_recurring` declares `SKIP_MISSED` or `COALESCE_ONE`. Coalescing admits at most one synthetic firing for that logical schedule per durable resume window, subject to one deterministic fair global cap; excluded candidates are audited rather than deferred.
+- `advisory_cosmetic` may drop missed occurrences and resume at a future occurrence.
+
+Features that need elapsed downtime to matter compute one bounded deterministic aggregate effect rather than replaying every missed firing.
+
 All writes to timer keys (`timer:{tenantRegionTag}`) are performed under the same region lease and Lua scripts as tick processing; domain services must not modify timer keys via ad-hoc Redis commands. This keeps timers and command queues in the same concurrency domain.
 
-Timer and retry keys are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or explicit domain state) are expected to be recovered or re-derived; the existence of a `timer:{tenantRegionTag}` entry is never the only record of a correctness-critical timer.
+Timer and retry keys are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or explicit domain state) are expected to be recovered or re-derived; the existence of a `timer:{tenantRegionTag}` entry is never the only record of a correctness-bearing or durable-recurring timer.
 
 Durations may be scaled dynamically:
 

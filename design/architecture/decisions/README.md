@@ -85,6 +85,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0069](./adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | At-least-once physical effect attempts with one guarded logical mutation and terminal outcome |
 | [ADR 0070](./adr-0070-bounded-within-tick-visibility-by-semantic-phase.md) | Accepted | `GR-1` | `GR-2`, `GR-4`, `SF-2` | Bounded within-tick visibility across passive, root-actor, and parent-generated phases |
 | [ADR 0071](./adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | Durable tick commit before exact fenced Redis coordination cleanup |
+| [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md) | Accepted | `AS-1` | `GR-1`, `GR-2`, `SF-1` | Class-specific timer durability, missed-occurrence policy, and bounded recovery |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

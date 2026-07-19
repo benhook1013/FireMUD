@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 22 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 23 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **59** | **183** | `in-progress` |
+| **Total** | | **60** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -200,7 +200,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 3 P1
 
 - [x] `TICK-05` — `accepted` on 2026-07-19; [canonical workflow substrate boundary](../../architecture/system-architecture-transactions.md#saga-vs-temporal-boundary)
-- [ ] `TICK-07`
+- [x] `TICK-07` — `revised` on 2026-07-19; [ADR 0072](../../architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md)
 - [ ] `TICK-08`
 - [ ] `TICK-10`
 - [ ] `TICK-11`

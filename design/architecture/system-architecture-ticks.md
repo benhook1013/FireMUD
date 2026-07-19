@@ -388,8 +388,9 @@ Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules
   - If `scheduleId` is not globally unique across game instances, the uniqueness projection must include `gameInstanceId`.
 - On startup or after a reset:
   - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, regionId>` from `GetRegionTickStatus` and the corresponding `next_due_tickId` from PostgreSQL.
-  - If `next_due_tickId <= currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances `next_due_tickId` by whole intervals until it is strictly greater than `currentTickId`.
-  - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
+  - Correctness-bearing one-shots reconcile their durable identity to one logical execution or explicit terminal outcome.
+  - A durable recurring schedule applies its declared `SKIP_MISSED` or `COALESCE_ONE` policy. `COALESCE_ONE` admits at most one synthetic firing for that logical schedule per durable resume window, subject to one deterministic fair global cap across schedules.
+  - Advisory/cosmetic timers may drop missed occurrences. Very old recurring intervals are never replayed one by one; future cadence resumes after explicit skipped/coalesced audit outcomes.
 - After recovery, the scheduler:
   - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
   - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute, because durable trigger-instance uniqueness remains the de-duplication boundary.
