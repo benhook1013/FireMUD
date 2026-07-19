@@ -50,10 +50,11 @@ The first supported World Management Class A caches are intentionally narrow and
   - Payload exclusions: must not include presentation-only rendered room views, chat/history windows, or inventories/occupant rosters unless an explicit cross-service contract makes them part of the authoritative room snapshot.
   - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, and instance lifecycle transitions that rebuild or retire the room snapshot.
 - Reader contract:
-  - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
-  - Validate against `roomDynamicVersion` or `roomSnapshotVersion`.
+  - Only World Management may use `world-dynamic:*` and `room:*` internally to accelerate its correctness-sensitive movement, pathfinding, and visibility reads; other services call World Management APIs.
+  - Validate the cached complete scope and `roomDynamicVersion` or `roomSnapshotVersion` against authoritative current-version/fence evidence for the operation.
   - Fall back to authoritative reads if the version cannot be verified.
   - TTL-only world or presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
+  - Existing unversioned TTL-only `room:*` payloads cannot be interpreted as this Class A shape. Adoption requires a distinct key/payload version or an explicit purge-and-fenced migration before validated reads begin.
 
 ### Cache/Rate-Limit Key Catalog
 

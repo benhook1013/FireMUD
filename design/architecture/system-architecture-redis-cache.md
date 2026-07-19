@@ -91,6 +91,8 @@ Some derived caches are better understood as a small built-in gameplay view cach
 
 Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root. Others are naturally best-effort and can tolerate occasional stale reads under simple TTL-based eviction. To keep designs consistent and reviewable, caches are grouped into two classes:
 
+[ADR 0086](decisions/adr-0086-owner-validated-class-a-caches-and-presentation-only-class-b.md) defines the authority boundary: a Class A entry may serve a correctness-sensitive read only inside the owning service and only when that operation proves the complete cached scope and version/fence are current. Other services use the owner's API rather than reading its Redis keys. Cache TTL, cache-embedded version, or invalidation receipt alone is not currentness proof, and authoritative mutation preconditions still apply after a cached read.
+
 - **Strongly validated caches (versioned)** – payloads that are validated against a version or `lastModified` value stored in the authoritative system:
   - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
   - Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
@@ -98,6 +100,7 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
     - Read the current version from the authoritative store or a lighter-weight index.
     - Compare it with the version in Redis.
     - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
+  - If the authoritative version/fence cannot be proven, the owner falls back to its authoritative read or fails closed; it never uses the entry as stale truth.
 - Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>`), not per field, and is treated as part of the aggregate’s API contract.
 
 - **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
@@ -169,13 +172,15 @@ This pattern keeps cache correctness bounded to clearly defined aggregates and a
 
 From a correctness perspective, cache usage falls into two broad classes:
 
-- **Class A – correctness-critical caches** (for example, inventories shown to players, room occupants that drive combat/visibility decisions):
+- **Class A – owner-validated correctness-sensitive read accelerators** (for example, inventory or room aggregates whose owning service can prove an exact current version/fence):
   - Must use **event-based invalidation and/or version checks** as described above.
   - May add TTLs, but **TTL alone is never considered sufficient** for correctness; a Class A cache must remain correct even if TTLs are set very large.
-  - Aggregates that cannot provide events or versions should treat Redis as a pure performance optimization (for example, per-request in-memory caching) or avoid caching that aggregate entirely.
+  - Only the authoritative owner consumes these Redis entries for correctness-sensitive reads. Aggregates that cannot provide trustworthy current-version/fence proof use authoritative reads or avoid Class A caching.
 - **Class B – best-effort/performance caches** (for example, analytics-style aggregates, debug views, or non-player-facing summaries):
   - May rely on **TTL-only** invalidation, as long as occasional staleness is acceptable for the use case.
   - Still must respect per-key TTL budgets and size limits so they cannot starve Class A caches or coordination workloads.
+
+Class B payloads may support declared presentation surfaces such as reconnect redraw or rendered `LOOK`, but never movement, combat, pathing, visibility, authorization, financial, or other correctness-sensitive decisions. A prefix changing from old TTL-only semantics to Class A must use an explicit key/payload migration or schema discriminator so old entries cannot be mistaken for validated state.
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
