@@ -106,6 +106,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0090](./adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md) | Accepted | `AS-1` | `SF-2`, `GR-1`, `SF-1`, `AR-1` | Durable owner-versioned input manifests for reproducible script evaluation and retry |
 | [ADR 0091](./adr-0091-class-specific-script-timer-clocks-and-recovery.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `SF-1`, `AR-3` | Class-specific script timer clocks, bounded recurring recovery, and durable correctness one-shots |
 | [ADR 0092](./adr-0092-grpc-status-and-typed-domain-outcome-boundary.md) | Accepted | `SF-1` | `SF-1`, `GR-1`, `PO-4` | Canonical gRPC status for request/infrastructure failure with typed successful domain outcomes |
+| [ADR 0093](./adr-0093-game-design-coordinated-digest-attested-content-publication.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `GR-2`, `AA-3` | Game Design-coordinated publication with domain-owned templates and actual-content digest attestation |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

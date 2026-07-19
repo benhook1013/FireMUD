@@ -4,13 +4,13 @@ This brief document summarizes optional ways a hosted game can change its look a
 
 ## Theme and Branding
 
-- Designers upload logos, favicons, and theme JSON through the **Game Design Service** at design time. Assets are packaged when a version is published.
-- At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
+- Designers upload logos, favicons, and theme JSON through the **Game Design Service** at design time. Game Design owns version metadata, publish coordination, and the release attestation; domain services retain authority for their versioned templates. Assets are packaged when a version is published.
+- At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN). A `manifest.json` binds stable asset roles to immutable locations and digests computed from the actual exported bytes; URL, name, size, or path metadata alone is not content attestation.
 - Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay.
 - A playtest fork uses the branding/assets for the published bundle it is actually launched against. If a fork targets a new `versionId`, it loads that target version's manifest; if it reproduces the source realm's current build, it uses the source build's published manifest. Forks do not create a third independent asset-selection mode.
 - Example: if production is running `v42` with the current live logo and a playtest fork is launched on `v43` with a new theme manifest, testers in the fork see the `v43` branding while public players in production continue to see the `v42` branding.
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
-- If the manifest is empty or missing fields, the default platform branding is applied.
+- Explicitly optional presentation assets may fall back to the versioned platform branding declared by the release contract. A missing, mismatched, or unreadable required runtime artifact fails publication or launch rather than receiving a silent fallback.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
 - Realm admission is the runtime resolution point for branding. `PLAY` success, reconnect resume, and any realm switch must return the resolved bundle identity for the selected realm (`versionId`, optional `scriptPatchVersion`, and manifest location/hash or equivalent) so first-party clients can swap theme assets deterministically when production and playtest realms run different builds.
 
