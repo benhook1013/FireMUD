@@ -162,12 +162,14 @@ This invariant ensures that even highly scripted encounters remain bounded and o
 Two related configuration concepts control how long tick work is allowed to run and how long leases/locks are held:
 
 - `tick_interval_ms` – the configured target interval between ticks for a region.
-- `tick_budget_ms` – the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work). FireMUD uses a shared, canonical derivation:
+- `tick_budget_ms` – the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work). The shared bootstrap derivation is:
   - `tick_budget_ms = tick_interval_ms * 0.8`
-- `lock_ttl_ms` – the TTL used for per-entity locks (for example `tick:{tenantRegionTag}:lock:<entityId>`), derived from the budget using a bounded multiplier:
+- `lock_ttl_ms` – the TTL used for per-entity locks (for example `tick:{tenantRegionTag}:lock:<entityId>`). The shared bootstrap derivation is:
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
 
-These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
+These formulas are safe bootstrap defaults, not permanent production evidence. They are implemented once in shared tick/Redis helpers; individual services must not define alternate derivations. `tick_interval_ms` is gameplay cadence, configured only at its declared game/operator levels within caps and fixed for one live epoch. `tick_budget_ms` and `lock_ttl_ms` are operator safety settings within platform hard bounds. Production values are calibrated from p95/p99 execution, participant RPC latency/error, GC and scheduler pauses, cleanup lag, representative backlog, recovery objectives, and fault tests. Lower-level overrides are accepted only when that individual key declares eligibility and still satisfy operator caps and platform bounds.
+
+Lease possession, the durable executor fence, exact owner preconditions, and idempotency guards provide correctness after expiry. Lock TTL instead controls liveness, duplicate attempt frequency, contention duration, and takeover delay.
 
 The only allowed exception is an explicit **solo-tick budget mode** for commands marked `requiresSoloTick: true`:
 
@@ -190,7 +192,7 @@ Worked cadence-change example:
 4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
 5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
 
-At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
+At runtime, health reports cadence/execution-budget pressure, lock-expiry risk, durable commit progress, cleanup lag, and work/recovery backlog separately. Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` may feed both execution-versus-budget and execution-versus-lock-TTL ratios, but one ratio must not stand in for the other dimensions.
 
 ### Canonical Region Health States and Threshold Source
 
@@ -198,12 +200,12 @@ This table is the single source of truth for region health state names and thres
 
 | State | Meaning | Primary triggers |
 | --- | --- | --- |
-| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
-| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
+| `RUNNING` | Region is making normal forward progress. | Execution-versus-budget and lock-expiry risk remain below their separate degraded thresholds, cleanup and backlog remain bounded, and commit progress is advancing. Solo ticks use their corresponding solo budget and TTL dimensions. |
+| `DEGRADED` | Region is still progressing but close to safety limits. | Execution-budget pressure, lock-expiry risk, cleanup lag, or remote/retry/recovery backlog exceeds its sustained threshold while commits still advance. Solo ticks use their corresponding solo budget and TTL dimensions. |
 | `STALLED` | Region lease may still be held but progress has stopped. | No successful commits for multiple `tick_interval_ms` windows, repeated failed ticks, or persistent stuck cleanup/ledger signals. |
 | `PAUSED` | Region is intentionally paused by control plane or maintenance flow. | Operator/control-plane pause for reset, migration, or incident mitigation. |
 
-Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md` and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`.
+Threshold values and alert windows are environment-calibrated within platform bounds, emitted through the canonical metrics defined in `system-architecture-redis-operations.md`, and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`. Environments must retain separate signals rather than raising one threshold to conceal failure in another dimension.
 
 In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, regionId>`:
 
