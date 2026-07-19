@@ -137,6 +137,7 @@ Pointer freshness and cutover rules:
 ## Account-to-Game Relationships
 
 - Players have a **single platform account** managed by the **Account Service**.
+- Registration creates only that global account and its security identity. It does not select a tenant or implicitly create membership, roles, a tenant profile, a character, an entitlement, or gameplay authority; the explicit public-game `JOIN` contract creates membership.
 - Authentication is global at the `accountId` level, but services always check the requested `tenantId` against the account’s allowed tenants and enforce this when retrieving or updating game data.
 - The same account can join multiple games. Each game is identified by a `tenantId`.
 - `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).
@@ -145,6 +146,9 @@ Pointer freshness and cutover rules:
 - Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
 - Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse tenant-shared character state or use isolated state scoped to the selected `gameInstanceId`.
 - Friend lists and guilds are maintained by the Social & Groups Service. Per-game friendships store `tenantId` plus player IDs, while account-to-account friendships reference global account IDs.
+- Tenant roles, profiles, characters, purchases, subscriptions, entitlements, grants, and gameplay state are tenant-scoped relationships or records. Leaving one game changes only that relationship under its retention rules and does not delete the account or unrelated relationships.
+- Tenant operators may see only the minimum account reference and tenant-owned data authorized for their tenant. Global credentials, recovery state, linked external identities, security history, and the existence or contents of unrelated tenant relationships are platform authority and must not be exposed through tenant roles.
+- Global username and email uniqueness, internal platform correlation, and the cross-game effect of account compromise, security lock, recovery, and deletion are accepted consequences of this identity model. The account row must not carry a default or owning `tenantId`.
 
 ## Data Separation per Service
 
