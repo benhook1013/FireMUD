@@ -1283,6 +1283,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           targetEntityId(instance),
           instance.getScriptId(),
           instance.getEventType(),
+          DEFAULT_SCHEMA_VERSION,
           instance.getScriptPatchVersion(),
           instance.getScheduleDefinitionId(),
           wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,

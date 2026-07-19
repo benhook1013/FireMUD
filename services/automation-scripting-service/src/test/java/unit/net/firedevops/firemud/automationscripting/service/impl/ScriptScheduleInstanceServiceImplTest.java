@@ -546,9 +546,10 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getWorldSlug()).isEqualTo("demo");
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getEventSchemaVersion()).isEqualTo("v1");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-19112d90423632ccf1d25cd89005bb39acc11eec49c922d6765a99965b09");
+        .isEqualTo("timer-b89521820ef0eb4931c1c67f180a41dbc674dd3d7b769d2bbf8097f701ea");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
