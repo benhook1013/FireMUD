@@ -227,15 +227,18 @@ Downstream behavior for stalled regions (rejecting new commands, marking instanc
 
 ## Retry and Backoff Invariants
 
-Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
+Retry automation is failure-class-specific and always preserves deterministic scheduling:
 
-- Each rescheduled action carries a per-command retry counter and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
-- Retries are appended to the back of the originating entity’s queue and are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
-- After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
-- Fairness is guaranteed per entity: within a given entity’s queue, commands are processed FIFO; cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.
-- Metrics such as `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth` surface regions where contention is persistent so operators can adjust region layout, tick budgets, or feature design.
+- A durable Game Session-owned retry record retains the original command/effect identity, request digest, semantic lane, `entity_enqueue_seq`, scheduler priority, attempt history, age, and last evidence. Only future eligibility changes; retry never enters a private FIFO, gains priority, changes lanes, or spins inside one tick.
+- Lock contention uses deterministic capped exponential backoff in ticks and bounded attempts/age.
+- A known dependency outage uses circuit breaking, admission shedding, and delayed fair re-entry without rapidly consuming the contention counter.
+- An ambiguous timeout after dispatch queries or retries the same `EffectId` and digest until owner evidence resolves it; missing acknowledgement is never proof of non-application.
+- A stale precondition is not blindly resent. Re-resolution is permitted only by an explicit feature contract; otherwise the command reaches not-applied/failure or a staged effect reaches evidence-backed safe abandonment.
+- Persistent technical or unclassified failure receives bounded automation and then `DEAD_LETTER`/quarantine with identity and evidence intact, not fabricated `ABANDONED`.
 
-These invariants ensure that contention is handled predictably: retries remain bounded, hot entities cannot monopolize the loop indefinitely, and operators have clear signals when configuration or design changes are required.
+Each command/effect family declares retryable outcomes, deterministic backoff/admission behavior, maximum automated attempts and age, and exhaustion disposition. Eligible retries re-enter ADR 0065's recorded fair scheduler in their original lane. An unstaged command may fail explicitly; a staged effect remains unresolved after automation exhaustion until owner evidence supports `APPLIED`, safe `ABANDONED`, or verified disposition.
+
+Metrics such as `tick_conflict_hotspot_detected_total`, retry depth/age by bounded failure class, circuit state, and dead-letter/quarantine counts surface persistent contention, outages, ambiguous dispatch, and technical failure without high-cardinality identities.
 
 At the configuration level:
 
@@ -244,13 +247,7 @@ At the configuration level:
   - `automation.tick-max-events`
 - These caps exist so no single player or script can monopolize the tick loop, even if they enqueue many actions; excess work spills into subsequent ticks according to the same fairness rules.
 
-Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
-
-- `RUNNING` – p99 execution time is well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
-- `DEGRADED` – p99 execution time is approaching or exceeding `tick_lock_ttl_ms` over a sustained window.
-- `STALLED` – forward progress has stopped even if timing ratios are noisy or unavailable.
-
-This keeps fairness and safety enforceable through bounded per-tick work and timing-based health checks without introducing alternate state names in other docs.
+Region health uses the separate cadence/budget, lock-expiry, commit-progress, cleanup-lag, and backlog dimensions defined under `Canonical Region Health States and Threshold Source`; retry pressure is one backlog input rather than an alternate health-state definition.
 
 ## Tick Regions, Global Effects, and Idle Background Ticks
 

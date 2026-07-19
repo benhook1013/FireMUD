@@ -396,9 +396,10 @@ Commands that cannot complete inside the configured tick budget are deferred via
 
 Retry queues store, for each action, a retry counter and `next_eligible_tick_id` so that:
 
-- Retries are scheduled for future ticks using an exponential backoff in ticks (for example, `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`).
-- Retries are appended to the originating entity’s queue, preserving per-entity FIFO ordering.
-- After a bounded number of attempts (for example `MAX_RETRIES`), the action is marked permanently failed and surfaced via metrics and player-visible errors rather than retried indefinitely.
+- Retry records durably preserve the original identity, digest, lane, entity enqueue sequence, scheduler priority, attempt/evidence history, and failure class; `next_eligible_tick_id` changes future eligibility without creating a retry-private ordering path.
+- Lock contention uses capped tick-based exponential backoff. Known dependency outage uses circuit/admission policy. Ambiguous post-dispatch outcomes query/retry the same effect identity. Stale preconditions re-resolve only under declared feature semantics. Technical exhaustion enters dead letter/quarantine.
+- Every class declares retryable outcomes, attempt/age bounds, and exhaustion behavior. Eligible work re-enters the normal deterministic fair scheduler in its original lane and never spins in the current tick.
+- An unstaged command may terminalize as failed/not applied. A staged effect is not declared abandoned merely because automation exhausted; it remains unresolved until authoritative evidence or supported disposition establishes its terminal outcome.
 
 ## Remote Follow-Up Drain (Cross-Region Budgets)
 
