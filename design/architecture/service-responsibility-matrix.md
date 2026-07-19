@@ -104,7 +104,7 @@ Route-review example:
 
 - **Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`)** – Game Session Service owns gameplay session bindings, lifecycle, and reset scope expectations for these keys. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay session prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
 - **Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`)** – Game Session Service owns gameplay coordination schema and lifecycle for these prefixes. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay coordination prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
-- **Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`)** – Account Service owns JWT allowlist and revocation watermark semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
+- **Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`)** – Account Service owns the issued-token registry and revocation/version semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
 - **Redis-backed automation ownership split** – Automation & Scripting Service owns:
   - Coordination Redis scheduler/timer keys such as `automation:timer:*` and `script-scheduler:*`.
   - Cache/Rate-Limit Redis `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort queues/counters.

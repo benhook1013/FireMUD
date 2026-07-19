@@ -124,10 +124,10 @@ Subscription status feeds directly into tenant availability and resource enforce
   - Game Session and related services consume this event and immediately:
     - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and
     - Reconcile entitlement caches and admission gates for the tenant.
-  - Downstream services must not write `session:auth:revoked_after:*` watermark keys directly. Implementations must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths; opportunistic cleanup of tenant-scoped allowlist entries is allowed only via purpose-built, bounded indexes and background work.
+  - Downstream services must not write `session:auth:revoked_after:*` watermark keys directly. Implementations must not scan `session:auth:token:*` in hot paths; opportunistic cleanup of older token records is allowed only via purpose-built, bounded Account-owned indexes and background work.
   - Durable event consumption is the fast path. Game Session must also batch-reconcile active tenant authority so a missed event cannot preserve gameplay authority beyond 60 seconds. Failure to renew that authority-reconciliation lease closes admission and terminates bindings whose authority cannot be re-established at the bound; routine commands do not perform entitlement reads.
 
-These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
+These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped token authority, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
 
 ## Runtime Entitlement Contract
 

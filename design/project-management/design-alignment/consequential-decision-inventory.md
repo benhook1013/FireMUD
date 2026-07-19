@@ -106,13 +106,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 15 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 16 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **24** | **183** | `in-progress` |
+| **Total** | | **25** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -154,7 +154,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SEC-01` — `revised` on 2026-07-19; [ADR 0032](../../architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md)
 - [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
 - [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
-- [ ] `JWT-01`
+- [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
 - [ ] `JWT-02`
 - [ ] `JWT-03`
 - [ ] `JWT-04`

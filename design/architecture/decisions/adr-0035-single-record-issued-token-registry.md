@@ -1,0 +1,104 @@
+# ADR 0035: Single-Record Issued-Token Registry
+
+## Status
+
+Accepted
+
+## Decision Record
+
+- Decision date: 2026-07-19
+- Primary capability: `SF-1.3` Authentication, authorization, service identity, and secret handling
+- Affected capabilities: `SF-2.2`, `AA-1.3`, `AA-2.3`
+- Decision owner: FireMUD human product and architecture owner
+- Consultation: human-led adversarial review of `JWT-01`
+
+## Context
+
+FireMUD combines locally verifiable JWTs with server-side issued-token state so a single token can be logged out immediately, refresh remains generation-bound, and possession of an exfiltrated signing key alone does not create an accepted token. The previous design created one account record, one record for every tenant in the token, and another record for global roles. Tenant requests could require multiple lookups, while issuance, rotation, and logout had to keep a variable set of duplicate records consistent.
+
+Tenant and global authorization already comes from strictly validated signed claims plus Account-owned account, tenant, and membership revocation/version authority. Duplicating those scopes into per-token Redis key names adds cardinality and partial-update cases without adding a distinct authorization boundary.
+
+The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Global entries, full watermark enforcement, and end-to-end revocation proof remain incomplete.
+
+## Decision
+
+### One Registry Record Per Revocable JWT
+
+- Account Service creates exactly one Coordination Redis record for each issued Browser, player-bootstrap, or private Service JWT: `session:auth:token:<tokenHash>`.
+- `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. Raw token contents never appear in Redis keys, values, logs, metrics, traces, or audit evidence.
+- The bounded record contains `schemaVersion`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, issuance/refresh generation, and active state. It does not duplicate tenant-role maps or global-role grants from the signed token.
+- Its absolute expiry is the JWT `exp` plus the bounded validation-skew/safety margin. Activity does not extend it.
+- Account atomically establishes the record before returning the JWT. If registration fails, issuance fails and the token is never exposed to the caller.
+
+### Validation And Authorization
+
+- A consumer first validates signature and `kid`, issuer, exact audience/profile, required claims, time bounds, and claim types locally.
+- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record matches the token hash, account, profile, `jti`, generation, and time claims. Missing or mismatched state denies the token.
+- The registry proves that Account issued this exact still-active token; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the separate Account-owned revocation/version contract reviewed under JWT-02.
+- Registry lookup is not part of ordinary gameplay-command processing. Gameplay-domain delegation retains the mTLS workload and typed execution-context boundary from ADR 0024.
+
+### Profile Boundaries
+
+- Browser, player-bootstrap, and private Service JWTs use the registry because they require individual logout or generation-bound refresh.
+- The 30-second gameplay connect token uses its dedicated Gateway-owned atomic single-use/replay contract from ADR 0029 and does not also receive an issued-token registry record.
+- Gateway-to-Game-Session signed connect context is a separate short-lived workload assertion, not an Account JWT session, and does not use this registry.
+
+### Revocation And Rotation
+
+- Per-token logout deletes the single token record idempotently. Other devices, tokens, and gameplay bindings remain unaffected.
+- Bulk account, tenant, and membership revocation uses monotonic watermarks/versions rather than scanning token records or encoding every scope in the token key.
+- Generation-bound Service-token rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
+- Registry absence is default denial. Coordination reset therefore forces reauthentication/reissuance rather than making unregistered but cryptographically valid tokens acceptable.
+
+## Consequences
+
+- Each revocable token creates one bounded key and requires one registry lookup rather than account plus tenant/global key combinations.
+- Issuance, logout, rotation, expiry, and cleanup cannot partially update a variable set of scope records.
+- Exfiltration of an Account signing key without access to Account-owned registry writes is insufficient to create an accepted token.
+- Protected control-plane and admission calls retain one Coordination Redis availability dependency. Ordinary gameplay commands do not acquire that dependency.
+- Per-token state is simpler but does not itself provide a device/session listing. A future device-management UI would require a bounded Account-owned index, not key scanning.
+- Tenant/global authority remains dependent on correct claim-profile validation and the separately reviewed revocation/version contract rather than duplicated token-key scopes.
+
+## Alternatives Considered
+
+### Keep Account, Tenant, And Global Keys Per Token
+
+This makes each scope visible in the keyspace but duplicates claims, creates one-to-many key growth, requires multiple validation reads, and introduces partial issuance/logout/rotation states. Watermarks already provide scoped bulk revocation.
+
+### Stateless JWT Validation Only
+
+This removes registry writes and lookups but loses immediate single-token logout and generation-bound refresh, and an exfiltrated signing key can mint accepted tokens until key cutover completes.
+
+### Revoked-Token Denylist
+
+A denylist writes fewer records during issuance, but absent state means allow. Lost/reset denylist state can resurrect revoked tokens, and signing-key possession is sufficient to mint tokens not present on the denylist.
+
+### Opaque Reference Tokens
+
+Opaque tokens can provide the same server-side revocation but require the state lookup to supply all claims and scope on every consumer. The hybrid JWT plus one issuance-record model preserves strict local cryptographic/profile validation and bounded claims while retaining immediate token lifecycle control.
+
+## Implementation and Proof Obligations
+
+- Replace account/tenant/global per-token keys with the single canonical `session:auth:token:<tokenHash>` record and remove obsolete key builders and compatibility reads directly in this pre-v1 system.
+- Define one versioned bounded record schema and validate every field against the cryptographically verified token.
+- Make issuance return contingent on record creation; prove store failure never leaks a usable unregistered token.
+- Update shared validators so every applicable protected route performs local token-profile validation and exactly one registry lookup before scope authorization.
+- Prove missing, expired, malformed, wrong-profile, wrong-account, wrong-generation, deleted, and unavailable registry state fails closed with stable errors.
+- Prove per-token logout deletes one record and leaves other tokens active; prove rotation establishes the replacement before exposure and removes the predecessor after bounded overlap.
+- Prove connect-token replay and Gateway connect-context paths do not create or consult the Account issued-token registry.
+- Update Redis key catalogs, reset behavior, memory budgets, ACLs, operational tooling, and retained evidence for the one-key contract.
+
+## Required Documentation Alignment
+
+- `design/architecture/system-architecture-jwt-and-token-contracts.md`
+- `design/architecture/system-architecture-session-behavior.md`
+- `design/architecture/system-architecture-redis.md`
+- `design/architecture/system-architecture-redis-cheatsheet.md`
+- `design/architecture/system-architecture-redis-reset-and-recovery.md`
+- `design/architecture/microservices/account-service/runtime-and-data.md`
+- `design/architecture/microservices/account-service/api-contracts.md`
+- `design/architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md`
+
+## Reversibility and Revisit Triggers
+
+The record schema is versioned and the token hash remains stable, so additional bounded fields can be introduced without changing the public token carrier. Revisit if an external identity provider becomes the token/session authority, control-plane request volume makes one registry lookup materially expensive, or a device-management product requires a durable Account-owned session index. Do not reintroduce scope-duplicated keys merely to build such an index.

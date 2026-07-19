@@ -13,7 +13,7 @@ The account lifecycle state machine, global deletion preconditions, full-account
   - Service JWTs for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
   Gameplay protocol clients (Telnet and WebSocket) never see or transmit these tokens.
 - The live service hashes and verifies raw passwords with `argon2-jvm` Argon2 using `iterations=2`, `memory=65536 KiB`, and `parallelism=1`, with unique salts before PostgreSQL storage.
-- Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
+- Issued-token registry records are stored in Redis as described in [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
 - Account-to-character relationships allow players to own characters across multiple games.
@@ -59,10 +59,8 @@ Full-account export and tenant-scoped export are separate contracts. `ExportAcco
 - **Coordination Redis**
   - The Account Service does not participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
   - It does, however, use auth/session keys as documented in [Authentication & Authorization](../../system-architecture-authentication.md):
-    - `session:auth:account:<accountId>:<tokenHash>` – baseline allowlist entry for a JWT, consulted for control-plane session validity and immediate revocation.
-    - `session:auth:tenant:<tenantId>:<tokenHash>` – tenant-scoped Account/JWT bindings for internal auth, consulted when authorizing tenant-specific operations.
-    - `session:auth:global:<accountId>:<tokenHash>` – cross-tenant Account/JWT bindings for internal auth, consulted when authorizing cross-tenant or platform-wide operations based on `globalRoles`.
-  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but reset-sensitive: coordination resets that drop `session:auth:*` force re-authentication and token re-issuance for affected account, tenant, and global scopes.
+    - `session:auth:token:<tokenHash>` – the one versioned issued-token record for a revocable Browser, player-bootstrap, or private Service JWT, consulted for control-plane/admission validity and immediate per-token revocation.
+  - These records live on Coordination Redis so auth sessions share the same AOF and reset semantics as gameplay sessions. They are short-lived but reset-sensitive: coordination resets that drop `session:auth:*` force re-authentication and token re-issuance.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
   - When introducing new Redis usage here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so auth/session keys, roles, and observability remain consistent with the global design.
@@ -75,13 +73,9 @@ If you change Redis usage for this service, you must read and apply:
 
 ## Session and Token Model
 
-Authentication generates a JWT and records server-side allowlist entries in Redis for immediate revocation, following the scope model defined in [Authentication & Authorization](../../system-architecture-authentication.md):
+Authentication generates a Browser, player-bootstrap, or private Service JWT and establishes exactly one server-side `session:auth:token:<tokenHash>` registry record before returning it, following [ADR 0035](../../decisions/adr-0035-single-record-issued-token-registry.md). The record proves exact issuance and active state; signed claims plus Account-owned revocation/version state determine tenant and global authority without scope-duplicated token keys.
 
-- Account-scoped entries: `session:auth:account:<accountId>:<tokenHash>` for every issued JWT; this is the baseline allowlist entry.
-- Tenant-scoped entries: `session:auth:tenant:<tenantId>:<tokenHash>` when the token’s effective privileges are limited to a specific tenant and derived from `scopedRoles[tenantId]`.
-- Global/admin entries: `session:auth:global:<accountId>:<tokenHash>` when the token carries cross-tenant `globalRoles` such as `platformAdmin`, `billingAdmin`, or `support`.
-
-The Account Service always creates exactly one account-scoped entry per issued token, may create one tenant-scoped entry per tenant in `scopedRoles`, and creates a single global entry when `globalRoles` are present. In all cases, `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT), and TTL is derived from the JWT lifetime:
+`tokenHash` is a fixed-length digest (a hex-encoded SHA-256 of the complete compact JWT), and the one registry record's TTL is derived from the JWT lifetime:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
@@ -98,16 +92,16 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.
 - For first-party `/ws/game/**`, subsequent gameplay `LOGIN` must complete from the bootstrap/connect context already established for that socket; browser clients must not be required to replay account credentials after bootstrap.
 - If the token is lost because the page/app process is restarted, the client must restart bootstrap from `POST /auth/player-bootstrap`; the current architecture does not define a hidden silent-bootstrap refresh mechanism.
-- It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
+- It is backed by one `session:auth:token:<tokenHash>` record so per-token logout and account-level revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
 
 Gameplay clients never hold control-plane Browser JWTs or internal Service JWTs. The only JWT profile first-party gameplay clients may hold directly is this short-lived `player-bootstrap` token.
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
-Active gameplay Service JWT refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's allowlist generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement allowlist entry before returning it; Game Session installs the replacement atomically and removes the previous entry after the bounded in-flight RPC overlap.
+Active gameplay Service JWT refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's registry generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement token record before returning it; Game Session installs the replacement atomically and removes the previous record after the bounded in-flight RPC overlap.
 
-Per-token logout deletes only the presented token's bounded scoped allowlist entries and is idempotent. Logout-all commits a distinct durable account-wide logout/audit event and then idempotently projects the account watermark; it does not depend on scanning every token key. Raw token values are excluded from both audit forms. The account-wide event terminates active gameplay under ADR 0030, whereas per-token logout leaves other devices and unrelated gameplay bindings intact.
+Per-token logout deletes only the presented token's one registry record and is idempotent. Logout-all commits a distinct durable account-wide logout/audit event and then idempotently projects the account watermark; it does not depend on scanning token keys. Raw token values are excluded from both audit forms. The account-wide event terminates active gameplay under ADR 0030, whereas per-token logout leaves other devices and unrelated gameplay bindings intact.
 
 ## Membership and Entitlement Authority
 

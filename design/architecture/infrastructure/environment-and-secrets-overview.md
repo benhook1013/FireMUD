@@ -62,7 +62,7 @@ Key rules:
 
 Operational notes:
 
-- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and control-plane JWT allowlist entries (`session:auth:*`) as described in `system-architecture-authentication.md`.
+- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and Account-owned issued-token registry and revocation/version state (`session:auth:*`) as described in `system-architecture-jwt-and-token-contracts.md`.
 
 ### Authentication & JWT
 

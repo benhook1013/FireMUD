@@ -25,7 +25,7 @@ The architecture already describes this split and the admission path substantial
 Account Service owns:
 
 - global account identity, lifecycle, credentials, recovery, and configured authentication modes;
-- token issuance profiles, signing keys, JWKS publication, token allowlists, and account/tenant/membership revocation watermarks;
+- token issuance profiles, signing keys, JWKS publication, the issued-token registry, and account/tenant/membership revocation authority;
 - account-to-tenant membership, tenant roles, gameplay-admission eligibility, realm-access grants, and runtime entitlement truth; and
 - monotonic membership and entitlement versions used by consumers to reject stale authority.
 
