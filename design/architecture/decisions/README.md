@@ -101,6 +101,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0085](./adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) | Accepted | `SF-2` | `PO-4`, `PO-3`, `GR-1` | Evidence-gated coherent replay with externally fenced smallest-complete-scope reset |
 | [ADR 0086](./adr-0086-owner-validated-class-a-caches-and-presentation-only-class-b.md) | Accepted | `SF-2` | `GR-2`, `GR-3`, `EA-1`, `PO-4` | Owner-validated Class A read acceleration with presentation-only disposable Class B caches |
 | [ADR 0087](./adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md) | Accepted | `SF-2` | `PO-2`, `AA-1`, `PO-4` | One-to-one subject rate-limit buckets with bounded cardinality and explicit loss semantics |
+| [ADR 0088](./adr-0088-static-and-incremental-script-output-bounds.md) | Accepted | `AR-1` | `AS-1`, `GR-4` | Versioned static output-cost analysis plus incremental metering and atomic handler output persistence |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

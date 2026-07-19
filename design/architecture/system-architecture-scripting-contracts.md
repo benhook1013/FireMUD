@@ -134,8 +134,9 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 - A successfully admitted trigger must still be prevented from emitting unbounded work.
 - The Automation & Scripting Service must enforce explicit ceilings including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes` before durable persistence/handoff.
-- Output-budget violations must be recorded as non-success stage-aware outcomes and must not partially persist oversized work items.
-- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings, using the shared static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
+- Runtime enforcement is incremental and stops before constructing or serializing the next over-limit element. Output-budget violations are handler-scoped `DSL_EVAL` outcomes and must not partially persist any generated commands for that handler.
+- Pre-handler envelope violations remain event-ingress outcomes; they do not summarize later generated output.
+- Publish-time validation in Game Design conservatively rejects graphs whose bounded worst-case fan-out exceeds runtime ceilings, using the versioned/digested shared component-cost contract in [ADR 0088](decisions/adr-0088-static-and-incremental-script-output-bounds.md).
 
 ## Related Documents
 

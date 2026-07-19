@@ -164,23 +164,24 @@ Scripts do not execute inside the tick system. The Automation & Scripting Servic
 
 Admission and sandboxing must bound not only how often a handler runs, but also how much work a single admitted run can emit:
 
-- Each DSL run must enforce explicit output budgets before a work item is persisted, including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`, plus any bounded payload ceilings needed for known large command families.
-- Exceeding an output budget must fail deterministically with a non-success stage-aware outcome. Implementations may classify the failure at `DSL_EVAL` or `WORK_ITEM_PERSIST`, but `finalReason` must use bounded canonical codes such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, or `work_item_size_exceeded`.
+- Each DSL run incrementally enforces `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, `maxSerializedWorkItemBytes`, declared data-dependent caps, and any known large-command payload ceilings before constructing or serializing the next over-limit output element.
+- A resolved handler's generated output is persisted atomically as one complete bounded set or not persisted at all. Exceeding an output budget fails deterministically at handler stage `DSL_EVAL` with a bounded reason such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, `work_item_size_exceeded`, or the applicable cap violation; it never leaves a partial command set.
+- A request-envelope limit known before handler resolution remains an event-ingress outcome. It does not stand in for a later generated-output result, and a handler failure does not rewrite successful event-scope admission or another handler's outcome.
 - Output budgets apply equally to core scripts and plugins.
 - Publish-time validation in Game Design must perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes using the same component cost metadata that Automation & Scripting uses for runtime revalidation.
 
 ### Static Output Cost Contract
 
-Every compiled script artifact must carry enough normalized output-cost metadata for Game Design and Automation & Scripting to reach the same accept/reject decision before runtime:
+Under [ADR 0088](decisions/adr-0088-static-and-incremental-script-output-bounds.md), every compiled script artifact records the version and digest of one shared normalized component-cost metadata contract so Game Design and Automation & Scripting use the same interpretation:
 
 - Each action/component definition must declare `maxCommandsEmitted`, optional per-entity command distribution rules, `maxSerializedBytesPerCommand`, and whether its output cost is `STATIC`, `BOUNDED_BY_INPUT`, or `UNSUPPORTED_FOR_STATIC_BOUND`.
-- `STATIC` components contribute a fixed cost. `BOUNDED_BY_INPUT` components must name the validated input bound that caps their fan-out, such as a maximum selected-entity count, bounded loop counter, or configured list length. `UNSUPPORTED_FOR_STATIC_BOUND` components are not eligible for publish in live scripts until they are redesigned or given a bounded contract.
+- `STATIC` components contribute a fixed cost. `BOUNDED_BY_INPUT` components name a finite bound that is recorded in the artifact and enforced incrementally at runtime, such as a maximum selected-entity count, loop count, or configured list length. `UNSUPPORTED_FOR_STATIC_BOUND` components are not eligible for publish in live scripts until redesigned or given an enforced bounded contract.
 - Branches are analyzed conservatively by taking the maximum cost of mutually exclusive branches and the sum of costs for paths that can both execute in one run.
 - Bounded loops multiply the loop body cost by the validated finite iteration bound. Loops without a finite bound are rejected by loop-safety validation before output-cost analysis.
 - Timer edges that create future triggers do not add same-run command cost beyond the timer-registration command itself, if any; the future trigger is analyzed as its own run.
 - Bulk action nodes must expose an explicit validated maximum fan-out. Runtime-discovered collection sizes without a publish-time upper bound are treated as `UNSUPPORTED_FOR_STATIC_BOUND`.
-- Game Design writes the normalized cost summary into the compiled artifact. Automation & Scripting revalidates the summary against its local component registry and rejects the patch if the summary is missing, stale, or exceeds runtime ceilings.
-- Runtime output budgeting remains mandatory even when static validation passes; the static contract prevents obviously oversized graphs from publishing, while runtime guards protect against registry bugs, corrupted artifacts, or future component changes.
+- Game Design writes the normalized cost summary plus component-cost metadata version/digest into the compiled artifact. Automation & Scripting revalidates that exact version/digest and rejects a missing, displaced, mismatched, stale, or over-ceiling artifact rather than interpreting it with a private newer table.
+- Runtime output budgeting remains mandatory and incremental even when static validation passes; it protects against registry defects, corrupt artifacts, and actual data-dependent values before oversized allocation, serialization, or persistence.
 
 ## Budget Charge Points
 

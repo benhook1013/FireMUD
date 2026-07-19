@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 38 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 39 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **75** | **183** | `in-progress` |
+| **Total** | | **76** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -216,7 +216,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `REDIS-05` — `revised` on 2026-07-20; [ADR 0085](../../architecture/decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md)
 - [x] `CACHE-01` — `revised` on 2026-07-20; [ADR 0086](../../architecture/decisions/adr-0086-owner-validated-class-a-caches-and-presentation-only-class-b.md)
 - [x] `CACHE-02` — `revised` on 2026-07-20; [ADR 0087](../../architecture/decisions/adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md)
-- [ ] `SCRIPT-02`
+- [x] `SCRIPT-02` — `revised` on 2026-07-20; [ADR 0088](../../architecture/decisions/adr-0088-static-and-incremental-script-output-bounds.md)
 - [ ] `SCRIPT-03`
 - [ ] `SCRIPT-12`
 - [ ] `TIMER-01`
