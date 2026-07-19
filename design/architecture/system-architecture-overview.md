@@ -182,6 +182,8 @@ This matrix is canonical for high-level architecture docs and must remain aligne
 
 Core operator actions must not rely on observability backends for write success. Logging & Admin is the operator-facing entry point for these actions, but it is not allowed to become the runtime state owner for other domains.
 
+Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin first durably records actor, reason, scope, mutation, and one `controlPlaneRequestId`, then forwards that same identifier to the owner. The owner alone validates current authority and durably commits the domain mutation and idempotent result. Success is reported only after that commit is confirmed. A lost response or final audit-update failure is reconciled with the same identifier; it never invites an uncorrelated duplicate mutation. If the initial intent record is unavailable, the mutation fails before forwarding.
+
 | Operator action | Operator-facing entry point | Runtime/policy owner | Required write path | Required durable store(s) for success | Observability dependency allowed for write success |
 | --- | --- | --- | --- | --- | --- |
 | Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Logging & Admin defines policy; Game Session or Social & Groups enforce runtime scope | Logging & Admin records audit and calls owning enforcement/policy APIs | Logging & Admin PostgreSQL audit state plus owning service PostgreSQL/control-plane state | No |
@@ -191,7 +193,7 @@ Core operator actions must not rely on observability backends for write success.
 
 External admin tooling must not invoke alternate direct write routes for the actions in this table. If a future design allows a direct external mutation path for one of these actions, it must define equivalent audit, validation, and availability guarantees and update this table explicitly.
 
-Game Session control-plane APIs exposed behind the Gateway terminate on the stable Game Session service surface. In the current implementation they are ordinary service/control-plane handlers; in the target session-front-end plus lease-owner model, any control-plane request that mutates region-scoped coordination or tick-owned state must be forwarded to the current lease owner under the same fenced internal contract used for gameplay work. The externally routable API surface must not imply that a session front-end can directly write region-owned coordination keys.
+Game Session control-plane APIs exposed behind the Gateway terminate on the stable Game Session service surface. In the current implementation they are ordinary service/control-plane handlers; in the target session-front-end plus lease-owner model, any control-plane request that mutates region-scoped coordination or tick-owned state must be forwarded to the current lease owner under the current gameplay fence and the same `controlPlaneRequestId`. A stale owner or stale fence rejects the write so that the same identifier can be safely reconciled or retried against the current owner. The externally routable API surface must not imply that a session front end can directly write region-owned coordination keys.
 
 ### Authentication Modes and Boundaries
 
