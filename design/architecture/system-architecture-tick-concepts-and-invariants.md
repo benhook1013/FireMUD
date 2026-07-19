@@ -33,6 +33,8 @@ When designing new tick-driven features, keep these invariants in mind:
 - **Single authoritative executor per region** – all tick-side state for a `<tenantId, regionId>` is owned by one executor at a time.
 - **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
 - **One intentional actor action per entity per tick** – under [ADR 0051](./decisions/adr-0051-separate-actor-action-and-effect-lanes.md), player commands, AI decisions, automation commands, actor-action timers, and their retries compete for one actor-action slot. Passive status/environmental work, incoming remote effects, actor-generated consequences, and their retries use a separate bounded effect lane and do not consume the target's action slot. Both lanes retain deterministic persisted ordering plus per-entity and region-wide count/cost budgets.
+- **Fair deterministic entity selection** – eligible work is ordered within its entity, while persisted rotating/deficit scheduler state selects entities under reserved lane budgets. The selected manifest and scheduler advance commit together so replay preserves the decision and sustained backlog cannot indefinitely starve a permanently eligible non-best-effort entity within a healthy epoch. See [ADR 0065](./decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md).
+- **One in-flight tick through cleanup** – a region does not stage tick `N+1` until tick `N` is durably terminal and matching fenced coordination cleanup has cleared its pending state and locks.
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
@@ -53,36 +55,30 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 
 Fairness and the actor-action/effect-lane rules apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
-- Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
+- Redis failover and scoped coordination resets may delay, replay, terminalize, or slightly reorder scheduling projections; accepted commands and correctness-bearing effects retain the class-specific durable outcomes in ADR 0058.
 - In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
 - Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
 
 Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, region_epoch, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
 
-### Tail-Loss and Tick Replay Window
+### Coordination-Loss Observation and Tick Replay
 
-Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
+Redis coordination exposure is measured by the environment-specific unreplicated-write-window SLO, not a tick-derived product RPO. Tick-driven designs tolerate delayed, rebuilt, terminalized, or replayed coordination projections while preserving ADR 0058's class-specific durable outcomes. Region leases may be lost and re-acquired under the same or a new `region_epoch`; scheduler fairness is best effort across that reset boundary and resumes from authoritative source work plus durable scheduler/batch state.
 
-- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
-  - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
-- Tick-driven designs must tolerate:
-  - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
-  - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
+## Tick Coordination-Loss Contract
 
-## Tick Tail-Loss Contract
-
-The tick system and Redis tail-loss SLOs combine into a simple contract:
+The tick system and Redis coordination-loss observations combine into a simple contract:
 
 - For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
-  - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
+  - Recent Redis scheduling/staging projections are lost or replayed, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
   - Guarded with idempotency checks that detect and short-circuit replays, or
   - Intentionally marked `ABANDONED` in the tick effect ledger with a precise reason (for example, reset scopes as described in the failures and operations doc).
 
-Players may observe brief rollbacks or duplicated feedback around failover boundaries, but they must never experience permanent double-application of critical effects or silent corruption of authoritative state.
+Players may observe delay, explicit non-application, or duplicated presentation feedback around failover boundaries, but committed authoritative state does not roll back and logical effects do not double-apply.
 
-Redis tail-loss thresholds are defined in `system-architecture-redis-operations.md` under Redis availability and safety guarantees. This section captures only the conceptual relationship between those budgets and the tick invariants they are meant to uphold.
+The measured unreplicated-write-window SLO is defined in `system-architecture-redis-operations.md`; ADR 0058 defines product outcomes. This section captures only their relationship to tick replay invariants.
 
 ### Isolation Within a Tick
 

@@ -39,7 +39,7 @@ Current live substrate to keep in mind while reading:
 FireMUD uses a **hybrid tick model** to balance real-time responsiveness with deterministic action resolution:
 
 - Actions are queued per entity (players, NPCs, scripted automation).
-- At each tick, the region executor pulls at most one action per entity and resolves them in a fair order so player commands, AI, and automation are treated equivalently.
+- At each tick, the region executor selects at most one intentional actor action per entity plus separately bounded passive/inbound/generated effects. Persisted rotating/deficit scheduling selects eligible entities under reserved lane budgets so sustained backlog cannot indefinitely starve non-best-effort work within a healthy epoch.
 - From the player’s perspective, state changes appear as a single, coherent “tick of work” per region, even though they are implemented as multiple service-local transactions plus idempotent retries.
 
 Conceptually, FireMUD treats time as **localized pulses** rather than a single global clock: each tick is a self-contained logical transaction for its region that composes safely with others. Internally, that logical transaction is realized as:
@@ -314,8 +314,10 @@ At each tick for a region, the executor:
 
 - Dequeues eligible commands from per-entity queues.
 - Pulls a bounded number of due timers and retries into the worklist.
-- Applies fairness rules (one action per entity, per tick).
+- Applies fixed passive/action/generated phases, one intentional actor action per entity, separately bounded effect work, and persisted fair entity selection.
+- Persists the selected order and scheduler-state advance together before source work becomes exclusive.
 - Drives staging and commit for all selected actions under the region lease.
+- Does not stage the next regional tick until the current tick is durably terminal and its matching fenced coordination cleanup completes.
 
 See `system-architecture-tick-execution-flows.md` for the detailed algorithm, including how timers, retries, and remote follow-ups are folded into the per-tick worklist.
 

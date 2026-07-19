@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 14 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 15 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **51** | **183** | `in-progress` |
+| **Total** | | **52** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -189,7 +189,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SESSION-06` — `revised` on 2026-07-19; [ADR 0062](../../architecture/decisions/adr-0062-layered-gameplay-command-delivery-semantics.md)
 - [x] `SCRIPT-01` — `revised` on 2026-07-19; [ADR 0063](../../architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md)
 - [x] `SCRIPT-04` — `revised` on 2026-07-19; [ADR 0064](../../architecture/decisions/adr-0064-stage-qualified-script-outcomes.md)
-- [ ] `TICK-09`
+- [x] `TICK-09` — `revised` on 2026-07-19; [ADR 0065](../../architecture/decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md)
 - [ ] `TICK-13`
 - [ ] `TICK-14`
 - [ ] `TICK-15`
