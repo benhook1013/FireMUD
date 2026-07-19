@@ -264,6 +264,7 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 Launch descriptor version-resolution rules:
 
 - A launchable game template resolves to exactly one base `versionId`.
+- The resolved runtime release tuple also freezes the immutable release bundle and manifest, the selected `scriptPatchVersion`, and every enabled `pluginVersionId`. Each patch and plugin must prove publication, runtime readiness, and compatibility with that base version before the tuple is launchable.
 - `game_template_version_ref` is the canonical source for that base version; other normalized template references must agree with it.
 - Mixed-version template bundles are invalid for launch and must be rejected during template validation and launch-descriptor resolution rather than interpreted heuristically at runtime.
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
@@ -273,6 +274,8 @@ Launch descriptor version-resolution rules:
 - Caller-supplied runtime overrides are only honored when the template leaves the corresponding field unset. If the template already supplies a default, any caller-supplied value for that field is a deterministic launch-descriptor failure instead of being merged heuristically.
 - The launch orchestrator must treat `versionStateEpoch` as part of preflight proof, not informational metadata. If attestation verification or downstream activation sees a different epoch than the one frozen into the descriptor, launch fails closed before any persistent instance row or `PREPARING` world state is created.
 - World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
+- Friendly channels such as `production` or `preview` may choose a candidate only at the start of a new launch or rollout. Resolution freezes the concrete tuple under the attempt's idempotency identity; later channel movement cannot change an existing descriptor, running instance, restart, recovery, or rollback target.
+- Changing a patch or plugin for an existing instance creates and records a new validated tuple through the applicable rollout workflow. Runtime never follows `latest` and rollback selects a previously recorded concrete tuple rather than reconstructing one from current aliases.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
   - `participantDigests[]`
   - `artifactDigests[]` for each exported derived world artifact
