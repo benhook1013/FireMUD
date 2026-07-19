@@ -382,57 +382,22 @@ Scripts are designed to behave **deterministically for a given game configuratio
   - be implemented in terms of the seeded RNG and tick-based time described above, or
   - be explicitly documented as **non-replayable** and confined to side channels such as logging and metrics where non-determinism does not affect gameplay state or authoritative decisions.
 
-Under these rules, the combination of Trigger Identity plus tick context (for example `tickId` and `regionEpoch` when applicable) fully determines the observable behavior of a script run that contributes commands to the tick system.
+Under these rules, the durable input manifest plus the versioned seed derivation fully determines the observable behavior of a script run that contributes commands to the tick system.
 
 ### Read Consistency Contract
 
-Determinism depends not only on stable RNG/time, but also on a stable **read snapshot** for all gameplay-affecting data exposed to the DSL:
+Determinism depends not only on stable RNG/time, but on recording the exact bounded inputs that affected evaluation. [ADR 0090](decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md) does not require one universal historical snapshot across independently owned services.
 
-- Every live handler-scoped run must execute against a runtime-issued **read snapshot token** captured at admission. For gameplay/runtime triggers, that token must be anchored to the committed source timeline for the trigger, including at minimum `<tenantId, gameInstanceId, regionId, regionEpoch>` plus a source consistency point such as `tickId` or an equivalent read version.
-- All DSL component reads that influence authoritative branching or emitted commands must use that same snapshot token for the duration of the run. A single run must not silently mix fresher and older committed values for the same gameplay state just because wall-clock time advanced between gRPC reads.
-- If the runtime exposes cross-region, tenant-global, or non-tick-owned data to scripts, the component contract must declare the consistency class explicitly. Data that can materially change authoritative gameplay decisions must either:
-  - be versioned by the same run snapshot token, or
-  - carry its own immutable version/read token captured at admission and reused for the whole run.
-- For custom and service-specific events, the event registry is the source of truth for snapshot authority and consistency class. Ingress must reject an event whose payload omits a registry-required snapshot token or whose token scope does not match the required Trigger Identity fields.
-- Eventually consistent or best-effort operational views may be exposed only to components whose outputs are non-authoritative (for example logging/diagnostics) or whose contract explicitly states that they do not affect gameplay branching.
-- `onLoad` and dry-run/test execution must also declare their snapshot source. In the first implementation slice:
-  - `onLoad` may read only configuration/runtime metadata and recomputable caches using a tenant-scoped readiness snapshot, not mutable gameplay state.
-  - dry-run/test runs must either accept an explicit snapshot selector from tooling or record the server-chosen latest committed snapshot token in the returned/audited result so the run is reproducible.
+- Every admitted handler-scoped run has one durable input manifest keyed by Trigger Identity.
+- Admission captures immutable trigger facts, exact script/component artifact versions, the committed source causal floor, and the canonical seed-derivation version. Gameplay triggers anchor that floor to their complete runtime scope and committed timeline rather than a later Automation observation.
+- Every gameplay-affecting authoritative component read returns a bounded result plus the owning service's exact version identity. Before evaluated output is accepted, the value used and its owner version are durably captured in the manifest.
+- Retry reuses the manifest and never silently fetches a newer gameplay-affecting value for the same Trigger Identity. If required historical input was not captured or cannot be proven against its recorded owner version, evaluation fails explicitly.
+- The causal floor and owner-versioned results provide reproducible inputs but do not claim a cross-service atomic snapshot. A script emits typed commands; the owning runtime/domain applies exact current preconditions, fencing, transactions, and idempotency when those commands execute.
+- A component whose correctness requires an atomic invariant across owners is not implemented as a DSL read-and-decide sequence. It invokes or emits the typed owner/workflow operation that owns that invariant.
+- Eventually consistent or best-effort views are available only to non-authoritative components such as logging or diagnostics and cannot influence gameplay branching or emitted commands.
+- `onLoad` may read only bounded configuration/readiness inputs, not mutable gameplay state. Dry-run/test execution records the exact tooling-selected or server-selected manifest inputs used so its result is reproducible.
 
-This snapshot contract is part of the runtime semantics, not an implementation detail. Services backing DSL read components must therefore accept and honor the snapshot/read-version token required by the component contract.
-
-Concrete transport shape example:
-
-- For a gameplay trigger emitted immediately after tick commit, the ingress payload may carry an opaque `readSnapshotToken` whose decoded contents are equivalent to `<tenantId=T1, gameInstanceId=G7, regionId=R2, regionEpoch=14, tickId=981223>`.
-- DSL components that query region-local world state, inventory, or nearby entities must pass that same token on every downstream read call for the lifetime of the run.
-- Downstream services may expose the token either as an opaque envelope or as explicit fields, but the semantics are the same: the run sees one committed snapshot and does not silently upgrade to tick `981224` midway through evaluation.
-
-Illustrative transport example:
-
-```protobuf
-message TriggerScriptEventRequest {
-  string tenant_id = 1;
-  string game_instance_id = 2;
-  string playable_state_scope = 3;
-  string region_id = 4;
-  int64 region_epoch = 5;
-  string entity_id = 6;
-  string script_patch_version = 7;
-  string script_event_id = 8;
-  string event_type = 9;
-  bytes read_snapshot_token = 10;
-}
-
-message GetNearbyEntitiesRequest {
-  string tenant_id = 1;
-  string game_instance_id = 2;
-  string region_id = 3;
-  string entity_id = 4;
-  bytes read_snapshot_token = 5;
-}
-```
-
-In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. The resolved `playable_state_scope` also travels as first-class trigger identity for gameplay-originated events so shared-state and isolated-state realms do not collide in durable work, timer follow-up rows, or operator read models. A downstream service may decode the snapshot token internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
+The manifest is a durable bounded record, not merely a token that permits later latest-state lookup. Services may still accept a producer-supplied source token or causal floor to identify the trigger timeline, but every gameplay-affecting value actually used is paired with its owner version and captured before output acceptance.
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 

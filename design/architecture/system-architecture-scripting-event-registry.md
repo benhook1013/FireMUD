@@ -62,7 +62,7 @@ Required semantics for those fields:
     - `PRODUCER_SUPPLIED_TOKEN`
     - `AUTOMATION_CAPTURED_AT_ADMISSION`
     - `NON_AUTHORITATIVE_NO_SNAPSHOT`
-  - If a token is required, the entry must name the required token fields and timeline.
+  - This declares who supplies the source causal floor or non-authoritative classification; it does not claim a universal cross-service snapshot. The entry names the required scope/timeline fields, and every gameplay-affecting component read is captured with its bounded result and owner version in the handler's durable ADR 0090 input manifest before output acceptance.
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`

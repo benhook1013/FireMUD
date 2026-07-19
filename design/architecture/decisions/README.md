@@ -103,6 +103,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0087](./adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md) | Accepted | `SF-2` | `PO-2`, `AA-1`, `PO-4` | One-to-one subject rate-limit buckets with bounded cardinality and explicit loss semantics |
 | [ADR 0088](./adr-0088-static-and-incremental-script-output-bounds.md) | Accepted | `AR-1` | `AS-1`, `GR-4` | Versioned static output-cost analysis plus incremental metering and atomic handler output persistence |
 | [ADR 0089](./adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md) | Accepted | `AS-1` | `AR-2`, `PO-4` | Durable Trigger-keyed usage charges separated from fenced reclaimable sandbox-capacity leases |
+| [ADR 0090](./adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md) | Accepted | `AS-1` | `SF-2`, `GR-1`, `SF-1`, `AR-1` | Durable owner-versioned input manifests for reproducible script evaluation and retry |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
