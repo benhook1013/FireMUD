@@ -78,6 +78,8 @@ When a work item is handed to Game Session, the handoff identity must be explici
 - If one work item emits multiple gameplay commands, each emitted command must use a deterministic suffix or ordinal under the same stable parent identity (for example `<outboxWorkItemId>#<commandOrdinal>`), so duplicate handoff retries remain idempotent per gameplay command rather than only per work item.
 - Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting must key off that per-command `automationDispatchId`, while operator tooling must still be able to correlate those outcomes back to the parent `outboxWorkItemId` and Trigger Identity.
 
+Each emitted command is also represented by one durable child dispatch row under the work item. At minimum it stores `outboxWorkItemId`, deterministic `automationDispatchId`, command ordinal and immutable digest, target scope, handoff status/result, attempt metadata, and the returned Game Session `commandId` when accepted. The durable uniqueness key is `automationDispatchId`; duplicate evaluation or delivery reads or advances the same child rather than creating another logical command. Retries select only unfinished children.
+
 ### Minimum Status Model
 
 Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
@@ -85,7 +87,7 @@ Statuses are a target-state contract; implementations may use different internal
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
 - `HANDOFF_IN_FLIGHT` - being handed off to Game Session (idempotent retries allowed).
-- `HANDED_OFF` - Game Session has accepted the corresponding tick commands into tick queues (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=success`).
+- `HANDED_OFF` - Game Session has durably accepted every required child dispatch. A work item with accepted and unfinished children remains `HANDOFF_IN_FLIGHT`; a permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
 - `CANCELED` - permanently canceled by control plane (for example rollback, disable, or operator purge).
 - `DEAD_LETTERED` - permanently non-progressing due to repeated infrastructure failures; bounded retention and operator visibility are required.
 
@@ -101,16 +103,17 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 ### Rebuild and Deduplication Rules
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
-- Automation's queue-drain/rebuild path and durable executor must dedupe by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
+- Automation's queue-drain/rebuild path locates the parent by `outboxWorkItemId`, then deduplicates and retries each emitted command by its durable `automationDispatchId` child (never Redis list position). Queue resets and re-indexing therefore cannot resend already accepted children or invent new ordinals.
 - `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
 
 ### Operational Constraints
 
 - Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
-- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records. Payload compaction or deletion waits until every child is terminal and the longest downstream replay, rollback-diagnosis, command-status, and audit horizon has elapsed; retained identity/digest/disposition evidence must still prevent a duplicate logical dispatch.
 - The canonical defaults are owned by [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md): `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS`, `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE`, `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS`, and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE`.
 - The current Automation & Scripting implementation wires those retention knobs into a scheduled cleanup job for terminal `script_work_items`: `HANDED_OFF` and `CANCELED` rows expire by status-specific retention days, and `DEAD_LETTERED` rows expire by max age plus a row-count cap that removes the oldest excess rows first.
 - The current implementation also wires the derived queue contract into runtime behavior instead of leaving it as prose only: queue drains dedupe repeated pointer envelopes by `outboxWorkItemId`, a bounded scheduled rebuild republishes missing queue pointers from durable `PENDING_EVALUATION` / `EVALUATING` work items, and the scheduled executor now uses queue pointers as its first work-discovery path before claiming durable outbox rows. Redis never becomes authoritative: execution only proceeds after a PostgreSQL row is successfully transitioned from `PENDING_EVALUATION` to `EVALUATING`, stale/orphaned pointers are ignored by that durable claim, and queue discovery failures fall back to the bounded durable scan.
+- Those current implementation claims do not yet prove the target durable child-dispatch model, the 1:1 mapping from current internal statuses to the normative parent/child states, multi-command partial handoff, or retention gated by downstream evidence.
 - Operator-facing replay, purge, and convergence tooling must treat those retention windows as the supported diagnosis horizon rather than inventing ad hoc cleanup timing.
 
 ## `scriptEventId` Lifecycle and Deduplication
@@ -213,7 +216,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 ## Failure Modes and Error Handling
 
-Script executions are treated as at-most-once per trigger. Common outcome classes include:
+Script evaluation may retry after infrastructure failure under the same full Trigger Identity. Retries must converge on one durable logical work item and one deterministic child dispatch per emitted command; they do not promise that sandbox evaluation code physically ran at most once. Common outcome classes include:
 
 - `success`
 - `quota_denied`
