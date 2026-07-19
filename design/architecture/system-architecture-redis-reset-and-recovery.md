@@ -237,14 +237,15 @@ Reset tooling and runbooks are expected to consume this catalog to enforce reset
 
 ## Reset vs Accept Loss
 
-When coordination state appears incorrect or unhealthy, first-implementation operators choose between two supported strategies. Think of this as the **minimal decision tree** for a single‑admin operator:
+When coordination state appears incorrect or unhealthy, [ADR 0085](decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) permits bounded replay only when durable records automatically prove one coherent epoch and batch timeline. Otherwise recovery performs the smallest provably complete fenced reset. **Accept loss** is a post-reconciliation outcome only for disposable hints, not a competing substitute for effect and command convergence:
 
 1. **Can you safely accept the loss?**
    - Choose **Accept loss** when:
      - Metrics show tail‑loss stayed within the documented SLO window, and
+     - Durable reconciliation proves that no authoritative effect, batch, accepted command outcome, or other required work remains unresolved, and
      - Invariants (no double‑apply of critical effects, no cross‑tenant leaks, no broken financial flows) remain intact.
    - Behavior:
-     - Acknowledge that some coordination state (timers, pending effects, non‑critical queues) has been lost within the tail‑loss envelope and **do nothing** beyond monitoring.
+     - Acknowledge that disposable wakes, cache-like coordination hints, or other explicitly loss-tolerant projections were lost within their envelope after authoritative work converged, then monitor. Pending effects, accepted commands, and unknown coordination state never qualify for “do nothing.”
    - Examples:
      - Short Redis outage where `tail_loss_ms` and tick metrics confirm only the last 1–2 seconds of activity were affected.
      - Eviction of cache‑like coordination hints that are inherently best‑effort.

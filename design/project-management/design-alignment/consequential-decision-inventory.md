@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 35 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 36 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **72** | **183** | `in-progress` |
+| **Total** | | **73** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -213,7 +213,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `DB-04` — `revised` on 2026-07-20; [ADR 0082](../../architecture/decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md)
 - [x] `REDIS-03` — `revised` on 2026-07-20; [ADR 0083](../../architecture/decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md)
 - [x] `REDIS-04` — `revised` on 2026-07-20; [ADR 0084](../../architecture/decisions/adr-0084-evidence-scoped-redis-lua-compatibility.md)
-- [ ] `REDIS-05`
+- [x] `REDIS-05` — `revised` on 2026-07-20; [ADR 0085](../../architecture/decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md)
 - [ ] `CACHE-01`
 - [ ] `CACHE-02`
 - [ ] `SCRIPT-02`

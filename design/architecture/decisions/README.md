@@ -98,6 +98,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0082](./adr-0082-semantic-boundary-for-cross-service-identifier-migration.md) | Accepted | `SF-2` | `SF-2`, `AR-1`, `AR-3` | Preserve IDs across representation changes and map new identities for semantic replacement, scope change, split, or merge |
 | [ADR 0083](./adr-0083-no-general-event-broker-until-measured-adoption-gates.md) | Accepted | `SF-2` | `SF-1`, `PO-4`, `AS-1`, `GR-1` | PostgreSQL outbox delivery without a general broker until measured adoption gates are crossed |
 | [ADR 0084](./adr-0084-evidence-scoped-redis-lua-compatibility.md) | Accepted | `SF-2` | `SF-1`, `GR-1`, `PO-4` | Redis Lua compatibility scoped to evidenced caller and payload coexistence |
+| [ADR 0085](./adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) | Accepted | `SF-2` | `PO-4`, `PO-3`, `GR-1` | Evidence-gated coherent replay with externally fenced smallest-complete-scope reset |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

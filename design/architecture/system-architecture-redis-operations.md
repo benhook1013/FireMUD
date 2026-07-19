@@ -218,25 +218,26 @@ Default runbooks should still prefer fixing deployments and relying on TTL over 
 Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, split-brain recovery, restore coordination recovery, and topology-changing scaling can place non-trivial load on Coordination Redis and can invalidate each other if they overlap. Routine online PostgreSQL backups do not use this pause/status/epoch control plane. To keep mutating coordination work predictable:
 
 - one control-plane actor orchestrates heavy maintenance per deployment
-- one deployment-wide maintenance lock serializes incompatible restore, reset, cleanup, migration, and topology-changing scale operations
+- one deployment-wide durable maintenance operation and fence, stored outside the Coordination Redis deployment being repaired, serializes incompatible restore, reset, cleanup, migration, and topology-changing scale operations
 - an exceptional backup-related maintenance operation that explicitly pauses or mutates coordination state must acquire the lock, but the routine online backup CronJob neither acquires it nor pauses ticks
 - restore coordination recovery, scoped resets, normalization migrations, split-brain recovery, session cleanup, and topology-changing scale changes must acquire this lock before they pause or mutate coordination state
 - read-only low-impact scanners may run only when they are declared compatible with the active operation and still back off on Redis health degradation
 - dashboards and health endpoints should expose a simple “maintenance in progress” signal while such a job is active
-- fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader deployment-wide rule, but they do not replace it
+- fine-grained Redis locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` may assist execution inside the broader deployment-wide rule, but they do not replace or fence the durable external authority
 - maintenance jobs must back off or abort when Redis health signals show elevated latency, `used_cpu_sys`, `used_memory`, or elevated error rates
 
 Canonical maintenance-lock behavior:
 
-- lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
+- lock identity: one durable active operation record per Coordination Redis deployment / gameplay environment boundary, persisted in an owning PostgreSQL/control-plane store outside the Redis deployment under repair
 - minimum fields: `operation`, `scope_type`, `tenantId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
+- the durable operation carries a monotonically advancing fence; every mutating maintenance step validates it, and a Redis-local token alone cannot authorize work
 - acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
 - refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
 - success release owner: `coordination-maintenance resume ...` is the canonical success-path release step once the scope has safely returned to `RUNNING`
 - failure release owner: `coordination-maintenance release-lock ...` is the canonical failure or operator-abort release step when the workflow stops before resume
 - exceptional backup-related maintenance treats lock-acquisition failure as a skipped/failed maintenance attempt; routine online backup health is independent of this lock and is measured through artifact freshness, lineage, integrity, and restore readability
-- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
+- restore recovery and reset tooling must refresh or complete the durable lease before expiry so another actor cannot start a conflicting sequence; process takeover advances the fence and makes the old actor stale
 
 Canonical maintenance-active signal:
 

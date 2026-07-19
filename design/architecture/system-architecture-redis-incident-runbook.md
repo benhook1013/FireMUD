@@ -42,7 +42,7 @@ The incident flows below describe the target operator model. In the current impl
 
 ### Coordination Redis Recovery Behaviour
 
-When Coordination Redis recovers after an outage or severe degradation:
+When Coordination Redis recovers after an outage or severe degradation, [ADR 0085](decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) automatically selects bounded replay only from durable proof of one coherent epoch and batch timeline. Missing, contradictory, orphaned, duplicate, stalled, or non-progressing evidence immediately selects a fenced reset; surviving Redis keys cannot establish coherence by themselves.
 
 - **Tick executors**
   - Do not attempt to resume in-flight locks or leases based on in-memory state.
@@ -110,12 +110,12 @@ The following Redis-focused incident flows build on the general recovery steps a
    - Region health shows sustained `DEGRADED` or `STALLED` state for those shards.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
-   - For sustained violations or `STALLED` regions, treat this as a **tick SLO breach** for the affected `<tenantId, regionId>` shards and choose exactly one recovery mode first:
+   - For sustained violations, treat this as a **tick SLO breach** for the affected `<tenantId, regionId>` shards. The recovery controller selects exactly one initial mode from durable evidence and records that evidence; operators do not guess from Redis residue:
      - `replay_first`
-       - Use when the region is still on one coherent `region_epoch`, there is no evidence of mixed-epoch state, no duplicate durable batches, and surviving coordination residue can still be correlated to the durable batch/ledger timeline.
+       - Use only when durable records prove one coherent `region_epoch` and batch/ledger timeline. Surviving coordination residue may be correlated to that proof but cannot supply it.
        - Goal: preserve as much in-epoch work as possible by driving lingering `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`.
      - `reset_first`
-       - Use when the region is already `STALLED`, when mixed-epoch or orphaned coordination state is suspected, when duplicate/inconsistent durable batches are detected, or when replay-first fails to make bounded progress within the replay convergence budget.
+       - Use immediately when required durable evidence is missing or contradictory, the region is `STALLED`, mixed-epoch or orphaned state exists, duplicate/inconsistent durable batches are detected, or replay-first fails to make bounded progress within the replay convergence budget.
        - Goal: fence the old timeline with an epoch bump and use the canonical reset handshake to abandon or reconcile old-epoch work explicitly.
 3. **Act**
    1. If the chosen mode is `replay_first`:
