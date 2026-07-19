@@ -69,14 +69,16 @@ Redis coordination exposure is measured by the environment-specific unreplicated
 
 The tick system and Redis coordination-loss observations combine into a simple contract:
 
-- For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+- For each durably claimed or staged effect `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
   - Recent Redis scheduling/staging projections are lost or replayed, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
+- Execution attempts are physically at least once. Owner-local identity/digest guards permit at most one logical mutation, and `REPLAY_NOOP` is recorded as outcome evidence beneath terminal `APPLIED`; the contract does not promise one physical handler invocation.
+- An accepted command that never becomes durably claimed or staged has no effect-ledger row to abandon. Its command record instead converges to `executionOutcome = LOST_BEFORE_STAGING` and `gameplayResult = NOT_APPLIED` under the command-lifecycle contract.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
   - Guarded with idempotency checks that detect and short-circuit replays, or
   - Intentionally marked `ABANDONED` in the tick effect ledger with a precise reason (for example, reset scopes as described in the failures and operations doc).
 
-Players may observe delay, explicit non-application, or duplicated presentation feedback around failover boundaries, but committed authoritative state does not roll back and logical effects do not double-apply.
+Players may observe delay, explicit non-application, or duplicated presentation feedback around failover boundaries, but committed authoritative state does not roll back, logical effects do not double-apply, and effect-ledger status remains distinct from the derived command result.
 
 The measured unreplicated-write-window SLO is defined in `system-architecture-redis-operations.md`; ADR 0058 defines product outcomes. This section captures only their relationship to tick replay invariants.
 

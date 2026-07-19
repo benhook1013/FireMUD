@@ -101,6 +101,8 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
+- Physical handler execution is at least once. The immutable effect identity and request digest let owner-local guards permit at most one logical mutation; an authoritative replay no-op therefore terminates as `APPLIED` with outcome/reason `REPLAY_NOOP` rather than as another status.
+- Accepted commands that fail before durable claim/staging converge through command status as `LOST_BEFORE_STAGING` / `NOT_APPLIED`; recovery does not create a fictional effect-ledger row for them.
 - Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
 
 #### Replay Convergence SLO (Normative)
@@ -277,7 +279,7 @@ Common scenarios and invariants:
 - **Crash during AOF window (tail loss)**
   - Redis: some recent `pending`/lock/queue keys for the last ticks may be missing.
   - PostgreSQL: effects applied before the crash remain; very recent, in-flight effects may or may not have been applied.
-  - Invariants: no double-apply; some ticks may be lost or need manual reconstruction.
+  - Invariants: coordination projections may be lost, but accepted commands and durable effects retain their class-specific terminal outcomes; logical effects do not double-apply.
   - Action:
     - Metrics and dashboards surface gaps or stuck regions.
     - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, regionId, region_epoch)` combinations.
@@ -296,8 +298,8 @@ Common scenarios and invariants:
 - **Redis coordination cluster outage**
   - Redis: coordination keys temporarily unavailable; a tail window of recent `pending`/lock/queue state may be lost depending on failure and AOF configuration.
   - PostgreSQL: remains authoritative; effects committed before the outage are not rolled back.
-  - Invariants: no double-apply; some ticks may be lost or skipped, but already-applied effects are not undone.
-  - Action: Game Session halts ticks/commands for affected regions, following the Redis outage policy; after Redis recovers, the recovery subsystem and operators decide whether to skip, retry, or repair missing ticks.
+  - Invariants: coordination attempts may be delayed, rebuilt, or terminalized; accepted commands and durable effects are not silently lost, double-applied, or left permanently ambiguous.
+  - Action: Game Session halts ticks/commands for affected regions, following the Redis outage policy; after Redis recovers, the recovery subsystem converges durable effects and command records under their class-specific outcomes.
 
 These scenarios assume the Redis AOF is configured as described in `system-architecture-redis.md`. If AOF or replication settings differ, the same idempotency rules still apply, but the tail window for potential tick loss may change.
 
@@ -453,7 +455,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - If a feature still requires the intent, explicitly authorized reset tooling creates a new current-epoch effect identity linked to the abandoned row after revalidating current scope, ownership, location, aggregate versions, and feature policy. It never rewrites or rebinds the old row.
   - Player impact:
     - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
-    - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rewind/hiccup at the coordination layer, not silent corruption.
+    - Players may observe explicit non-application for accepted-but-unstaged commands or delay/replay/abandonment for durable effects; game UX must expose the resulting command outcome rather than describe ambiguous silent loss.
 
 - **Tenant-scoped reset**
   - Timeline impact:
