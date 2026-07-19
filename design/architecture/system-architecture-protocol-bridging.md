@@ -81,7 +81,7 @@ MCP negotiation and cord state are also scoped to a single TCP connection. When 
 The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves a clear set of ordering and delivery guarantees for **gameplay command streams from clients into Game Session**:
 
 - **Per-connection FIFO where delivered** – For a given Telnet/TCP or WebSocket connection, gameplay commands and text lines are forwarded to the Game Session Service in the same order they were accepted by the edge (TCP Proxy for Telnet, Gateway for WebSocket). No component in this client → Game Session command path intentionally reorders gameplay messages or generates duplicates.
-- **At-most-once delivery with bounded loss (gameplay commands)** – The edge protocol path for gameplay commands is **at most once**: once a command on a given connection is dropped by any edge layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. “Bounded” here means that potential loss is limited to the commands still resident in that layer’s per-connection buffers at the time of failure; there is no implicit replay across disconnects. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
+- **At-most-once edge delivery with bounded loss before acceptance** – The edge protocol path is **at most once**: once a command is dropped by an edge layer, that layer does not retry or replay it. Potential loss is limited to commands still resident before trusted Game Session acceptance; there is no implicit replay across disconnects. At trusted acceptance, Game Session assigns or preserves a stable `commandId` and durably records the command lifecycle before acknowledging it. Ordinary interactive commands remain tracked but non-replayable: internal loss before staging terminalizes as `LOST_BEFORE_STAGING` / `NOT_APPLIED` rather than silently disappearing or executing later. Internal retries use the same identity and owner guards; see [ADR 0062](./decisions/adr-0062-layered-gameplay-command-delivery-semantics.md) and [ADR 0016](./decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md).
 - **No replay of prior outbound stream across reconnects** – The edge does not preserve or replay previously-sent server text, WebSocket frames, or MCP messages onto a new client transport after reconnect. After resume, Game Session may send fresh post-`PLAY` state or summaries, but it must not treat the new transport as a continuation of the prior byte stream.
 - **At-least-once delivery (edge event sinks)** – Internal gRPC event sinks associated with the edge (for example the TCP Proxy’s `NotifyDisconnect` stream into Game Session) are intentionally **at-least-once** and must be consumed idempotently with respect to their idempotency keys, as described in [gRPC API Style & Versioning](./system-architecture-grpc.md#event-and-streaming-semantics). These streams are advisory hints that complement, but do not change, the at‑most‑once guarantees for client gameplay commands.
 - **Explicit drop conditions (edge layers)** – Commands or lines may be dropped under clearly defined conditions, including:
@@ -102,13 +102,15 @@ Domain services treat incoming commands as **idempotent with respect to their ef
 
 ### Gameplay Command Idempotency (Client View)
 
-External clients (WebSocket and Telnet) treat gameplay commands as **fire-and-forget** with respect to the edge:
+The base Telnet and plain-text WebSocket protocols treat gameplay commands as **fire-and-forget with respect to the edge**, not as untracked after Game Session acceptance:
 
 - Clients do not attach idempotency keys, effect identifiers, or per-command sequence numbers to text commands as part of the Telnet or WebSocket protocol described in this document.
-- When a command fails due to network loss, disconnect, or `backend_unavailable` conditions, clients surface the failure to the user and may choose to reissue the command as a new gameplay action, but there is no protocol-level replay contract.
-- Idempotency and replay safety for ambiguous situations inside the tick system are handled entirely by Game Session and domain services using internal effect IDs and transactional safeguards as described in [Transactions & Idempotency](./system-architecture-transactions.md).
+- Trusted Game Session ingress assigns the stable identity when the client does not provide one. A human player never types or manages that identity.
+- A versioned capable-client envelope may supply a `commandId` and use the canonical status API. Reusing that ID observes or advances the same logical record; it does not automatically make stale interactive intent replayable.
+- When a command is lost before trusted acceptance, the client may reissue it only as a new gameplay action. After acceptance, Game Session's durable status distinguishes applied, abandoned, and not-applied outcomes.
+- Automatic durable replay is limited to explicitly classified features with safe expiry and context preconditions.
 
-Architecture and service designs must not assume that external clients participate in any idempotency or sequence-key protocol beyond these fire-and-forget semantics.
+Architecture and service designs must not require base text clients to participate in an idempotency protocol. They must still preserve Game Session's assigned identity and durable outcome through every internal retry boundary.
 
 ### Telnet Disconnect Reasons
 

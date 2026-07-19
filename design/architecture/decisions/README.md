@@ -75,6 +75,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0059](./adr-0059-causal-floor-cross-service-presentation-reads.md) | Accepted | `SF-1` | `SF-2`, `GR-2`, `GR-3` | Common causal floor with distinct component versions for presentation reads |
 | [ADR 0060](./adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md) | Accepted | `GR-2` | `GR-1`, `GR-4`, `SF-2`, `PO-1` | World-owned ambient facts with Logic-owned consequences and durable effect admission |
 | [ADR 0061](./adr-0061-single-owner-spatial-mutations-across-split-authority.md) | Accepted | `GR-2` | `GR-3`, `GR-4`, `SF-2` | Single-owner spatial mutations across split World and Entity authority |
+| [ADR 0062](./adr-0062-layered-gameplay-command-delivery-semantics.md) | Accepted | `SF-1` | `SF-2`, `GR-1`, `AA-2`, `PO-2` | Layered edge, accepted-command, outbound, and internal-event delivery semantics |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

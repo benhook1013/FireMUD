@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 11 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 12 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **48** | **183** | `in-progress` |
+| **Total** | | **49** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -186,7 +186,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `ID-02` — `revised` on 2026-07-19; [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md)
 - [x] `MS-GR-AMBIENT-STATE-AUTHORITY` — `revised` on 2026-07-19; [ADR 0060](../../architecture/decisions/adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md)
 - [x] `SPATIAL-01` — `revised` on 2026-07-19; [ADR 0061](../../architecture/decisions/adr-0061-single-owner-spatial-mutations-across-split-authority.md)
-- [ ] `SESSION-06`
+- [x] `SESSION-06` — `revised` on 2026-07-19; [ADR 0062](../../architecture/decisions/adr-0062-layered-gameplay-command-delivery-semantics.md)
 - [ ] `SCRIPT-01`
 - [ ] `SCRIPT-04`
 - [ ] `TICK-09`
