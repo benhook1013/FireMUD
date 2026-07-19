@@ -234,7 +234,15 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 
 ## Login Modes
 
-Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected ordinary gameplay login modes. Both modes must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not mandatory gameplay contracts; stronger factors for elevated control-plane actions are a separate security policy.
+Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected ordinary login modes. Both modes must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator TOTP and a separate `otp` field are not ordinary gameplay contracts; TOTP is target-state only for entering bounded `platformAdmin` or cross-tenant `billingAdmin` elevation.
+
+### Sensitive Actions and Gameplay Handoff
+
+- Account identity/factor changes, new real-money charges, saved payment-instrument changes, global deletion, billing-owner transfer, and global administration are HTTPS-only account/control operations. Clients may be web, native, or CLI, but a Telnet gameplay connection cannot complete them or receive elevated authority.
+- Sensitive personal and billing mutations require recent ordinary reauthentication. Global privileged elevation additionally requires independent TOTP once per bounded elevated window, not once per action.
+- A gameplay client may explicitly initiate an eligible action and receive an opaque, short-lived, single-use HTTPS URL. Its server-side intent binds the initiating account, gameplay session, tenant when applicable, exact action, product and immutable amount/currency when applicable, and `requestId`. The URL contains no account, payment, or factor secret and grants no completion authority without independent HTTPS authentication and any required provider flow.
+- Account records only a verified, idempotent completion. Gameplay may poll or receive the resulting success, failure, expiry, or cancellation but cannot approve it.
+- Existing non-withdrawable premium-balance spending remains a confirmed, capped, idempotent gameplay mutation rather than a new real-money charge. Cash redemption, withdrawal, or cash-equivalent transfer is outside this contract.
 
 ## Login Error Codes
 
