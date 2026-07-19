@@ -509,15 +509,13 @@ For gameplay/chat moderation specifically, the operator policy plane and enforce
 
 Common gameplay commands must use a bounded synchronous fan-out model:
 
-- One service may orchestrate a hot-path read or command evaluation, but downstream participants on that path should avoid recursively building new cross-service fan-out trees.
+- Under [ADR 0056](./decisions/adr-0056-one-hot-path-fan-out-owner.md), each operation has one ingress/dispatch step and exactly one designated synchronous fan-out owner. The dispatch hop is not an authoritative participant. The fan-out owner may call at most two authoritative downstream domain participants across the transitive critical path, and those participants must not create further synchronous fan-out.
 - Read-heavy commands with stable transcript shapes (for example `LOOK`) should prefer pre-rendered or pre-aggregated gameplay read models where available, such as Game Session-owned `view:room-look:*` caches, with authoritative recomputation on miss.
 - For `LOOK`-class reads, World Management remains the authority for room snapshot and occupancy, while Entity Management enriches caller-supplied occupant/entity references with entity-owned display state. Entity Management should not make a nested occupancy fetch back into World Management on the steady-state hot path.
-- New command designs that require synchronous calls to more than two downstream domain services in steady-state must document latency budgets, fallback behavior, and why a read model or pre-aggregation approach is insufficient.
-- Initial-slice movement and region-transition orchestration is the explicit exception to the two-downstream-service ceiling. That path may synchronously involve Game Logic, World Management, and Entity Management under Game Session orchestration only because occupancy, deterministic movement rules, and entity-side consequences must commit under one fenced tick/effect contract.
-- This exception is narrow and must preserve a concrete budget/fallback contract:
-  - target steady-state budget: one fenced movement orchestration attempt must complete within the command latency envelope for the active tick budget; if that budget cannot be met, the command fails closed rather than degrading into partial cross-service success;
-  - fallback behavior: if any required participant is unavailable or rejects the current fence/effect identity, the movement command is not partially committed and must converge through the same retry/reconciliation path documented for spatial/ambient effects rather than inventing a second hot-path repair flow;
-  - no additional downstream participant may be added to this steady-state synchronous movement path without a new architecture-level decision.
+- `LOOK` and movement both fit the ordinary pattern: Game Session dispatches to Game Logic as fan-out owner, and Game Logic coordinates World and Entity as its two authoritative participants. There is no separate movement participant-count exception.
+- The structural ceiling is supplemented by a measured contract covering every RPC stage, repeated call, retry, timeout, p95/p99 latency budget, fallback, and fail-closed behavior. Independent reads should be parallel where safe.
+- A third authoritative participant requires a new architecture-level decision documenting measured latency/availability, fallback, and why a coarser API, projection, read model, or asynchronous effect is insufficient.
+- If a required participant is unavailable or rejects the current fence/effect identity, the operation fails or remains pending and converges through the canonical reconciliation path; it never degrades into partial success merely to meet latency.
 
 This section is normative for service-level API design. Service docs must treat the bounded fan-out rule as a contract, not as optional performance guidance.
 
@@ -557,10 +555,10 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 ### Command Fan-Out, Orchestration, and Scaling
 
-Game Session Service is an **orchestrator**, not a business-logic owner. To avoid turning it into an accidental monolith and to keep latency predictable:
+Game Session Service owns tick pacing and dispatch, not business logic. A command's designated fan-out owner—often Game Logic—owns its bounded synchronous domain-call graph:
 
 - Gameplay commands are represented as **coarse-grained operations** (for example, “execute command for character in region X”) rather than many fine-grained calls.
-- Game Session may issue a small, bounded number of synchronous gRPC calls per command (for example, a single call to Game Logic plus at most one read-model fetch). If a feature would require more than this, the design must introduce read models, projections, or caching instead of adding further fan-out.
+- Game Session normally issues one coarse-grained dispatch to the fan-out owner. That owner may synchronously coordinate at most two authoritative participants; participants do not fan out further. Read models, projections, or durable asynchronous effects handle supplemental work.
 - Game Logic Service owns deterministic mechanics (combat, movement, progression). Game Session is responsible for ordering, conflict resolution, and deciding when to invoke Logic and when to defer or drop commands based on tick and quota state.
 - Horizontal scaling is based on **tenant + tick-region** sharding. Redis keys for **region-local coordination** (for example, `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`) must be designed so that all state needed for a tick region can be executed locally on a single Game Session shard. Gameplay session bindings are not region-hash-scoped; they are tenant/instance scoped (for example, `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) and follow authentication/reconnection lifecycles rather than region epochs.
 - Session front-end to lease-owner forwarding is itself a coarse-grained Game Session internal call. It must use fenced identity, preserve per-session ordering, and must not devolve into ad hoc fan-out from front-end pods directly to multiple gameplay-domain services.

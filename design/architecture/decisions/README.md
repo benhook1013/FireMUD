@@ -69,6 +69,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Local idempotent gameplay effects with stronger atomicity selected by invariant class |
 | [ADR 0054](./adr-0054-split-spatial-authority-with-causal-read-composition.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Split spatial authority with operation-bound effects and causal presentation reads |
 | [ADR 0055](./adr-0055-durable-cross-region-effects-with-static-live-topology.md) | Accepted | `GR-2` | `GR-1`, `SF-2`, `PO-4` | Durable asynchronous cross-region effects with static live topology and maintenance cutover |
+| [ADR 0056](./adr-0056-one-hot-path-fan-out-owner.md) | Accepted | `GR-1` | `GR-2`, `GR-3`, `SF-2`, `PO-4` | One hot-path fan-out owner with at most two authoritative participants |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
