@@ -84,14 +84,17 @@ The measured unreplicated-write-window SLO is defined in `system-architecture-re
 
 ### Isolation Within a Tick
 
-Per-tick isolation is defined explicitly so replay and fairness remain deterministic:
+Per-tick isolation uses bounded semantic-phase visibility rather than a universal speculative overlay:
 
-- Actions may only see staged state from the **current** tick for their `<tenantId, regionId>`.
-- Changes from other tick regions or from **future** ticks in the same region are invisible while a tick is in progress.
-- Changes staged earlier in the same tick are composable: later actions in that tick may observe them when computing their own outcomes.
-- When required state is missing or inconsistent, the action must fail and retry under the normal retry/backoff rules rather than speculatively mixing cross-tick or cross-region reads.
+- The tick records a stable committed pre-tick causal base for its tenant, game instance, region, epoch, and prior committed tick. This is logical resolution evidence, not a claim of distributed MVCC, equal cross-service versions, or the presentation-only causal floor from ADR 0059.
+- Start-of-tick passive and inbound effects execute first and must have authoritative durable results before actor resolution begins.
+- Root actor actions use one persisted stable post-passive resolution basis. They do not observe mutations from other root actor actions in the same tick, regardless of manifest order or completion timing.
+- Generated effects may depend only on their own parent's durable confirmed result and use the parent's persisted order plus deterministic child ordinals. They do not gain arbitrary visibility into unrelated root actions.
+- Owner services still enforce exact scope, epoch, location, holder, identity, request-digest, and aggregate-version preconditions. Recorded ordering or phase evidence never substitutes for mutation guards.
+- Raw Redis `pending`, uncommitted staged intent, independently fresh mixed-fence reads, other regions, and future ticks are never valid resolution inputs. Missing required evidence produces a bounded wait, failure, or retry.
+- Replay uses the recorded causal base, post-passive resolution basis, manifest order, parent result, and child ordinals. It does not re-resolve from newer state.
 
-These rules ensure clean, replayable ticks and keep visual or scripting shortcuts from leaking inconsistent state across ticks.
+Consequently, passive poison may prevent an actor action and a confirmed attack may generate immediate lifesteal, but one root actor opening a door, dropping an item, buffing an ally, or stunning another actor ordinarily affects that other actor on the next tick. A future feature may opt into a catalogued cross-root same-tick dependency only through a separate design that records its dependency, ordering, partial-failure, and replay semantics.
 
 ## Locking and Multi-Entity Commands (Conceptual)
 

@@ -83,6 +83,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0067](./adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md) | Accepted | `GR-1` | `SF-2`, `GR-2`, `AS-1`, `PO-4` | Old-epoch work abandoned immutably and reconstructed only with a new lineage-linked identity |
 | [ADR 0068](./adr-0068-evidence-derived-bounded-tick-ledger-recovery.md) | Accepted | `PO-4` | `GR-1`, `SF-2`, `PO-1`, `SF-1` | Evidence-derived convergence SLO with bounded fair Game Session-owned ledger recovery |
 | [ADR 0069](./adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | At-least-once physical effect attempts with one guarded logical mutation and terminal outcome |
+| [ADR 0070](./adr-0070-bounded-within-tick-visibility-by-semantic-phase.md) | Accepted | `GR-1` | `GR-2`, `GR-4`, `SF-2` | Bounded within-tick visibility across passive, root-actor, and parent-generated phases |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

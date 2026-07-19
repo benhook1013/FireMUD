@@ -42,10 +42,11 @@ Within a region’s tick, each command proceeds through several phases:
    - Game Session accepts commands from Telnet and WebSocket clients, AI, or automation.
    - Commands are enqueued into per-entity (or occasionally per-region) queues such as `tick:{tenantRegionTag}:queue:<entityId>`.
 2. **Target Resolution (read-only)**
-   - During the tick, the executor resolves targets from the pinned snapshot for that `<tenantId, regionId>`:
+   - During the tick, the executor resolves targets from the persisted resolution basis for that semantic phase and `<tenantId, gameInstanceId, regionId, regionEpoch>`:
      - Single-target actions select a specific entity or room.
      - Multi-target actions derive a bounded set of entity IDs from local region state (room occupants, threat lists, groups).
-   - This phase is read-only with respect to durable state; it decides *what* to touch without mutating Redis or PostgreSQL.
+   - Start-passive results are authoritative before actor resolution. Root actor actions share the stable post-passive basis and do not observe other root actor mutations from the same tick. Generated effects may depend only on their own parent's durable confirmed result.
+   - This phase is read-only with respect to durable domain state; it decides *what* to touch without treating raw Redis pending intent or independently fresh mixed-fence reads as authority.
 3. **Region-Local Mutations**
    - For purely local effects, the executor acquires the relevant entity lock(s) under `tick:{tenantRegionTag}:lock:<entityId>` and stages effects into `tick:{tenantRegionTag}:pending` via Lua.
    - Domain services apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)`.
@@ -230,10 +231,13 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Reserves separate regional count/cost budgets for actor actions and effect phases so one lane cannot exhaust the other's capacity.
    - Orders eligible work within each entity by the persisted canonical tuple, then selects entities through the lane's persisted deterministic rotating/deficit scheduler. Non-best-effort work has bounded aging or `maxDeferralTicks`; explicitly best-effort work follows its declared delay/drop policy.
    - Persists the selected ordered manifest and scheduler-state advance atomically before source work becomes exclusive. Replay uses the recorded selection rather than recomputing it from changed queues.
-3. Stages effects:
-   - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
-4. Applies and commits:
-   - Invokes domain services to apply effects under idempotent rules.
+3. Resolves and applies semantic phases:
+   - Records the stable committed pre-tick causal base on the tick batch.
+   - Under the region lease and entity locks, stages start-passive and inbound effects, invokes owner services under idempotent guards, and durably records their results before actor resolution.
+   - Persists the stable post-passive actor resolution basis. All root actor actions resolve from that basis before another root actor's writes become visible to them, then stage and apply in recorded manifest order under exact owner preconditions. A stale competing mutation fails, retries, or becomes explicitly not applied.
+   - After each root actor has a durable confirmed result, appends only its deterministic generated children to the batch using parent order plus child ordinal, within the reserved generated-effect budget, and applies them under the same ledger and guard rules.
+   - Redis `pending` remains coordination state and never becomes authoritative read input for another action.
+4. Commits and clears coordination:
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
    - Does not stage the next regional tick until the current tick is durably terminal and matching epoch/tick/lease/fence cleanup has completed.
 

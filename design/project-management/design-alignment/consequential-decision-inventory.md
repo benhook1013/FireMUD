@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 19 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 20 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **56** | **183** | `in-progress` |
+| **Total** | | **57** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -194,7 +194,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-14` — `revised` on 2026-07-19; [ADR 0067](../../architecture/decisions/adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md)
 - [x] `TICK-15` — `revised` on 2026-07-19; [ADR 0068](../../architecture/decisions/adr-0068-evidence-derived-bounded-tick-ledger-recovery.md)
 - [x] `TICK-16` — `revised` on 2026-07-19; [ADR 0069](../../architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md)
-- [ ] `TICK-17`
+- [x] `TICK-17` — `revised` on 2026-07-19; [ADR 0070](../../architecture/decisions/adr-0070-bounded-within-tick-visibility-by-semantic-phase.md)
 - [ ] `TICK-19`
 
 #### Packet 3 P1
