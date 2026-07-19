@@ -339,7 +339,7 @@ def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime |
 
 
 def is_substantive_review_body(body: str) -> bool:
-    return SUBSTANTIVE_REVIEW_MARKER in body or "Actionable comments posted:" in body
+    return SUBSTANTIVE_REVIEW_MARKER in body or ACTIONABLE_COMMENTS_MARKER in body
 
 
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:

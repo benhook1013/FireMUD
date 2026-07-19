@@ -93,8 +93,21 @@ def main() -> None:
             "../../../web-client/package.json",
             "proof",
             "audited",
-            "No focused browser test is present; the package exposes scripts only.",
+            "No focused executable proof: the package exposes scripts only.",
             "audit-context-positive",
+        )
+        expect_failure(
+            "audit context without absence marker",
+            lambda: validator.validate_evidence_anchor(
+                root,
+                owner,
+                "../../../web-client/package.json",
+                "proof",
+                "audited",
+                "The package exposes scripts only.",
+                "audit-context-negative",
+            ),
+            "tests or canonical validation/smoke tooling",
         )
         for target, context in (
             ("../../../dev-tools/tests/architecture-doc-contracts.sh", "validation-tool-positive"),
@@ -215,13 +228,39 @@ def main() -> None:
         )
         validator.validate_evidence_presence(
             "not-implemented",
+            "unverified",
             ["[design](x)", "No production anchor: no implementation exists.", "[proof](x)"],
             "absent-production-positive",
+        )
+        validator.validate_evidence_presence(
+            "partial",
+            "audited",
+            [
+                "[design](x)",
+                "[implementation](x)",
+                "No focused executable proof: [package](../../../web-client/package.json) is audit context only.",
+            ],
+            "audited-proof-absence-positive",
+        )
+        expect_failure(
+            "audit context does not satisfy proof presence",
+            lambda: validator.validate_evidence_presence(
+                "partial",
+                "audited",
+                [
+                    "[design](x)",
+                    "[implementation](x)",
+                    "[package](../../../web-client/package.json) is audit context only.",
+                ],
+                "audited-proof-absence-negative",
+            ),
+            "audited rows without one must use No focused executable proof:",
         )
         expect_failure(
             "missing production anchor without explicit rationale",
             lambda: validator.validate_evidence_presence(
                 "not-implemented",
+                "unverified",
                 ["[design](x)", "No implementation exists.", "[proof](x)"],
                 "absent-production-negative",
             ),
@@ -231,6 +270,7 @@ def main() -> None:
             "implemented row without production anchor",
             lambda: validator.validate_evidence_presence(
                 "implemented",
+                "proven",
                 ["[design](x)", "No production anchor: missing.", "[proof](x)"],
                 "implemented-production-negative",
             ),

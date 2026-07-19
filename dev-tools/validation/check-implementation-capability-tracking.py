@@ -43,6 +43,7 @@ CAPABILITY_RE = re.compile(r"[A-Z]{2}-\d+\.\d+")
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx"}
 AUDIT_CONTEXT_NAMES = {"README.md", "package.json"}
+NO_FOCUSED_PROOF_MARKER = "No focused executable proof:"
 PRODUCTION_ANCHOR_OPTIONAL_STATES = {"not-implemented", "design-unresolved", "not-applicable"}
 CANONICAL_PROOF_TOOLS = {
     "dev-tools/backups/verify-backups.sh",
@@ -196,11 +197,7 @@ def is_audit_context(verification: str, cell: str, relative: str) -> bool:
         return False
     if Path(relative).name not in AUDIT_CONTEXT_NAMES or relative.startswith("design/"):
         return False
-    lowered = cell.lower()
-    return (
-        re.search(r"\bno\b[^.]{0,120}\b(?:test|proof|executable)\b", lowered) is not None
-        or re.search(r"\brather than\b[^.]{0,100}\bproof\b", lowered) is not None
-    )
+    return NO_FOCUSED_PROOF_MARKER.casefold() in cell.casefold()
 
 
 def validate_evidence_anchor(
@@ -296,11 +293,30 @@ def level_two_section(text: str, heading: str, context: str) -> str:
 
 def validate_evidence_presence(
     implementation: str,
+    verification: str,
     cells: list[str],
     context: str,
 ) -> None:
     for label, cell in zip(("design", "implementation", "proof"), cells, strict=True):
-        if MARKDOWN_LINK_RE.search(cell):
+        links = MARKDOWN_LINK_RE.findall(cell)
+        if label == "proof":
+            executable_links = [
+                target
+                for target in links
+                if Path(unquote(target.split("#", 1)[0])).name not in AUDIT_CONTEXT_NAMES
+            ]
+            if executable_links:
+                continue
+            if (
+                verification == "audited"
+                and NO_FOCUSED_PROOF_MARKER.casefold() in cell.casefold()
+            ):
+                continue
+            fail(
+                f"{context}: proof evidence must include an executable repository link; "
+                f"audited rows without one must use {NO_FOCUSED_PROOF_MARKER}"
+            )
+        if links:
             continue
         if (
             label == "implementation"
@@ -504,7 +520,12 @@ def main() -> None:
             verification = state(cells[2], VERIFICATION_STATES, f"{tracker_name}:{capability_id}")
             if any(not cell for cell in cells[3:]):
                 fail(f"{tracker_name}:{capability_id}: design, anchors, handoffs, and gap cells are required")
-            validate_evidence_presence(implementation, cells[3:6], f"{tracker_name}:{capability_id}")
+            validate_evidence_presence(
+                implementation,
+                verification,
+                cells[3:6],
+                f"{tracker_name}:{capability_id}",
+            )
             validate_evidence_links(root, path, capability_id, verification, cells[3:6])
             if (implementation == "not-applicable") != (verification == "not-applicable"):
                 fail(f"{tracker_name}:{capability_id}: not-applicable states must be paired")
