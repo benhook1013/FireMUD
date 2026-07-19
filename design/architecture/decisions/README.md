@@ -77,6 +77,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0061](./adr-0061-single-owner-spatial-mutations-across-split-authority.md) | Accepted | `GR-2` | `GR-3`, `GR-4`, `SF-2` | Single-owner spatial mutations across split World and Entity authority |
 | [ADR 0062](./adr-0062-layered-gameplay-command-delivery-semantics.md) | Accepted | `SF-1` | `SF-2`, `GR-1`, `AA-2`, `PO-2` | Layered edge, accepted-command, outbound, and internal-event delivery semantics |
 | [ADR 0063](./adr-0063-durable-per-dispatch-script-handoff.md) | Accepted | `AS-1` | `SF-2`, `GR-1`, `PO-4` | PostgreSQL-authoritative script work items with durable per-command dispatch children |
+| [ADR 0064](./adr-0064-stage-qualified-script-outcomes.md) | Accepted | `AS-1` | `PO-4`, `SF-2`, `SF-1` | Stage-qualified scripting outcomes with authoritative per-command gameplay results |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

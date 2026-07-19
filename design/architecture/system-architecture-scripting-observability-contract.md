@@ -84,7 +84,7 @@ Stages:
 - `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
-- `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
+- `TICK_HANDOFF` – every required child dispatch was durably accepted by Game Session (the point at which `finalOutcome=handoff_accepted` is allowed).
 - `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
 
 Required fields:
@@ -103,7 +103,8 @@ If a structured `stages` array is not used, equivalent per-stage fields must exi
 
 Stage semantics:
 
-- `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
+- `finalOutcome=handoff_accepted` must imply `finalStage=TICK_HANDOFF` and durable acceptance of every required child dispatch. It does not imply gameplay application.
+- A valid live handler that intentionally emits no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`.
 - Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; it is not a live gameplay success signal.
 - `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
@@ -111,28 +112,30 @@ Stage semantics:
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
-### Supplementary Execution Disposition (Required When Present)
+### Per-Dispatch Gameplay Outcomes and Derived Handler Summary
 
-`script_event_audit` is the canonical lifecycle record through `TICK_HANDOFF`, but Game Session may later reject handed-off commands at execution-time version fences during rollback or plugin version changes. Tooling must not rely on metrics alone to correlate those drops back to the original trigger.
+`script_event_audit` is authoritative only for the handler pipeline through `TICK_HANDOFF`. Every emitted command has a durable child keyed by `automationDispatchId` and linked to the authoritative Game Session `commandId` and command lifecycle. Applied, not-applied, partial, abandoned, replay-no-op, and execution-fence results remain per-command facts; tooling must not rely on metrics or one handler scalar to represent them.
 
-When a downstream service reports such a post-handoff rejection, the audit surface must expose an `executionDisposition` object keyed to the same Trigger Identity with:
+The correlated query surface exposes one entry per dispatch containing at least:
 
-- `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
-- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
-- `recordedAt` – timestamp.
-- `sourceService` – producer of the disposition (for example `game-session`).
+- `automationDispatchId` and Game Session `commandId` when assigned;
+- durable handoff outcome;
+- current `executionOutcome` and `gameplayResult` from Game Session;
+- bounded reason and timestamp; and
+- a link to the authoritative command-status record.
 
 Rules:
 
-- `executionDisposition` does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned pipeline result.
-- A trigger may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, and later `executionDisposition.outcome=version_fence_dropped`.
-- When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
+- Per-dispatch outcomes do not replace the Automation-owned `finalStage` / `finalOutcome`.
+- A handler may show `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` while one later command is applied and another is abandoned.
+- A handler-level post-handoff summary is a rebuildable projection containing counts and links. It may report all applied, none applied, partial, or abandoned, but never becomes command-outcome authority.
+- UI/query surfaces return the pipeline record, derived summary, and dispatch links together.
 
 Concrete example:
 
-- `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- Later, Game Session rejects the queued command during rollback convergence and appends `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session, recordedAt=... }`.
-- Queries for `T123` must surface both facts in one result so operators can tell that Automation succeeded but gameplay execution was later fenced.
+- Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
+- One dispatch later becomes `APPLIED/SUCCESS`; another becomes `ABANDONED/NOT_APPLIED` because of a version fence.
+- Queries for `T123` surface both authoritative command results and derive a partial handler summary without rewriting the handoff fact.
 
 Illustrative record shape:
 
@@ -149,7 +152,7 @@ Illustrative record shape:
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
   "finalStage": "TICK_HANDOFF",
-  "finalOutcome": "success",
+  "finalOutcome": "handoff_accepted",
   "finalReason": "accepted_into_tick_queue",
   "stages": [
     {
@@ -172,21 +175,24 @@ Illustrative record shape:
     },
     {
       "stage": "TICK_HANDOFF",
-      "outcome": "success",
+      "outcome": "handoff_accepted",
       "reason": "accepted_into_tick_queue",
       "at": "2026-03-19T08:10:01Z"
     }
   ],
-  "executionDisposition": {
-    "outcome": "version_fence_dropped",
-    "reason": "script_patch_mismatch",
-    "sourceService": "game-session",
-    "recordedAt": "2026-03-19T08:10:03Z"
-  }
+  "dispatchSummary": {
+    "applied": 1,
+    "notApplied": 1,
+    "result": "partial"
+  },
+  "dispatches": [
+    { "automationDispatchId": "W1#0", "commandId": "C1", "executionOutcome": "APPLIED", "gameplayResult": "SUCCESS" },
+    { "automationDispatchId": "W1#1", "commandId": "C2", "executionOutcome": "ABANDONED", "gameplayResult": "NOT_APPLIED" }
+  ]
 }
 ```
 
-This example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned final stage/outcome, and an optional later downstream execution disposition.
+This example is illustrative rather than prescriptive about JSON layout, but every API or query surface preserves one Automation-owned pipeline outcome plus authoritative per-dispatch links and a rebuildable summary.
 
 ### Canonical Outcome Taxonomy (Required)
 
@@ -222,7 +228,7 @@ If limits are exceeded, writers must truncate deterministically and set `finalRe
 
 When `policyViolations` is present, `decision` values and final outcomes must align with policy mode:
 
-- If all entries have `decision=REPORT_ONLY`, execution may continue and `finalOutcome` must still represent pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is not valid in this case.
+- If all entries have `decision=REPORT_ONLY`, execution may continue and `finalOutcome` must still represent the stage-qualified pipeline result (`handoff_accepted`, `completed_no_commands`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is not valid in this case.
 - If any entry has `decision=BLOCKED`, admission must stop with `finalStage=ADMISSION` and `finalOutcome=plugin_component_blocked`.
 - `automation_plugin_policy_violations_total` must be emitted in both report-only and enforcing modes so operators can compare rollout behavior before and after enforcement.
 

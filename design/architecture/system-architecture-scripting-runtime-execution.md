@@ -218,7 +218,8 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 Script evaluation may retry after infrastructure failure under the same full Trigger Identity. Retries must converge on one durable logical work item and one deterministic child dispatch per emitted command; they do not promise that sandbox evaluation code physically ran at most once. Common outcome classes include:
 
-- `success`
+- `handoff_accepted`
+- `completed_no_commands`
 - `quota_denied`
 - `sandbox_error`
 - `validation_error`
@@ -230,7 +231,7 @@ Script evaluation may retry after infrastructure failure under the same full Tri
 
 Component safety classification for core scripts is fixed at validation and readiness time, not reevaluated as a live runtime policy on already-READY patches.
 
-`success` is valid only after tick-handoff acceptance, not merely after DSL evaluation. Audit records therefore stay stage-aware through `finalStage`, `finalOutcome`, and `finalReason` rather than collapsing runtime behavior into a single undifferentiated status.
+`handoff_accepted` is valid only after every required child dispatch is durably accepted by Game Session; it is not gameplay success. A valid live evaluation that intentionally emits no commands uses `completed_no_commands` at `DSL_EVAL`. Audit records stay stage-aware, while later gameplay truth remains per dispatch.
 
 Retry behavior:
 
@@ -276,5 +277,5 @@ Failure handling:
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not claim `handoff_accepted`.
 Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all per-script `onLoad` runs; the patch becomes `READY` only after every required `onLoad` handler succeeds.

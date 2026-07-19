@@ -94,7 +94,7 @@ In addition to live event handling, the service exposes a non-committing test pa
 
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of persisting and indexing work items or handing off to tick queues, test runs return the would-be commands to the caller for inspection.
-- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful test executions use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `TICK_HANDOFF` or live `success`.
+- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful test executions use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `TICK_HANDOFF` or `handoff_accepted`.
 - Dry-run and test requests must use an idempotency namespace separate from live traffic so test calls cannot dedupe, suppress, or overwrite live trigger records.
 - Dry-run and test APIs should use server-generated `scriptEventId` values by default. If tooling passes a caller-supplied value, the service must enforce namespace validation and reject identity collisions deterministically.
 - By default, dry runs do not consume `ScriptQuotaService` windows or tenant automation budgets and must not increment live-traffic error counters.

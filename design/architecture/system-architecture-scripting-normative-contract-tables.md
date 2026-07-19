@@ -110,12 +110,12 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 ### Required Stage Set
 
-| `finalStage` | Meaning | “Success” allowed? |
+| `finalStage` | Meaning | Successful terminal outcome allowed? |
 | --- | --- | --- |
 | `ADMISSION` | Pre-evaluation decisions: quotas, reload backpressure, disabled scripts, invalid version, policy enforcement. No DSL run occurs. | No |
-| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | No |
+| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | Only `readiness_success` or `completed_no_commands` in their declared cases |
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
-| `TICK_HANDOFF` | Handoff to Game Session and acceptance into tick queues. | Yes |
+| `TICK_HANDOFF` | Durable handoff of every required dispatch to Game Session. | Only `handoff_accepted` |
 | `DRY_RUN_RESULT` | Non-committing dry-run/test result after DSL evaluation; would-be commands are returned to the authorized caller and are not persisted or handed off. Allowed only when `isDryRun=true`. | Yes, but only with `finalOutcome=dry_run_success`. |
 
 ### Required Audit Write Semantics (Normative)
@@ -133,19 +133,19 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | Stage | Required rule |
 | --- | --- |
 | `ADMISSION` | Must record explicit backpressure outcomes during `reloadState=RELOADING` (`finalOutcome=skipped_reloading`) and `PAUSED_FOR_ROLLBACK` (`finalOutcome=rollback_paused`) rather than silent drops. |
-| `DSL_EVAL` | Sandbox failures must be recorded as `finalOutcome=sandbox_error` with a specific `finalReason` (for example `cpu_budget_exceeded`, `memory_budget_exceeded`). |
+| `DSL_EVAL` | Sandbox failures use `finalOutcome=sandbox_error`. A valid live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`; it does not claim handoff. |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
-| `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
+| `TICK_HANDOFF` | `finalOutcome=handoff_accepted` is permitted only when Game Session has durably accepted every required child dispatch. Evaluation or partial handoff is not handoff acceptance. |
 | `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for authorized `isDryRun=true` executions after DSL evaluation completes and the non-committing result has been returned or stored for inspection. It must not imply durable work-item persistence or tick handoff. |
 
 Additional non-committing terminal outcome rules:
 
-- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`, and a bounded `finalReason` such as `ready_for_tenant`. It must not use live `finalOutcome=success`, because no gameplay work item or tick handoff exists for readiness-only execution.
+- Tenant-readiness `onLoad` completion uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; a live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`. Neither claims `handoff_accepted`.
 - Control-plane or rollback fencing that intentionally prevents an already admitted execution from persisting or handing off must use `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
 Supplementary post-handoff correlation rule:
 
-- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed through the same Trigger Identity via the observability contract's supplementary `executionDisposition` surface, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- Post-handoff gameplay results and version/plugin fence drops must not be left as metrics-only signals. Each durable `automationDispatchId` links to its authoritative Game Session command lifecycle; handler-level summaries are derived counts and links rather than one replacement outcome.
 
 ### Canonical `finalOutcome` Values (Normative)
 
@@ -157,7 +157,8 @@ Taxonomy governance rule:
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
-| `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
+| `handoff_accepted` | `TICK_HANDOFF` | Every required child dispatch was durably accepted by Game Session; this is not gameplay application. |
+| `completed_no_commands` | `DSL_EVAL` | A valid live handler evaluated and intentionally emitted no commands. |
 | `readiness_success` | `DSL_EVAL` | Tenant-readiness `onLoad` completed successfully and contributed to patch readiness. No work item or tick handoff was created. |
 | `dry_run_success` | `DRY_RUN_RESULT` | Non-committing dry-run/test execution completed and returned would-be commands for inspection. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
@@ -211,7 +212,7 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | Runtime scope / epoch change before due-point admission | Do not remint stale due points under the newer `(regionId, regionEpoch)` timeline. Advance the schedule to the next valid due point for the new scope and treat the old due point as fenced. | Record the dropped candidate against the old Trigger Identity with `finalStage=ADMISSION`, `finalOutcome=canceled`, and `finalReason=runtime_scope_changed`, and emit the runtime-fence metric. |
 | Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window unless the next valid cadence boundary lands exactly on resume. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
-| Infrastructure error after admission | Do not re-run the DSL body for the same `scriptEventId`. Only idempotent downstream ops may retry. | `finalStage` must reflect where it failed; do not record `success`. |
+| Infrastructure error after admission | Evaluation may retry only under the same full Trigger Identity and must converge on the same work item/dispatch identities. Downstream retries remain idempotent. | `finalStage` must reflect where it failed; do not record `handoff_accepted` without full durable child acceptance. |
 
 ## Table 4: Metrics Label Matrix
 

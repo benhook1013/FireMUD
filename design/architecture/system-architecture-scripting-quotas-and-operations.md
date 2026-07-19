@@ -261,7 +261,7 @@ At the metric layer, these rows should contribute to the same bounded rollback/d
 
 Concrete rollback-visibility example:
 
-- Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
+- Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` after every required child dispatch is durably accepted by Game Session.
 - Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
 - Game Session rejects the queued command on its execution-time version fence and publishes `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session }` for Trigger Identity `T123`.
 - Operator tooling for `T123` must therefore show both the successful Automation pipeline result and the later execution-time fence drop, rather than overwriting one with the other.
@@ -282,7 +282,7 @@ Metrics such as:
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
 
-- `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
+- `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=handoff_accepted`.
 - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:

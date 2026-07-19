@@ -21,7 +21,7 @@ Audit and outcomes must distinguish between:
 - “DSL evaluated successfully” vs
 - “commands were accepted into the tick system”.
 
-By default, live `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated. The audit record must also be stage-aware (for example `finalStage=TICK_HANDOFF`) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`. Dry-run/test success uses the separate non-committing outcome `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`.
+Live `script_event_audit.finalOutcome=handoff_accepted` means every required child dispatch was durably accepted by Game Session, not that the DSL merely evaluated or gameplay applied. A valid handler emitting no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`. Dry-run/test success remains `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`. Per-command gameplay outcomes remain authoritative in Game Session and are linked through each `automationDispatchId` as specified in [ADR 0064](./decisions/adr-0064-stage-qualified-script-outcomes.md).
 
 ### 3) Version Fencing (Rollback Safety)
 
