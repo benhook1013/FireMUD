@@ -146,11 +146,20 @@ Durations may be scaled dynamically:
 
 Tick-driven effects may enqueue follow-up actions (for example, explosions spawning secondary hits, traps triggering additional effects, or scripted chains). To avoid unbounded recursion and re-entrancy:
 
-- Each action carries a `tickChainDepth` that increments whenever the action spawns follow-up work.
-- A configuration value such as `MAX_TICK_CHAIN_DEPTH` (default 8) defines the maximum allowed chain depth.
-- When the chain depth limit is exceeded, the new action is not enqueued; prior committed effects remain in place, and a warning is logged so designers can tune or fix the offending behavior.
+- Each child carries immutable root and parent effect identities, `tickChainDepth = parentDepth + 1`, and a deterministic child ordinal covered by its request digest. Retry/replay reuses that identity and depth; it never increments again or remints the child.
+- A platform hard depth ceiling uses `8` as its bootstrap default. Each root chain also has deterministic total child-count and declared-cost budgets plus a per-target cap. Features may select lower limits but cannot exceed operator/platform bounds.
+- When any limit would be exceeded, the new child is not enqueued and prior committed effects remain. Every generated child is declared required or optional so suppression derives the parent command's `SUCCESS`, `PARTIAL`, or `FAILED` result truthfully.
 
-This invariant ensures that even highly scripted encounters remain bounded and observable under the tick model.
+Every suppression writes durable diagnostic evidence containing the root and parent identities, authored feature/script/version, rejected child ordinal, limit reason (`depth`, `count`, `cost`, or `per_target`), actual and configured values, required/optional class, and derived player outcome. Bounded metrics expose suppression reason, depth/cost bands, suppression ratio, required/optional class, and partial/failed command totals; raw tenant, script, effect, and version identities remain queryable through audit rather than Prometheus labels.
+
+Alert routing distinguishes intent:
+
+- one optional one-off suppression is audit-only;
+- repeated optional suppression from one authored source produces a designer warning;
+- any required-child suppression produces a prompt gameplay/correctness alert; and
+- sustained aggregate suppression or associated tick degradation produces an operational alert/page.
+
+Depth, count, cost, and per-target bounds together ensure that highly scripted encounters remain bounded and observable without treating an intentional safety catch as automatically equivalent to a production incident.
 
 ## Tick Budget, TTLs, and Region Health (Conceptual)
 

@@ -481,14 +481,14 @@ Worked reset example:
 
 Some effects (for example, explosions, chained spells, scripted traps) spawn follow-up actions. To keep this behavior bounded:
 
-- Each action tracks a `tickChainDepth` that increments whenever it spawns follow-up work.
-- A configuration such as `MAX_TICK_CHAIN_DEPTH` (default 8) defines the maximum allowed chain depth for a single originating action.
-- When a follow-up would exceed `MAX_TICK_CHAIN_DEPTH`:
+- Each generated child persists its root/parent identities, `tickChainDepth = parentDepth + 1`, deterministic child ordinal, required/optional class, and declared cost as digest-bound inputs.
+- A platform depth ceiling (`8` bootstrap default), total root-chain count/cost budgets, and per-target cap apply together.
+- When a follow-up would exceed any bound:
   - The new action is not enqueued.
   - Existing committed effects remain in place.
-  - A warning is logged so designers can adjust the feature or its tuning, and the player may receive a message indicating the chain was halted.
+  - Durable suppression evidence and bounded metrics record the authored source, bound reason, actual/configured values, child class, and derived player outcome. Required suppression alerts promptly; repeated optional suppression warns designers; isolated optional suppression remains audit-only.
 
-Because chained effects still respect the “one action per entity per tick” rule, this depth guard is primarily a protection against runaway re-entrancy and unbounded script-driven chain reactions.
+Generated effects use their reserved lane and per-target/regional budgets; they do not consume another root actor-action slot. Replay preserves the recorded child identity and depth rather than expanding the chain again.
 
 ## Worked Example: Cross-Region Lifesteal Command
 

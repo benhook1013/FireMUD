@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 25 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 26 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **62** | **183** | `in-progress` |
+| **Total** | | **63** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -203,7 +203,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-07` — `revised` on 2026-07-19; [ADR 0072](../../architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md)
 - [x] `TICK-08` — `revised` on 2026-07-19; [ADR 0073](../../architecture/decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md)
 - [x] `TICK-10` — `revised` on 2026-07-19; [ADR 0074](../../architecture/decisions/adr-0074-one-entity-lock-per-redis-script.md)
-- [ ] `TICK-11`
+- [x] `TICK-11` — `revised` on 2026-07-20; [ADR 0075](../../architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md)
 - [ ] `TICK-12`
 - [ ] `TICK-18`
 - [ ] `ID-03`
