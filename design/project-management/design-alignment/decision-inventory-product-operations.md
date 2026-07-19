@@ -49,11 +49,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `ASSET-01` - CAS-guarded asset lifecycle and exact-byte repair
 
 - **Capability:** Primary `AR-1.5` Revisions, versions, publishing, validation, and attestation. Secondary `AR-1.4`, `AR-3.2`, `AR-3.3`, `PO-3.3`, and `SF-2.3`.
-- **Decision / status / importance:** Treat the persisted `version_asset_artifact` record and its `stateEpoch` as authoritative for publish, retire, purge, and repair. Use compare-and-set admission (`CanDeleteVersionAssets`, `BeginPurgeVersionAssets`) and explicit `TOMBSTONED -> PURGE_IN_PROGRESS -> PURGED` or `PURGE_FAILED` states; never infer lifecycle from object-store listings. Published or Active repair must restore exact expected bytes and fail closed on mismatch. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Every published object uses an immutable content-addressed key and mandatory actual-byte SHA-256 digest. Publication and repair build privately and verify the complete candidate before any public write. The persisted `version_asset_artifact` row and storage-level `stateEpoch` CAS remain authoritative for publish, retire, repair, reachability, and purge; bucket listings never establish lifecycle. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-asset-store-runbook.md](../../architecture/system-architecture-asset-store-runbook.md) `§ Health Checks`, `§ Incident Handling`, `§ MinIO Deployment and Configuration`, and `§ Handling Failed Publish Versions`.
-- **Strongest alternative:** Let operators check a bucket listing and manually delete or mutate objects, with application state inferred from object-store contents.
-- **ADR recommendation:** Yes. Record the asset-state authority, CAS transition contract, exact-byte repair rule, and last-resort manual-operation boundary.
-- **Human consultation:** Yes; operations and content-publishing owners must accept the irreversible purge and repair authority.
+- **Strongest alternative:** Overwrite one version prefix and verify after regeneration, use object-store listings/versioning as lifecycle authority, or rely on manual repair and purge.
+- **ADR recommendation:** [ADR 0095](../../architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md) records the revised human decision.
+- **Human consultation:** Completed through human-led adversarial review; content-addressed storage, mandatory byte digests, private candidate verification, CAS lifecycle authority, and reachability-gated purge were accepted.
 
 #### `ASSET-02` - Unattested or failed publishes are not launchable
 

@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 2 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 3 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **82** | **183** | `in-progress` |
+| **Total** | | **83** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -228,7 +228,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 - [x] `CONTENT-01` — `revised` on 2026-07-20; [ADR 0093](../../architecture/decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md)
 - [x] `CONTENT-02` — `revised` on 2026-07-20; [ADR 0094](../../architecture/decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md)
-- [ ] `ASSET-01`
+- [x] `ASSET-01` — `revised` on 2026-07-20; [ADR 0095](../../architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md)
 - [ ] `ASSET-02`
 - [ ] `PROMO-01`
 - [ ] `PROC-02`

@@ -1,9 +1,8 @@
 # Asset Storage Setup
 
 Game assets such as icons or sound files are uploaded through the Game Design
-Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes live in object storage alongside the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service uploads or promotes these assets to
-tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
-generates a `manifest.json` that maps asset keys to public URLs. A manifest is
+Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes use immutable content-addressed object keys and are discovered through the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service builds and validates candidates in a private staging/quarantine namespace, promotes only digest-verified bytes to content-addressed public delivery (e.g., S3, MinIO, or a CDN), and
+generates a `manifest.json` that maps stable asset roles to immutable locations, mandatory SHA-256 content digests, content types, and schema metadata. A manifest is
 produced for every published version, even if no assets are present. The manifest is
 stored alongside the assets and its URL is recorded in the published version
 metadata so runtime clients can retrieve it. Each manifest includes an explicit
@@ -200,6 +199,7 @@ Fail-closed reader rule:
 
 - If a runtime consumer does not understand the manifest `schemaVersion`, or if a required derived-world-artifact key is missing for the release it is trying to start, launch must fail before gameplay admission rather than guessing fallback paths or object keys.
 - Requiredness is determined from the attested release bundle metadata for that release, not by heuristics over manifest contents.
+- Every ordinary binary and derived artifact entry carries a mandatory digest of its actual bytes. A manifest hash over URLs, names, paths, or byte lengths does not substitute for per-object integrity.
 
 ## External Delivery Classification
 
@@ -351,7 +351,7 @@ Allowed transitions:
 
 Transition enforcement contract:
 
-- Every transition is persisted by updating `version_asset_artifact` with CAS on `state_epoch`.
+- Every transition is persisted with a storage-level compare-and-set predicate on `version_asset_artifact.state_epoch`; an unlocked read followed by an unconditional update is not CAS.
 - Failed CAS means another workflow already changed state; callers must reload current state and re-evaluate.
 - The durable publish workflow and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
@@ -360,17 +360,14 @@ Transition enforcement contract:
   - Selects assets by joining `version_asset` to `game_assets` for the target
     `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
     exported for that version. In the current first slice, export selects all tenant `game_assets` rows until the normalized `version_asset` mapping table is fully enforced.
-  - Copies the selected ordinary asset bytes from `game_assets.data` into a deterministic published prefix such as
-    `<tenantId>/<versionId>/` in object storage. Future metadata-only storage may instead copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
-  - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
+  - Writes ordinary and derived candidate bytes to a private staging/quarantine namespace, computes every actual-byte SHA-256 digest, and verifies the complete candidate before publication.
+  - Promotes verified bytes and the deterministic manifest to immutable content-addressed public keys. Future metadata-only storage may copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
   - Updates version metadata with the manifest location.
   - Transitions `version_asset_artifact` from `STAGED` to `EXPORTED_UNATTESTED`.
   - Fails the workflow step if any asset referenced in `version_asset` for the target
     `(tenantId, versionId)` is missing, so partially published versions cannot be
     marked as Published.
-- The step is **idempotent**: rerunning `ExportAssets` for the same
-  `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
-  version metadata consistent.
+- The step is **idempotent**: rerunning `ExportAssets` for the same `(tenantId, versionId)` republishes only identical content-addressed bytes and the same manifest identity. Changed bytes require different keys and, after attestation, a new `versionId`.
 - A later `FinalizePublishedRelease` step must read the computed `manifestHash`,
   write `published_release_bundle`, and only then transition
   `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the
@@ -380,8 +377,8 @@ Transition enforcement contract:
 - Once a version is in the **Published** or **Active** state, immutability rules apply:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
-  - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
-  - Version metadata and/or the immutable `published_release_bundle` attestation must record `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between metadata mappings and object-store contents.
+  - Retrying `ExportAssets` for a Published/Active version must resolve to the same content-addressed keys and bit-for-bit identical bytes.
+  - Version metadata and the immutable `published_release_bundle` attestation record `manifestHash` and mandatory per-asset `contentHash` values so operators and CI can detect drift between metadata mappings and object-store contents.
   - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place by changing attested content; the only allowed repair is an exact-bytes rebuild that reproduces the existing `published_release_bundle` attestation. If that is impossible, recovery requires publishing a new `versionId`.
 - If any downstream publish step fails, the durable workflow must:
   - mark the version as **Failed** in the Game Design Service so it cannot be activated, and
@@ -395,10 +392,10 @@ Transition enforcement contract:
 Exact-bytes repair rule:
 
 - Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
-- Repair must also read `GetVersionAssetArtifactState(tenantId, versionId)` and prove the expected `artifactState`, `stateEpoch`, and `manifestHash` before any bytes are rewritten.
+- Repair must also read `GetVersionAssetArtifactState(tenantId, versionId)` and prove the expected `artifactState`, `stateEpoch`, `manifestHash`, and per-object digest set before any public bytes are written.
 - For ordinary binary assets in the current first slice, the repair workflow regenerates object-store bytes from the immutable `game_assets.data` rows selected for the attested version export. Those rows must not be modified in place after they are referenced by a Published/Active release.
 - If a future storage model replaces `game_assets.data` with metadata plus object-store handles, the replacement repair source must be immutable and retained for every non-Retired or design-history-reachable release. A mutable draft object key by itself is not a valid repair source.
-- The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).
+- The repair workflow materializes candidates away from published keys and may write only bytes matching every mandatory attested object digest and the existing attested `manifestHash`.
 - If regenerated bytes would change the attestation payload, the workflow must fail closed and require a new `versionId` rather than mutating the published release in place.
 
 Required deterministic repair/purge failure vocabulary:

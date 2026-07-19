@@ -19,7 +19,7 @@ For the architecture of asset storage, see `design/architecture/microservices/ga
 3. **Data Integrity Concerns**
    - Verify checksums or version metadata where available.
    - Coordinate with backup and recovery procedures if persistent corruption is suspected.
-   - Prefer comparing the published version’s recorded `manifestHash` (and, where implemented, per-asset `contentHash` values) against the currently served `manifest.json` and objects to detect silent drift. `manifestHash` is mandatory for Published/Active versions; missing hashes should be treated as a publish contract violation.
+   - Compare the published version's recorded `manifestHash` and mandatory per-object content digests against the currently served manifest and objects to detect silent drift. Missing hashes are a publish contract violation.
 
 ## MinIO Deployment and Configuration
 
@@ -72,12 +72,12 @@ When using a self-hosted MinIO cluster as the asset store:
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
    - If object-store contents drift from the database (for example missing objects for
-     a still-published version), operators should re-run the `ExportAssets` publish-workflow step
-     for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
+     a still-published version), operators should use the exact-byte repair workflow
+     for the affected `(tenantId, versionId)` so candidates are rebuilt and verified away from published keys
      from the authoritative repair sources rather than attempting manual repair:
      ordinary binary assets rebuild from the immutable Game Design asset byte rows (`game_assets.data` in the current first slice) plus exported asset-key proof, while derived artifacts rebuild from the producer-owned immutable artifact contracts defined in `asset-storage.md`.
    - Use `RepairPublishedVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, repairWorkflowId)` for Published/Active releases rather than ad hoc reruns. That workflow must fail with deterministic application outcomes such as `REPAIR_ATTESTATION_MISMATCH` or `ASSET_ARTIFACT_STATE_CONFLICT` instead of silently mutating attested bytes.
-   - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes matching the existing `published_release_bundle` attestation returned by `GetPublishedReleaseBundle(tenantId, versionId)`. If any required producer-owned derived artifact can no longer reproduce the attested bytes, fail closed and treat it as a recovery-blocking process bug or data-corruption incident rather than “fixing” the published version in place.
+   - Published/Active repair must verify every candidate object's mandatory digest and the manifest digest before writing immutable content-addressed public keys. If any required producer-owned artifact cannot reproduce the attested bytes, fail closed and require a new version rather than changing the published release.
    - Prefer invoking a higher-level admin workflow (for example a `RetireVersion` operation in the Game Design or Logging & Admin Service) that verifies retirement eligibility, updates manifests/internal metadata to retired state, and deletes the corresponding `<tenant>/<version>/` prefix from the object store.
 
    Directly deleting a prefix with `mc rm` should be treated as a last-resort
