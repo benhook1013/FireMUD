@@ -193,7 +193,7 @@ def is_docs_only_target(relative: str) -> bool:
 
 
 def is_audit_context(verification: str, cell: str, relative: str) -> bool:
-    if verification != "audited":
+    if verification not in {"audited", "unverified"}:
         return False
     if Path(relative).name not in AUDIT_CONTEXT_NAMES or relative.startswith("design/"):
         return False
@@ -299,6 +299,15 @@ def validate_evidence_presence(
 ) -> None:
     for label, cell in zip(("design", "implementation", "proof"), cells, strict=True):
         links = MARKDOWN_LINK_RE.findall(cell)
+        if (
+            label == "implementation"
+            and implementation == "not-implemented"
+            and not re.search(r"\bno production anchor\s*:", cell, re.IGNORECASE)
+        ):
+            fail(
+                f"{context}: not-implemented rows must use an explicit "
+                "No production anchor: rationale"
+            )
         if label == "proof":
             executable_links = [
                 target
@@ -308,13 +317,13 @@ def validate_evidence_presence(
             if executable_links:
                 continue
             if (
-                verification == "audited"
+                verification in {"audited", "unverified"}
                 and NO_FOCUSED_PROOF_MARKER.casefold() in cell.casefold()
             ):
                 continue
             fail(
                 f"{context}: proof evidence must include an executable repository link; "
-                f"audited rows without one must use {NO_FOCUSED_PROOF_MARKER}"
+                f"audited or unverified rows without one must use {NO_FOCUSED_PROOF_MARKER}"
             )
         if links:
             continue

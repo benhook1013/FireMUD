@@ -255,7 +255,7 @@ Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) a
 Key properties:
 
 - `sessionId` is an opaque, server-generated identifier (for example, a UUID or fixed-length hash) chosen so key length stays bounded and independent of the raw JWT or account token.
-- Session entries use a **derived physical Redis TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
+- Session entries use a **derived physical Redis TTL** computed from authentication settings (see `infrastructure/environment-and-secrets-catalog.md#authentication--jwt`):
 
   - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
   - `session_expiration_ms` derives the immutable logical gameplay-binding lifetime established at admission and the key's initial physical cleanup TTL. It is not a JWT validity period and does not replace the JWT `exp` claim.

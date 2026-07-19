@@ -96,6 +96,15 @@ def main() -> None:
             "No focused executable proof: the package exposes scripts only.",
             "audit-context-positive",
         )
+        validator.validate_evidence_anchor(
+            root,
+            owner,
+            "../../../web-client/package.json",
+            "proof",
+            "unverified",
+            "No focused executable proof: the package provides context only.",
+            "unverified-context-positive",
+        )
         expect_failure(
             "audit context without absence marker",
             lambda: validator.validate_evidence_anchor(
@@ -233,6 +242,16 @@ def main() -> None:
             "absent-production-positive",
         )
         validator.validate_evidence_presence(
+            "not-implemented",
+            "unverified",
+            [
+                "[design](x)",
+                "No production anchor: adjacent [implementation](x) is context only.",
+                "No focused executable proof: no production boundary exists.",
+            ],
+            "absent-production-with-context-positive",
+        )
+        validator.validate_evidence_presence(
             "partial",
             "audited",
             [
@@ -254,7 +273,31 @@ def main() -> None:
                 ],
                 "audited-proof-absence-negative",
             ),
-            "audited rows without one must use No focused executable proof:",
+            "audited or unverified rows without one must use No focused executable proof:",
+        )
+        validator.validate_evidence_presence(
+            "not-implemented",
+            "unverified",
+            [
+                "[design](x)",
+                "No production anchor: no implementation exists.",
+                "No focused executable proof: no production boundary exists.",
+            ],
+            "unverified-proof-absence-positive",
+        )
+        expect_failure(
+            "unverified row without explicit proof absence",
+            lambda: validator.validate_evidence_presence(
+                "not-implemented",
+                "unverified",
+                [
+                    "[design](x)",
+                    "No production anchor: no implementation exists.",
+                    "No focused proof exists.",
+                ],
+                "unverified-proof-absence-negative",
+            ),
+            "audited or unverified rows without one must use No focused executable proof:",
         )
         expect_failure(
             "missing production anchor without explicit rationale",
@@ -264,7 +307,17 @@ def main() -> None:
                 ["[design](x)", "No implementation exists.", "[proof](x)"],
                 "absent-production-negative",
             ),
-            "implementation evidence must include a repository link",
+            "not-implemented rows must use an explicit No production anchor: rationale",
+        )
+        expect_failure(
+            "not-implemented context links without explicit rationale",
+            lambda: validator.validate_evidence_presence(
+                "not-implemented",
+                "unverified",
+                ["[design](x)", "Adjacent [implementation](x) is context only.", "[proof](x)"],
+                "absent-production-context-negative",
+            ),
+            "not-implemented rows must use an explicit No production anchor: rationale",
         )
         expect_failure(
             "implemented row without production anchor",
@@ -304,6 +357,14 @@ def main() -> None:
             allowed_handoffs,
             allocations,
             "Related [AA-1.2](./player-access-and-session.md) capability in this tracker.",
+        )
+        allocations["ZZ-1.1"] = ("gameplay-rules-entities-and-effects.md", set())
+        validator.validate_status_row_handoffs(
+            "player-access-and-session.md",
+            "AA-1.1",
+            allowed_handoffs,
+            allocations,
+            "Related [ZZ-1.1](./gameplay-rules-entities-and-effects.md) capability in another tracker.",
         )
         expect_failure(
             "extra status-row handoff",
