@@ -149,21 +149,29 @@ This separation is required so patch publication remains predictable under load 
 
 Quota and budget policy must be applied at fixed charge points so operators can predict what a burst will cost and retries cannot distort usage:
 
+[ADR 0089](decisions/adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md) separates durable nonrefundable usage accounting from temporary sandbox concurrency. Every resolved handler has one durable Trigger-keyed charge record containing its persisted `quotaClass`, admission charge state, and execution-start charge state. Capacity is a separately fenced lease.
+
 - **Per-script quota windows**
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
+  - The charge transition and durable admission/charge evidence must be idempotent so concurrent duplicate ingress cannot charge before losing a materialization race.
   - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
+  - Queued handlers hold no sandbox concurrency lease.
   - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
   - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized when the event registry class is `STANDARD_RUNTIME`. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
 - **Per-tenant tier budgets**
-  - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
+  - Execution usage is charged once when the handler-scoped sandbox execution begins, using the durable Trigger-keyed charge record.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
   - Current Automation execution persists both `priorityTag` and registry `quotaClass` onto durable work items, and enforces `ScriptTenantBudgetService` only for `STANDARD_RUNTIME` work before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
+- **Sandbox concurrency capacity**
+  - Represented by a fenced lease acquired immediately before execution, not by a refundable quota charge.
+  - Released after terminal completion or cancellation and reclaimed after worker crash or timeout. A reclaimed/stale fence cannot continue execution.
+  - Pre-execution cancellation consumes no tenant/cluster execution usage; releasing or reclaiming capacity never refunds admission or already-started execution usage.
 - **Output-budget and post-admission failures**
-  - Output-budget failures, sandbox errors, rollback-epoch cancellations after admission, and downstream infrastructure failures do not refund quota or execution budget that has already been charged.
+  - Output-budget failures, sandbox errors, rollback-epoch cancellations after execution start, and downstream infrastructure failures do not refund admission or execution usage already charged.
   - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
 - **`onLoad`**
   - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
@@ -173,8 +181,8 @@ Concrete mixed fan-out accounting example:
 
 - One inbound `TriggerScriptEvent` for `onEnterRegion` is admitted at event scope and resolves to three handler-scoped Trigger Identities: `S1`, `S2`, and `S3`.
 - `S1` is rejected immediately with `finalStage=ADMISSION`, `finalOutcome=quota_denied`. It consumes no tenant runtime execution budget and no sandbox CPU/memory budget.
-- `S2` is accepted under `concurrencyPolicy=queue_until_free`. It consumes one per-script quota slot immediately when queued, but it does not consume tenant runtime execution budget until it later reserves sandbox capacity and starts running.
-- `S3` is admitted directly to execution. It consumes one per-script quota slot at handler admission and consumes tenant runtime execution budget when it reserves sandbox capacity.
+- `S2` is accepted under `concurrencyPolicy=queue_until_free`. It consumes one per-script quota slot immediately when queued, but it holds no sandbox lease and consumes no tenant/cluster execution usage until it starts.
+- `S3` is admitted directly to execution. It consumes one per-script quota slot at handler admission, then acquires a fenced capacity lease and consumes tenant/cluster execution usage once when execution begins.
 - If `S2` later reaches execution and fails with `sandbox_error`, or `S3` later fails with `work_item_size_exceeded`, the already-charged quota/execution budget is not refunded.
 
 ---

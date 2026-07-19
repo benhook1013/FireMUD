@@ -188,15 +188,14 @@ Under [ADR 0088](decisions/adr-0088-static-and-incremental-script-output-bounds.
 Quota and budget accounting must be deterministic so operators can reason about load and so retries do not double-charge:
 
 - Event-scope ingress admission does not itself consume per-script quota windows or tenant runtime budgets.
-- Per-script quota windows are charged once per resolved handler at handler admission time.
-- A handler admitted immediately to sandbox work consumes one quota slot at admission, and a handler accepted into a bounded `queue_until_free` wait queue also consumes that slot immediately rather than being charged again when execution later starts.
-- Per-tenant and cluster execution budgets are charged when a handler-scoped run leaves admission and is reserved onto sandbox execution capacity.
-- Duplicate deliveries for the same handler-scoped Trigger Identity must not consume additional quota.
-- Budget consumption is not refunded for runs that later fail after the charge point.
+- One durable charge record keyed by full handler Trigger Identity and persisted `quotaClass` records admission and execution charge state. Duplicate delivery, retry, and recovery reuse it.
+- Per-script quota is charged once and nonrefundably at handler admission. A handler accepted into `queue_until_free` consumes that admission quota but holds no sandbox capacity while waiting.
+- Per-tenant and cluster execution usage is charged once when sandbox execution actually begins. Cancellation before that point does not consume execution usage; failure, timeout, or cancellation after it begins does not refund the usage already consumed.
+- Sandbox concurrency is a fenced lease rather than a refundable charge. It is acquired for execution, released on terminal completion/cancellation, and reclaimed after crash or timeout; stale holders cannot execute. Release returns capacity without changing usage history.
 - `onLoad` readiness work uses the separate `PUBLISH_READINESS` quota class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
 - Automation must persist the resolved registry `quotaClass` onto each durable `script_work_item` so execution-time budget behavior reads the same canonical policy that ingress used instead of re-inferring from `eventType`.
 - Current Automation execution also reserves dedicated readiness capacity for non-dry-run `PUBLISH_READINESS` work before DSL evaluation; if that bounded substrate is exhausted, the work item is canceled with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`.
-- Implementations may expose additional budget dimensions, but they must map to one of these charge points rather than inventing ad hoc charging semantics per caller or per service.
+- Implementations may expose additional budget dimensions, but they distinguish durable usage charges from temporary capacity leases and map them to these canonical boundaries rather than inventing ad hoc semantics.
 
 ## Ordering Between Player and Script Commands
 
