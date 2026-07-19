@@ -8,6 +8,7 @@ import java.io.IOException;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -180,9 +181,11 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "REMOTE_FOLLOWUP_KIND_REQUIRED",
           "Target-side remote followup payload must declare a kind");
     }
+    PlayableStateScope playableStateScope;
     try {
-      TriggerScriptEventRequestFactory.requirePlayableStateScope(
-          authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
+      playableStateScope =
+          TriggerScriptEventRequestFactory.requirePlayableStateScope(
+              authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
     } catch (IllegalArgumentException ex) {
       return failure(
           TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)
@@ -199,7 +202,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      return executeTriggerScriptEvent(root, coordinator, followup);
+      return executeTriggerScriptEvent(root, coordinator, followup, playableStateScope);
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -366,7 +369,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private PayloadExecution executeTriggerScriptEvent(
-      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+      JsonNode root,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      PlayableStateScope playableStateScope) {
     try {
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
@@ -405,9 +411,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
                   isDryRun,
                   triggerMode(root, followup),
-                  TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                      authoritativeText(
-                          followup.getPlayableStateScope(), root, "playableStateScope")),
+                  playableStateScope,
                   requiredAuthoritativeText(
                       followup.getReadSnapshotToken(), root, "readSnapshotToken"),
                   eventPayloadJson(root, followup)),

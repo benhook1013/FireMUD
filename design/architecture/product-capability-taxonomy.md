@@ -229,7 +229,7 @@ Logs, metrics, traces, alerting, health and readiness, reliability policy, incid
 
 ## Product Coverage Basis
 
-The taxonomy was checked against the canonical product requirements, persona journeys, system overview, service responsibility matrix, infrastructure overview, and service architecture. The following sources establish why every leaf is a real product or platform capability rather than an arbitrary tracking bucket.
+The taxonomy was checked against the canonical product requirements, persona journeys, system overview, service responsibility matrix, infrastructure overview, and service architecture. The following sources establish why every capability group is a real product or platform concern rather than an arbitrary tracking bucket.
 
 | Capability | Representative canonical sources |
 | --- | --- |

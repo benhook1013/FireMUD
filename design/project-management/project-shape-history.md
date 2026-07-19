@@ -6,7 +6,7 @@ This append-only record captures occasional dated assessments of FireMUD's overa
 
 ### Partial Implementation Status
 
-At this snapshot, 11 of 79 leaf capabilities are `implemented`, 66 are `partial`, and 2 are `not-implemented`; verification includes 5 `drift-found` capabilities.
+At this snapshot, 10 of 79 leaf capabilities are `implemented`, 67 are `partial`, and 2 are `not-implemented`; verification includes 6 `drift-found` capabilities.
 
 FireMUD is unusually ambitious but technically coherent. It is not merely a MUD server: it is a configurable, multi-tenant game platform with durable execution, authored behavior, operational tooling, and several client protocols. The architecture generally reflects that ambition rather than disguising complexity behind shortcuts.
 

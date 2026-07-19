@@ -43,7 +43,7 @@ These are implementation or proof gaps, not silently competing target states:
 
 After the human-led adversarial decision review establishes any required design changes:
 
-1. Resolve the five current `drift-found` capabilities.
+1. Resolve the six current `drift-found` capabilities.
 2. Select high-value `partial` capabilities and close their designed boundaries end to end rather than adding more isolated substrate.
 3. Prioritize complete playable user journeys over widening foundations that are already credible enough to support them.
 

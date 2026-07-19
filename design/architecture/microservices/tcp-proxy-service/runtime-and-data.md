@@ -16,7 +16,7 @@ The TCP Proxy Service treats each Telnet TCP connection as independent and keeps
 
 - Multiple Telnet connections using the same `{gameInstanceId, tenantId}` are allowed. The proxy simply forwards commands for each connection; Game Session enforces the “one session per character” behavior by applying takeover rules when a second client logs in as the same character.
 - The proxy does not emit a positive reconnect event. It only calls `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` + `PLAY` flow as either a fresh login or a resume or takeover based on Redis session state.
-- After `NotifyDisconnect`, Game Session may resume the binding only within the effective `firemud.reconnection.policy.resume-window-ms` and while the derived absolute `session_expiration_ms` lifetime remains valid. The proxy does not evaluate either policy; see the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
+- After `NotifyDisconnect`, Game Session may resume the binding only within the effective `firemud.reconnection.policy.resume-window-ms` and while the derived absolute `session_expiration_ms` lifetime remains valid. The proxy does not evaluate either policy; see the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Environment & Secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#authentication--jwt).
 
 ## Data Model
 

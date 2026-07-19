@@ -7,6 +7,7 @@ import importlib.util
 import shutil
 import sys
 import tempfile
+import unittest
 from pathlib import Path
 
 
@@ -28,16 +29,6 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
     fixture = tempfile.TemporaryDirectory()
     shutil.copytree(ROOT / "design", Path(fixture.name) / "design")
     return fixture
-
-
-def expect_failure(label: str, validator, root: Path, expected: str) -> None:
-    try:
-        validator(root)
-    except SystemExit as error:
-        if expected not in str(error):
-            raise AssertionError(f"{label}: unexpected failure: {error}") from error
-    else:
-        raise AssertionError(f"{label}: mutated fixture unexpectedly passed")
 
 
 def expect_call_failure(label: str, call, expected: str) -> None:
@@ -69,200 +60,241 @@ def replace_in_line(path: Path, marker: str, old: str, new: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> None:
-    validator = load_validator()
-    with fixture_root() as directory:
-        validator.validate(Path(directory))
+class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.validator = load_validator()
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.SYSTEM_ALLOCATION
-        text = path.read_text(encoding="utf-8")
-        path.write_text(
-            "\n".join(line for line in text.splitlines() if "[design/architecture/README.md]" not in line) + "\n",
-            encoding="utf-8",
-        )
-        expect_failure("missing architecture ledger row", validator.validate, Path(directory), "source manifest mismatch")
+    def test_valid_fixture(self) -> None:
+        with fixture_root() as directory:
+            self.validator.validate(Path(directory))
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.SYSTEM_ALLOCATION
-        replace_in_line(path, "system-architecture-authentication.md", "| `AA-2` |", "| `SF-1` |")
-        replace_once(path, "AA-2 4", "AA-2 3")
-        replace_once(path, "SF-1 19", "SF-1 20")
-        expect_failure(
-            "system primary allocation drift with adjusted counts",
-            validator.validate,
-            Path(directory),
-            "unexpected primary capability",
-        )
+    def test_missing_architecture_ledger_row(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.SYSTEM_ALLOCATION
+            text = path.read_text(encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    line
+                    for line in text.splitlines()
+                    if "[design/architecture/README.md]" not in line
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            expect_call_failure(
+                "missing architecture ledger row",
+                lambda: self.validator.validate(root),
+                "source manifest mismatch",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.SYSTEM_ALLOCATION
-        replace_in_line(path, "system-architecture-authentication.md", "| normative design |", "| reference |")
-        replace_once(path, "`56` normative design", "`55` normative design")
-        replace_once(path, "`14` reference", "`15` reference")
-        expect_failure(
-            "system classification drift with adjusted counts",
-            validator.validate,
-            Path(directory),
-            "unexpected source classification",
-        )
+    def test_system_primary_allocation_drift_with_adjusted_counts(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.SYSTEM_ALLOCATION
+            replace_in_line(path, "system-architecture-authentication.md", "| `AA-2` |", "| `SF-1` |")
+            replace_once(path, "AA-2 4", "AA-2 3")
+            replace_once(path, "SF-1 19", "SF-1 20")
+            expect_call_failure(
+                "system primary allocation drift with adjusted counts",
+                lambda: self.validator.validate(root),
+                "unexpected primary capability",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.TOP_ALLOCATION
-        replace_once(path, "| **Total** | **184** |", "| **Total** | **183** |")
-        expect_failure("architecture summary drift", validator.validate, Path(directory), "total discovered summary drift")
+    def test_system_classification_drift_with_adjusted_counts(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.SYSTEM_ALLOCATION
+            replace_in_line(path, "system-architecture-authentication.md", "| normative design |", "| reference |")
+            replace_once(path, "`56` normative design", "`55` normative design")
+            replace_once(path, "`14` reference", "`15` reference")
+            expect_call_failure(
+                "system classification drift with adjusted counts",
+                lambda: self.validator.validate(root),
+                "unexpected source classification",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.SYSTEM_ALLOCATION
-        replace_once(
-            path,
-            "Primary allocation counts are: `AA-1 0`",
-            "Primary allocation counts are: `AA-1 1`, `AA-1 0`",
-        )
-        expect_failure(
-            "duplicate primary allocation count claim",
-            validator.validate,
-            Path(directory),
-            "duplicate primary allocation count claim entries",
-        )
+    def test_architecture_summary_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_once(path, "| **Total** | **184** |", "| **Total** | **183** |")
+            expect_call_failure(
+                "architecture summary drift",
+                lambda: self.validator.validate(root),
+                "total discovered summary drift",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.SYSTEM_ALLOCATION
-        replace_once(
-            path,
-            "Classification counts are: `56` normative design",
-            "Classification counts are: `55` normative design, `56` normative design",
-        )
-        expect_failure(
-            "duplicate classification count claim",
-            validator.validate,
-            Path(directory),
-            "duplicate classification count claim entries",
-        )
+    def test_duplicate_primary_allocation_count_claim(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.SYSTEM_ALLOCATION
+            replace_once(
+                path,
+                "Primary allocation counts are: `AA-1 0`",
+                "Primary allocation counts are: `AA-1 1`, `AA-1 0`",
+            )
+            expect_call_failure(
+                "duplicate primary allocation count claim",
+                lambda: self.validator.validate(root),
+                "duplicate primary allocation count claim entries",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.MICROSERVICE_ALLOCATION
-        replace_once(
-            path,
-            "| Runtime-policy/configuration contract | Substantive settings authority",
-            "| Invalid classification | Substantive settings authority",
-        )
-        expect_failure(
-            "microservice classification drift",
-            validator.validate,
-            Path(directory),
-            "unexpected source classification",
-        )
+    def test_duplicate_classification_count_claim(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.SYSTEM_ALLOCATION
+            replace_once(
+                path,
+                "Classification counts are: `56` normative design",
+                "Classification counts are: `55` normative design, `56` normative design",
+            )
+            expect_call_failure(
+                "duplicate classification count claim",
+                lambda: self.validator.validate(root),
+                "duplicate classification count claim entries",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.MICROSERVICE_ALLOCATION
-        replace_once(
-            path,
-            "`design/architecture/microservices/account-service/README.md` | `AA-1`",
-            "`design/architecture/microservices/account-service/README.md` | `AA-2`",
-        )
-        expect_failure(
-            "microservice primary drift",
-            validator.validate,
-            Path(directory),
-            "unexpected primary capability",
-        )
+    def test_microservice_classification_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.MICROSERVICE_ALLOCATION
+            replace_once(
+                path,
+                "| Runtime-policy/configuration contract | Substantive settings authority",
+                "| Invalid classification | Substantive settings authority",
+            )
+            expect_call_failure(
+                "microservice classification drift",
+                lambda: self.validator.validate(root),
+                "unexpected source classification",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.TOP_ALLOCATION
-        replace_in_line(path, "`design/architecture/decisions/README.md`", "| Exempt |", "| `AS-1` |")
-        replace_once(path, "| Architecture decisions | 12 | 11 |", "| Architecture decisions | 12 | 12 |")
-        replace_once(path, "| Architecture decisions | 12 | 12 | 0; 1 registry exemption", "| Architecture decisions | 12 | 12 | 0")
-        replace_once(path, "| **Total** | **184** | **181** |", "| **Total** | **184** | **182** |")
-        replace_once(path, "| **Total** | **184** | **182** | **0; 3 explicit exemptions**", "| **Total** | **184** | **182** | **0; 2 explicit exemptions**")
-        expect_failure(
-            "ADR primary allocation drift with adjusted counts",
-            validator.validate,
-            Path(directory),
-            "unexpected primary capability",
-        )
+    def test_microservice_primary_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.MICROSERVICE_ALLOCATION
+            replace_once(
+                path,
+                "`design/architecture/microservices/account-service/README.md` | `AA-1`",
+                "`design/architecture/microservices/account-service/README.md` | `AA-2`",
+            )
+            expect_call_failure(
+                "microservice primary drift",
+                lambda: self.validator.validate(root),
+                "unexpected primary capability",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.TOP_ALLOCATION
-        replace_in_line(path, "adr-0004-gameplay-reroute-vs-backend-unavailable.md", "| Superseded by ADR 0007 |", "| Accepted |")
-        expect_failure(
-            "ADR classification drift",
-            validator.validate,
-            Path(directory),
-            "unexpected source classification",
-        )
+    def test_adr_primary_allocation_drift_with_adjusted_counts(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(path, "`design/architecture/decisions/README.md`", "| Exempt |", "| `AS-1` |")
+            replace_once(path, "| Architecture decisions | 12 | 11 |", "| Architecture decisions | 12 | 12 |")
+            replace_once(path, "| Architecture decisions | 12 | 12 | 0; 1 registry exemption", "| Architecture decisions | 12 | 12 | 0")
+            replace_once(path, "| **Total** | **184** | **181** |", "| **Total** | **184** | **182** |")
+            replace_once(path, "| **Total** | **184** | **182** | **0; 3 explicit exemptions**", "| **Total** | **184** | **182** | **0; 2 explicit exemptions**")
+            expect_call_failure(
+                "ADR primary allocation drift with adjusted counts",
+                lambda: self.validator.validate(root),
+                "unexpected primary capability",
+            )
 
-    with fixture_root() as directory:
-        path = Path(directory) / validator.TOP_ALLOCATION
-        text = path.read_text(encoding="utf-8")
-        row = next(
-            line
-            for line in text.splitlines()
-            if "design-capability-allocation-microservices.md" in line
-        )
-        replace_once(path, row, f"{row}\n{row}")
-        expect_failure(
-            "duplicate top-level allocation row",
-            validator.validate,
-            Path(directory),
-            "duplicate allocation ledger row",
-        )
+    def test_adr_classification_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(path, "adr-0004-gameplay-reroute-vs-backend-unavailable.md", "| Superseded by ADR 0007 |", "| Accepted |")
+            expect_call_failure(
+                "ADR classification drift",
+                lambda: self.validator.validate(root),
+                "unexpected source classification",
+            )
 
-    for label, source_class, added_path in (
-        (
+    def test_duplicate_top_level_allocation_row(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            text = path.read_text(encoding="utf-8")
+            row = next(
+                line
+                for line in text.splitlines()
+                if "design-capability-allocation-microservices.md" in line
+            )
+            replace_once(path, row, f"{row}\n{row}")
+            expect_call_failure(
+                "duplicate top-level allocation row",
+                lambda: self.validator.validate(root),
+                "duplicate allocation ledger row",
+            )
+
+    def test_stale_microservice_umbrella_count(self) -> None:
+        self.assert_stale_umbrella_count(
             "stale microservice umbrella count",
             "Microservice architecture",
             "design/architecture/microservices/example/new-source.md",
-        ),
-        (
+        )
+
+    def test_stale_system_umbrella_count(self) -> None:
+        self.assert_stale_umbrella_count(
             "stale system umbrella count",
             "Top-level architecture",
             "design/architecture/new-source.md",
-        ),
-        (
+        )
+
+    def test_stale_adr_umbrella_count(self) -> None:
+        self.assert_stale_umbrella_count(
             "stale ADR umbrella count",
             "Architecture decisions",
             "design/architecture/decisions/adr-9999-example.md",
-        ),
-    ):
+        )
+
+    def assert_stale_umbrella_count(self, label: str, source_class: str, added_path: str) -> None:
         with fixture_root() as directory:
             root = Path(directory)
-            source_sets = validator.repository_files(root)
+            source_sets = self.validator.repository_files(root)
             source_sets[source_class].add(added_path)
             expect_call_failure(
                 label,
-                lambda root=root, source_sets=source_sets: validator.validate_top_allocation_ledger(
+                lambda: self.validator.validate_top_allocation_ledger(
                     root,
-                    validator.group_ids(root),
+                    self.validator.group_ids(root),
                     source_sets["Architecture decisions"],
                     source_sets,
                 ),
                 "allocation row drift",
             )
 
-    expect_call_failure(
-        "trailing contradictory exemption claim",
-        lambda: validator.parse_explicit_exemptions(
-            "0; 3 explicit exemptions; 99 gaps",
-            "fixture",
-        ),
-        "malformed gap/exemption count",
-    )
+    def test_trailing_contradictory_exemption_claim(self) -> None:
+        expect_call_failure(
+            "trailing contradictory exemption claim",
+            lambda: self.validator.parse_explicit_exemptions(
+                "0; 3 explicit exemptions; 99 gaps",
+                "fixture",
+            ),
+            "malformed gap/exemption count",
+        )
 
-    expect_call_failure(
-        "duplicate exact allocation section",
-        lambda: validator.section(
-            "## Allocation Ledger\n\n## Allocation Ledger\n",
-            "Allocation Ledger",
-        ),
-        "expected exactly one section",
-    )
-    expect_call_failure(
-        "non-exact allocation section",
-        lambda: validator.section("## Allocation Ledger Notes\n", "Allocation Ledger"),
-        "expected exactly one section",
-    )
-    duplicate_table = """
+    def test_duplicate_exact_allocation_section(self) -> None:
+        expect_call_failure(
+            "duplicate exact allocation section",
+            lambda: self.validator.section(
+                "## Allocation Ledger\n\n## Allocation Ledger\n",
+                "Allocation Ledger",
+            ),
+            "expected exactly one section",
+        )
+
+    def test_non_exact_allocation_section(self) -> None:
+        expect_call_failure(
+            "non-exact allocation section",
+            lambda: self.validator.section("## Allocation Ledger Notes\n", "Allocation Ledger"),
+            "expected exactly one section",
+        )
+
+    def test_duplicate_matching_allocation_table(self) -> None:
+        duplicate_table = """
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability |
@@ -273,18 +305,16 @@ def main() -> None:
 | --- | --- | --- |
 | two | scope | primary |
 """
-    expect_call_failure(
-        "duplicate matching allocation table",
-        lambda: validator.table_in_section(
-            duplicate_table,
-            "Allocation Ledger",
-            {"Design source", "Heading or scope", "Primary capability"},
-        ),
-        "expected exactly one table",
-    )
-
-    print("design capability allocation regression tests passed")
+        expect_call_failure(
+            "duplicate matching allocation table",
+            lambda: self.validator.table_in_section(
+                duplicate_table,
+                "Allocation Ledger",
+                {"Design source", "Heading or scope", "Primary capability"},
+            ),
+            "expected exactly one table",
+        )
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main(verbosity=2)
