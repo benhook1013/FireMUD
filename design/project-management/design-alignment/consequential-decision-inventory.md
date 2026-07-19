@@ -103,12 +103,12 @@ The review facilitator must preserve the current choice's strongest argument, co
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
-| 3 | Execution correctness and durability | 17 | 43 | `in-progress` |
+| 3 | Execution correctness and durability | 18 | 43 | `in-progress` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **54** | **183** | `in-progress` |
+| **Total** | | **55** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -192,7 +192,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TICK-09` — `revised` on 2026-07-19; [ADR 0065](../../architecture/decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md)
 - [x] `TICK-13` — `revised` on 2026-07-19; [ADR 0066](../../architecture/decisions/adr-0066-durable-asynchronous-cross-region-result-arbitration.md)
 - [x] `TICK-14` — `revised` on 2026-07-19; [ADR 0067](../../architecture/decisions/adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md)
-- [ ] `TICK-15`
+- [x] `TICK-15` — `revised` on 2026-07-19; [ADR 0068](../../architecture/decisions/adr-0068-evidence-derived-bounded-tick-ledger-recovery.md)
 - [ ] `TICK-16`
 - [ ] `TICK-17`
 - [ ] `TICK-19`

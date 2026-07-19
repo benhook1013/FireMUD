@@ -103,14 +103,13 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
 - Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
 
-#### Replay Convergence Budget (Normative)
+#### Replay Convergence SLO (Normative)
 
-To keep replay-controller alerting and runbooks deterministic, the replay path uses an explicit convergence budget:
+The replay path emits an explicit environment convergence SLO so alerting and capacity claims describe measured recovery capability:
 
 - `tick_effects_replay_convergence_budget_seconds{scope}` is the canonical emitted budget for each active region-sized gameplay scope.
-- Default formula:
-  - `replay_convergence_budget_seconds = max(60, ceil(20 * tick_interval_ms / 1000))`
-  - For common tick cadences, this yields a practical minimum budget of `60s`.
+- The production value is derived from representative backlog distributions, durable scan and claim latency, available worker throughput and fair-share behavior, owning-domain latency and error rates, and fault-tested recovery capacity. Tick cadence alone does not establish it.
+- `60s` is a provisional bootstrap alert threshold only until the environment has load and fault evidence for a production acceptance value. A breach changes health and remediation behavior, never terminal correctness.
 - Prometheus recording rules should also expose:
   - `tick_effects_pending_oldest_age_seconds{scope}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
   - `tick_effects_replay_slo_breached{scope}` when oldest pending age exceeds the emitted convergence budget
@@ -118,7 +117,7 @@ To keep replay-controller alerting and runbooks deterministic, the replay path u
 - Alerting guidance:
   - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for an otherwise running region.
   - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
-- Environment overlays may raise the budget for extreme workloads, but they must emit the canonical budget metric rather than hiding the threshold inside PromQL.
+- Environment overlays emit their evidence-backed budget through the canonical metric rather than hiding thresholds inside PromQL. Raising a budget to conceal insufficient capacity is not an accepted calibration method.
 
 Canonical alert names for shared rulesets:
 
@@ -251,7 +250,7 @@ Replay fairness is part of the operational contract, not just an implementation 
 
 Responsibility for driving ledger rows to a terminal outcome lies with the Game Session Service:
 
-- A background “ledger replay controller” in Game Session:
+  - A background “ledger replay controller” in Game Session:
   - Periodically scans for `SCHEDULED` rows that have exceeded the emitted replay-convergence budget for a given `(tenantId, regionId, region_epoch, tickId)`.
   - Replays eligible effects using the same idempotent handlers the tick pipeline uses, marking rows `APPLIED` when domain state confirms success.
   - Marks rows `ABANDONED` with a precise reason when replay is no longer safe or meaningful (for example, entities removed, sessions expired, or region/tenant/cluster resets that bumped `region_epoch`).
@@ -259,6 +258,9 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
     - Scans and replays in bounded batches per `<tenantId, regionId>`.
     - Uses round-robin (or weighted-fair) scheduling across regions rather than draining one region completely before touching others.
     - Emits `tick_effects_replay_scan_lag_ms{scope}` and `tick_effects_replay_batches_total{scope}` so starvation is visible without reintroducing raw tenant/region labels to Prometheus.
+  - When technical retries are exhausted without authoritative terminal evidence, the recovery record enters `DEAD_LETTER` or quarantine while the effect ledger remains unresolved. Retry exhaustion alone never fabricates `ABANDONED`.
+  - `REPLAY_NOOP` is an outcome/reason under terminal ledger status `APPLIED`, proving the logical effect was already present; it is not a fourth ledger status.
+  - Active, unresolved, dead-lettered, and quarantined work is never garbage-collected. Retention or compaction begins only after terminal evidence and applicable audit and diagnostic obligations are satisfied.
 - The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes.
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, regionId)` or `region_epoch` when guided by runbooks in the Redis operations docs.
 - Convergence SLO contract (required):
@@ -319,12 +321,10 @@ In rare cases, a `tick:{tenantRegionTag}:pending` entry may remain present even 
   - Regions where `tick:{tenantRegionTag}:pending` has not advanced despite repeated recovery attempts.
 - Candidate stuck ticks are enqueued into a `tick_recovery` queue or table with metadata such as `<tenantId, regionId, tickId, firstSeenAt, lastRetryAt>`.
 - An automated recovery worker:
-  - Uses the same idempotent handlers and ledger/guard patterns as normal ticks to drive any effects associated with the stuck tick to terminal `APPLIED` or `ABANDONED` outcomes, and records any higher-level tick or command status (for example `FAILED`/`SKIPPED`) as a **derived view** over those effect-level results rather than as an independent convergence mechanism.
+  - Uses the same idempotent handlers and ledger/guard patterns as normal ticks to drive effects to evidence-backed terminal `APPLIED` or policy-valid `ABANDONED` outcomes. Persistent technical failure instead enters the service-owned dead-letter/quarantine path, and any higher-level tick or command status (for example `FAILED`/`SKIPPED`) remains a **derived view** over effect-level results rather than an independent convergence mechanism.
   - Clears `tick:{tenantRegionTag}:pending` and associated retry metadata via a dedicated, idempotent helper path.
   - Emits detailed logs and metrics for audit and dashboards.
-- Operator tooling allows manual override for complex cases (for example, suspected data corruption), with two typical modes:
-  - **Recommendation mode** – the system proposes recoveries; operators approve or override.
-  - **Auto-recovery mode** – low-risk patterns are resolved automatically once thresholds are met.
+- Operator tooling exposes the same service-owned verifier/reconcile operation for complex cases. Operators may inspect durable state and authorize a supported disposition, but cannot directly edit ledger status; every transition records actor, reason, time, prior state, evidence, and player outcome.
 
 Retry and timer queues are protected against unbounded growth:
 

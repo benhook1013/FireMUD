@@ -261,11 +261,12 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Do not update ledger rows directly to `APPLIED` from ad hoc SQL, a generic admin endpoint, or a one-off script.
-     - Run the service-owned verifier/reconcile path for the affected `EffectId` so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` or `REPLAY_NOOP` with an audit record.
-     - If no verifier exists for that effect family, treat the row as not safely proven and choose re-run or `ABANDONED` remediation instead of inventing a manual `APPLIED` correction.
+     - Run the service-owned verifier/reconcile path for the affected `EffectId` so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with outcome/reason `REPLAY_NOOP` and an audit record.
+     - If no verifier exists for that effect family, treat the row as not safely proven and choose a safe re-run or service-owned dead-letter/quarantine path. Use `ABANDONED` only when authoritative evidence or declared feature policy proves non-application is valid; never invent a manual `APPLIED` correction.
    - For genuinely stuck rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
+     - If neither application nor abandonment is proven after technical retries are exhausted, move the service-owned recovery record to dead letter or quarantine while leaving the ledger outcome unresolved for supported disposition.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
      - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,regionId>` before escalating to broader reset actions.
