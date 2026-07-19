@@ -148,6 +148,8 @@ FireMUD’s SQL-backed services are converging on `jOOQ + Flyway` as the canonic
 
 Shared libraries should not reintroduce Hibernate/JPA runtime assumptions; the canonical SQL helper surface now targets `jOOQ + Flyway` only.
 
+[ADR 0079](decisions/adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md) defines the exact authority boundary. Generated Flyway-derived schema types are the default. Dynamic or plain SQL is a narrow exception only for required PostgreSQL behavior the applicable generated or jOOQ DSL surface cannot express, and it must retain focused schema, mapping, transaction, and failure proof rather than becoming a second DAO style.
+
 The first shared substrate is the `net.firedevops.firemud.jooq-conventions` build path, which generates service-local DSL code directly from Flyway-owned SQL and adds only the minimal shared runtime wiring needed to compile and adopt `DSLContext`. Broader runtime helpers should be added only when multiple migrated services prove the same paging/filter/sort, transaction, or error-translation concern is truly repeated.
 
 ## Related Documentation

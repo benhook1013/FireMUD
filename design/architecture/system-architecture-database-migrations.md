@@ -6,6 +6,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 
 - FireMUD’s SQL target state is `jOOQ + Flyway`, with Flyway as the canonical schema authority and `jOOQ` generation/execution as the intended runtime access model for SQL-backed services.
 - The `02.19` convergence family is now closed at the platform boundary: SQL-backed services use `jOOQ + Flyway`, and repo-wide Hibernate/JPA runtime support has been removed rather than preserved as a second persistence path.
+- [ADR 0079](decisions/adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md) makes generated Flyway-derived jOOQ types the default query surface. Dynamic or plain SQL is permitted only as a focused escape hatch for a required PostgreSQL feature the generated or jOOQ DSL surface cannot express; it remains inside the owning persistence boundary and must prove schema alignment, parameter handling, result mapping, transaction behavior, and relevant failure cases.
 
 ---
 
@@ -22,6 +23,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - SQL-backed service `application.yml` files also carry an explicit `spring.flyway.table` contract in the same `flyway_schema_history_<service_schema>` form used by local destructive reset tooling and hosted/runtime manifests, so plain service boot does not silently fall back to bare `flyway_schema_history`.
 - Generated `jOOQ` sources derive from these migrated schemas rather than from a second hand-maintained SQL model.
+- Application code uses those generated schema types by default. A bounded unsupported-feature exception may use dynamic or plain SQL under ADR 0079, but Flyway remains the sole durable-object authority and convenience does not justify a parallel DAO or schema model.
 - The shared `jOOQ` foundation exposes a canonical `:service:generateJooq` task that derives DSL code directly from `src/main/resources/db/migration/*.sql`.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
