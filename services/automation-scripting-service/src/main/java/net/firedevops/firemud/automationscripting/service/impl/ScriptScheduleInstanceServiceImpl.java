@@ -1274,31 +1274,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String identity() {
-      return instance.getTenantId()
-          + "|"
-          + instance.getGameInstanceId()
-          + "|"
-          + blankToEmpty(instance.getPlayableStateScope())
-          + "|"
-          + regionId
-          + "|"
-          + regionEpoch
-          + "|"
-          + targetEntityId(instance)
-          + "|"
-          + instance.getScriptId()
-          + "|"
-          + instance.getEventType()
-          + "|"
-          + instance.getScriptPatchVersion()
-          + "|"
-          + instance.getScheduleDefinitionId()
-          + "|"
-          + (wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId)
-          + "|"
-          + SCHEDULER_IS_DRY_RUN
-          + "|"
-          + SCHEDULER_TRIGGER_MODE;
+      return lengthPrefixedIdentity(
+          instance.getTenantId(),
+          instance.getGameInstanceId(),
+          instance.getPlayableStateScope(),
+          regionId,
+          String.valueOf(regionEpoch),
+          targetEntityId(instance),
+          instance.getScriptId(),
+          instance.getEventType(),
+          instance.getScriptPatchVersion(),
+          instance.getScheduleDefinitionId(),
+          wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
+          Boolean.toString(SCHEDULER_IS_DRY_RUN),
+          SCHEDULER_TRIGGER_MODE);
     }
 
     private String finalReason() {
@@ -1308,6 +1297,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String lengthPrefixedIdentity(String... values) {
+    StringBuilder identity = new StringBuilder();
+    for (String value : values) {
+      String normalized = blankToEmpty(value);
+      identity
+          .append(normalized.getBytes(StandardCharsets.UTF_8).length)
+          .append(':')
+          .append(normalized);
+    }
+    return identity.toString();
   }
 
   private static long zeroIfNull(Long value) {

@@ -517,8 +517,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         submitted_at_dt = parse_timestamp(review.get("submittedAt"))
         if author != "coderabbitai" or ACTIONABLE_COMMENTS_MARKER not in body:
             continue
+        if submitted_at_dt is None:
+            continue
         if latest_explicit_review_request_dt is not None and (
-            submitted_at_dt is None or submitted_at_dt < latest_explicit_review_request_dt
+            submitted_at_dt < latest_explicit_review_request_dt
         ):
             continue
         if latest_actionable_comment_dt is None or submitted_at_dt > latest_actionable_comment_dt:

@@ -548,7 +548,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-e3569701c50434a939b1f581caa278940acb56f49c6d9e54beaeb26b2fda");
+        .isEqualTo("timer-19112d90423632ccf1d25cd89005bb39acc11eec49c922d6765a99965b09");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -577,6 +577,32 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(shared, isolated));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    service.observeRuntimeTickProgress(
+        new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+            "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2)).saveAndFlush(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates()
+        .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesTimerIdentityWhenFieldsContainDelimiters() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc|guard", "guard.patrol.v1", 30L, 130L);
+    first.setEventType("onInterval");
+    ScriptScheduleInstance second = tickSchedule("guard-1", "npc", "guard.patrol.v1", 30L, 130L);
+    second.setEventType("guard|onInterval");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
         .thenReturn(List.of());

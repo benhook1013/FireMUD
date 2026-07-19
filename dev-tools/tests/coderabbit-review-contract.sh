@@ -114,6 +114,14 @@ cat >"$TMP_DIR/submitted-review.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
+              "body": "**Actionable comments posted: 1**\n\n<summary>Duplicate comments (9)</summary>",
+              "submittedAt": null,
+              "url": "https://example.test/unsubmitted-review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
               "body": "**Actionable comments posted: 1**\n\n<summary>♻️ Duplicate comments (4)</summary>",
               "submittedAt": "2026-07-19T06:02:35Z",
               "url": "https://example.test/submitted-review"
