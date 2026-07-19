@@ -86,7 +86,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - **Bootstrap vs stream**
   - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
   - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
-  - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the documented tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`) and are never considered the primary source of truth for epoch or tick counters.
+  - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the measured `redis_unreplicated_write_window_slo_ms` in `system-architecture-redis-operations.md` and are never considered the primary source of truth for epoch or tick counters. Class-specific durable outcomes remain governed by [ADR 0058](./decisions/adr-0058-class-specific-redis-loss-outcomes.md) even when that SLO is breached.
   - Tick-scoped Redis staging state (for example `tick:{tenantRegionTag}:pending`, effect batches, and other data created for one in-flight tick) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
   - Region-scoped source structures such as `tick:{tenantRegionTag}:queue:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`, tick event streams, and scheduler offsets are primarily epoch-scoped coordination state:
     - They belong to the current `region_epoch`.
@@ -146,15 +146,11 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Redis holds **volatile coordination state**: tick queues and locks, timers, session bindings, automation hints, retry metadata, and similar.
   - Losing coordination state within a bounded window must not create irreversible financial effects, cross‑tenant data leaks, or unfixable domain inconsistencies.
 
-- **Tail‑loss envelope**
-  - Coordination Redis is configured with AOF and sized so that **only a small tail** of recent coordination state per `<tenantId, regionId>` may be lost during failover or restart. In production‑like environments, the canonical envelope is:
-    - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
-  - Designs must tolerate the loss of a few ticks’ worth of:
-    - Commands, staged effects, timers, and retry markers, and
-    - Session liveness hints and other advisory metadata.
-  - In terms of the coordination timeline:
-    - A normal failover or bounded tail‑loss event may drop or replay the last `N` ticks on the timeline for a `<tenantId, regionId>`, where `N` corresponds to the configured tail‑loss SLOs in `system-architecture-redis-operations.md` (computed from `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
-    - Tick effect ledger behavior and domain idempotency rules (see `system-architecture-tick-failures-and-operations.md`) must guarantee that those dropped/replayed ticks converge to a final state where each `(tenantId, regionId, region_epoch, tickId, effectKey)` is either durably applied or durably abandoned, never left indefinitely “half‑applied”.
+- **Tail-loss observation and class-specific outcomes**
+  - Coordination Redis uses AOF and measured replication/failover evidence to set an environment-specific `redis_unreplicated_write_window_slo_ms`. It is an infrastructure exposure target, not a product RPO or permission to lose every write made during that time.
+  - `ticks_exposed = ceil(window_ms / tick_interval_ms)` may be emitted for diagnosis only. Long-future timers and old queued work demonstrate why write age and player consequence are not interchangeable.
+  - Accepted commands, correctness-bearing timers, staged effects/retries, sessions/leases/hints, and premium/external operations follow the distinct durable outcomes in ADR 0058. Tick ledgers and domain guards drive every correctness-bearing effect to applied, replay-no-op, or abandoned rather than silently losing or duplicating it.
+  - A breach increases durable reconstruction, explicit terminalization, or operator-reconciliation scope; it never weakens financial, security, isolation, or no-resurrection invariants.
   - Flows that **cannot** tolerate this tail‑loss (for example, real‑money purchases, cross‑tenant transfers, or unique external side effects) must use durable domain mechanisms and may only use Redis for optional coordination.
 
 - **Idempotent replay and monotonic guards**
@@ -185,7 +181,7 @@ The **Redis Design Checklist** (`system-architecture-redis-design-checklist.md`)
 From an application perspective:
 
 - Coordination Redis is expected to be **highly available** within the limits of the chosen profile (for example, `production_clustered`).
-- Tail-loss is bounded to a **small window** per `<tenantId, regionId>`; losing more than this window is treated as an incident and investigated using the metrics and alerts defined in `system-architecture-redis-operations.md`.
+- The unreplicated coordination-write window is measured per environment; breaching its SLO is an incident investigated through Redis metrics plus affected durable command/effect/timer counts. Product outcomes remain class-specific rather than inheriting the window as data loss.
 - Lua scripts and domain idempotency guarantees ensure that replay and partial loss of coordination keys do not:
   - Double-apply critical effects.
   - Violate cross-tenant isolation.
@@ -486,7 +482,7 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
     - Cluster-scoped resets are accompanied by a coordinated epoch bump for all affected regions so that new executors cannot accidentally reuse stale coordination state.
 - **Idempotent domain effects**
   - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).
-  - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`).
+  - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply or silently lose logical effects even if Redis state is replayed, partially lost, or exceeds the measured unreplicated-write-window SLO.
 - **Transactional boundaries**
   - Services that participate in ticks and coordination flows encapsulate their durable writes in transactions with clear boundaries and conflict detection (for example, optimistic locking or explicit version checks).
   - Redis designs may assume that “commit vs abandon/cleanup” is visible in domain state and must not introduce coordination patterns that require peeking into in-flight, uncommitted work.
