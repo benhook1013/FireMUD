@@ -74,7 +74,7 @@ Unauthenticated `sessionctx:*` entries may exist before `LOGIN`; they are bootst
 
 Game Session must also maintain the bounded authoritative indexes defined in the authentication architecture so takeover, reconnect, and revocation do not require scans:
 
-- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` -> current `sessionId` and `bindingGeneration`
 - `session:game:index:account:<accountId>` -> active tenant-qualified `sessionId` set
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
@@ -118,13 +118,15 @@ Session shutdown therefore cleans up session keys but does not implicitly delete
 
 ## Reconnection and Disconnect Handling
 
-Game Session restores player sessions after disconnects and enforces single-session control as outlined in the [Reconnection Strategy](../../system-architecture-reconnection.md). For Telnet clients, it also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth.
+Game Session restores player sessions after client-visible edge disconnects and enforces single-controller authority as outlined in the [Reconnection Strategy](../../system-architecture-reconnection.md). Loss of only the internal Gateway-to-Game-Session hop is not a disconnect while the edge socket survives bounded rebind. For Telnet clients, Game Session also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth.
 
 Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behavior at the proxy can remain simple while consumption stays idempotent. Any `{tenantId, gameInstanceId}` values coming from proxy-owned bootstrap metadata or future hidden MCP-carried smart-client hints remain advisory context that may be used for logging and audit, but they are not trusted as authorization claims or binding directives. Game Session still validates any game-instance ownership claims against Redis and its authenticated session state before rebinding the transport.
 
 Recent/offline account-presence state should preserve the last admitted routing bundle too. When live presence drops to recent presence after transport loss, takeover, or logout, the bounded recent-presence record keeps the last admitted `gameInstanceId`, `worldSlug`, `realmSlug`, and `pointerVersion` so account-presence and friend-presence reads can continue to describe the last resolved realm target directly instead of collapsing immediately to a routing-less timestamp.
 
 Deliberate logout remains a different lifecycle from transport loss. `LOGOUT` clears the session's reconnect-oriented replay and restore eligibility, retires the live gameplay presence row, records bounded recent-presence disconnect disposition as deliberate logout, and routes gameplay-bound runtime shutdown through the shared termination seam instead of preserving a reconnect-suspended gameplay shell.
+
+Reconnect never replays prior client bytes, frames, Telnet lines, MCP state, or commands. Input with ambiguous admission at edge loss may be lost. A command already durably admitted before loss continues under its existing ledger/effect identity and may append authorized output while the player is offline; the new transport receives bounded semantic context and fresh state rather than resubmitted input.
 
 Game Session also owns the canonical live gameplay-presence substrate rather than treating authenticated session context as an online-presence proxy. The bounded current implementation persists one live presence record per gameplay-bound session with tenant/game-instance/account/character identity, current role bucket for `WHO`, explicit-AFK state, accepted-command activity, meaningful-gameplay activity, and the admitted routing bundle used by later account/friend presence reads. It does not resolve, cache, or transport profile visibility policy. Player-facing `WHO` is scoped to the current game instance and reads this presence substrate directly, while later social consumers use the same substrate plus bounded recent-presence handoff and Account-owned policy instead of rebuilding online/offline truth from raw Redis session shells.
 

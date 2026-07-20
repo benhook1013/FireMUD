@@ -142,6 +142,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0126](./adr-0126-isolated-playtest-state-modes-and-reset.md) | Accepted | `AR-3` | `AA-3`, `GR-2`, `GR-3`, `AA-1`, `AR-3` | Explicit fresh, seeded, and snapshot playtest initialization with namespace-replacement reset |
 | [ADR 0127](./adr-0127-lifecycle-distinct-gameplay-close-taxonomy.md) | Accepted | `PO-2` | `PO-2`, `GR-1`, `AA-2`, `PO-4` | Lifecycle-distinct terminal logout, takeover, maintenance, and failure close outcomes |
 | [ADR 0128](./adr-0128-namespace-scoped-single-character-controller.md) | Accepted | `AA-2` | `AA-2`, `EA-3`, `SF-2`, `AR-3` | One atomic character controller per stable playable-state namespace |
+| [ADR 0129](./adr-0129-fresh-edge-reconnect-without-client-input-replay.md) | Accepted | `AA-2` | `AA-2`, `EA-1`, `PO-2`, `GR-1`, `SF-2` | Fresh edge reconnect without client-input replay while admitted durable work continues |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

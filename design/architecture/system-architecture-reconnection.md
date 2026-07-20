@@ -195,6 +195,8 @@ These timing thresholds are initial functional acceptance criteria rather than a
 
 FireMUD treats reconnection as an explicit **client-visible recovery flow**: after any disconnect, clients open a fresh transport (TCP or WebSocket), issue a new `LOGIN`, and complete `PLAY` before gameplay commands. This documented flow is the canonical interoperability contract for third-party MUD clients. First-party WebSocket clients may automate the same sequence for a smoother UX, but they must still follow the same underlying connect-token, `LOGIN`, and `PLAY` rules. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first-party clients should follow a consistent reconnection policy:
 
+Here, “disconnect” means loss of the client-facing Gateway WebSocket or TCP Proxy socket. It does not include ADR 0013's bounded internal Gateway-to-Game-Session rebind while the edge socket survives. Successful internal rebind keeps the admitted transport and does not repeat connect-token admission, `LOGIN`, or `PLAY`; exhausted recovery closes the edge and then enters this visible reconnect flow.
+
 - **Backoff and jitter**
   - Start with an initial delay of `1–2s` after the first failed reconnect attempt.
   - Use exponential backoff (for example, doubling the delay on each subsequent failure) up to a maximum backoff of `30–60s`.
@@ -218,6 +220,10 @@ Clients must also treat pre-disconnect output as non-resumable transport state. 
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
 The hot reconnect screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
+
+Client input is not replayed either. A line or frame whose admission is ambiguous at the disconnect boundary may be lost under the edge's at-most-once contract. A command already durably admitted before transport loss is different: it continues once under its recorded server-side command/effect identity, and its later outcome may enter the authorized resume transcript. Reconnect never recreates that command from the old client input.
+
+Explicit gameplay `LOGOUT` remains terminal and suppresses private replay. Planned `service_restart` follows this ordinary reconnect path, while `session_replaced` tells the displaced transport that another controller is current; neither is reclassified as gameplay logout.
 
 Prompt/status output is a separate output class from transcript lines:
 
