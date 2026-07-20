@@ -99,3 +99,17 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 - Later slices may allow world-topology-aware propagation rules such as area-local whispers, map-wide shouts, or continent-scoped announcements. Social & Groups should accept those semantics through explicit delivery metadata rather than inferring them from a room-chat alias alone.
 - The preferred target-state is a configurable communication envelope where a communication intent names a type definition plus one or more targets/scopes. Social & Groups should receive explicit resolved delivery metadata and presentation directives from the gameplay orchestration layer rather than re-deriving spatial context from a verb name alone.
 - Only world/gameplay communication must enter Game Logic. Private platform and ordinary social-channel communication remains independent of Game Logic availability and tenant-authored gameplay semantics.
+
+## History, Evidence, and Acknowledgement
+
+Communication storage follows [ADR 0136](../../decisions/adr-0136-communication-type-specific-history-and-retention.md). Every supported communication type declares durable player-history behavior, finite moderation or safety-evidence behavior, retention, access, export, erasure or tombstones, and acknowledgement semantics. A generic send endpoint must not silently assign indefinite persistence to a type whose contract is transient.
+
+- Mail, account direct messages, and channels promising scrollback are durably committed before the API returns the corresponding durable-acceptance outcome.
+- World speech is live by default and does not expose permanent player history unless its type explicitly promises a bounded history surface.
+- Safety evidence is a separately authorized finite record, not an implicit player-history extension. Logging & Admin cases and audit records remain separate from Social communication evidence.
+- A content-free idempotency receipt may survive content expiry and return the previous outcome for an identical retry; it cannot reconstruct content or audience.
+- Cache/Rate-Limit Redis is a rebuildable history projection and fanout mechanism only. Its loss cannot erase promised durable history or authorize an otherwise forbidden replay.
+- History and export return no more than the semantic view originally authorized for that recipient. Metadata-only, redacted, or partial observers cannot retrieve full content through another endpoint or a later cache refill.
+- Semantic admission, durable-history acceptance, evidence capture, transport attempt, and end-user delivery are distinct typed outcomes unless the communication type explicitly requires one before another.
+
+The current REST, gRPC, persistence, and retrieval surfaces do not yet prove these distinctions. Complete implementation requires type-versioned storage declarations, lifecycle and erasure handling, recipient-view-bound reads, and typed acknowledgement outcomes rather than interpreting one successful `SendMessage` response as every form of persistence and delivery.

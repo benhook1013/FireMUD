@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 10 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 11 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **126** | **183** | `in-progress` |
+| **Total** | | **127** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -283,7 +283,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MOD-01` — `revised` on 2026-07-20; [ADR 0133](../../architecture/decisions/adr-0133-owner-local-moderation-enforcement.md)
 - [x] `MS-GR-COMMUNICATION-ORCHESTRATION` — `revised` on 2026-07-20; [ADR 0134](../../architecture/decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md)
 - [x] `MS-SOCIAL-RELATIONSHIP-AUTHORITY` — `revised` on 2026-07-20; [ADR 0135](../../architecture/decisions/adr-0135-social-relationship-authority-and-entity-owned-value.md)
-- [ ] `MS-SOCIAL-HISTORY-DURABILITY`
+- [x] `MS-SOCIAL-HISTORY-DURABILITY` — `revised` on 2026-07-20; [ADR 0136](../../architecture/decisions/adr-0136-communication-type-specific-history-and-retention.md)
 - [ ] `MS-SOCIAL-OBSERVER-SHOUT-POLICY`
 - [ ] `PLAYTEST-01`
 - [ ] `LIFE-01`
