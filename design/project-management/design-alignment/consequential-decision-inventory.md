@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 19 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 20 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **99** | **183** | `in-progress` |
+| **Total** | | **100** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -248,7 +248,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `CONTENT-04` — `revised` on 2026-07-20; [ADR 0109](../../architecture/decisions/adr-0109-materialized-starter-profiles-with-conservative-draft-upgrades.md)
 - [x] `CONTENT-05` — `deferred` on 2026-07-20; [ADR 0110](../../architecture/decisions/adr-0110-defer-whole-game-portability-and-external-authoring-formats.md)
 - [x] `CMD-02` — `accepted` on 2026-07-20; [ADR 0111](../../architecture/decisions/adr-0111-typed-bounded-gameplay-effect-extension.md)
-- [ ] `SET-02`
+- [x] `SET-02` — `revised` on 2026-07-20; [ADR 0112](../../architecture/decisions/adr-0112-bounded-pull-settings-distribution-with-freshness-classes.md)
 - [ ] `LLM-01`
 - [ ] `PROC-01`
 - [ ] `PROC-03`

@@ -204,6 +204,14 @@ That later resolver or read model should:
 
 This does not need to become a full distributed config platform. A bounded authoritative settings read model is enough.
 
+### Distribution and Freshness
+
+The bounded read model uses pull-based authoritative snapshots and process-local caches. Every returned scope snapshot carries a monotonic revision, and every surfaced domain or key declares a freshness class and maximum stale interval. A successful settings write is therefore guaranteed to become visible within its declared bound; it is not described as globally instantaneous.
+
+During an authority outage, a consumer may retain its last-known-good snapshot only within the applicable stale interval. After that interval, ordinary presentation preferences may use a declared safe fallback, while admission, tenant-isolation, resource-safety, and other restrictive policy must fail closed or consult a dedicated authoritative fence. A consumer must never preserve an indefinitely stale permissive value merely to maintain availability.
+
+Immediate revocation and emergency fencing are separate control-plane concerns rather than ordinary cached settings. A future notification-plus-pull optimization may reduce refresh latency when measurements justify it, but notifications do not carry authoritative values and missed notifications cannot invalidate the correctness of revisioned pull and bounded staleness.
+
 ## Current Practical Rule
 
 Current practical rule:
@@ -215,4 +223,5 @@ Current practical rule:
 - Game Session exposes the resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, `commandHistory`, and `commandCapabilities` result through `/actuator/settings/effective`, and also includes normalized subgroup payloads for transcript, movement, and world-topology seams plus the current scoped `communication` override view for the same session or synthesized scope, while Game Logic exposes the fully merged effective `communication` result through `/actuator/settings/effective/communication`;
 - the first authority stays bounded and domain-oriented; it is not a general distributed config platform;
 - cache invalidation remains bounded and local to each runtime process through explicit refresh/evict operations on the shared reader rather than a distributed push fabric;
+- authoritative snapshots must eventually expose monotonic scope revisions and schema-declared freshness classes; the current reader does not yet implement class-specific stale expiry or safe fallback/fail-closed behavior;
 - centralized operator-default/caps resolution ownership and preset expansion remain later slices rather than compatibility scaffolding in this one.

@@ -57,6 +57,7 @@ The generated reference carries the current defaults, descriptions, valid values
   - `common-platform-core` now supplies the shared merged persisted override layer, but Game Session still owns the final merge into its typed operator defaults;
   - operator caps and preset expansion are not applied there yet;
   - invalidation is bounded/local rather than a distributed push model: readers use a short TTL cache plus explicit per-scope refresh/evict semantics;
+  - the target shared snapshots carry monotonic scope revisions and schema-declared freshness bounds; bounded last-known-good use, presentation fallback, and fail-closed admission/safety expiry remain implementation work;
   - and there is still no generalized config-distribution fabric.
 
 - Prompt exclusion from reconnect transcript replay remains part of the canonical reconnect/output policy; it is not yet surfaced as an operator-facing `firemud.presentation` setting.
