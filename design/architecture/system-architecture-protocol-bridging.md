@@ -57,20 +57,21 @@ The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each T
 
 Planned Gateway drain example:
 
-- Gateway closes the authenticated internal bridge with `1000/logout;subreason=gateway_restart`.
+- Gateway closes the authenticated internal bridge with `1012/service_restart`.
 - TCP Proxy classifies that machine-parseable bridge close as `bridge_shutdown_class=planned_drain`.
-- The Telnet client receives a final `logout` disconnect with `subreason=gateway_restart` rather than `backend_unavailable`.
+- The Telnet client receives a final `service_restart` disconnect. Optional operational metadata may identify the deployment, but it is not required to choose reconnect behavior.
 
-Clean upstream logout example:
+Clean upstream session-end examples:
 
-- Game Session or Gateway closes the authenticated internal bridge with `1000/logout` and a supported bounded subreason such as `takeover`, `user_logout`, `admin_termination`, or `none`.
-- TCP Proxy preserves that clean upstream session-end signal as the Telnet-side `logout` category with the same bounded subreason instead of translating it into `backend_unavailable`.
+- Game Session signals terminal logout or forced session termination as `1000/logout`, and Gateway preserves that top-level outcome on the authenticated internal bridge. TCP Proxy translates it to Telnet `logout`.
+- Game Session signals successful controller takeover for the displaced transport, and Gateway emits `1000/session_replaced`. TCP Proxy translates it to Telnet `session_replaced`.
+- Bounded subreasons may add operational context, but omission or an unknown value cannot change either lifecycle classification.
 
 Unattributed bridge-loss example affecting one established Telnet bridge:
 
 - The authenticated internal bridge drops without a machine-parseable planned-drain close (for example abrupt transport reset or crash).
 - TCP Proxy classifies the loss as `bridge_shutdown_class=unattributed_failure`.
-- For that already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery. Other Telnet sessions whose bridges terminate on healthy Gateway instances should remain unaffected.
+- For that already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery or invent `service_restart`. The proxy cannot prove from an absent close frame whether Gateway, its network path, or the routed backend failed. Other Telnet sessions whose bridges terminate on healthy Gateway instances should remain unaffected.
 
 MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity and tick queues) is distinct from MCP metadata; durable actor gameplay state, including cooldowns, continues independently of the transport session. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
 
@@ -85,7 +86,7 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
 - **No replay of prior outbound stream across reconnects** – The edge does not preserve or replay previously-sent server text, WebSocket frames, or MCP messages onto a new client transport after reconnect. After resume, Game Session may send fresh post-`PLAY` state or summaries, but it must not treat the new transport as a continuation of the prior byte stream.
 - **At-least-once delivery (edge event sinks)** – Internal gRPC event sinks associated with the edge (for example the TCP Proxy’s `NotifyDisconnect` stream into Game Session) are intentionally **at-least-once** and must be consumed idempotently with respect to their idempotency keys, as described in [gRPC API Style & Versioning](./system-architecture-grpc.md#event-and-streaming-semantics). These streams are advisory hints that complement, but do not change, the at‑most‑once guarantees for client gameplay commands.
 - **Explicit drop conditions (edge layers)** – Commands or lines may be dropped under clearly defined conditions, including:
-  - TCP Proxy upstream-bridge failures: if the TCP Proxy cannot establish the Proxy → Gateway WebSocket bridge within its bounded retry budget because upstream gameplay is unavailable, it closes the Telnet connection with `backend_unavailable`. If handshake trust checks fail (for example mTLS certificate validation or policy deny), it closes with `policy_violation` instead. For established sessions where the bridge drops, the proxy closes the Telnet connection immediately according to the canonical disconnect taxonomy: clean authenticated `1000/logout` closes preserve `logout` with the corresponding bounded subreason, while unattributed established-session bridge loss maps to `backend_unavailable`. If upstream backpressure causes the proxy’s Telnet → Gateway input buffer ceiling to be exceeded while upstream remains reachable, it closes the connection with `policy_violation` and records `edge_backpressure` context in logs/metrics rather than silently discarding gameplay commands.
+  - TCP Proxy upstream-bridge failures: if the TCP Proxy cannot establish the Proxy → Gateway WebSocket bridge within its bounded retry budget because upstream gameplay is unavailable, it closes the Telnet connection with `backend_unavailable`. If handshake trust checks fail (for example mTLS certificate validation or policy deny), it closes with `policy_violation` instead. For established sessions, TCP Proxy preserves authoritative top-level bridge closes as their equivalent Telnet reasons: terminal `logout`, `session_replaced`, or `service_restart`. An unattributed established-session bridge loss retains the observation-limited `backend_unavailable` fallback. If upstream backpressure causes the proxy’s Telnet → Gateway input buffer ceiling to be exceeded while upstream remains reachable, it closes the connection with `policy_violation` and records `edge_backpressure` context in logs/metrics rather than silently discarding gameplay commands.
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed Telnet or MCP traffic) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
@@ -114,29 +115,31 @@ Architecture and service designs must not require base text clients to participa
 
 ### Telnet Disconnect Reasons
 
-Telnet clients receive final disconnect messages from the TCP Proxy Service when connections close due to policy, slow-client behaviour, backend outages, or internal errors. To keep behaviour aligned with WebSocket close codes from [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts), the TCP Proxy Service standardises a small set of Telnet disconnect reason categories:
+Telnet clients receive final disconnect messages from the TCP Proxy Service when connections close due to policy, slow-client behaviour, backend outages, or internal errors. To keep behaviour aligned with WebSocket close codes from [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) and [ADR 0127](./decisions/adr-0127-lifecycle-distinct-gameplay-close-taxonomy.md), the TCP Proxy Service standardises a small set of Telnet disconnect reason categories:
 
-- `logout` – explicit, clean shutdown (user-initiated logout, takeover completion, admin-initiated session end, or planned edge drain); maps to WebSocket `1000` with reason `logout` and the corresponding bounded `subreason` defined in Gateway Architecture. When the authenticated upstream gameplay bridge closes cleanly with `1000/logout`, the TCP Proxy must preserve the Telnet-side category as `logout` and carry through the bounded subreason (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, or `none`) rather than translating that clean shutdown into `backend_unavailable`.
+- `logout` – terminal gameplay logout or forced session termination; maps to WebSocket `1000/logout`. TCP Proxy preserves the top-level terminal outcome without requiring a subreason.
+- `session_replaced` – the old transport was displaced by a successful controller takeover; maps to WebSocket `1000/session_replaced`.
 - `idle_timeout` – idle-connection timeout where no traffic has been observed within the configured idle window; maps to WebSocket `1001` with reason `idle_timeout`.
 - `policy_violation` – client behaviour that violates platform policies (for example sustained command-rate abuse, malformed envelopes, repeated MCP negotiation failures, intentionally abusive traffic, or edge trust/policy handshake failures such as proxy mTLS certificate validation mismatch); maps to WebSocket `1008` with reason `policy_violation`.
+- `service_restart` – planned Gateway drain or restart; maps to standard WebSocket `1012/service_restart`.
 - `backend_unavailable` – gameplay backend services (Game Session or critical dependencies) are unavailable or overloaded beyond well-defined grace windows on the WebSocket and Telnet paths. On the WebSocket side, Spring Cloud Gateway emits `1013/backend_unavailable` when ADR 0013's bounded upstream-recovery timer expires or the stalled-input buffer cannot accept more input, as described in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window). On the Telnet side, the TCP Proxy emits `backend_unavailable` when its bridge-availability state determines gameplay admission is unavailable (including sustained inability to establish or maintain Proxy → Gateway gameplay connectivity) and does not keep ambiguous half-open gameplay sessions. Edge buffer-pressure closes map to `policy_violation` with `edge_backpressure` context only when the gameplay upstream is reachable; buffer exhaustion caused by a Game Session stall maps to `backend_unavailable`.
-- `internal_error` – unexpected server-side failures not attributable to client behaviour and not clearly backend unavailable; maps to WebSocket `1011` with reason `internal_error`.
+- `internal_error` – unexpected server-side failures not attributable to client behaviour and not clearly backend unavailable; maps to WebSocket `1011/internal_error`. A WebSocket transport may fail before that close frame can be emitted, in which case clients apply the same retry class to the abnormal transport loss. TCP Proxy retains `backend_unavailable` for unattributed loss of its established Gateway bridge because it cannot infer an internal-error cause from the absent frame.
 
 The authoritative cross-layer translation table and precedence rules for WebSocket and Telnet close outcomes live in [Gateway Architecture](./system-architecture-gateway.md#canonical-close-translation-matrix). This document defines the Telnet taxonomy and must remain consistent with that table.
 
 The exact Telnet disconnect line format is defined in the TCP Proxy Service design as `DISCONNECT <reason-token> <human-message>\n`. Every player-visible disconnect must include one of these reason tokens so that:
 
-- Client authors can treat `policy_violation` as non-retriable (or much longer backoff) and the others as retriable with the backoff rules in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour), except when wire-visible disconnect metadata explicitly indicates edge backpressure (for example WebSocket `1008/policy_violation;subreason=edge_backpressure` or Telnet `policy_violation;subreason=edge_backpressure`), which should follow retriable backend-pressure policy. If this metadata is absent, default to non-retriable `policy_violation`.
+- Client authors can treat `policy_violation` as non-retriable (or much longer backoff), `logout` as terminal, `session_replaced` as displacement by another controller, `service_restart` as planned-maintenance retry, and the remaining failure outcomes according to [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour). Optional wire-visible diagnostic detail may refine operator presentation but cannot be required to determine those lifecycle classes.
 - Operators can aggregate disconnect metrics by reason category in a way that lines up with WebSocket close-code dashboards.
 
-Telnet disconnect messages and structured logs should preserve the same bounded subreason context used by the WebSocket side (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) so deploy drains and edge pressure can be distinguished from true outages without introducing a separate Telnet-only taxonomy. For Telnet disconnects caused by edge backpressure, `subreason=edge_backpressure` is mandatory on the wire so clients can apply the retriable policy deterministically.
+Telnet structured logs and metrics may preserve the same bounded subreason context used by the WebSocket side (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`). Telnet wire messages may include that detail, but the top-level reason token alone must determine lifecycle behavior. Deploy drain and takeover therefore use `service_restart` and `session_replaced` rather than depending on `gateway_restart` or `takeover` suffixes.
 
-Concrete clean-logout example:
+Concrete terminal and takeover examples:
 
 - A Telnet client is already in gameplay.
-- A second client successfully takes over the same `{tenantId, gameInstanceId, characterId}` binding, or an admin ends that session cleanly.
-- Game Session closes the authenticated upstream gameplay bridge with `1000/logout;subreason=takeover` or `1000/logout;subreason=admin_termination`.
-- TCP Proxy preserves that as Telnet `logout;subreason=takeover` or `logout;subreason=admin_termination`; it does not translate the event into `backend_unavailable`.
+  - A second client successfully takes over the same `{tenantId, playableStateNamespaceId, characterId}` controller binding, or an admin ends that session cleanly.
+- For administrator-forced termination, Gateway emits `1000/logout` and TCP Proxy emits Telnet `logout`.
+- For successful takeover, Gateway emits `1000/session_replaced` and TCP Proxy emits Telnet `session_replaced` on the displaced transport.
 
 Any additional Telnet-specific reasons introduced in the TCP Proxy implementation must be documented here and mapped to one of the WebSocket categories above (or a new, explicitly added category) to keep the taxonomy unified.
 
@@ -147,12 +150,12 @@ The underlying authentication and gameplay services enforce a **single active ga
 - **Telnet → Web takeover**
   - A Telnet client connects via the TCP Proxy, issues `LOGIN`, and enters gameplay with `PLAY` for a character.
   - Later, a Web client connects via WebSocket to `/ws/game/**` and successfully issues `LOGIN` + `PLAY` for the same character.
-  - Game Session treats the Web client as the new active binding, terminates or demotes the Telnet connection according to takeover rules, and closes the Telnet path with a `logout` Telnet reason (mapped to WebSocket `1000/logout` in the taxonomy above). No ordering guarantees are provided between the last Telnet commands and the first WebSocket commands; only per-connection FIFO holds on each individual connection.
+  - Game Session treats the Web client as the new active binding, terminates or demotes the Telnet connection according to takeover rules, and closes the Telnet path with a `session_replaced` Telnet reason (mapped to WebSocket `1000/session_replaced` in the taxonomy above). No ordering guarantees are provided between the last Telnet commands and the first WebSocket commands; only per-connection FIFO holds on each individual connection.
   - The Telnet client must treat this disconnect as a normal session takeover outcome, apply its reconnection/backoff rules if it wishes to reconnect, and not assume that any new Telnet connection can “resume” alongside the active WebSocket binding.
 - **Web → Telnet takeover**
   - A Web client connects via `/ws/game/**`, issues `LOGIN`, and enters gameplay with `PLAY` for a character.
   - A Telnet client later connects through the TCP Proxy and logs in as the same character.
-  - Game Session treats the Telnet client as the new active binding; the WebSocket session is closed with `1000/logout` and the Telnet connection becomes authoritative. Again, cross-connection ordering is not defined: only per-connection FIFO is guaranteed, and clients must not attempt to sequence commands across the old and new transports.
+  - Game Session treats the Telnet client as the new active binding; the WebSocket session is closed with `1000/session_replaced` and the Telnet connection becomes authoritative. Again, cross-connection ordering is not defined: only per-connection FIFO is guaranteed, and clients must not attempt to sequence commands across the old and new transports.
 - **Concurrent Telnet + Web connections**
   - When clients deliberately keep both a Telnet connection and a WebSocket connection open for the same character (for example a scripting tool plus a web UI), only one binding at a time is gameplay-active. The “losing” connection is closed or demoted by Game Session, surfaced at the edge via the standard disconnect categories, and must not be relied on for ongoing gameplay commands.
 
