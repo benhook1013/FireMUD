@@ -360,14 +360,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md) records the revised export, minimization, finite-retention, and restore-erasure contract. Exact numeric legal/provider schedules remain mandatory player-facing environment inputs rather than invented universal constants.
 - **Human consultation:** Human-led product and architecture review completed 2026-07-19; `revised`. Environment-specific privacy and finance approval remains a production-readiness obligation.
 
-#### `SOCIAL-01` - Communication is room-local until broader scopes are designed
+#### `SOCIAL-01` - Superseded room-local communication staging assumption
 
 - **Capability:** Primary `EA-2.1` Chat, private communication, and mail. Secondary `AR-2.2`, `EA-1.2`, and `PO-1.2`.
-- **Decision / status / importance:** The current player communication scope is room-local `SAY`, targeted `WHISPER`, and targeted `TELL`; cross-room, global, or mail-like audience scopes are deferred. Moderation and capability policy must not infer broader reach from the current commands. Status `proposed/deferred`; `M/med`.
+- **Decision / status / importance:** The former room-local target is superseded. Communication now has explicit gameplay, social-channel, and operator classes; type-specific history and acknowledgement; closed observer views; and profile-authored bounded topology scopes. Current implementation remains room `SAY`, nearby targeted `WHISPER`, online direct `TELL`, plus partial Social mail/message/channel foundations. No baseline `SHOUT` is promised. Status `superseded`; `M/med`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 5. Social Interaction & Safety`; [system-architecture-mud-client-protocol.md](../../architecture/system-architecture-mud-client-protocol.md) `§ Interaction with abuse heuristics` and `§ MCP resource limits & abuse budgets`; [platform-settings-reference.md](../../architecture/generated/platform-settings-reference.md) `§ firemud.communication` and `§ firemud.command-capabilities`.
-- **Strongest alternative:** Add global, cross-room, or mail scopes immediately and make them part of the baseline client contract.
-- **ADR recommendation:** Yes before expanding audience scope; define delivery, retention, moderation, capability, and privacy semantics first.
-- **Human consultation:** Yes; product, trust-and-safety, and player-support owners must choose the future audience model.
+- **Strongest alternative:** Freeze a deliberately narrow v1 to room `SAY`, nearby `WHISPER`, and Social-owned direct messages/mail without a generalized authored communication envelope. This is simpler but sacrifices the accepted extensibility and still requires a later migration for richer MUD communication.
+- **Superseding decisions:** [ADR 0134](../../architecture/decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md), [ADR 0136](../../architecture/decisions/adr-0136-communication-type-specific-history-and-retention.md), and [ADR 0137](../../architecture/decisions/adr-0137-closed-observer-views-and-profile-scoped-shout.md) establish the current target. No duplicate ADR is required.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `superseded`. Broader topology propagation, SHOUT, cross-pod delivery, type-specific retention, and complete social product surfaces remain implementation work, not unresolved audience authority.
 
 #### `ACCOUNT-01` - External identity providers are a product promise, not an implementation detail
 
