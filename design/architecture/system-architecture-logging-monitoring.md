@@ -279,7 +279,7 @@ Moderation and admin workflows should remain usable even when parts of the obser
   - Clearly indicate which data sources are unavailable (for example, “logs currently unavailable”, “metrics degraded”, or “traces unavailable”).
   - Continue to expose core moderation and admin APIs based on authoritative game data wherever possible.
   - Hide or disable only those features that require the missing backend (for example, embedded dashboards or historical trace searches), rather than failing the entire moderation workflow.
-- **Alert routing:** If Alertmanager is unavailable, or email delivery is degraded, Logging & Admin should surface alert status inside its own UI and APIs so operators can still see pending alerts without relying solely on email or chat integrations. When Alertmanager is down, Logging & Admin may fall back to a small set of Prometheus recording rules that approximate critical alert conditions (for example, SLO breaches for tail-loss or player SLIs) and clearly label those views as “best-effort from Prometheus (Alertmanager unavailable)” so operators understand they are not seeing the full alert state.
+- **Alert routing:** When Alertmanager is unavailable, Logging & Admin reports routed-alert state as unavailable. It may display fresh, bounded Prometheus diagnostic values, but does not reconstruct pending alerts or a second active-alert authority; stale diagnostics become `unknown`.
   - For broader “observability stack outage” scenarios (Prometheus down, Elasticsearch down, Jaeger down), follow `design/architecture/system-architecture-observability-incident-runbook.md` for fallback workflows and recovery verification.
 
 New moderation features and admin tools must explicitly document:
