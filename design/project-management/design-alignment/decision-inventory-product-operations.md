@@ -432,7 +432,7 @@ The assigned sources also provide materially stronger or contradictory evidence 
 
 ## Conflicts And Open Boundaries
 
-`SESSION-08` was the only direct contradiction found in the assigned sources. It is now resolved: healthy uninterrupted play is independent of internal JWT lifetime, the three-minute setting is the disconnected-resume admission cap under the remaining continuity-binding lifetime, stale bindings follow the configured fresh-entry fallback, and transcript retention is independent.
+`SESSION-08` was the only direct contradiction found in the assigned sources. It is now resolved: healthy uninterrupted play is independent of private player-delegation token lifetime, the three-minute setting is the disconnected-resume admission cap under the remaining continuity-binding lifetime, stale bindings follow the configured fresh-entry fallback, and transcript retention is independent.
 
 The following are stronger evidence or implementation gaps, not additional contradictions:
 

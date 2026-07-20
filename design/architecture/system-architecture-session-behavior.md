@@ -74,7 +74,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 
 - **Issued-token registry records**
   - Key: `session:auth:token:<tokenHash>` on Coordination Redis, where `<tokenHash>` is a fixed-length SHA-256 digest of the complete compact JWT.
-  - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable Browser, player-bootstrap, or private Service JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
+  - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
   - Lifetime: absolute TTL through JWT `exp` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Records are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` force re-authentication.
 
 - **Gameplay session bindings**
@@ -103,7 +103,7 @@ Index contract requirements:
 
 Each gameplay session binding must store the server-side auth token identity it is operating under:
 
-- `authTokenHash` – the token hash for the internal JWT that Game Session uses when making backend calls for this session. Clients never see or transmit this token.
+- `authTokenHash` – the token hash for the private `game-session-account-delegation` JWT that Game Session uses when making backend calls for this session. Clients never see or transmit this token.
 - `authTokenIssuedAt` (`iat`) – the issuance time of that JWT.
 - `authTokenExpiresAt` (`exp`) – the deadline used to schedule rotation before expiry.
 - `membershipVersion` – the latest authoritative tenant-membership version used when the session was admitted or last refreshed.
@@ -117,7 +117,7 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 - Current revocation state does not block the account or tenant for gameplay admission.
 - Current entitlement authority is fresh for a new binding. Resume of the same still-resumable binding may instead use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; hard denial, revocation, a newer billing sequence, or a sequence gap forbids this continuity path.
 
-Resume validation must not depend on the previous internal service token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh backend token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, consume the current disconnection episode, and then resume the gameplay binding. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
+Resume validation must not depend on the previous private player-delegation token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh `game-session-account-delegation` token, atomically replace stored `authTokenHash` and `authTokenIssuedAt`, update `membershipVersion`, consume the current disconnection episode, and then resume the gameplay binding. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
 
 ### Active-Socket Auth Revocation
 
@@ -125,7 +125,7 @@ When an `auth-revoked` result reaches a currently connected gameplay binding, Ga
 
 ### Active Session Token Refresh (Required)
 
-Long-lived gameplay sessions require periodic rotation of the private Service JWT used for Account and other control-plane calls. Gameplay clients never receive it, and gameplay-domain authorization continues to use the mTLS workload and typed execution-context contract rather than adding token refresh to each gameplay RPC. Game Session must:
+Long-lived gameplay sessions require periodic rotation of the private `game-session-account-delegation` JWT used for Account calls. Gameplay clients never receive it, and gameplay-domain authorization continues to use the mTLS workload and typed execution-context contract rather than adding token refresh to each gameplay RPC. Game Session must:
 
 1. Schedule planned refresh at approximately 50% of the current JWT lifetime with random jitter, but always before `exp` by the configured safety margin. A 60-second minimum interval may throttle repeated attempts only when enough validity remains; it must never postpone the final safe refresh beyond expiry.
 2. Single-flight concurrent refresh demand for the same binding. A transient failure while the current token remains valid retries with bounded jittered backoff and does not rewrite gameplay continuity deadlines.

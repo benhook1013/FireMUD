@@ -14,7 +14,7 @@ FireMUD has one application-facing contract for exportable secrets: Kubernetes w
 
 ## Token Issuance & Secret Storage
 
-- The **Account Service** signs JWTs for both control-plane browser/API sessions (`/auth/login` profile) and internal service authorization (Service JWT profile).
+- The **Account Service** signs JWTs for both `control-ui` control-plane sessions (`/auth/login` profile) and receiver-specific private player-delegation profiles, currently `game-session-account-delegation` for Account calls.
 - The Account JWT key ring is asymmetric and per environment. Only Account Service may access its private signing keys; validators use public JWKS and must never receive a private Account JWT key.
 - Target-state signing keys remain in **non-exportable signer custody** under the phased protocol in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Account Service owns key-generation requests, validation, promotion, JWKS publication, and public/private pruning; the signer performs only private-key operations Account delegates. Until signer delegation is implemented, `jwt-signing-keys` is an Account-only Kubernetes Secret fallback that rotation automation may neither read nor update.
 - In player-facing environments, inline-only JWT secret configuration and HMAC-only signing or verification are forbidden. `FIREMUD_AUTH_JWT_SECRET_PATH` is the controlled Account-only file-mount fallback, not the target non-exportable signer interface.
@@ -186,7 +186,7 @@ This matrix is the authoritative reference for configuring the Proxy → Gateway
 
 ## Cross-Service Trust
 
-- Internal JWT validation uses the Account Service’s JWKS endpoint.
+- Exact-profile JWT validation uses the Account Service’s JWKS endpoint; backend delegation uses the receiver-specific private player-delegation profile for that route.
 - All internal traffic is authenticated using **mTLS** with cert-manager-issued certificates.
 - Peer-level trust is enforced via **Kubernetes NetworkPolicies**, which restrict ingress and egress paths between services.
 

@@ -14,15 +14,15 @@ Accepted
 
 ## Context
 
-A gameplay connection may remain active longer than the private Service JWT that Game Session uses for Account and other control-plane calls. Without planned rotation, healthy long-running sessions fail at token expiry. A refresh surface that trusts only Game Session's workload identity can create the opposite problem: logout-all, password reset, security lock, or membership revocation may invalidate the current token and then lose a race to a newly issued token with a later `iat`.
+A gameplay connection may remain active longer than the private `game-session-account-delegation` JWT that Game Session uses for Account calls. Without planned rotation, healthy long-running sessions fail at token expiry. A refresh surface that trusts only Game Session's workload identity can create the opposite problem: logout-all, password reset, security lock, or membership revocation may invalidate the current token and then lose a race to a newly issued token with a later `iat`.
 
 The current target already requires periodic refresh, atomic binding replacement, idempotent per-token logout, and watermark-based logout-all. The review retains those boundaries and makes refresh generation, expiry scheduling, overlap, and logout scope explicit. Current implementation has no complete periodic rotation or refresh-generation path; the role-refresh service is a placeholder, gameplay session state lacks the complete target token metadata, and Account logout/logout-all watermark workflows are absent.
 
 ## Decision
 
-### Private Service-Token Rotation
+### Private Player-Delegation Token Rotation
 
-- The rotated JWT is private backend material for Account and other control-plane calls. Gameplay clients never receive it. Gameplay-domain services continue to authorize the concrete mTLS workload and typed `PlayerExecutionContext`; they do not gain a per-action player-JWT dependency.
+- The rotated JWT is the receiver-specific private player-delegation profile `game-session-account-delegation` with audience `account-service`. It is private backend material for Account calls; gameplay clients never receive it. Gameplay-domain services continue to authorize the concrete mTLS workload and typed `PlayerExecutionContext`; they do not gain a per-action player-JWT dependency.
 - Game Session schedules planned refresh at approximately half of the current token lifetime with random jitter and always before `exp` by the configured safety margin.
 - A 60-second minimum retry interval may prevent a refresh storm only while sufficient validity remains. It cannot postpone the final safe attempt beyond expiry.
 - Concurrent refresh demand for one gameplay binding is single-flighted. Transient failure while the current token remains valid uses bounded jittered retry.
@@ -35,7 +35,7 @@ The current target already requires periodic refresh, atomic binding replacement
 
 ### Per-Token Logout
 
-- `POST /auth/logout` revokes only the presented Browser JWT or `player-bootstrap` token and is idempotent when its issued-token registry record is already absent.
+- `POST /auth/logout` revokes only the presented `control-ui` JWT or `player-bootstrap` token and is idempotent when its issued-token registry record is already absent.
 - Other devices and unrelated gameplay bindings for the account remain active.
 - A first-party player UI performs its local/device logout sequence separately: stop reconnect, gameplay `LOGOUT`, close the socket, revoke the current bootstrap token, and clear local state. Account does not locate gameplay sockets from the per-token endpoint.
 - The audit action is explicitly `token_logout` and records bounded actor, account, token-profile/hash identifier, request, and outcome metadata without the raw token.
@@ -85,10 +85,10 @@ This has one simpler logout meaning but unexpectedly terminates other devices an
 - Persist `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, refreshed membership metadata, and rotation CAS generation in the authenticated gameplay binding.
 - Implement half-life scheduling, jitter, single-flight, expiry safety margin, bounded retry, atomic swap, old-entry cleanup, and failure-to-fresh-login behavior.
 - Prove refresh cannot cross account, tenant, or membership revocation, including races with logout-all, password reset, security lock, and membership removal.
-- Implement idempotent `/auth/logout` for Browser JWT and player-bootstrap profiles with bounded scoped-key lookup and distinct audit events.
+- Implement idempotent `/auth/logout` for `control-ui` and `player-bootstrap` profiles with bounded scoped-key lookup and distinct audit events.
 - Implement logout-all durable event/audit, Account-owned watermark projection, active-gameplay termination, idempotency, and background token cleanup.
 - Prove per-token logout leaves other devices and unrelated gameplay active, while logout-all terminates every active account binding and permits later deliberate reauthentication.
-- Prove gameplay-domain routine actions acquire no Service JWT refresh or watermark lookup.
+- Prove gameplay-domain routine actions acquire no private player-delegation JWT refresh or watermark lookup.
 
 ## Required Documentation Alignment
 
@@ -103,4 +103,4 @@ This has one simpler logout meaning but unexpectedly terminates other devices an
 
 ## Reversibility and Revisit Triggers
 
-Refresh timing, retry, and overlap are centralized policy that can be tuned without changing logout scope or authority ownership. Revisit if measured refresh load is material, token lifetimes become shorter than safe scheduled rotation permits, cross-device UX requires a durable device/session management surface, or gameplay services no longer need Account/control-plane Service JWTs.
+Refresh timing, retry, and overlap are centralized policy that can be tuned without changing logout scope or authority ownership. Revisit if measured refresh load is material, token lifetimes become shorter than safe scheduled rotation permits, cross-device UX requires a durable device/session management surface, or gameplay services no longer need the `game-session-account-delegation` profile for Account calls.

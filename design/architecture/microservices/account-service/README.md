@@ -7,9 +7,10 @@ Manages user accounts and authentication for the platform. It stores profile dat
 ### Responsibilities
 
 - Registration and login flows, including password resets
-- Issuing short-lived JWT tokens for internal meta/control APIs, including:
-  - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, and
-  - Service JWTs for backend gRPC callers via internal authentication flows
+- Issuing exact short-lived JWT profiles for permitted destinations, including:
+  - `control-ui` JWTs for first-party admin/creator web UIs via `/auth/login`;
+  - `player-bootstrap` JWTs for first-party gameplay bootstrap; and
+  - receiver-specific private player-delegation JWTs for backend gRPC callers via internal authentication flows, currently `game-session-account-delegation` for Account Service
 - Issuing first-party player bootstrap tokens and gameplay connect tokens for `/ws/game/**` admission.
 - Tracking profiles, OAuth2 social logins, external account links, and achievements.
 - Managing subscription status and ban enforcement.

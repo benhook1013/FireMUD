@@ -24,7 +24,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 ### One Registry Record Per Revocable JWT
 
-- Account Service creates exactly one Coordination Redis record for each issued Browser, player-bootstrap, or private Service JWT: `session:auth:token:<tokenHash>`.
+- Account Service creates exactly one Coordination Redis record for each issued `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT: `session:auth:token:<tokenHash>`.
 - `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. Raw token contents never appear in Redis keys, values, logs, metrics, traces, or audit evidence.
 - The bounded record contains `schemaVersion`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, issuance/refresh generation, and active state. It does not duplicate tenant-role maps or global-role grants from the signed token.
 - Its absolute expiry is the JWT `exp` plus the bounded validation-skew/safety margin. Activity does not extend it.
@@ -39,7 +39,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 ### Profile Boundaries
 
-- Browser, player-bootstrap, and private Service JWTs use the registry because they require individual logout or generation-bound refresh.
+- `control-ui`, player-bootstrap, and receiver-specific private player-delegation JWTs use the registry because they require individual logout or generation-bound refresh. The current private profile is `game-session-account-delegation` with audience `account-service`.
 - The 30-second gameplay connect token uses its dedicated Gateway-owned atomic single-use/replay contract from ADR 0029 and does not also receive an issued-token registry record.
 - Gateway-to-Game-Session signed connect context is a separate short-lived workload assertion, not an Account JWT session, and does not use this registry.
 
@@ -47,7 +47,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 - Per-token logout deletes the single token record idempotently. Other devices, tokens, and gameplay bindings remain unaffected.
 - Bulk account, tenant, and membership revocation uses monotonic watermarks/versions rather than scanning token records or encoding every scope in the token key.
-- Generation-bound Service-token rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
+- Generation-bound private player-delegation rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
 - Registry absence is default denial. Coordination reset therefore forces reauthentication/reissuance rather than making unregistered but cryptographically valid tokens acceptable.
 
 ## Consequences

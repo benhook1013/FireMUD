@@ -20,7 +20,7 @@ The decision is accepted; implementation and proof remain partial. Durable bound
 
 FireMUD must distinguish token validity, continuously active gameplay, continuity after transport loss, Redis cleanup, and retained presentation context. These boundaries have different security, player-experience, and storage purposes. The live implementation currently relies primarily on a refreshable Redis TTL, does not enforce the configured disconnected-resume window in `PLAY`, and lacks immutable continuity timestamps.
 
-The previously reconciled target separated the policies but described `gameplaySessionExpiresAt`, derived from JWT lifetime plus a safety margin, as an absolute gameplay-binding ceiling. Read literally, the one-hour JWT default plus five-minute margin could force a healthy long-running player through periodic gameplay-session recreation even though internal service tokens are designed to rotate. Internal credential lifetime must not indirectly dictate uninterrupted player-session duration.
+The previously reconciled target separated the policies but described `gameplaySessionExpiresAt`, derived from JWT lifetime plus a safety margin, as an absolute gameplay-binding ceiling. Read literally, the one-hour JWT default plus five-minute margin could force a healthy long-running player through periodic gameplay-session recreation even though private player-delegation tokens are designed to rotate. Internal credential lifetime must not indirectly dictate uninterrupted player-session duration.
 
 ## Decision
 
@@ -29,9 +29,9 @@ JWT validity, active gameplay authorization, continuity-binding eligibility, dis
 ### Active Gameplay
 
 - A continuously connected gameplay session may remain active while edge liveness is healthy and current account, membership, entitlement, revocation, fencing, and backend-token checks succeed.
-- Internal service JWTs rotate on their bounded cadence. Each token remains valid only through its own `exp`; rotation neither revives an expired token nor forces a healthy player through fresh `PLAY` merely because the previous token aged out.
+- Receiver-specific private player-delegation JWTs rotate on their bounded cadence. Each token remains valid only through its own `exp`; rotation neither revives an expired token nor forces a healthy player through fresh `PLAY` merely because the previous token aged out.
 - Account or tenant revocation and loss of required authority remain immediate terminal conditions. This decision does not create an immortal authorization grant.
-- If FireMUD later requires a maximum continuously active player-session lifetime, it must be an explicit security/product policy rather than an accidental consequence of internal JWT configuration.
+- If FireMUD later requires a maximum continuously active player-session lifetime, it must be an explicit security/product policy rather than an accidental consequence of private player-delegation token configuration.
 
 ### Continuity and Resume
 
@@ -58,7 +58,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 ## Consequences
 
-- Long uninterrupted play is not coupled to the one-hour internal JWT default.
+- Long uninterrupted play is not coupled to the one-hour private player-delegation token default.
 - Short disconnected-resume windows still bound unattended continuity risk, and stale Redis or transcript data cannot revive a binding.
 - Fresh admission provides a player-friendly fallback after continuity expiry without pretending that old transient state resumed.
 - The runtime must persist and evaluate additional logical timestamps independently of Redis expiration.
@@ -69,7 +69,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 ### Treat the Derived Anchor as an Active-Session Cutoff
 
-This gives a simple hard cap but couples player-session duration to internal token policy and can interrupt healthy long-running play.
+This gives a simple hard cap but couples player-session duration to private player-delegation token policy and can interrupt healthy long-running play.
 
 ### Use One TTL for Tokens, Bindings, Resume, and Transcript
 

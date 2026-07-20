@@ -1,6 +1,27 @@
 version: 3
 updated_by: "platform-security+account-service"
 default_action: deny
+default_action_scope: declared_route_entries_only
+unlisted_route_status: drift
+default_deny_generation:
+  enabled: false
+  blocked_until: source_stable_openapi_protobuf_coverage_complete_and_validated
+inheritance:
+  mode: none
+  rule: route_entries_do_not_inherit_authentication_or_authorization_fields
+token_profiles:
+  - profile: control-ui
+    audience: control-ui
+    kind: control_plane_user
+  - profile: player-bootstrap
+    audience: player-bootstrap
+    kind: gameplay_bootstrap_user
+  - profile: game-session-account-delegation
+    audience: account-service
+    kind: private_player_delegation
+internal_workload_rules:
+  caller_constraints: all_declared_constraints_must_pass
+  allowed_callers_and_mtls_callers: conjunctive
 classifications:
   - public
   - account_scoped
@@ -71,6 +92,7 @@ routes:
     scope: tenant
     classification: public_production_onboarding
     auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
@@ -81,6 +103,7 @@ routes:
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     required_live_checks: [runtime_entitlements]
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -90,6 +113,7 @@ routes:
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     required_live_checks: [runtime_entitlements]
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -99,6 +123,7 @@ routes:
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     required_live_checks: [runtime_entitlements]
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -107,20 +132,27 @@ routes:
     classification: tenant_regular
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
     route: AuthLogin
     scope: public
     classification: public
+    issued_token_profile: control-ui
+    issued_token_audience: control-ui
   - service: account-service
     route: PlayerBootstrapLogin
     scope: public
     classification: public
+    issued_token_profile: player-bootstrap
+    issued_token_audience: player-bootstrap
   - service: account-service
     route: JoinPublicProductionMembership
     scope: tenant
     classification: public_production_onboarding
+    auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
@@ -130,6 +162,7 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     subject_binding: caller_account_id
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -139,18 +172,19 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id
-    accepted_token_profiles: [browser, player-bootstrap]
+    accepted_token_profiles: [control-ui, player-bootstrap]
   - service: account-service
     route: AuthLogoutAll
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id
-    accepted_token_profiles: [browser, player-bootstrap]
+    accepted_token_profiles: [control-ui, player-bootstrap]
   - service: account-service
     route: GetProfile
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
   - service: account-service
@@ -158,6 +192,7 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
   - service: account-service
@@ -165,6 +200,7 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    accepted_token_profiles: [control-ui]
     response_profile: full_account_export
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
@@ -173,6 +209,7 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    accepted_token_profiles: [control-ui]
     mutation_contract: account_delete_requires_no_nonterminal_owned_subscriptions
     canonical_errors:
       any_of: [ACCOUNT_DELETE_ACTIVE_BILLING_OWNER]
@@ -183,6 +220,7 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id_or_platform_admin
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
   - service: account-service
@@ -190,9 +228,10 @@ routes:
     scope: tenant
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
-    required_live_checks: [membership, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, membership_generation, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
     subject_binding: caller_account_id
@@ -204,6 +243,10 @@ routes:
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
+    issued_token_profile: game-session-account-delegation
+    issued_token_audience: account-service
+    allowed_callers:
+      any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     credential_source_context: required_trusted_server_derived
@@ -216,6 +259,10 @@ routes:
     issued_token_state: current_exact_private_delegation
     accepted_token_profiles: [game-session-account-delegation]
     token_audience: account-service
+    issued_token_profile: game-session-account-delegation
+    issued_token_audience: account-service
+    allowed_callers:
+      any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: gameplay_binding_subject
@@ -228,6 +275,8 @@ routes:
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
+    allowed_callers:
+      any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
@@ -240,6 +289,8 @@ routes:
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
+    allowed_callers:
+      any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
@@ -252,6 +303,8 @@ routes:
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
+    allowed_callers:
+      any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
@@ -262,12 +315,14 @@ routes:
     auth_path: internal_service
     issued_token_state: route_variant
     accepted_token_profiles: [game-session-account-delegation, control-ui]
-    token_audience: exact_receiver
+    token_audiences:
+      game-session-account-delegation: account-service
+      control-ui: control-ui
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     response_profile: runtime_admission
     allowed_callers:
-      any_of: [game-session-service, logging-admin-service, platform-runtime]
+      any_of: [game-session-service, logging-admin-service]
     mtls_callers:
       any_of:
         - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
@@ -277,6 +332,7 @@ routes:
     route: GetTenantEntitlementsTenant
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -287,6 +343,7 @@ routes:
     route: GetTenantEntitlementsCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
+    accepted_token_profiles: [control-ui]
     response_profile: high_level_only
     roles:
       any_of: [support, platformAdmin]
@@ -294,6 +351,7 @@ routes:
     route: GetSubscriptionTenantHighLevel
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -304,6 +362,7 @@ routes:
     route: ExportTenantData
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -314,6 +373,7 @@ routes:
     route: GetSubscriptionCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
+    accepted_token_profiles: [control-ui]
     response_profile: high_level_only
     roles:
       any_of: [support, platformAdmin]
@@ -321,6 +381,7 @@ routes:
     route: ListSubscriptionsTenantHighLevel
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -331,6 +392,7 @@ routes:
     route: ListSubscriptionsCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
+    accepted_token_profiles: [control-ui]
     response_profile: high_level_only
     roles:
       any_of: [support, platformAdmin]
@@ -338,6 +400,7 @@ routes:
     route: ListSubscriptionsCrossTenantBillingSafeReports
     scope: cross_tenant
     classification: cross_tenant_billing_safe
+    accepted_token_profiles: [control-ui]
     response_profile: billing_reporting
     roles:
       any_of: [billingAdmin, platformAdmin]
@@ -345,6 +408,7 @@ routes:
     route: GetCallerTenantMembershipTenant
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -355,6 +419,7 @@ routes:
     route: GetTenantMembershipForAccountCrossTenant
     scope: cross_tenant
     classification: cross_tenant_billing_safe
+    accepted_token_profiles: [control-ui]
     response_profile: membership_reporting
     roles:
       any_of: [billingAdmin, platformAdmin]
@@ -362,6 +427,7 @@ routes:
     route: BillingArtifactsTenant
     scope: tenant
     classification: billing_safe_tenant
+    accepted_token_profiles: [control-ui]
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership]
@@ -374,5 +440,6 @@ routes:
     route: BillingArtifactsCrossTenant
     scope: cross_tenant
     classification: cross_tenant_billing_safe
+    accepted_token_profiles: [control-ui]
     roles:
       any_of: [billingAdmin, platformAdmin]

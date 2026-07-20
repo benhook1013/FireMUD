@@ -77,7 +77,7 @@ This provides cryptographic Game Session origin proof and limits an intermediary
 
 Removing replay writes lowers latency and availability cost while retaining origin proof. It still adds per-RPC signing, verification, payload, key lifecycle, and call-site complexity for a threat FireMUD has chosen to accept.
 
-### Generic Service JWTs Carrying Player Identity
+### Generic Backend JWTs Carrying Player Identity
 
 This reuses token infrastructure but conflates workload authentication with player delegation and spreads reusable end-user authority across services.
 

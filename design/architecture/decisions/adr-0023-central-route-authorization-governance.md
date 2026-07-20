@@ -22,7 +22,7 @@ The repository contains a machine-readable authorization matrix and substantial 
 
 ### One Machine-Readable Policy Source
 
-`design/architecture/system-architecture-authz-route-matrix.yaml` is the canonical route-level authorization policy. Every externally reachable or protected HTTP route, gRPC method, gameplay command, and operator surface declares at least:
+`design/architecture/system-architecture-authz-route-matrix.yaml` is the canonical route-level authorization policy for entries it declares. The current YAML is an incomplete inventory, not yet a complete registry of every externally reachable or protected HTTP route, gRPC method, gameplay command, and operator surface. Each declared entry has at least:
 
 - stable service and route identity;
 - public/protected status and route class;
@@ -35,10 +35,12 @@ The repository contains a machine-readable authorization matrix and substantial 
 
 The Markdown matrix is its human-readable companion. Generated inventories, middleware mappings, annotations, and tests are derived from or mechanically checked against the YAML source rather than becoming independent policy authorities.
 
+Until source-stable OpenAPI/protobuf coverage is complete and the generated comparison is validated, missing route coverage is recorded as authorization drift/gap. The incomplete YAML must not drive generated default-deny policy for unlisted routes. Once that inventory gate passes, the declared default-deny policy and full-fail checks apply to the complete validated source inventory.
+
 ### Enforcement
 
-- CI derives candidate route inventories from OpenAPI, protobuf, protocol-command, and explicitly registered operator surfaces and fails if a protected or externally reachable route is missing, stale, or inconsistently classified.
-- Runtime middleware rejects an unclassified protected route. It must not approximate the route as `tenant_regular` or another permissive class.
+- CI will derive candidate route inventories from OpenAPI, protobuf, protocol-command, and explicitly registered operator surfaces and fail if a protected or externally reachable route is missing, stale, or inconsistently classified after the inventory gate passes.
+- Runtime middleware will reject an unclassified protected route once complete inventory coverage is available. It must not approximate the route as `tenant_regular` or another permissive class; current unlisted-route findings remain drift/gap rather than generated policy.
 - Shared middleware enforces route-level token profile, allowlist/watermark, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
 - Cross-tenant support-safe, billing-safe, and data-bearing behavior uses separate classified APIs and response profiles rather than optional flags on one ambiguous endpoint.
 - Gateway routes only reviewed external surfaces. Prefix routing may be a transport convenience only when the exact reachable endpoint inventory is generated and unclassified/internal endpoints are denied; a broad wildcard is not itself an exposure policy.
@@ -74,7 +76,7 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 ## Implementation and Proof Obligations
 
-- Build candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI.
+- Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
 - Enforce strict token profile/audience, allowlist, watermark, tenant, role, and cross-tenant response-profile rules.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.

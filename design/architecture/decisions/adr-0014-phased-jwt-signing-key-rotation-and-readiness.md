@@ -18,7 +18,7 @@ The decision is accepted; implementation and proof remain partial. The current w
 
 ## Context
 
-FireMUD's canonical token contract assigns asymmetric Browser, player-bootstrap, and Service JWT issuance to Account Service and assigns validation to downstream services through Account-published JWKS. Planned rotation should not interrupt users or service calls, while compromise and post-restore hardening must stop trusting the affected key immediately.
+FireMUD's canonical token contract assigns asymmetric `control-ui`, `player-bootstrap`, and receiver-specific private player-delegation JWT issuance to Account Service and assigns validation to downstream services through Account-published JWKS. Planned rotation should not interrupt users or service calls, while compromise and post-restore hardening must stop trusting the affected key immediately.
 
 The previous rotation target stored one current and one previous private key, updated the signing Secret and JWKS resource in one Job description, and relied on hot reload plus an unspecified overlap window. It did not define a safe publication order across separately updated resources, the exact overlap condition, validator cache and unknown-`kid` behavior, issuer rollback, or a player-facing readiness gate.
 
@@ -32,7 +32,7 @@ FireMUD's target-state private-key custody delegates private-key operations to a
 
 - Account Service is the sole issuer and authority for the Account JWT key ring, including generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private pruning. A non-exportable signer may perform only private-key operations explicitly delegated by Account; it is not an issuer, validator, promotion, JWKS-publication, or pruning authority.
 - Under the interim Kubernetes Secret fallback, Account Service is the only application workload that may receive private signing material.
-- Browser, player-bootstrap, and Service JWTs use this per-environment asymmetric key ring and carry an explicit stable `kid`.
+- `control-ui`, player-bootstrap, and receiver-specific private player-delegation JWTs use this per-environment asymmetric key ring and carry an explicit stable `kid`.
 - Validators receive no private JWT key. They validate through Account-published JWKS with a bounded cache.
 - The key ring is environment-wide, not tenant-specific. Compromise of an active Account signing key is therefore an environment-wide issuer compromise; incident response must not describe tenant-selective containment as sufficient.
 - Gateway connect-context signing remains a separate key family from Account JWT signing. [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md) supersedes the former Game Session `SessionAttestation` key family; routine gameplay delegation has no per-action signing keys.
@@ -119,7 +119,7 @@ Use a separate key ring for each tenant to reduce tenant blast radius. This mult
 ## Implementation and Proof Obligations
 
 - Replace shared-HMAC player-facing issuance and validation with Account-authorized asymmetric signing through the delegated non-exportable signer and downstream JWKS validation. Use Account-only Secret custody only as the controlled interim fallback until signer delegation is implemented.
-- Remove Account private signing material from every validating workload and prevent local service token minting outside Account.
+- Remove Account private signing material from every validating workload and prevent local private player-delegation-token minting outside Account.
 - Define a reusable versioned signing/JWKS bundle and phased rotation state machine with a single signer-promotion commit point.
 - Implement bounded validator caching, proactive refresh, unknown-`kid` one-refresh/one-retry behavior, convergence probes, and validator inventory evidence.
 - Add the issuer-wide revocation surface required for environment-key compromise and prove that it cannot substitute for compromised-key rejection.
@@ -132,7 +132,7 @@ Use a separate key ring for each tenant to reduce tenant blast radius. This mult
 
 The phased protocol is independent of signer storage, which keeps changes to the non-exportable signer implementation reversible at the application contract. The interim Account-only Secret fallback does not alter Account authority or permit a second signer authority. Once downstream services rely on Account-only asymmetric JWKS, returning to shared HMAC would weaken the trust boundary and requires a new security decision.
 
-Revisit the delegated signer implementation if its compliance evidence, availability, latency, quota, disaster-recovery behavior, or self-hosted operating model becomes inadequate. Revisit the Account-issued Service JWT model if per-call issuance makes centralized signing operationally unacceptable; managed workload identity or mTLS authorization is the preferred alternative to redistributing signing authority.
+Revisit the delegated signer implementation if its compliance evidence, availability, latency, quota, disaster-recovery behavior, or self-hosted operating model becomes inadequate. Revisit the Account-issued private player-delegation model if per-call issuance makes centralized signing operationally unacceptable; managed workload identity or mTLS authorization is the preferred alternative to redistributing signing authority.
 
 ## Required Documentation Alignment
 

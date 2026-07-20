@@ -27,6 +27,7 @@ The previous flow created membership implicitly during first-party connect-token
 - The join action creates or returns the Account-owned tenant `player` membership. This is an intended durable product relationship, not temporary admission state.
 - Successful membership powers the player's “my games”/return discovery even if the first connection or later `PLAY` attempt fails. A failed join transaction creates nothing.
 - Connect-token issuance, character creation, and `PLAY` require the resulting membership and never create it implicitly. If it is missing, they return `JOIN_REQUIRED` with recovery guidance.
+- `IssueConnectToken` must re-read the current caller-bound membership and membership generation/watermark at issuance time. A stale bootstrap token, discovery result, or cached membership decision cannot issue a connect token after membership authority has advanced or been revoked.
 - Non-public and non-production realms retain their explicit Account-owned grant requirements and cannot use open enrollment.
 
 ### Membership Transaction

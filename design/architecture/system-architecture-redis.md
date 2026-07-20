@@ -285,7 +285,7 @@ Session design assumes **reasonably synchronized clocks** on Game Session nodes 
 When changing authentication settings, keep these trade-offs in mind:
 
 - **Shorter JWT lifetime**
-  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the derived continuity-retention horizon and normal service-token lifetime. It does not make any JWT valid beyond its `exp`, move an existing continuity anchor, or shorten a healthy uninterrupted session by itself.
+  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the derived continuity-retention horizon and normal private player-delegation-token lifetime. It does not make any JWT valid beyond its `exp`, move an existing continuity anchor, or shorten a healthy uninterrupted session by itself.
 - **Different disconnected-resume policy**
   - Adjust `firemud.reconnection.policy.resume-window-ms` through the canonical effective-settings path. Increasing it never permits resume beyond the remaining logical gameplay binding lifetime.
 - **Unsupported combinations**

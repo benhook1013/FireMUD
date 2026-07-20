@@ -8,9 +8,10 @@ The account lifecycle state machine, global deletion preconditions, full-account
 
 ## Architecture and Runtime Notes
 
-- Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:
-  - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, with a frontend-oriented audience and short lifetime.
-  - Service JWTs for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
+- Stateless authentication uses exact short-lived JWT profiles for meta/control and gameplay bootstrap:
+  - `control-ui` JWTs for first-party admin/creator web UIs via `/auth/login`, with audience `control-ui` and short lifetime.
+  - `player-bootstrap` JWTs for first-party gameplay bootstrap, with audience `player-bootstrap` and only the bounded claims needed for bootstrap routes.
+  - Receiver-specific private player-delegation JWTs for backend services via internal authentication flows (for example, `Authenticate`), currently `game-session-account-delegation` with audience `account-service`.
   Gameplay protocol clients (Telnet and WebSocket) never see or transmit these tokens.
 - The live service hashes and verifies raw passwords with `argon2-jvm` Argon2 using `iterations=2`, `memory=65536 KiB`, and `parallelism=1`, with unique salts before PostgreSQL storage.
 - Issued-token registry records are stored in Redis as described in [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
@@ -20,8 +21,8 @@ The account lifecycle state machine, global deletion preconditions, full-account
 - The core `account` record represents a global platform account identified by `accountId`. Tables that represent per-game state or billing attach to tenants via a `tenantId` column so the same platform account can join multiple games without data leakage. Every tenant-scoped query enforces this filter as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Provides a JWKS endpoint for other services to validate tokens. JWT signing keys and JWKS documents are rotated by dedicated Kubernetes Jobs (cert-manager rotates TLS certificates), as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
-- Gameplay client authentication is initiated via the `LOGIN` command flow described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs. The Game Session Service calls the internal `Authenticate` gRPC method (mTLS-protected) to verify credentials and obtain Service JWTs, while `/auth/login` remains a browser/control-plane endpoint.
-- Admin and creator UI authentication is initiated via the `/auth/login` HTTP endpoint, which issues Browser JWTs used for control-plane APIs as described in the authentication and frontend architecture designs.
+- Gameplay client authentication is initiated via the `LOGIN` command flow described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs. The Game Session Service calls the internal `Authenticate` gRPC method (mTLS-protected) to verify credentials and obtain `game-session-account-delegation` JWTs for Account, while `/auth/login` remains a browser/control-plane endpoint.
+- Admin and creator UI authentication is initiated via the `/auth/login` HTTP endpoint, which issues `control-ui` JWTs used for control-plane APIs as described in the authentication and frontend architecture designs.
 - Owns credential brute-force defense and login abuse handling for every password and verified-email-code path. It combines trusted canonical source context with normalized account-candidate and coarse pressure buckets, applies graduated temporary throttles, and emits stable retry outcomes. Ordinary failed attempts never transition the account to `security_locked`; that durable state requires verified or high-confidence compromise, explicit security policy, or audited operator action. Suspicious activity triggers notification emails and audit events as described in [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling) and [ADR 0034](../../decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md).
 - Non-gameplay workflows such as account creation or billing updates are orchestrated using the Saga pattern outlined in [Transaction Strategies](../../system-architecture-transactions.md).
 - Leverages the [Shared Libraries](../../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
@@ -59,7 +60,7 @@ Full-account export and tenant-scoped export are separate contracts. `ExportAcco
 - **Coordination Redis**
   - The Account Service does not participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
   - It does, however, use auth/session keys as documented in [Authentication & Authorization](../../system-architecture-authentication.md):
-    - `session:auth:token:<tokenHash>` – the one versioned issued-token record for a revocable Browser, player-bootstrap, or private Service JWT, consulted for control-plane/admission validity and immediate per-token revocation.
+    - `session:auth:token:<tokenHash>` – the one versioned issued-token record for a revocable `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT, consulted for control-plane/admission validity and immediate per-token revocation.
   - These records live on Coordination Redis so auth sessions share the same AOF and reset semantics as gameplay sessions. They are short-lived but reset-sensitive: coordination resets that drop `session:auth:*` force re-authentication and token re-issuance.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
@@ -73,7 +74,7 @@ If you change Redis usage for this service, you must read and apply:
 
 ## Session and Token Model
 
-Authentication generates a Browser, player-bootstrap, or private Service JWT and establishes exactly one server-side `session:auth:token:<tokenHash>` registry record before returning it, following [ADR 0035](../../decisions/adr-0035-single-record-issued-token-registry.md). The record proves exact issuance and active state; signed claims plus Account-owned revocation/version state determine tenant and global authority without scope-duplicated token keys.
+Authentication generates a `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT and establishes exactly one server-side `session:auth:token:<tokenHash>` registry record before returning it, following [ADR 0035](../../decisions/adr-0035-single-record-issued-token-registry.md). The record proves exact issuance and active state; signed claims plus Account-owned revocation/version state determine tenant and global authority without scope-duplicated token keys.
 
 `tokenHash` is a fixed-length digest (a hex-encoded SHA-256 of the complete compact JWT), and the one registry record's TTL is derived from the JWT lifetime:
 
@@ -81,9 +82,9 @@ Authentication generates a Browser, player-bootstrap, or private Service JWT and
 
 See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
-Browser JWTs and Service JWTs share the same claim schema (`iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, optional `globalRoles`, optional `scopedRoles`) but differ in their intended audiences and issuance flows as described in the authentication design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
+`control-ui`, `player-bootstrap`, and private player-delegation JWTs share the required claim schema (`iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`), while optional role claims and intended audiences vary by exact profile and issuance flow as described in the authentication design. New endpoints must document which exact profile they issue or accept and validate the expected audience before trusting a token.
 
-The `player-bootstrap` token profile is distinct from both Browser JWTs and Service JWTs:
+The `player-bootstrap` token profile is distinct from both `control-ui` JWTs and private player-delegation JWTs:
 
 - Audience is `player-bootstrap`.
 - It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
@@ -95,11 +96,11 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - It is backed by one `session:auth:token:<tokenHash>` record so per-token logout and account-level revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
 
-Gameplay clients never hold control-plane Browser JWTs or internal Service JWTs. The only JWT profile first-party gameplay clients may hold directly is this short-lived `player-bootstrap` token.
+Gameplay clients never hold control-plane `control-ui` JWTs or private player-delegation JWTs. The only JWT profile first-party gameplay clients may hold directly is this short-lived `player-bootstrap` token.
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
-Active gameplay Service JWT refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's registry generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement token record before returning it; Game Session installs the replacement atomically and removes the previous record after the bounded in-flight RPC overlap.
+Active `game-session-account-delegation` refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's registry generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement token record before returning it; Game Session installs the replacement atomically and removes the previous record after the bounded in-flight RPC overlap.
 
 Per-token logout deletes only the presented token's one registry record and is idempotent. Logout-all commits a distinct durable account-wide logout/audit event and then idempotently projects the account watermark; it does not depend on scanning token keys. Raw token values are excluded from both audit forms. The account-wide event terminates active gameplay under ADR 0030, whereas per-token logout leaves other devices and unrelated gameplay bindings intact.
 
@@ -130,6 +131,7 @@ Runtime caller contract:
   - `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}` and is the freshness token callers must use when proving they are still binding against the same realm target they previously resolved.
   - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
+  - Issuance requires a current caller-bound membership generation/watermark in addition to the live membership, entitlement, and admission-pointer checks; discovery output and a stale bootstrap decision are not sufficient authority.
   - Minimum request fields: `connectScopeId`, `requestId`.
   - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.
   - Browser clients receive the connect token as `Set-Cookie: Firemud-Connect-Token=...` with the gateway-required security attributes and receive only non-secret response metadata in the body.
