@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 7 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 8 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **123** | **183** | `in-progress` |
+| **Total** | | **124** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -280,7 +280,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 - [x] `CMD-03` — `revised` on 2026-07-20; [ADR 0131](../../architecture/decisions/adr-0131-compact-versioned-player-output-and-late-rendering.md)
 - [x] `CMD-05` — `revised` on 2026-07-20; [ADR 0132](../../architecture/decisions/adr-0132-future-compatible-localization-boundary.md)
-- [ ] `MOD-01`
+- [x] `MOD-01` — `revised` on 2026-07-20; [ADR 0133](../../architecture/decisions/adr-0133-owner-local-moderation-enforcement.md)
 - [ ] `MS-GR-COMMUNICATION-ORCHESTRATION`
 - [ ] `MS-SOCIAL-RELATIONSHIP-AUTHORITY`
 - [ ] `MS-SOCIAL-HISTORY-DURABILITY`

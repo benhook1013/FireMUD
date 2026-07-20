@@ -20,8 +20,17 @@ Tenant-configurable word lists, normalization, masking, and bypass detection bel
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity.
-3. Actions are recorded via `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)). Logging & Admin persists the moderation action and evaluates policy; it does not delete accounts or terminate sessions as a side effect of recording the action.
-4. The owning runtime enforces the applicable policy at its authoritative boundary: Game Session enforces gameplay admission, Social & Groups enforces chat-send policy, and Account owns account security-state transitions and player notification. A broader cross-service suspension, recovery, appeal, and notification workflow remains separate Account-owned product work.
+3. Actions enter through `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)). Logging & Admin durably records the actor, reason, target and scope, exact typed action, payload digest, and one `controlPlaneRequestId` before forwarding. Recording a case or evaluating policy alone does not enforce a restriction.
+4. Under [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin sends the same digest-bound idempotent command to the owner: Game Session for `gameplay_ban` and Social & Groups for `chat_mute` or `chat_ban`. The owner validates current authority and scope and atomically persists a subject-scoped monotonic enforcement record with its idempotent result. Logging & Admin reports success only after owner acknowledgement.
+5. A later expiry, removal, or correction is another monotonic owner command. Delayed, duplicated, or reordered delivery cannot remove a newer restriction or restore an older one.
+6. Account separately owns `account_security_ban`, authentication generations, credential state, and account-wide token/session revocation. A broader cross-service suspension, recovery, appeal, and notification workflow remains separate Account-owned product work.
+
+## Runtime Enforcement Semantics
+
+- Game Session reads its own durable `gameplay_ban` state for `PLAY` and command admission. A newly committed ban stops new command admission and closes the active gameplay binding. Work already durably admitted may finish idempotently so enforcement does not create partial domain writes.
+- Social & Groups reads its own durable restriction state. `chat_mute` blocks sending while ordinary receipt remains available. `chat_ban` blocks ordinary participation, sending, and history access; essential system and moderation notices remain deliverable.
+- These routine decisions do not call Logging & Admin. Owners begin with indexed local database reads and add a local cache only if measurements justify it; any cache remains rebuildable and non-authoritative.
+- Failure to read required owner-local enforcement state fails closed. Logging & Admin, audit-reporting, analytics, or observability outages do not block runtime enforcement while owner-local state remains readable.
 
 ## Appeals
 

@@ -63,11 +63,12 @@ Logging & Admin does not write to Redis directly and does not define a competing
 ## Moderation Workflow
 
 - Operators review flagged logs through the web UI.
-- Actions such as bans or warnings are issued via secured API calls.
-- Enforcement follows the ban taxonomy:
-  - `account_security_ban` events are applied by Account Service.
-  - `gameplay_ban` events are enforced by Game Session Service.
-  - `chat_mute` and `chat_ban` events are enforced by Social & Groups Service.
+- Actions such as bans or warnings are issued via secured API calls. For an enforcing action, Logging & Admin persists operator intent and audit context before forwarding one typed command whose payload digest is bound to its `controlPlaneRequestId` under [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md).
+- Logging & Admin is not the runtime enforcement source of truth. It reports success only after the owner acknowledges its durable, subject-scoped monotonic enforcement record and idempotent result:
+  - Account Service owns `account_security_ban` and account-wide security state.
+  - Game Session Service owns `gameplay_ban` enforcement state.
+  - Social & Groups Service owns `chat_mute` and `chat_ban` enforcement state.
+- Expiry, removal, and correction are later monotonic owner commands rather than edits to an ingress-side policy snapshot. Runtime owners consult local durable state; ordinary `PLAY` and chat operations do not call Logging & Admin.
 
 All moderation actions are audit-recorded for compliance.
 
