@@ -111,7 +111,7 @@ Exit criteria for Phase C:
   - Coordination Redis stores volatile coordination state and uses AOF for crash recovery while the cluster is running.
   - Cache/Rate-Limit Redis stores best-effort caches and rate-limit counters and is not treated as durable.
 - Redis is not restored from backup during a cold start.
-- If Coordination Redis starts empty, treat it as a coordination reset event and follow the Coordination Reset Model rather than trying to restore Redis from backup images.
+- If Coordination Redis starts empty, treat it as a coordination reset event and follow the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) rather than trying to restore Redis from backup images.
 - After a PostgreSQL rewind, coordination state is rebuilt from PostgreSQL state and new activity where possible rather than restored from Redis backup images. Reset-sensitive prefixes such as `session:game:*` and `session:auth:*` may be dropped as part of this rebuild, so player re-login and internal token re-authentication should be expected where applicable.
 - In development, persisted AOF is a debugging tool only and should be restored into isolated throwaway instances unless service and Lua-script versions are known to match.
 
