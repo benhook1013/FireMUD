@@ -123,11 +123,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `LLM-01` - Human-controlled, sandboxed, draft-only authoring assistance
 
 - **Capability:** Primary `AR-1.2` Procedural, LLM-assisted, and external authoring tools. Secondary `AR-1.5`, `AS-1.2`, and `EA-3.2`.
-- **Decision / status / importance:** LLM tooling is design-time only. Game Design Service and its authoring UI orchestrate it; the model cannot directly call design APIs, write the production database or asset store, or act as an in-game chatbot. Any optional offline agent is read-only except for typed draft-bundle endpoints, and validation and human review happen outside the model before publish. Status `proposed/deferred`; `H/hard`.
+- **Decision / status / importance:** External AI tools are ordinary clients of explicitly public, authenticated creator APIs and receive no special trust; frontend endpoints do not become stable public APIs implicitly. A future first-party conversational authoring agent separates the untrusted model from a trusted scoped tool broker, exposes only allowlisted authoring operations, and accumulates changes in an isolated reviewable Draft proposal. A human accepts the consolidated change set and publishes separately. Sensitive account, financial, security, and operator actions retain their own authority and are not included merely because they are non-gameplay. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-llm-content-tools.md](../../architecture/system-architecture-llm-content-tools.md) `§ Non-Goals`, `§ Integration Model`, `§ Phased Implementation`, `§ Agent Sandbox Model`, and `§ Safety and Review`.
-- **Strongest alternative:** Permit autonomous model writes to authoring or production APIs, use a general plugin runtime, or make an LLM agent part of gameplay.
-- **ADR recommendation:** Yes. Record the trust boundary, draft-bundle schema, sandbox permissions, quota model, and human publication gate.
-- **Human consultation:** Yes; creators, security, privacy, and product owners must decide provider, retention, prompt-data, and PII boundaries, which the source does not yet settle.
+- **Strongest alternative:** Limit support to documented public typed APIs plus a FireMUD usage skill, initially making even first-party chat an ordinary scoped client and adding privileged compound authoring tools only after measured need.
+- **ADR recommendation:** [ADR 0116](../../architecture/decisions/adr-0116-untrusted-models-and-scoped-authoring-tools.md) records the revised two-mode authoring boundary while deferring provider and harness mechanics.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; broad creator automation was accepted, but blanket non-gameplay authority was rejected. Provider, retention, prompt-data, PII, model, prompt, tool granularity, quota numbers, and deployment topology remain implementation-stage or future policy decisions.
 
 #### `OBS-01` - Bounded-cardinality observability identity
 
