@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 14 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 15 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **94** | **183** | `in-progress` |
+| **Total** | | **95** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -240,7 +240,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SCRIPT-07` — `revised` on 2026-07-20; [ADR 0104](../../architecture/decisions/adr-0104-stage-aware-script-dead-letter-recovery.md)
 - [x] `SCRIPT-08` — `revised` on 2026-07-20; [ADR 0105](../../architecture/decisions/adr-0105-no-degraded-script-admission-without-authoritative-pin.md)
 - [x] `SCRIPT-16` — `revised` on 2026-07-20; [ADR 0106](../../architecture/decisions/adr-0106-game-session-owned-script-rollout-history.md)
-- [ ] `TIMER-02`
+- [x] `TIMER-02` — `revised` on 2026-07-20; [ADR 0107](../../architecture/decisions/adr-0107-explicit-opt-in-schedule-continuity-across-script-transitions.md)
 
 #### Packet 4 P1
 

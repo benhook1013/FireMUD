@@ -409,7 +409,7 @@ Rollback/disable/revocation flows must also reconcile durable plugin-owned timer
 
 - Any timer or interval owned by the displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
 - Canceling queued work items alone is insufficient; otherwise an old plugin version could continue minting new timer-driven triggers after disablement or rollback.
-- If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must then explicitly rewrite ownership to the new `pluginVersionId`.
+- A newer plugin version starts schedules fresh by default. The scheduler may carry an interval forward only when both versions explicitly declare compatible continuity for the same `pluginId`, `scheduleDefinitionId`, and target scope; reconciliation then rewrites exact provenance to the new `pluginVersionId` and recalculates the due point from the normative resume rule.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
 For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads from `design/architecture/system-architecture-scripting-control-plane-api.md` and the scripting drain/convergence workflow reads delegated from `design/architecture/system-architecture-scripting-control-plane-operations.md`.

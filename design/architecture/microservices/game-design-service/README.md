@@ -57,7 +57,7 @@ The Game Design Service owns the **authoring** view of script patches, while the
 
 - When `PublishScriptPatchVersion` is called, the Game Design Service:
   - Validates and persists the new script graphs, bindings, and metadata, including cross-asset compatibility checks against the pinned `baseVersionId` (for example, ensuring referenced ability identifiers exist and match the ability schema for that base version).
-  - Compiles stable runtime identities needed for reconciliation, including a `scheduleDefinitionId` for each logical timer/interval definition so Automation & Scripting can preserve or tombstone schedules deterministically across patch changes.
+  - Compiles stable runtime identities and explicit continuity policy for intervals, including `scheduleDefinitionId`, stable owner, and target scope. Reset is the default; Automation preserves due state only when both source and target declare compatible continuity.
   - Computes or reads an immutable `abilitySchemaDigest` for the pinned `baseVersionId` and records it with the patch metadata used for runtime validation.
   - Notifies Automation & Scripting of the published patch so it can ingest the compiled definitions and bindings for the target `<tenantId, scriptPatchVersion>` and start or reuse the durable Temporal `script-patch-readiness` workflow.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.

@@ -12,7 +12,7 @@ This document defines operator-driven promotion, rollback, convergence, timeout,
 6. Call `PurgeQueuedTickCommandsForScriptPatch` for the previous version and epoch (and plugin equivalents when plugin version changes are coupled with the promotion).
 7. Automation & Scripting must reconcile durable schedules and timers for the newly pinned exact artifact before timer admission resumes:
    - schedules absent from the newly pinned patch are removed or tombstoned;
-   - schedules that still exist may be carried forward only through explicit reconciliation to the new version identity;
+   - schedules reset by default; an interval may carry due state forward only through compatible explicit continuity declarations and reconciliation to the new exact version identity;
    - displaced patch or plugin versions must not be able to generate new `scriptEventId` values after promotion.
 8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`, `scriptPatchVersion`, and `scriptPinEpoch`.
 9. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the promotion scope under the current `admissionEpoch`.

@@ -130,10 +130,10 @@ Timer-driven handlers such as `onInterval` follow the same **at-most-once per tr
 
 ### `scheduleDefinitionId` Example
 
-`scheduleDefinitionId` is the stable compiled identity used to decide whether a logical timer survives publish, reload, or rollback:
+`scheduleDefinitionId` participates in the stable interval identity, but continuity across publish, reload, plugin replacement, or rollback is explicit and defaults to reset:
 
-- If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and Game Design emits the same `scheduleDefinitionId`, Automation & Scripting preserves the existing timer row and carries its due state forward under the new patch.
-- If patch `P12` replaces that patrol timer with a different logical schedule such as "run every 5 ticks while alerted" and the compiled `scheduleDefinitionId` changes, the old timer is tombstoned and a new timer is created. Rollback to `P11` follows the same rule in reverse: preserve only matching `scheduleDefinitionId` values, and recreate timers for schedules whose identity no longer matches.
+- If `P11` and `P12` both explicitly declare compatible continuity for the same durable script owner, `scheduleDefinitionId`, target scope, and 30-tick cadence, Automation preserves the logical row, rewrites its exact patch provenance, and derives the next due point from the resume rule.
+- If either declaration is absent, or `P12` changes the identity, cadence, binding, or target, the old timer is tombstoned and the target timer starts with fresh due state. Rollback applies the same rule rather than inferring intent from matching old content.
 
 ---
 

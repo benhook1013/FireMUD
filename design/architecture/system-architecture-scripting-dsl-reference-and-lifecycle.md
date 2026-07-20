@@ -161,11 +161,12 @@ Concrete supersession example:
 
 ### `scheduleDefinitionId` Reconciliation Example
 
-Implementers should treat `scheduleDefinitionId` as the canonical answer to "is this the same logical schedule?":
+`scheduleDefinitionId` is one part of the stable interval key, but identifier reuse alone does not request continuity. Reset is the default, and both source and target must explicitly declare compatible continuity for the same stable owner, definition, and target scope:
 
-- If patch `P21` contains a patrol interval compiled to `scheduleDefinitionId=patrol.main.v1` and patch `P22` keeps the same logical timer while only changing unrelated dialogue nodes, the scheduler preserves that timer row and its due state across the patch transition.
+- If patch `P21` and `P22` both explicitly declare continuity for the same durable script owner, `scheduleDefinitionId=patrol.main.v1`, target scope, and compatible cadence/binding, the scheduler preserves the logical row, rewrites exact version ownership, and recalculates due state with the normative resume rule.
+- If `P22` reuses `scheduleDefinitionId=patrol.main.v1` but either side omits the continuity declaration, the old row is tombstoned and `P22` starts with fresh due state.
 - If patch `P22` instead changes the patrol logic into a distinct combat-alert timer compiled to `scheduleDefinitionId=patrol.alert.v1`, the previous timer row is tombstoned and a new timer row is created with fresh due state.
-- Rollback uses the same rule. A timer is preserved only when the rollback target exposes the same `scheduleDefinitionId`; otherwise rollback must recreate the old logical schedule rather than trying to reinterpret the newer timer row.
+- Rollback uses the same opt-in and compatibility rule; historical similarity never grants continuity. Pending one-shot timers do not migrate through this interval reconciliation contract.
 
 ---
 
