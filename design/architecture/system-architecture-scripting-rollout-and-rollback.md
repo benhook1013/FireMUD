@@ -23,34 +23,27 @@ This document defines operator-driven promotion, rollback, convergence, timeout,
 
 ## Patch Rollback (Operator-Driven, Required)
 
-1. Call `PauseTicks` for the affected scope.
-2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK)` for the same scope.
-3. Confirm the rollback target remains tenant-`READY` and base-compatible. Perform any required exact-artifact preparation while the old pin remains authoritative; preparation failure leaves that pin and epoch unchanged and keeps the workflow paused.
-4. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) to repin to the target patch. Game Session commits a new `scriptPinEpoch` even when that version was used before.
-5. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the displaced version and epoch (and optionally purge volatile coordination indexes).
-6. If plugin versions are also being rolled back, disabled, or revoked, call `CancelPendingWorkItemsForPluginVersion`.
-7. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
-8. Automation & Scripting must reconcile durable schedules and timers before resuming admission:
+1. Confirm the rollback target remains tenant-`READY` and base-compatible, then prepare or preload the exact artifact while the old pin remains authoritative. Preparation failure leaves the old pin and epoch unchanged.
+2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK)` for the affected instance so new script triggers do not refill work during cutover.
+3. At the serialized Game Session authority boundary, call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`). Game Session atomically commits the target and a new `scriptPinEpoch`, even when that version was used before.
+4. Automation observes the committed tuple and reconciles its immutable graph, durable schedules, and timers:
    - timers owned by the displaced patch or plugin version are removed or tombstoned;
    - only schedules present in the rollback target may survive reconciliation;
    - cancellation of outbox work alone is not sufficient rollback cleanup.
-9. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new exact version and epoch (`controlPlaneRequestId` must match).
-10. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the rollback scope under the current `admissionEpoch`.
-11. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
-12. Resume ticks with `ResumeTicks`.
+5. Resume Automation admission only after exact-pin convergence and required schedule reconciliation. Ordinary player ticks and player-command admission continue throughout this routine workflow.
+6. Run displaced-version cancel, purge, and drain work asynchronously with bounded retries, retention, metrics, and operator visibility. The final version-and-epoch fence, not cleanup completion, prevents old work from mutating gameplay.
+7. If Automation convergence times out, keep Automation admission fail-closed and expose repair or explicit repin actions; do not freeze gameplay or silently fall back.
 
 Concrete example:
 
 - `tenantId=T1`, `gameInstanceId=G7`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
-- Step 1: `PauseTicks(T1, G7, RB-42)`.
+- Step 1: Confirm `P21` is still tenant-`READY` and prepare its exact artifact while `P22` remains authoritative.
 - Step 2: `SetAutomationAdmissionMode(T1, G7, PAUSED_FOR_ROLLBACK, RB-42)`.
-- Step 3: Confirm `P21` is still tenant-`READY`, prepare it if required, then call `RollbackScriptPatchVersion(T1, G7, P21, RB-42)` and record the returned `scriptPinEpoch`.
-- Step 4: Poll `GetAutomationPinConvergence(T1, G7)` and `GetGameSessionPinConvergence(T1, G7)` until both report `observedPinnedScriptPatchVersion=P21`, the returned `scriptPinEpoch`, and `lastObservedControlPlaneRequestId=RB-42`.
-- Step 5: Run patch and plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(T1, G7)` until active executions and cancelable pending work are both zero.
-- Step 6: `SetAutomationAdmissionMode(T1, G7, NORMAL, RB-42)`.
-- Step 7: `ResumeTicks(T1, G7, RB-42)`.
+- Step 3: Call `RollbackScriptPatchVersion(T1, G7, P21, RB-42)` at the safe Game Session authority boundary and record the returned `scriptPinEpoch`.
+- Step 4: Reconcile Automation to the exact returned tuple, then return Automation admission to normal. Gameplay ticks have continued throughout.
+- Step 5: Run patch/plugin-scoped cancel, purge, and drain cleanup for displaced `P22` asynchronously; old-epoch work is already non-applicable at final effect fences.
 
-Ordering is intentional: Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
+Ordering is intentional: candidate preparation precedes pin commit, Automation admission resumes only after exact-target reconciliation, and operational cleanup does not determine gameplay availability.
 
 ## Rollback Orchestration State Machine (Required)
 
@@ -62,25 +55,21 @@ Ownership and source-of-truth requirements:
 - Logging & Admin may expose convenience orchestration APIs, but these must call the Game Session workflow APIs and read back the same canonical workflow state; they must not persist a competing rollback-state machine.
 - Automation & Scripting participates via idempotent step APIs (`SetAutomationAdmissionMode`, cancel/purge hooks, convergence reads) and must not infer orchestration completion from local state alone.
 
-Required states:
-
-- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
-- Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
+Required semantic progress is `PREPARING_TARGET -> AUTOMATION_PAUSED -> PIN_COMMITTED -> RECONCILING -> COMPLETED`, with terminal Automation outcome `ROLLBACK_CONVERGENCE_TIMEOUT`. Cancel, purge, and drain progress is recorded separately as asynchronous cleanup rather than inserted into the correctness-critical path.
 
 State rules:
 
 - Each transition must be idempotent and keyed by `controlPlaneRequestId`.
 - Re-running a request in the same state must return current state, not restart from scratch.
-- Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
+- Cleanup failure remains visible and retries, but it does not freeze player ticks or undo a committed pin.
 - Operator retries must continue from the last durable state.
-- `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
-- `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.
+- `ROLLBACK_CONVERGENCE_TIMEOUT` keeps Automation admission paused until repair or explicit repin; ordinary gameplay continues.
 
 Convergence timeout semantics (required):
 
-- Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) for step 7.
+- Rollback orchestration must apply a bounded Automation convergence timeout.
 - If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
+- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety while gameplay ticks continue.
 - The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
 - While timeout terminal state remains active, pre-resolution ingress admissions in scope must record an event-scope ingress audit outcome `rollback_convergence_timeout` with a bounded reason. If handler-scoped work is already resolved when the timeout state is observed, its `script_event_audit` row must use `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
 

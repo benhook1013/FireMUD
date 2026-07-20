@@ -95,14 +95,14 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 ### 9) Rollback Convergence Timeout Contract
 
-- Rollback orchestration must enforce bounded convergence waiting across Automation and Game Session pin-convergence APIs.
-- If convergence is not observed before timeout, rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In that state, admission and ticks remain paused until an explicit operator action resumes or aborts rollback.
-- The terminal condition must emit:
+- Routine rollback prepares the target, pauses Automation admission for the instance, atomically advances the authoritative `scriptPinEpoch`, and lets ordinary gameplay ticks continue.
+- Every script-derived trigger, work item, command, timer, remote follow-up, staged effect, retry, and final gameplay mutation carries and checks the exact patch and pin epoch. Displaced work cannot affect gameplay after repin.
+- Cancel, purge, convergence, and drain remain bounded asynchronous operational cleanup; they are not the mutation-correctness barrier and do not delay unrelated gameplay.
+- If Automation cannot converge before the bounded timeout, Automation remains fail-closed for the instance while gameplay continues. The terminal condition must emit:
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
   - Audit-visible admission outcome `rollback_convergence_timeout` for affected scope while pause remains active.
-- Rollback-safe pause scope is instance-level: control-plane pause, admission pause, convergence checks, and resume operations must all target the same `(tenantId, gameInstanceId)` scope. Region-only pause operations are operational tools and must not be used as the only barrier for rollback orchestration.
+- A full gameplay tick pause is exceptional and requires a declared effect family or migration that cannot enforce the final `scriptPinEpoch` fence. It pauses the smallest complete scope and proves active-effect quiescence rather than serving as the routine rollback mechanism.
 
 ### 10) Instance Rollout Read Model Ownership
 

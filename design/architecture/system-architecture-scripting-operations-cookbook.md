@@ -134,7 +134,7 @@ Rollback must prevent previously queued work from a rolled-back `scriptPatchVers
 At a minimum, rollback consists of:
 
 1. **Fence new evaluation**
-   - Pause tick execution and set Automation & Scripting admission to rollback pause mode for the affected scope before repin, so new triggers do not refill queues during cleanup.
+   - Prepare the exact rollback target, then set Automation & Scripting admission to rollback pause mode for the affected instance before repin. Ordinary player ticks continue.
    - Confirm the target is still tenant-`READY`, prepare the exact candidate if required, and repin the affected game instance(s) using Game Session / Logging & Admin control-plane APIs. Game Session commits a new `scriptPinEpoch` even for a previously used version.
    - Ensure Automation & Scripting rejects triggers for non-`READY` patches and records explicit outcomes (for example `version_unavailable`) rather than silently falling back.
 2. **Drain/purge queued automation work**
@@ -144,21 +144,18 @@ At a minimum, rollback consists of:
 3. **Enforce execution-time version fencing**
    - Game Session must reject any queued tick commands whose embedded `(scriptPatchVersion, scriptPinEpoch)` does not match the instance’s current tuple, and record the rejection so operators can diagnose rollback impact.
 4. **Resume in order**
-   - Return Automation & Scripting admission to normal only after cancel/purge completes and rollback draining confirms that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, then resume ticks.
+   - Return Automation & Scripting admission to normal after exact-pin graph and schedule reconciliation. Cancel, purge, and drain continue as bounded asynchronous cleanup because the final `scriptPinEpoch` fence already makes displaced work non-applicable.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
-Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+Rollback orchestration records `PREPARING_TARGET`, `AUTOMATION_PAUSED`, `PIN_COMMITTED`, `RECONCILING`, and `COMPLETED`, plus terminal Automation outcome `ROLLBACK_CONVERGENCE_TIMEOUT`. Cleanup progress is tracked separately.
 
 Concrete rollback sequence example:
 
-1. Call `PauseTicks(tenantId=T1, gameInstanceId=G7, controlPlaneRequestId=RB-42)` so Game Session stops new tick scheduling and command intake for that instance.
-2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with rollback backpressure outcome `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and admission reason `rollback_paused`.
-3. Call `RollbackScriptPatchVersion(tenantId=T1, gameInstanceId=G7, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42)` to repin the instance to the known-good patch.
-4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21`, the epoch returned by the repin, and the latest observed `controlPlaneRequestId=RB-42`.
-5. Cancel or purge queued outbox work and staging entries that still carry the displaced patch `P22`, then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
-6. Expect a bounded number of old-epoch audit rows for executions that were admitted before pause and later fenced by the advanced `admissionEpoch`; these remain non-success outcomes, not silent loss.
-7. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42)` only after convergence and drain checks pass.
-8. Call `ResumeTicks(..., controlPlaneRequestId=RB-42)` last so gameplay resumes only after both runtime services agree on the rollback target and old-version work has quiesced.
+1. Prepare `P21` while `P22` remains authoritative.
+2. Call `SetAutomationAdmissionMode(T1, G7, PAUSED_FOR_ROLLBACK, RB-42)`.
+3. Call `RollbackScriptPatchVersion(T1, G7, P21, RB-42)` and record the returned `scriptPinEpoch`.
+4. Reconcile Automation to that exact tuple and return its admission to normal. Gameplay ticks continue throughout.
+5. Cancel, purge, and drain displaced `P22` work asynchronously; expect bounded old-epoch audit rows rejected by final fences.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
