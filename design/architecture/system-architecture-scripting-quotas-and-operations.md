@@ -57,11 +57,11 @@ Scripts execute inside a **sandboxed runtime** owned by the Automation & Scripti
   - Execution budgets bound CPU and time per script run.
   - Dangerous components can be flagged as `UNSAFE` and enforced via migration and deprecation flows.
 
-For **core scripts**, `UNSAFE` is a publish/readiness classification, not a live runtime policy rollout:
+For **core scripts**, component policy has two distinct authority classes under [ADR 0121](./decisions/adr-0121-routine-component-migration-and-explicit-emergency-revocation.md):
 
-- New publishes or readiness transitions that reference an `UNSAFE` component must fail deterministically with `validation_error` / `unsafe_component`.
-- Already-`READY` or already-pinned patches do not become implicitly disabled just because a component was reclassified later.
-- Immediate containment of a live script that uses a newly `UNSAFE` component is an operator action through the existing disable/rollback controls, not a separate implicit admission policy.
+- Routine `UNSAFE` classification means migration-required / new-use-blocked. New publishes or readiness transitions that reference the component fail deterministically with `validation_error` / `unsafe_component`, while already-`READY` or pinned patches do not become implicitly disabled. Routine reclassification is not a live runtime policy rollout.
+- Emergency revocation is a separate explicit, audited platform-security action reserved for critical sandbox escape, arbitrary execution, cross-tenant access, or private-data access. Once accepted, it blocks new affected evaluation even under an otherwise `READY` or pinned patch, discovers affected active patches, pauses their Automation scopes, and drives explicit disable or fenced rollback.
+- If no safe target exists after emergency revocation, affected Automation remains fail closed while unrelated gameplay continues.
 
 For lower-level sandbox and runtime internals, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
 

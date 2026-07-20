@@ -10,6 +10,7 @@ The direct API surface and request/response contracts for pinning, plugin activa
 - [Principles](#principles)
 - [Actors and Responsibilities](#actors-and-responsibilities)
 - [Control Plane Workflow APIs (Normative)](#control-plane-workflow-apis-normative)
+- [Emergency Component Revocation Workflow (Required)](#emergency-component-revocation-workflow-required)
 - [Rollback and Recovery Workflow](#rollback-and-recovery-workflow)
 - [Rollback Orchestration State Machine (Required)](#rollback-orchestration-state-machine-required)
 - [Pin-State Degraded Operations Policy (Required)](#pin-state-degraded-operations-policy-required)
@@ -22,6 +23,7 @@ The direct API surface and request/response contracts for pinning, plugin activa
 This document covers:
 
 - Tick pause/resume and admission pause/resume for rollback-safe orchestration.
+- Explicit emergency component revocation containment for affected Automation scopes.
 - Rollback convergence reads and drain-status reads used to decide when it is safe to resume normal operation.
 - Queue cleanup for script patch and plugin version changes.
 - Outbox, dead-letter, and stuck-workitem recovery.
@@ -361,6 +363,20 @@ Logging & Admin may expose a single high-level orchestration API (internally dri
 - `RequestScriptPatchPromotion(tenantId, gameInstanceId, targetScriptPatchVersion, controlPlaneRequestId, actor, reason)`
 
 If implemented, these APIs must remain thin orchestration and must not become another source of truth for the pinned version.
+
+## Emergency Component Revocation Workflow (Required)
+
+Routine `UNSAFE` classification is migration-required / new-use-blocked policy. It blocks future publication and readiness but does not invoke this workflow or mutate already-`READY` or pinned behavior.
+
+Emergency revocation is a distinct explicit, audited platform-security action reserved for critical sandbox escape, arbitrary execution, cross-tenant access, or private-data access. Once that action is accepted at the authoritative security-policy boundary, containment proceeds as follows:
+
+1. Immediately reject new evaluation of every handler whose exact component dependency set includes the revoked component, including handlers in otherwise `READY` or pinned patches. Work already evaluating must recheck the emergency fence before durable work-item persistence or handoff and discard its output after the fence. When the defect may have compromised evaluator processes, quarantine and replace those workers rather than relying on cooperative cancellation.
+2. Discover affected published patches, active pins, and current Automation scopes from authoritative dependency and runtime indexes; do not rely on tenants to self-identify exposure.
+3. Pause each affected Automation scope through the normal audited admission control so new triggers cannot refill work during containment.
+4. Where an exact safe target exists, prepare it and drive the normal explicit disable or fenced rollback workflow, including pin/epoch convergence and displaced-work cancellation and purge.
+5. Resume Automation only after the affected scope has converged to a safe state. If no safe target exists, keep affected Automation fail closed while unrelated gameplay continues.
+
+Every step is durably auditable and retryable. Routine component reclassification must not be able to trigger this runtime authority implicitly. Emergency containment does not claim that already-applied gameplay effects can be reversed; those use ordinary incident-remediation contracts.
 
 ## Rollback and Recovery Workflow
 

@@ -134,6 +134,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0118](./adr-0118-command-plan-preview-dry-run-isolation.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `SF-2` | Honest no-side-effect command-plan previews with exact inputs and live-protecting isolation |
 | [ADR 0119](./adr-0119-durable-fenced-multi-owner-draft-commits.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `EA-3`, `SF-2` | Durable exact-base Draft commits with owner-local CAS and a fully synchronized visibility fence |
 | [ADR 0120](./adr-0120-manifest-complete-onload-readiness-without-durable-game-initialization.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `GR-1` | Manifest-complete bounded onLoad readiness without durable game initialization |
+| [ADR 0121](./adr-0121-routine-component-migration-and-explicit-emergency-revocation.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `PO-1` | Routine component migration separated from explicit scoped emergency security revocation |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

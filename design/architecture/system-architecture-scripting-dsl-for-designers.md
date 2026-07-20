@@ -145,8 +145,9 @@ The platform performs **extensive validation** at design time and at publish tim
 - **Graph validation in the editor**
   - The Game Design Service highlights invalid wiring (for example, missing connections, incompatible types, or unbounded cycles) directly in the visual editor.
   - Errors point to the specific nodes and edges that must change before publish, including loops rejected by the loop safety analysis.
-  - Scripts with unsafe or deprecated components (for example, components marked `UNSAFE`) appear in a dedicated “requires migration” view. They must be migrated and republished before they are eligible to run again.
-  - Reclassifying a component as `UNSAFE` blocks future publish/readiness of scripts that still depend on it, but it does not automatically stop a patch that is already live. If a live script must be stopped immediately, operators use the normal disable or rollback workflows.
+  - Scripts with components routinely classified as `UNSAFE` appear in a dedicated “requires migration” view. This migration-required / new-use-blocked class prevents future publish and readiness while leaving already-`READY` and pinned behavior unchanged until an explicit replacement or rollback.
+  - A critical sandbox escape, arbitrary-execution, cross-tenant, or private-data risk may instead receive a distinct emergency revocation through an audited platform-security action. Emergency revocation blocks new affected evaluation, identifies and pauses affected Automation scopes, and drives explicit disable or rollback. If no safe target exists, affected Automation stays unavailable while unrelated gameplay continues.
+  - Routine reclassification is not an implicit live rollout. Creator tooling must distinguish migration work from emergency security containment rather than presenting both as one generic unsafe-component state.
 
 - **Loop safety rules**
   - Loops must always be bounded: use timers and counters to express “repeat every N ticks” or “do this up to N times,” rather than wiring a pure cycle with no guard.
