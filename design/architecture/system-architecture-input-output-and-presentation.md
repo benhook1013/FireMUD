@@ -7,27 +7,28 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 ## Implemented Status
 
 - Game Session now has the canonical pre-`06` normalized player-output seam: `TextCommandInterpretationResult` carries `PlayerOutput` envelopes instead of only a single raw response string.
-- The first output kinds and payloads are live in code for messages, views, prompts, notices, and errors, with replay policy and brief-policy placeholders on the envelope.
+- The first output kinds and payloads are live in code for messages, views, prompts, notices, and errors, with replay policy and brief-policy placeholders on the envelope. This is an internal implementation seam rather than a supported, versioned client schema.
 - `LOGIN`, `PLAY`, room views, movement refresh, and direct communication acknowledgements now all have real structured output paths; the main built-in handlers no longer depend on raw response strings as their canonical internal contract.
 - `LOOK` and `QUICKLOOK` now flow through `LookViewOutput` and `TextPlayerOutputRenderer`; room views carry explicit refresh reasons for `LOOK`, `QUICKLOOK`, movement refresh, and reconnect refresh, plus a bounded brief-rendering hint so movement-style refresh policy no longer depends on renderer inference from `MOVE_REFRESH` alone. Cached/replayed `LOOK` protocol framing is now renderer-owned rather than hand-built in the command handler. Hot reconnect replay stores structured output metadata for new entries while retaining classic rendered text for Telnet/generic WebSocket compatibility and legacy text-only buffer records.
-- Communication actor and recipient responses now flow through the same late renderer from metadata-only Game Logic delivery views. First-party web now also receives structured command-response, async-player-output, and reconnect-refresh envelopes at the WebSocket edge. Classic transport replay still projects derived text, while canonical durable entries retain structured metadata and replay only replay-eligible outputs rather than whole command responses; first-party replay wraps compatibility text in explicit transcript envelopes instead of falling back to raw text.
+- Communication actor and recipient responses now flow through the same late renderer from metadata-only Game Logic delivery views. The first-party WebSocket edge now also projects structured command-response, async-player-output, and reconnect-refresh envelopes, but no first-party browser application is implemented and proven to consume a supported version of that schema. Classic transport replay still projects derived text, while canonical durable entries retain structured metadata and replay only replay-eligible outputs rather than whole command responses; first-party replay wraps compatibility text in explicit transcript envelopes instead of falling back to raw text.
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text.
 - Prompt output now has the pre-`06` baseline pipeline: prompt coalescing, a narrow per-session prompt-throttling window, reconnect prompt regeneration, and structured first-party prompt delivery are live. Richer burst-end scheduling, broader game-defined composition, and canonical buffered prompt/status replay remain future work.
 - Built-in/system text now has the first usable localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests.
 - Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work.
 - The canonical resume-transcript model is substantially live: replay-eligible structured entries are retained durably as one bounded per-character resume context, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth. Game Session persists ordered `resume_transcript_entry` rows and uses Redis only as a best-effort hot cache. The current rows remain keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable; those are implementation gaps against [ADR 0130](./decisions/adr-0130-bounded-durable-semantic-reconnect-context.md). The implementation already drops an entry that cannot fit the hard ceiling, which is partial evidence for the revised strict-bound rule.
+- The current `LOOK` seam compares World and Entity snapshot fields that are derived from the same static room scope. Matching those fields proves scope agreement, not temporal agreement. The required temporal causal-floor and participant-version evidence in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md) remains unimplemented.
 
 ---
 
 ## Canonical Decisions
 
 - Player input should be normalized into a small structured command envelope with typed payload shapes before gameplay execution rather than remaining raw strings through the whole stack.
-- Player-visible output should be represented as a small structured output envelope with presentation tags and rendered as late as possible for the target client surface.
+- Player-visible output should be represented as a small, versioned structured output envelope with presentation tags and rendered as late as possible for the target client surface. Every supported envelope must have a deterministic text projection so the same semantic outcome remains usable over Telnet.
 - Prompt/status output is a separate output class from transcript lines and gameplay view redraws.
 - Player presentation settings such as color mode and `BRIEF` behavior should primarily alter rendering policy, not require duplicate authored gameplay prose for every action.
 - `BRIEF` mode should primarily suppress or omit tagged output segments rather than requiring a second fully-authored text path for every output.
 - Movement-triggered room refresh remains governed by the shared presentation plus movement settings model: transcript/rendering controls own briefness and locale/color policy, while `movement.postMoveView` owns whether a successful move produces a destination redraw at all.
-- FireMUD should avoid brittle one-class-per-command and one-class-per-output taxonomies as the default model. A richer schema-driven or document-tree representation may still become desirable later, but the first canonical model should stay smaller and easier to evolve.
+- FireMUD should avoid brittle one-class-per-command and one-class-per-output taxonomies. The canonical contract is not a general presentation-document language; any later extension must remain bounded or be adopted through a separate decision with concrete client requirements.
 
 ---
 
@@ -144,6 +145,7 @@ Most nuance should live in presentation tags and policies rather than exploding 
 In practical terms, the platform should prefer a model like:
 
 - player output envelope
+  - schema version
   - kind
   - audience role
   - structured content
@@ -153,6 +155,8 @@ In practical terms, the platform should prefer a model like:
   - color hints
 
 over a model that invents a separate hard-coded output class for every gameplay feature.
+
+Every supported player-output envelope must define a deterministic plain-text projection. The text need not be the canonical semantic payload, but an output is not complete if a Telnet renderer cannot present its essential meaning. A first-party structured-client schema becomes supported only after its envelope and compatibility rules are explicitly versioned; an internal Java type or unversioned WebSocket projection is not by itself a public client contract.
 
 ### Canonical output kinds
 
@@ -232,13 +236,7 @@ Some notices may be rendered into transcript history, while others may be surfac
 
 ### Future presentation-model evolution
 
-If FireMUD later needs richer output composition for configurable games, accessibility features, or first-party UI rendering, this output envelope can evolve toward a more document-like or schema-driven presentation tree where:
-
-- outputs contain structured blocks and spans
-- semantic segments are tagged for styling and suppression
-- multiple renderers consume the same presentation tree
-
-That richer direction is a valid future option, but the first implementation should begin with the smaller output-envelope model rather than jumping immediately to a full presentation document system.
+If FireMUD later needs richer output composition for configurable games, accessibility features, or first-party UI rendering, it should first add bounded payload fields and presentation tags to the compact envelope. A general nested document tree, arbitrary layout language, or class-per-feature hierarchy is not part of this decision. Adopting one later requires concrete client use cases, explicit complexity and compatibility limits, and a separate consequential decision.
 
 ### Canonical resume-transcript model
 
@@ -317,8 +315,7 @@ This allows one gameplay outcome to support:
 
 ### Rendering ownership
 
-Game/domain services should return structured gameplay or communication results.
-Game Session owns the final player-facing transcript/rendering responsibility for gameplay traffic.
+Game/domain services should return typed semantic gameplay or communication outcomes rather than final player prose. Game Session maps those outcomes into the compact `PlayerOutput` contract and owns the final player-facing transcript/rendering responsibility for gameplay traffic.
 
 That means:
 
@@ -332,6 +329,12 @@ This means the canonical model has two related layers:
 - player-output envelopes and renderers in Game Session
 
 The latter is the player-presentation contract this document standardizes.
+
+### Same-fence room presentation
+
+Late rendering does not make mixed-time room data safe. For `LOOK`, World Management must provide a temporal read requirement, such as ADR 0059's causal floor, and Entity Management must prove that its result satisfied that requirement while returning its own component version. Game Logic may compose the structured room result only from responses carrying that evidence.
+
+Equality between fields derived only from `<tenantId, gameInstanceId, roomInstanceId>` is not temporal proof, even if those fields are named snapshot or fence identifiers. The current static scope-token comparison is therefore partial implementation only; it must not be cited as proof that World and Entity data came from the same temporal boundary.
 
 ---
 
@@ -456,9 +459,9 @@ They should still benefit from:
 
 ### First-party web
 
-First-party web clients should not be forced to treat every output as raw transcript text.
+First-party web clients should not be forced to treat every output as raw transcript text once FireMUD defines and supports a versioned client schema.
 
-The same structured output model should allow:
+The same structured output model should then allow:
 
 - transcript events in the main scrollback
 - gameplay views rendered into dedicated UI areas if desired
@@ -489,3 +492,5 @@ This document defines the target-state model. Follow-on slices should implement 
 - color and capability-aware rendering
 - `BRIEF` and later accessibility presentation settings
 - first-party web and MCP-aware structured output consumption
+- versioning and compatibility rules for supported structured-client envelopes
+- replacement of the current static `LOOK` scope-token comparison with temporal causal-floor and component-version evidence

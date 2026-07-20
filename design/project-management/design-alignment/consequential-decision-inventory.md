@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 5 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 6 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **121** | **183** | `in-progress` |
+| **Total** | | **122** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -278,7 +278,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 5 P1
 
-- [ ] `CMD-03`
+- [x] `CMD-03` — `revised` on 2026-07-20; [ADR 0131](../../architecture/decisions/adr-0131-compact-versioned-player-output-and-late-rendering.md)
 - [ ] `CMD-05`
 - [ ] `MOD-01`
 - [ ] `MS-GR-COMMUNICATION-ORCHESTRATION`

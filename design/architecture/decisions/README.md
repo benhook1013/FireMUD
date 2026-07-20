@@ -144,6 +144,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0128](./adr-0128-namespace-scoped-single-character-controller.md) | Accepted | `AA-2` | `AA-2`, `EA-3`, `SF-2`, `AR-3` | One atomic character controller per stable playable-state namespace |
 | [ADR 0129](./adr-0129-fresh-edge-reconnect-without-client-input-replay.md) | Accepted | `AA-2` | `AA-2`, `EA-1`, `PO-2`, `GR-1`, `SF-2` | Fresh edge reconnect without client-input replay while admitted durable work continues |
 | [ADR 0130](./adr-0130-bounded-durable-semantic-reconnect-context.md) | Accepted | `EA-1` | `AA-2`, `EA-1`, `SF-2` | Namespace-scoped bounded semantic reconnect context with an absolute hard ceiling |
+| [ADR 0131](./adr-0131-compact-versioned-player-output-and-late-rendering.md) | Accepted | `EA-1` | `EA-1`, `EA-3`, `PO-2`, `SF-1` | Compact versioned late-rendering contract with mandatory text projection |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
