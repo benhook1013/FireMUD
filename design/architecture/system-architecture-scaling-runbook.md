@@ -104,7 +104,9 @@ Scaling decisions should be made against these metrics so that additional capaci
 
 ## Starting Guardrails (Baseline Sizing)
 
-The exact safe limits for a deployment depend on hardware and tuning, but the following **baseline guardrails** provide a starting point that aligns with the tick and Redis SLOs. They are intentionally conservative and should be validated and adjusted via load tests:
+The exact safe limits for a deployment depend on hardware, software, workload, and tuning. The following **baseline guardrails** are load-test seeds only. They are intentionally conservative starting hypotheses and must be validated and adjusted through target-profile load tests.
+
+These starting numbers are not production promises, safety caps, SLOs, autoscaling thresholds, or admission limits. Do not enforce or advertise them as any of those things without a measured envelope for the exact deployment profile and workload.
 
 - **Per-Game Session instance region density**
   - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
@@ -123,6 +125,18 @@ Baseline guardrails are only a starting point. Before materially increasing regi
 - `pod_tick_cost_ms = active_regions * (p99_region_tick_ms + p99_remote_drain_ms + p99_replay_overhead_ms)`
 - Keep `pod_tick_cost_ms` below the effective scheduling envelope implied by `tick_interval_ms`, lock TTL headroom, and observed Redis script latency.
 - When `solo_tick_budget_ms` is enabled for `requiresSoloTick` commands, capacity reviews must also model the isolated solo-tick path and its derived TTL/health thresholds rather than treating those commands as ordinary ticks.
+
+This formula is a conservative first-pass input, not a complete capacity predictor. It must not be interpreted as proof that all region work executes serially or that summing independent p99 values predicts the p99 of the combined workload. Calibration must additionally account for:
+
+- available CPU, executor/thread-pool parallelism, scheduling contention, and whether region ticks synchronize or stagger;
+- players, entities, scripts, timers, and retries per region;
+- representative command mix, chat and other fan-out, and authored high-cost or solo-tick commands;
+- Redis latency, script throughput, memory, persistence, and tail-loss behavior;
+- PostgreSQL read/write throughput, latency, storage growth, vacuum/GC, and retention behavior;
+- cross-region follow-up volume, target-drain behavior, and topology;
+- replay, recovery, dependency failure, retry, and reconciliation load;
+- process and node memory, garbage collection, network throughput, connection pressure, and required operating headroom.
+
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
   - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
@@ -140,4 +154,4 @@ Scaling decisions must not rely only on Redis tail-loss and pod density signals.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 
-Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.
+Every measured envelope must identify the deployment profile, hardware and resource allocation, FireMUD software version or artifact, workload fixture, and measurement date. Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.

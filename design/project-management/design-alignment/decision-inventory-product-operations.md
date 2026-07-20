@@ -244,11 +244,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `CAPACITY-01` - Baseline sizing is a calibration envelope, not a promise
 
 - **Capability:** Primary `PO-4.2` Health, readiness, reliability policy, SLOs, and degraded operation. Secondary `GR-1.1`, `SF-2.2`, and `PO-4.3`.
-- **Decision / status / importance:** The starting envelope of roughly 50-100 active regions per pod at a 100-250 ms tick interval, one in-flight tick plus a small buffer, and a tens-of-thousands timer/retry envelope is a sizing hypothesis. It must be calibrated by target-profile load tests before it becomes a capacity gate or SLO. Status `proposed/deferred`; `M/med`.
+- **Decision / status / importance:** The starting envelope of roughly 50-100 active regions per pod at a 100-250 ms tick interval, one in-flight tick plus a small buffer, and a tens-of-thousands timer/retry envelope is a load-test seed only. It is not a production promise, cap, SLO, autoscaling threshold, or admission limit. Any enforced envelope requires target-profile measurement across workload, executor, Redis, PostgreSQL, topology, replay/failure, resource, and headroom dimensions with exact environment/evidence identity. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [system-architecture-scaling-runbook.md](../../architecture/system-architecture-scaling-runbook.md) `§ Starting Guardrails (Baseline Sizing)` and `§ Capacity Model (Required Inputs)`; [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ High-Concurrency Load Testing`.
-- **Strongest alternative:** Treat the starting numbers as fixed production limits or scale without a measured capacity model.
-- **ADR recommendation:** No ADR for the provisional numbers. Yes when promoting them to hard limits, autoscaling thresholds, or release gates.
-- **Human consultation:** Yes; operations and product owners must define target profiles and acceptable degradation.
+- **Strongest alternative:** Ship conservative hard admission caps immediately, treat the starting numbers as fixed production limits, or scale without a measured capacity model.
+- **ADR recommendation:** No ADR for non-binding load-test seeds. A future hard limit, autoscaling threshold, admission policy, or public capacity promise requires its own measured decision.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `accepted`. The owner accepted calibration cost and rejected false precision; existing ten-client proof and the checked-in `/ping` Gatling scenario do not validate the envelope.
 
 #### `CAPACITY-02` - Unified retention policy for high-churn persistence
 
