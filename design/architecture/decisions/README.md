@@ -138,6 +138,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0122](./adr-0122-producer-owned-event-schemas-with-one-materialized-catalogue.md) | Accepted | `AS-1` | `AR-1`, `SF-1`, `PO-4`, `GR-1` | Producer-owned event schemas compiled into one revisioned Automation enforcement catalogue |
 | [ADR 0123](./adr-0123-preselected-exclusive-handlers-and-durable-fanout-ordering.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `PO-1` | Preselected sole exclusive handlers and durable deterministic non-exclusive fan-out ordering |
 | [ADR 0124](./adr-0124-epoch-fenced-per-instance-plugin-activation.md) | Accepted | `AS-1` | `AR-3`, `SF-1`, `AR-1`, `GR-1` | Per-instance plugin activation with monotonic epochs and acknowledged final-execution fences |
+| [ADR 0125](./adr-0125-owner-read-first-control-plane-notifications.md) | Accepted | `SF-1` | `AS-1`, `AR-3`, `PO-1`, `PO-4`, `SF-2` | Owner-read-first control-plane notifications with selectively durable asynchronous flows |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

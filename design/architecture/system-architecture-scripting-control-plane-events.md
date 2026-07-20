@@ -1,35 +1,42 @@
-# FireMUD Scripting & Automation: Control Plane Events
+# FireMUD Scripting & Automation: Control Plane Notifications
 
-This document defines the durable event contracts emitted by the scripting control plane. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the API surface and authoritative mutating/read contracts used by operators and services.
+This document defines the control-plane notification catalogue for scripting and automation. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the authoritative mutating and read contracts used by operators and services.
 
-All events must be:
+The producing service's durable state and, where chronology matters, append-only history with a stable producer-owned cursor are authoritative. The notification families below are advisory unless a family explicitly names a durable asynchronous consumer and delivery objective.
 
-- Durable (delivered at-least-once).
-- Idempotent for consumers (carry stable identity fields; include `controlPlaneRequestId` when operator-caused).
-- Emitted only after the producing service commits its state change.
+## Notification and Recovery Contract
 
-## Event Transport Contract (Required)
+Under [ADR 0125](decisions/adr-0125-owner-read-first-control-plane-notifications.md), consumers obtain correctness through direct owner reads. They may use bounded-staleness caches and controlled polling with rate limits, jitter, and herd control. Redis or gRPC may carry disposable wake-ups that tell a consumer to reread the owner; notifications may be lost, duplicated, delayed, or reordered.
 
-FireMUD has no implicit general event bus. Under [ADR 0083](decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md), each producer captures these events in a PostgreSQL transactional outbox with its authoritative state change, retains durable per-consumer delivery progress, delivers through idempotent workers, and exposes an authoritative reconstruction API. Redis may carry only disposable wakes or durable-row pointers.
+Notification loss may delay freshness until the next poll, but cannot lose accepted state, accepted history, or a required business consequence. A projection reconstructed from notifications never becomes authority. Consumers reread the owner after a gap, contradiction, cache expiry, restart, or suspected wake-up loss.
 
-To keep control-plane behavior predictable, every event family records its concrete delivery transport, retention, ordering, reconstruction, and backpressure behavior:
+Safety-critical and completion-critical transitions use idempotent commands plus durable acknowledgement. Notifications are never the correctness, containment, activation, publication, rollback, or completion barrier.
 
-- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged` and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
-- **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
-- **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
-- **Ordering**: delivery may duplicate or reorder events. Consumers apply the monotonic sequence within each event family and scope and use the authoritative reconstruction API when they detect a gap; no global order exists across tenants or instances.
-- **Monotonic sequencing (required)**:
-  - All instance-scoped event families must carry `instanceSequence` (monotonic per `(tenantId, gameInstanceId)`).
-  - Tenant-scoped patch readiness events must carry `tenantSequence` (monotonic per `tenantId`).
-  - Read models must apply events by sequence (not arrival time) and ignore stale or duplicate sequence numbers.
-- **Replay and reconstruction**: each family declares a concrete retained replay window. New or lagging consumers reconstruct from durable service APIs when that window is exhausted; no unspecified `N`-day broker retention is implied.
-- **Idempotency**: consumers must treat `controlPlaneRequestId` as the primary idempotency key for operator-driven events and must be safe under at-least-once delivery.
+Producers publish notifications only after the corresponding authoritative state and history commit. They do not publish predictive pre-commit notifications.
 
-## `ScriptPatchPinChanged` (Game Session -> Durable Event Delivery)
+### Identity and freshness
 
-Emitted whenever the pinned patch changes.
+Every notification carries:
 
-Fields:
+- `eventId`, a stable identity for that occurrence;
+- the family-specific producer-owned aggregate version, epoch, or history cursor when one exists; and
+- `occurredAt`.
+
+Operator-caused notifications may also carry `controlPlaneRequestId` for correlation. It is not the notification or delivery deduplication identity because one request may produce multiple legitimate events. A consumer of an advisory family uses aggregate epochs or versions to reject stale state and otherwise rereads the owner; it does not infer correctness from arrival order.
+
+Generic cross-service `tenantSequence` and `instanceSequence` counters do not exist. Families use the producer-owned version that represents their actual aggregate, such as `scriptPinEpoch`, `pluginActivationEpoch`, `scriptPatchStatusVersion`, or `pluginVersionStatusVersion`. Owner history APIs may additionally expose an opaque stable cursor for chronological paging.
+
+### Targeted durable delivery
+
+A family becomes durable only when a separate contract names a consumer that requires a guaranteed asynchronous consequence or a defined delivery service level. That flow must follow [ADR 0083](decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md): transactional outbox capture with producer state, stable `eventId`, independent durable consumer progress, idempotent delivery and effects, explicit ordering and retention, bounded retry and backpressure, and authoritative reconstruction.
+
+Adopting durable delivery for one family does not upgrade the rest of this catalogue. `SignerRevocationApplied` and `ScriptRollbackConvergenceTimedOut` are plausible future targeted durable flows for a named compliance or alerting subscriber; they remain advisory until such a contract and service level are adopted.
+
+## `ScriptPatchPinChanged` (Game Session -> Advisory Notification)
+
+Published after the authoritative Game Session pin and append-only history record commit. It is an optional cache-refresh wake-up whenever the pinned patch changes.
+
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `gameInstanceId`
@@ -38,86 +45,72 @@ Fields:
 - `pinnedScriptPatchVersion`
 - `scriptPinEpoch`
 - `changeType` (`SET` | `ROLLBACK` | `REPIN`)
-- `instanceSequence`
 - `controlPlaneRequestId`
 - `actor` and `reason`
-- `occurredAt`
 
-This is an optional refresh notification emitted from the same transaction as the authoritative Game Session pin and history record. Consumers reconstruct current state and history through Game Session APIs after loss or a sequence gap. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
+Consumers read current state and history through Game Session APIs. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
 
-## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Delivery)
+## `ScriptPatchRollbackRequested` (Game Session -> Advisory Notification)
 
-Optional dedicated event. If not used, `ScriptPatchPinChanged(changeType=ROLLBACK)` is required.
+Optional dedicated wake-up. If it is omitted, consumers observe the committed rollback through `ScriptPatchPinChanged(changeType=ROLLBACK)` or authoritative Game Session reads. Neither notification is the rollback completion barrier.
 
-## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Durable Event Delivery)
+## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Advisory Notification)
 
-Emitted whenever tenant-scoped readiness lifecycle changes.
+Published after tenant-scoped readiness state and history commit.
 
-Fields:
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `scriptPatchVersion`
 - `previousStatus`
 - `newStatus`
+- `scriptPatchStatusVersion`, monotonic for the Automation-owned tenant-and-patch status aggregate
 - `causedBy` (`RUNTIME_VALIDATION` | `SYSTEM` | `OPERATOR`)
 - `controlPlaneRequestId` (optional; required when `causedBy=OPERATOR`)
-- `tenantSequence`
 - `statusReason` (optional)
-- `occurredAt`
 
-Operator consumption rule:
+Creator and operator tooling rereads Automation's readiness API for gates and publication validation UX (`READY`, `FAILED`, `SUPERSEDED`).
 
-- Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
+## `PluginVersionStatusChanged` (Game Design -> Advisory Notification)
 
-## `PluginVersionStatusChanged` (Game Design -> Durable Event Delivery)
+Published after immutable design-time publication status and history commit for one plugin version.
 
-Emitted whenever immutable design-time publication status changes for one plugin version.
-
-Fields:
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `pluginId`
 - `pluginVersionId`
 - `previousDesignStatus`
 - `newDesignStatus` (`DRAFT` | `UPLOAD_REJECTED` | `SIGNATURE_VERIFIED` | `VALIDATION_FAILED_DESIGN` | `PUBLISHED` | `SUPERSEDED` | `REVOKED_DESIGN`)
-- `tenantSequence`
+- `pluginVersionStatusVersion`, monotonic for the Game Design-owned plugin-version status aggregate
 - `statusReason` (optional)
-- `occurredAt`
 
-Operator consumption rule:
+Creator and operator tooling rereads Game Design for publication history and design-time eligibility. It does not infer runtime activation, drain, or disablement from this family; those remain instance-scoped Automation state.
 
-- Use this event family for creator/operator publication history and design-time eligibility changes only.
-- Do not infer runtime activation, drain, or disablement from this event family; those remain instance-scoped runtime events.
+There is no mandatory `ScriptPatchInstanceRolloutChanged` family. Game Session's append-only history is authoritative, while `ScriptPatchPinChanged` may accelerate refresh. A distinct family requires a concrete consumer need that the committed pin record and authoritative history API cannot meet.
 
-There is no separate mandatory `ScriptPatchInstanceRolloutChanged` family. Game Session's append-only history is authoritative, while `ScriptPatchPinChanged` may accelerate current-state refresh. A distinct derived family requires a concrete consumer need that the committed pin record and authoritative history API cannot meet.
+## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Advisory Notification)
 
-## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Durable Event Delivery)
+Published after an instance-scoped plugin lifecycle transition and required Game Session fence acknowledgement under ADR 0124. It is not the activation or containment barrier.
 
-Emitted when operator actions change plugin active versions or disablement state.
-
-Fields:
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `gameInstanceId`
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
+- `pluginActivationEpoch`
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
-- `instanceSequence`
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
-- `occurredAt`
 
-Operator consumption rule:
+Tooling reads Automation's current state and append-only instance-scoped plugin transition history. Tooling that needs the full picture joins Game Design publication reads with Automation runtime reads rather than overloading runtime notifications to explain design-time publication history.
 
-- Use this event family for runtime activation state only.
-- Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
-- Automation's operator read model must persist an append-only instance-scoped history for this family so `ListPluginRuntimeEvents` can expose real transition chronology without inferring it from the latest registry row.
+## `SignerPolicyVersionObserved` (Automation & Scripting -> Advisory Notification)
 
-## `SignerPolicyVersionObserved` (Automation & Scripting -> Durable Event Delivery)
+Published after Automation records an observed signer-policy version for a scope.
 
-Emitted when Automation & Scripting observes or refreshes plugin signer policy for a scope.
-
-Fields:
+Fields in addition to the common envelope:
 
 - `tenantId` (nullable for global policy snapshots)
 - `serviceInstanceId`
@@ -125,31 +118,35 @@ Fields:
 - `observedAt`
 - `policySource` (for example `signed_config_artifact`)
 
-## `SignerRevocationApplied` (Automation & Scripting -> Durable Event Delivery)
+Consumers reread Automation's observation state or the signer-policy authority. The notification is not proof that every plugin instance has completed reconciliation.
 
-Emitted when signer revocation enforcement transitions one or more plugins to disabled state.
+## `SignerRevocationApplied` (Automation & Scripting -> Advisory Notification)
 
-Fields:
+Published after signer-revocation enforcement advances affected plugin activation epochs, installs required Game Session fences, and commits authoritative transition history. It is not the revocation containment barrier.
+
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `gameInstanceId`
 - `signerKeyId`
+- `observedSignerPolicyVersion`
 - `affectedPluginCount`
-- `instanceSequence`
-- `controlPlaneRequestId` (optional when operator-driven rollout change is correlated)
-- `occurredAt`
+- `controlPlaneRequestId` (optional when correlated with an operator-driven rollout change)
 
-## `ScriptRollbackConvergenceTimedOut` (Game Session -> Durable Event Delivery)
+A named compliance or alerting subscriber with a guaranteed-delivery requirement may justify a targeted ADR 0083 outbox flow later. Until then, operational consumers poll or reread authoritative revocation and activation history.
 
-Emitted when rollback orchestration reaches terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
+## `ScriptRollbackConvergenceTimedOut` (Game Session -> Advisory Notification)
 
-Fields:
+Published after rollback orchestration commits terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` because both convergence APIs did not acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session owns the terminal state and history.
+
+Fields in addition to the common envelope:
 
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion`
-- `instanceSequence`
+- `scriptPinEpoch`
 - `controlPlaneRequestId`
 - `timeoutMs`
 - `reason` (bounded enum/code)
-- `occurredAt`
+
+Operational consumers reread Game Session's rollout state and history. A named paging or incident subscriber with a guaranteed-delivery objective may justify a targeted ADR 0083 outbox flow later; the current advisory notification is not itself the durable alert record.
