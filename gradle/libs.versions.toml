@@ -1,7 +1,7 @@
 [versions]
 spring-boot = "4.1.0"
 jooq = "3.21.6"
-flyway = "12.11.0"
+flyway = "13.0.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
@@ -92,5 +92,5 @@ temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "12.11.0" }
+flyway = { id = "org.flywaydb.flyway", version = "13.0.0" }
 protobuf = { id = "com.google.protobuf", version = "0.10.0" }
