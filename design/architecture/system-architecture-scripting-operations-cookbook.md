@@ -160,7 +160,7 @@ Concrete rollback sequence example:
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
 - `ListOutboxWorkItems` for scoped inspection.
-- `ReplayDeadLetteredWorkItems` for bounded replay of recoverable items.
+- `ReplayDeadLetteredWorkItems` for bounded explicit-ID, stage-aware recovery of items with complete evidence and exact current fences.
 - `PurgeOutboxWorkItems` for auditable cleanup of terminally invalid/stale items.
 
 These requirements are summarized in [`system-architecture-scripting-contracts.md`](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety).

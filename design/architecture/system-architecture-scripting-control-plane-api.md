@@ -468,29 +468,27 @@ Boundary rule:
 
 #### `ReplayDeadLetteredWorkItems`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first bounded replay mutation on top of durable `script_work_items`. Replay currently requeues eligible rows by setting `status=PENDING_EVALUATION`, clearing the terminal cancel reason, and recording `finalStage=REPLAY` plus `finalOutcome=requeued` on the handler-scoped audit row. Broader convergence and richer replay-policy signaling remain follow-up work.
+Implementation note: the current Automation & Scripting implementation requeues eligible rows as `PENDING_EVALUATION`. That generic behavior contradicts the target stage-aware contract below and is not claimed as safe recovery proof.
 
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `createdAfterMs`, `createdBeforeMs`
-- Optional explicit `workItemIds` (numeric durable work-item identifiers; when present, replay selection is limited to these rows)
-- `limit` (bounded by the service)
+- Explicit bounded `workItemIds` (numeric durable work-item identifiers)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
 
 Outputs:
 
-- `replayedCount`
-- `rejectedCount`
+- One deterministic result per requested ID, including evaluation retried, dispatch resumed, already recovered, not found/not owned, missing stage evidence, and exact fence mismatch outcomes.
 
 Contract rules:
 
-- Replay is fail-closed per work item. A candidate row may be requeued only if the current Game Session runtime state still reports the same pinned `scriptPatchVersion` recorded on the dead-lettered work item.
-- When the original ingress audit identifies a plugin-backed handler, replay is additionally allowed only if the currently active plugin version for `(tenantId, gameInstanceId, pluginId)` still matches the ingress-audited `pluginVersionId`.
-- Rows that fail these checks remain `DEAD_LETTERED` and count toward `rejectedCount`; the operation does not partially mutate them into an intermediate state.
-- Replay does not bypass later admission or runtime checks. Requeued rows re-enter the normal evaluation pipeline and may dead-letter again if the underlying failure condition still exists.
+- An evaluation-stage row may retry only from the original trigger, frozen manifest, and exact immutable graph under the same identity.
+- A post-evaluation row resumes only unfinished children from its durable evaluated-output/dispatch ledger and never invokes the evaluator.
+- Current patch, `scriptPinEpoch`, plugin, region epoch, playable-state scope, world/realm identity, and routing pointer must exactly match the admitted row. Unavailable or stale authority fails closed.
+- Missing or contradictory stage evidence and every fence mismatch leave the row `DEAD_LETTERED`.
+- `controlPlaneRequestId` has a durable request-result record so retry returns the same per-row outcomes without repeating evaluation or dispatch.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 

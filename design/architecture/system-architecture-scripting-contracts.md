@@ -125,10 +125,10 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 ### 12) Dead-Letter Replay Version-Fence Safety
 
-- `ReplayDeadLetteredWorkItems` must validate work-item versions against current control-plane state before transition from dead-letter to replayable:
-  - `scriptPatchVersion` must match currently pinned patch for the scoped instance.
-  - Plugin work items must match currently active `(pluginId, pluginVersionId)` for the scoped instance.
-- Ineligible work items must remain dead-lettered and return deterministic application-level mismatch errors; replay must not be best-effort for version-fenced mismatches.
+- Dead-letter recovery is stage-aware. Evaluation-stage retry reuses the original Trigger Identity, frozen input manifest, and exact immutable graph; post-evaluation recovery resumes the stored output and unfinished child-dispatch ledger without invoking the DSL.
+- Recovery requires exact current matches for `scriptPatchVersion`, `scriptPinEpoch`, plugin identity/version when applicable, runtime region and `regionEpoch`, and the admitted routing bundle. Matching patch text under a later epoch is ineligible.
+- The initial mutation accepts bounded explicit work-item IDs and returns one deterministic outcome per ID. Aggregate counts or broad filters do not replace per-row evidence.
+- Ineligible or incomplete rows remain dead-lettered. Purge is a separate idempotent, authorized, audited operation, and direct SQL repair is unsupported.
 
 ### 13) Output Budget Safety
 

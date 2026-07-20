@@ -290,25 +290,21 @@ Outputs:
 Inputs:
 
 - `tenantId`
-- Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- Explicit bounded `outboxWorkItemIds[]`
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
 
 Semantics:
 
-- Idempotent.
-- Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
-- Must enforce bounded batch size per request.
-- Must enforce replay eligibility against current control-plane state before transition:
-  - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
-  - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
-  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`) and must remain `DEAD_LETTERED`.
+- Idempotent through a durable `controlPlaneRequestId` result.
+- Evaluation-stage rows retry only with their original Trigger Identity, frozen input manifest, and exact graph. Post-evaluation rows resume the retained unfinished child dispatches without DSL evaluation.
+- Exact patch and pin epoch, plugin, runtime region epoch, and routing bundle must remain current. Missing stage evidence or any mismatch leaves the row dead-lettered.
+- Direct SQL requeue or repair is unsupported.
 
 Outputs:
 
-- `replayedCount` (best-effort count; may be approximate for large batches)
+- One deterministic outcome per requested ID; aggregate counts may be derived as convenience only.
 
 #### `PurgeOutboxWorkItems`
 

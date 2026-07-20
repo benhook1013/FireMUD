@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 11 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 12 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **91** | **183** | `in-progress` |
+| **Total** | | **92** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -237,7 +237,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MS-GR-REPLACEMENT-STATE` — `revised` on 2026-07-20; [ADR 0101](../../architecture/decisions/adr-0101-stable-playable-state-namespaces-for-runtime-replacement.md)
 - [x] `MS-GR-WORLD-LIFECYCLE` — `revised` on 2026-07-20; [ADR 0102](../../architecture/decisions/adr-0102-database-authoritative-temporal-coordinated-world-lifecycle.md)
 - [x] `SCRIPT-06` — `revised` on 2026-07-20; [ADR 0103](../../architecture/decisions/adr-0103-epoch-fenced-script-rollback-without-routine-gameplay-pause.md)
-- [ ] `SCRIPT-07`
+- [x] `SCRIPT-07` — `revised` on 2026-07-20; [ADR 0104](../../architecture/decisions/adr-0104-stage-aware-script-dead-letter-recovery.md)
 - [ ] `SCRIPT-08`
 - [ ] `SCRIPT-16`
 - [ ] `TIMER-02`
