@@ -19,6 +19,7 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 ## Branch And PR Hygiene
 
 - Open or update a PR autonomously when an implementation branch reaches a coherent review checkpoint. Stacked PRs are acceptable when their base dependencies are explicit and they let independent work continue while CI or review runs; do not create tiny placeholder PRs without review-worthy content.
+- When retargeting a stacked PR after its parent merges, change the base before rebasing or pushing the child. Required workflows also listen for GitHub's base-change `edited` event so a retargeted PR cannot remain blocked with required checks that were never created.
 - For recurring branch, worktree, and PR inventory, use `dev-tools/validation/report-worktree-pr-topology.sh` rather than ad hoc status commands.
 - After a merge, remove its defunct local worktree and merged local/remote branch only after confirming no open PR or active stacked branch depends on it. Preserve unmerged branches and worktrees.
 - Pass PR-body Markdown through a file or stdin with real newlines rather than literal `\\n` strings.
