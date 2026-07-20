@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 0 | 25 | `not-started` |
+| 6 | Operations and delivery | 1 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **137** | **183** | `in-progress` |
+| **Total** | | **138** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -302,7 +302,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 6 P0
 
-- [ ] `COMPLIANCE-01`
+- [x] `COMPLIANCE-01` — `revised` on 2026-07-20; [ADR 0146](../../architecture/decisions/adr-0146-event-scoped-automated-tier-a-credential-compliance.md)
 - [ ] `PREFLIGHT-02`
 - [ ] `PREFLIGHT-01`
 - [ ] `OPS-03`

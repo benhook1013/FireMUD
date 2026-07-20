@@ -159,6 +159,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0143](./adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) | Accepted | `AA-1` | `PO-1`, `EA-3` | Stripe-only v1 hosting billing with creator monetization deferred |
 | [ADR 0144](./adr-0144-stateless-first-party-frontend-application-boundary.md) | Accepted | `EA-3` | `PO-3`, `PO-2` | Independently released stateless first-party frontend application boundary |
 | [ADR 0145](./adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md) | Accepted | `PO-2` | `EA-1` | Plain-text gameplay with classic-client extensions deferred behind research and proof |
+| [ADR 0146](./adr-0146-event-scoped-automated-tier-a-credential-compliance.md) | Accepted | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Event-scoped automated Tier A credential compliance |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
