@@ -97,6 +97,7 @@ class MultiplayerLoadProofCrossServiceTest {
         "concurrent LOGIN -> PLAY -> LOOK entry", playerRuns.duration(), ENTRY_PHASE_BUDGET);
     List<PlayerRunResult> results = playerRuns.result();
     assertThat(results).hasSize(CLIENT_COUNT);
+    assertThat(STACK.gameDesignStub().publishedReleaseBundleRequests()).isPositive();
     assertThat(results)
         .allSatisfy(
             result -> {
