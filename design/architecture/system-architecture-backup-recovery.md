@@ -4,7 +4,7 @@ This document defines FireMUD’s canonical backup model, restore-mode selection
 
 Backup expectations are defined by environment class:
 
-- **production**: scheduled backups and verification are mandatory.
+- **production**: scheduled backups and verification are mandatory; the initial hosted RPO objective is 15 minutes measured from the newest verified restorable point.
 - **hobby-self-hosted**: backups are mandatory with a minimum baseline of at least daily logical backup, at least 7 daily restore points retained, and at least one restore drill every 30 days.
 - **staging**: disposable by default with no scheduled backups unless explicitly enabled for specific goals.
 - **local-dev / pr-preview / dev-demo-cluster**: ad hoc or no-backup posture unless explicitly upgraded. `pr-preview` persists mutable state only for the lifetime of the PR and loses that state if the preview node or its storage is lost.
@@ -16,6 +16,7 @@ Staging is disposable by default, but if it is restored from production-origin d
 The main body of this document describes the target-state backup workflow. Current implementation may lag the target state in a few areas:
 
 - The scheduled Kubernetes CronJob performs an online `pg_dump`, but it does not yet record the complete environment/schema/service/tool lineage or prove that the artifact can pass the environment-wide cold-start recovery workflow.
+- The configured 15-minute Cron schedule is not proof of the 15-minute hosted RPO. Completion, upload, lineage validation, restore-readability, and the age of the newest verified restorable point are not yet measured end to end.
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
 - The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term maintenance and reset contract.
 - Region pause/status remains incomplete for maintenance and future scoped recovery, but routine online backups do not depend on tick pause.
@@ -40,6 +41,7 @@ Canonical current-state note:
 
 - `firemud-pg-dump` runs every 15 minutes and stores compressed SQL dumps.
 - The CronJob takes an online transactionally consistent PostgreSQL snapshot while normal writes continue; routine backup does not pause gameplay.
+- The hosted-production RPO objective is 15 minutes measured from the newest artifact that has passed integrity, environment/database lineage, restore-readability, and supported-tooling validation. Scheduling alone does not satisfy it, and implementations may need to run more frequently to preserve verification margin.
 - Each artifact records environment/database identity, snapshot time, schema and migration lineage, deployed service digests, backup-tool digest, and object-storage binding.
 - Production Terraform deploys this CronJob automatically.
 - Retention policy:
@@ -49,6 +51,7 @@ Canonical current-state note:
   - 3 monthly dumps
 - Dumps are written to `firemud-pg-dumps` and may also upload to object storage when `PG_DUMP_BUCKET` is configured.
 - In production, skipped object-storage uploads are a misconfiguration even if short-term dumps remain on PVC.
+- When hosted production has no verified restorable point within the objective, raise the configured backup incident and block production promotion until evidence is current. Do not automatically stop otherwise healthy gameplay merely because backup freshness has degraded.
 - Velero schedules back up Kubernetes manifests only, with `snapshotVolumes: false`.
 - Backups are immutable until normal expiry and may contain subject data erased after their snapshot time. Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), restore quarantine must replay durable erasure and tombstone state through the restored boundary before traffic reopens so deleted identity and authority are not resurrected.
 
@@ -63,6 +66,8 @@ The backup artifact is one consistent PostgreSQL database view, not a tenant- or
 - periodic production-equivalent proof that durable workflow and external-effect reconciliation can recover from an artifact captured while representative writes are active.
 
 Cross-service workflows may be captured between durable steps, as they may be during an abrupt crash. The player-facing readiness boundary is therefore restore-time convergence, not recurring write quiescence. Every declared and enabled durable participant must be idempotently replayable, externally reconcilable, deterministically terminalizable or invalidatable, durably fenceable/disableable with retained backlog, or an explicit blocker to reopen.
+
+Backup execution, artifact validation, freshness calculation, isolated restore testing, and evidence generation are automated. Routine proof cannot depend on an operator manually entering timestamps or reconstructing a restore procedure during an incident.
 
 Canonical backup/recovery severity matrix:
 
@@ -146,6 +151,12 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 - tenant-local or region-local rewind from the whole-database artifact is unsupported.
 
 `scoped_reset_restore` is a deferred future mode for quarantined experiments only. It requires a separate accepted design and complete region ownership, scope inventory, stale-state rejection, session policy, and reconciliation proof before it can become player-facing.
+
+### Logical Backup Scale and PITR Trigger
+
+Online logical backups remain the initial hosted, hobby, and small-deployment baseline. Hobby/self-hosted operators may select a slower cadence, but operator status and recovery evidence must show the configured policy, effective RPO, and age of the newest verified restorable point.
+
+Hosted production adopts PostgreSQL physical backup with WAL archiving and point-in-time recovery when logical backups cannot reliably maintain the measured 15-minute objective or when dump duration, overlap, storage behavior, or runtime load materially harms the live platform. PITR changes point selection, not the environment-wide quarantine, empty-Redis reset, durable convergence, external reconciliation, hardening, or controlled-reopen boundary.
 
 ## Kubernetes Production
 

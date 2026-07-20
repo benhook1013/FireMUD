@@ -161,6 +161,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0145](./adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md) | Accepted | `PO-2` | `EA-1` | Plain-text gameplay with classic-client extensions deferred behind research and proof |
 | [ADR 0146](./adr-0146-event-scoped-automated-tier-a-credential-compliance.md) | Accepted | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Event-scoped automated Tier A credential compliance |
 | [ADR 0147](./adr-0147-phased-environment-bound-deployment-preflight-and-expected-bindings.md) | Accepted | `PO-3` | `PO-4`, `SF-1` | Phased environment-bound deployment preflight and expected bindings |
+| [ADR 0148](./adr-0148-measured-online-backup-rpo-and-future-pitr-trigger.md) | Accepted | `PO-3` | `SF-2`, `GR-1`, `PO-4` | Measured online-backup RPO with a future PITR trigger |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
