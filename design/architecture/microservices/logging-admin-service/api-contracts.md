@@ -15,6 +15,9 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
 - `POST /logs/query` – search stored logs.
 - `POST /moderation/actions` – apply a moderation action.
+- `POST /moderation/appeals` – Account-authenticated player submission of one eligible appeal against an exact restriction revision; repeated `requestId` or an already active appeal returns the same bounded result.
+- `GET /moderation/appeals/{appealCaseId}` – caller-bound safe player status projection or authorized jurisdiction-scoped moderator view; player responses exclude protected evidence and reporter identity.
+- `POST /moderation/appeals/{appealCaseId}/review` – authorized tenant- or platform-jurisdiction review that records one terminal decision and, for modification or reversal, sends a new monotonic digest-bound command to the enforcement owner.
 - `GET /sagas` – list saga instances.
 - `GET /sagas/{id}/steps` – inspect steps for a saga instance.
 - `GET /admission-pointers` – list the caller-visible Game Session route records joined with their separately revisioned catalog/policy projection, including `OPEN`/`CLOSED`, the route version, and the explicit public-production policy used by admission and first-join membership creation.
@@ -39,6 +42,7 @@ curl http://localhost:8080/ping
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto).
 - `QueryLogs(QueryLogsRequest) returns (QueryLogsResponse)` – searches collected logs.
 - `ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse)` – records a moderation event.
+- Appeal case mutation/read contracts use the REST surfaces above until an internal owner-command handoff requires a dedicated generated contract; implementations must not overload `ApplyModerationAction` or rewrite its original history.
 - `CreateReport(CreateReportRequest) returns (CreateReportResponse)` – ingest a player report.
 - `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – enable or disable a feature flag.
 - Tick-remediation is not a Logging & Admin-owned state-mutation gRPC surface; this service audits and forwards those operator actions to Game Session control-plane APIs instead of defining a competing remediation RPC.
@@ -55,12 +59,13 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
+| Player appeal APIs (HTTP) | Appeal submission and caller-safe status under `/moderation/appeals*` | Account-authenticated exact subject binding, normally reached through the Account-owned browser handoff | Submission/status never grants moderator access or exposes protected evidence/reporter identity. |
+| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, appeal review, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | JWT middleware (`AuthTokenInterceptor` + route classification) | Appeal review additionally requires exact tenant or platform jurisdiction. External tools must enter via Gateway allowlisted routes. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
 
 ## Availability Classes by Endpoint Family
 
 | Endpoint family | Availability class | Required behavior during observability outage |
 | --- | --- | --- |
-| `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | Core operator control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
+| `/moderation/actions`, `/moderation/appeals*`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | Core operator/player case control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
 | `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |

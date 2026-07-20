@@ -155,6 +155,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0139](./adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md) | Accepted | `AR-3` | `AA-1`, `PO-1` | Tenant-owned routine runtime lifecycle with audited platform break-glass |
 | [ADR 0140](./adr-0140-realm-authored-controllable-actor-entry.md) | Accepted | `AA-2` | `AA-3`, `GR-3`, `EA-3` | Realm-authored entry into one persisted generic controllable actor |
 | [ADR 0141](./adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) | Accepted | `EA-2` | `PO-1`, `AA-1` | Fixed safety restriction categories with independent owner-local lifecycles |
+| [ADR 0142](./adr-0142-bounded-moderation-appeal-cases.md) | Accepted | `PO-1` | `PO-1`, `EA-2`, `AA-1` | Bounded moderation appeal cases with Account-authenticated web handoff |
 | [ADR 0143](./adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) | Accepted | `AA-1` | `PO-1`, `EA-3` | Stripe-only v1 hosting billing with creator monetization deferred |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).

@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 18 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 19 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **134** | **183** | `in-progress` |
+| **Total** | | **135** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -291,7 +291,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SAFETY-01` — `revised` on 2026-07-20; [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md)
 - [x] `COMMERCE-01` — `revised` on 2026-07-20; [ADR 0143](../../architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md)
 - [x] `SOCIAL-01` — `superseded` on 2026-07-20 by [ADR 0134](../../architecture/decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md), [ADR 0136](../../architecture/decisions/adr-0136-communication-type-specific-history-and-retention.md), and [ADR 0137](../../architecture/decisions/adr-0137-closed-observer-views-and-profile-scoped-shout.md)
-- [ ] `MS-PO-MODERATION-APPEALS`
+- [x] `MS-PO-MODERATION-APPEALS` — `revised` on 2026-07-20; [ADR 0142](../../architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md)
 
 #### Packet 5 P2 And P3
 

@@ -248,6 +248,15 @@ Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-se
 - Account records only a verified, idempotent completion. Gameplay may poll or receive the resulting success, failure, expiry, or cancellation but cannot approve it.
 - Existing non-withdrawable premium-balance spending remains a confirmed, capped, idempotent gameplay mutation rather than a new real-money charge. Cash redemption, withdrawal, or cash-equivalent transfer is outside this contract.
 
+### Moderation Appeal Authentication and Handoff
+
+- Account authenticates the affected player, sends moderation and appeal-status notifications, and issues the opaque, short-lived HTTPS handoff used by Telnet or other gameplay clients. Logging & Admin, not Account, owns moderation appeal cases, evidence references, review decisions, and audit.
+- The server-side handoff intent binds the account, gameplay session when initiated in-game, exact Logging & Admin `appealCaseId` or eligible restriction owner/scope/revision, action (`submit` or `status`), expiry, and `requestId`. It contains no protected evidence, reporter identity, credential, or decision authority and requires independent Account authentication in the browser.
+- Essential notification content is limited to safe restriction category/scope, current effect and expiry where disclosable, appeal eligibility, and submission/status guidance. Account must not copy case evidence into general notifications or profiles.
+- Protective `account_security_lock` recovery remains Account-owned and is not a moderation appeal. Punitive `platform_access_ban` may link to a platform-jurisdiction Logging & Admin appeal, but only Account applies the resulting account-enforcement command.
+- Rate-limited or duplicate handoff requests return caller-safe retry or existing-intent results. Account never accepts a caller-supplied account subject, tenant jurisdiction, restriction revision, or appeal outcome without resolving it from authenticated context and the owning case/restriction authority.
+- No moderation appeal handoff, notification flow, or browser integration is currently implemented.
+
 ## Login Error Codes
 
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:

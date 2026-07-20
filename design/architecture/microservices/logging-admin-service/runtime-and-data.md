@@ -58,6 +58,7 @@ Logging & Admin does not write to Redis directly and does not define a competing
 - `log_events` stores log data and is mirrored into Elasticsearch indexes for search.
 - `moderation_actions` records bans and warnings with timestamps and includes a `tenant_id` column.
 - `player_reports` stores abuse and bug reports with a `tenant_id` column.
+- `moderation_appeal_cases` is the bounded appeal authority. It stores case identity, appellant, jurisdiction, exact owner restriction revision/digest and originating action linkage, lifecycle status, safe submission, evidence references, review actor and decision, and the resulting owner-command identity when applicable. It does not copy unrestricted evidence or rewrite `moderation_actions`.
 - Runtime feature-flag truth is owned by Game Session. Logging & Admin records operator intent and audit context for feature-flag requests, then forwards the mutation to Game Session rather than maintaining a competing `feature_flag` runtime table.
 
 ## Moderation Workflow
@@ -65,12 +66,24 @@ Logging & Admin does not write to Redis directly and does not define a competing
 - Operators review flagged logs through the web UI.
 - Actions such as bans or warnings are issued via secured API calls. For an enforcing action, Logging & Admin persists operator intent and audit context before forwarding one typed command whose payload digest is bound to its `controlPlaneRequestId` under [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md).
 - Logging & Admin is not the runtime enforcement source of truth. It reports success only after the owner acknowledges its durable, subject-scoped monotonic enforcement record and idempotent result:
-  - Account Service owns `account_security_ban` and account-wide security state.
+  - Account Service owns protective `account_security_lock` and punitive `platform_access_ban`; recovery clears only the protective lock.
   - Game Session Service owns `gameplay_ban` enforcement state.
   - Social & Groups Service owns `chat_mute` and `chat_ban` enforcement state.
 - Expiry, removal, and correction are later monotonic owner commands rather than edits to an ingress-side policy snapshot. Runtime owners consult local durable state; ordinary `PLAY` and chat operations do not call Logging & Admin.
 
 All moderation actions are audit-recorded for compliance.
+
+### Moderation Appeal Cases
+
+Logging & Admin owns `SUBMITTED` → `UNDER_REVIEW` → `DECIDED`, with terminal outcome `UPHELD`, `MODIFIED`, or `OVERTURNED`. Filing does not stay the referenced restriction. An upheld case writes only the append-only decision. Modification or reversal produces a new ADR-0048-compatible monotonic digest-bound owner command linked to both `appealCaseId` and the exact appealed restriction revision; it cannot erase original history or clear a later unrelated restriction.
+
+Appeal policy declares eligibility, jurisdiction, and data governance. Severe or long-lived punitive restrictions require an appeal path; brief auto-expiring mutes may be ineligible. Tenant restrictions remain tenant-jurisdiction cases unless explicit platform policy grants escalation, while punitive `platform_access_ban` uses platform jurisdiction. Protective `account_security_lock` clearance remains Account-owned security recovery, not moderation appeal adjudication.
+
+One active case is allowed for the exact appellant and restriction revision, with idempotent submission and bounded account, tenant, and status-read rate limits. Case and referenced evidence access is least-privilege and jurisdiction-scoped. Every policy supplies finite retention, redaction, legal-hold handling, export classification, and terminal erasure or minimization; a hold is a separately authorized exception rather than indefinite default retention. Player projections include only their submission and safe status/decision details, never protected evidence or reporter identity.
+
+Account provides authenticated browser handoff and notifications. Gameplay receives a short-lived opaque HTTPS URL rather than case evidence or review authority. V1 does not establish a general tribunal, mandatory multi-reviewer process, or one universal response-time SLA.
+
+No appeal table, authenticated submission/status surface, evidence-reference lifecycle, review authorization, owner outcome command, Telnet/browser handoff, notification redaction, retention enforcement, or end-to-end proof is currently implemented.
 
 ## Saga Dashboard
 

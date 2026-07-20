@@ -38,4 +38,16 @@ Player block/ignore relationships and personal mute preferences remain Social-ow
 
 ## Appeals
 
-Account owns any future player appeal, recovery, notification, and security-state workflow. A complete appeal web flow and cross-service case-management process are not currently implemented. Moderation records should retain the evidence needed by that future workflow without making Logging & Admin the account-state owner.
+Every moderation policy declares appeal eligibility. Severe or long-lived punitive restrictions require an appeal path. A brief automatically expiring mute may be ineligible for a full case when the policy instead supplies clear notice and expiry. Filing never pauses or weakens enforcement.
+
+Logging & Admin owns a small appeal lifecycle: `SUBMITTED`, `UNDER_REVIEW`, and terminal `DECIDED`. A decision outcome is `UPHELD`, `MODIFIED`, or `OVERTURNED`. Ineligible submissions return an explicit outcome without creating a case. The case binds the exact enforcement owner, subject, tenant or platform scope, restriction type, restriction revision and digest, originating moderation action/case, evidence references, appellant submission, jurisdiction, and final review decision.
+
+Tenant-scoped gameplay and communication restrictions are reviewed under the applicable tenant policy by authorized tenant moderation actors. Platform-wide restrictions and moderation-originated account-security restrictions use platform jurisdiction. Account-owned credential recovery is not reclassified as a moderation appeal. Platform escalation of a tenant case exists only when an explicit platform policy grants it.
+
+An upheld decision creates no enforcement mutation. A modified or overturned decision sends the applicable owner a new monotonic, digest-bound command referencing the appeal case and exact appealed restriction revision. The owner advances current enforcement state without rewriting either the original action or later unrelated restrictions. Appeal and enforcement histories remain append-only.
+
+Account authenticates the player, sends an essential notice, and provides the HTTPS browser handoff. Telnet or another gameplay client receives only an opaque, short-lived URL for submission or status; the URL contains no evidence, reporter identity, credential, or decision authority and still requires independent Account authentication. Essential notices disclose only safe restriction scope, effect/expiry, appeal eligibility, and status guidance.
+
+Submission is idempotent and permits at most one active appeal for the exact account and restriction revision. Account-, tenant-, and status-polling rate limits return bounded retry guidance without revealing another case. Each policy declares case/evidence access, finite retention, redaction, legal-hold exception, export treatment, and terminal erasure or minimization. Player status/export may include the player's own submission and safe decision summary but never protected evidence or reporter identity.
+
+This is not a general tribunal. V1 does not require multiple reviewers, arbitrary hearings, discovery, cross-tenant case browsing, or one universal response-time SLA. No complete appeal ingress, case lifecycle, evidence-reference, review, outcome-command, notice/handoff, or end-to-end proof currently exists.
