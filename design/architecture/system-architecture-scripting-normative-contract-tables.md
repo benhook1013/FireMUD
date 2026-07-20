@@ -222,25 +222,27 @@ This table defines the authoritative metric-family catalog and label sets for sc
 General rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- Raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
+- Raw `tenantId`, `gameInstanceId`, `regionId`, `scriptId`, `pluginId`, `pluginVersionId`, `automationDispatchId`, and other exact runtime identities are forbidden ordinary Prometheus labels.
+- Creator-, plugin-, or producer-defined strings are not bounded merely because they have a descriptive label name. Metrics use only enforced finite platform enums; unknown or retired values collapse to `other` or `unknown`.
+- `scope` is a finite operational traffic class, `script_kind` is a finite runtime kind, `plugin_origin` is a finite trust/origin class, `event_class` is a finite platform event family, and `priority` is the closed scheduling tier. None contains a raw tenant, script, plugin, version, event name, or other authored identifier.
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
-| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted) with final stage-aware outcome; do not treat “DSL eval success” as success if handoff failed. |
-| `automation_script_skips_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
-| `automation_script_triggers_dropped_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
-| `script_quota_allowed_total` | `scope`, `script_category` | `scriptEventId` | Quota decisions are pre-eval. |
-| `script_quota_denied_total` | `scope`, `script_category`, `reason` | `scriptEventId` | N/A |
-| `automation_tick_events_enqueued_total` | `scope` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
-| `automation_tick_version_fence_dropped_total` | `scope`, `script_category`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
-| `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
-| `automation_script_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
-| `automation_script_sandbox_failures_total` | `scope`, `script_category`, `reason`, optional `plugin_family` | `scriptEventId` | N/A |
-| `automation_script_test_runs_total` | `scope`, `script_category`, `eventType`, `result`, optional `plugin_family` | `scriptEventId` | Must be separate from live-traffic counters. |
-| `automation_script_test_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
-| `automation_script_test_sandbox_failures_total` | `scope`, `script_category`, `eventType`, `reason`, optional `plugin_family` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
-| `automation_script_timer_catchup_truncated_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts catch-up firings that were intentionally truncated/dropped by resume-window limits. |
-| `automation_script_timer_runtime_fence_dropped_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts due points intentionally dropped because runtime scope or epoch changed before the scheduler could admit them. |
+| `automation_script_triggers_total` | `scope`, `script_kind`, `event_class`, `outcome`, `plugin_origin`, `priority` | exact or authored identifiers | Counts all observed triggers with final stage-aware outcome; do not treat evaluation success as handoff success. |
+| `automation_script_skips_total` | `scope`, `script_kind`, `reason`, `plugin_origin`, `priority` | exact or authored identifiers | “Skip” is pre-evaluation. |
+| `automation_script_triggers_dropped_total` | `scope`, `script_kind`, `reason`, `plugin_origin`, `priority` | exact or authored identifiers | Trigger did not reach durable tick acceptance. |
+| `script_quota_allowed_total` | `scope`, `script_kind` | exact or authored identifiers | Quota decisions are pre-evaluation. |
+| `script_quota_denied_total` | `scope`, `script_kind`, `reason` | exact or authored identifiers | Reasons use a closed enum. |
+| `automation_tick_events_enqueued_total` | `scope` | exact or authored identifiers | Counts successful tick handoffs, not DSL evaluations. |
+| `automation_tick_version_fence_dropped_total` | `scope`, `script_kind`, `reason` | exact or authored identifiers | Counts execution-time script-patch fence drops. |
+| `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_origin`, `reason` | exact or authored identifiers | Counts execution-time plugin-version fence drops without version labels. |
+| `automation_script_runtime_seconds` | `scope`, `script_kind`, `event_class`, `plugin_origin` | exact or authored identifiers | Runtime is sandbox evaluation time. |
+| `automation_script_sandbox_failures_total` | `scope`, `script_kind`, `reason`, `plugin_origin` | exact or authored identifiers | Reasons use a closed enum. |
+| `automation_script_test_runs_total` | `scope`, `script_kind`, `event_class`, `result`, `plugin_origin` | exact or authored identifiers | Separate from live-traffic counters. |
+| `automation_script_test_runtime_seconds` | `scope`, `script_kind`, `event_class`, `plugin_origin` | exact or authored identifiers | Dry-run/test latency remains separate. |
+| `automation_script_test_sandbox_failures_total` | `scope`, `script_kind`, `event_class`, `reason`, `plugin_origin` | exact or authored identifiers | Must not increment live counters. |
+| `automation_script_timer_catchup_truncated_total` | `scope`, `script_kind`, `event_class`, `reason` | exact or authored identifiers | Counts bounded catch-up truncation. |
+| `automation_script_timer_runtime_fence_dropped_total` | `scope`, `script_kind`, `event_class`, `reason` | exact or authored identifiers | Counts runtime scope/epoch fence drops. |
 | `automation_rollback_convergence_timeout_total` | `scope`, `operation`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |
 
 ## Documentation Drift Guardrails

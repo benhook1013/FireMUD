@@ -10,7 +10,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 - `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
-- Metric families in this design may use bounded semantic dimensions such as `eventType`, `outcome`, `reason`, `priorityTag`, and an explicitly approved low-cardinality `scope`, but raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` belong in audit rows, logs, traces, and control-plane queries rather than ordinary canonical Prometheus labels. When the metric catalog below refers to those logical dimensions, treat them as grouping concepts that still require bounded producer-side normalization before they are emitted.
+- Metric families use only enforced finite platform enums such as `event_class`, `outcome`, `reason`, `priority`, `script_kind`, `plugin_origin`, and the low-cardinality operational traffic `scope`. Creator/producer strings and raw `tenantId`, `gameInstanceId`, `regionId`, `scriptId`, `pluginId`, `pluginVersionId`, and dispatch/event identities belong in audit rows, protected logs/traces, and control-plane queries rather than Prometheus labels. Unknown values collapse to bounded `other` or `unknown` categories.
 
 ## Ingress Audit vs Handler Audit
 
@@ -237,31 +237,31 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
 
 - Trigger admission and drops
-  - `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}`
-  - `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}`
-  - `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}`
+  - `automation_script_triggers_total{scope, script_kind, plugin_origin, event_class, outcome, priority}`
+  - `automation_script_skips_total{scope, script_kind, plugin_origin, reason, priority}`
+  - `automation_script_triggers_dropped_total{scope, script_kind, plugin_origin, reason, priority}`
 - Quotas and budgets
-  - `script_quota_allowed_total{scope, script_category}`
-  - `script_quota_denied_total{scope, script_category, reason}`
+  - `script_quota_allowed_total{scope, script_kind}`
+  - `script_quota_denied_total{scope, script_kind, reason}`
   - `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`
 - Tick integration and queueing
   - `automation_tick_events_enqueued_total{scope}`
-  - `automation_tick_version_fence_dropped_total{scope, script_category, reason}`
-  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_family, plugin_version_family, reason}`
-  - `automation_script_queue_delay_seconds{scope, script_category}`
+  - `automation_tick_version_fence_dropped_total{scope, script_kind, reason}`
+  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_origin, reason}`
+  - `automation_script_queue_delay_seconds{scope, script_kind}`
   - `automation_queue_orphaned_entries_total{scope}` (when applicable)
-  - `automation_script_timer_catchup_truncated_total{scope, script_category, eventType, reason}`
+  - `automation_script_timer_catchup_truncated_total{scope, script_kind, event_class, reason}`
 - Sandbox and runtime health
-  - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_errors_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}`
+  - `automation_script_sandbox_failures_total{scope, script_kind, plugin_origin, reason}`
+  - `automation_script_errors_total{scope, script_kind, plugin_origin, reason}`
+  - `automation_script_output_budget_exceeded_total{scope, script_kind, plugin_origin, reason}`
+  - `automation_script_runtime_seconds{scope, script_kind, plugin_origin, event_class}`
 - Dry-run/test traffic (separate from live)
-  - `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}`
-  - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}`
-  - `automation_script_test_sandbox_failures_total{scope, script_category, plugin_family, eventType, reason}`
+  - `automation_script_test_runs_total{scope, script_kind, plugin_origin, event_class, result}`
+  - `automation_script_test_runtime_seconds{scope, script_kind, plugin_origin, event_class}`
+  - `automation_script_test_sandbox_failures_total{scope, script_kind, plugin_origin, event_class, reason}`
 - Plugin policy
-  - `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}`
+  - `automation_plugin_policy_violations_total{scope, plugin_origin, component_class, reason}`
 - Rollback convergence timeout
   - `automation_rollback_convergence_timeout_total{scope, operation, reason}`
 - Rollback drain fencing
@@ -270,7 +270,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
 Label rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- Raw tenant, script, plugin, and runtime identifiers are not approved ordinary Prometheus labels here. Producers must emit bounded `scope`, category, family, or operation dimensions instead of raw IDs.
+- Raw tenant, game-instance, region, script, plugin, version, dispatch, event, and other runtime identifiers are forbidden ordinary Prometheus labels here. Creator-defined names are also forbidden. Producers emit only the finite enum dimensions in the normative table, with unknown values normalized before registration.
 
 Metric semantics:
 

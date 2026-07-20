@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 22 | 25 | `in-progress` |
+| 6 | Operations and delivery | 23 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **159** | **183** | `in-progress` |
+| **Total** | | **160** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -327,7 +327,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MS-OPS-AVAILABILITY-PARTITION` — `revised` on 2026-07-20; [ADR 0160](../../architecture/decisions/adr-0160-authoritative-control-actions-during-observability-loss.md)
 - [x] `MS-PO-OWNER-REMEDIATION` — `revised` on 2026-07-20; [typed owner remediation boundary](../../architecture/microservices/logging-admin-service/api-contracts.md#rest)
 - [x] `SCRIPT-14` — `revised` on 2026-07-20; [ADR 0161](../../architecture/decisions/adr-0161-attributable-script-breakers-and-tenant-first-fairness.md)
-- [ ] `SCRIPT-15`
+- [x] `SCRIPT-15` — `revised` on 2026-07-20; [bounded scripting metrics](../../architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix)
 - [ ] `TRACE-02`
 
 #### Packet 6 P2 And P3
