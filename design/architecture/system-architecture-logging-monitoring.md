@@ -436,17 +436,20 @@ The Prometheus mirror is optional convenience telemetry, not proof that the inde
 
 ### Log Pipeline Queryability Contract
 
-Structured log emission is not sufficient by itself. Prod-like environments must prove that the log pipeline delivers and indexes those records so operators can actually investigate incidents:
+Structured log emission is not sufficient by itself. A profile claiming indexed-log observability proves the asynchronous emitter-to-query path so operators can actually investigate incidents:
 
 - Scope:
   - Gateway, Game Session, TCP Proxy, and any other service that owns a player-facing or tick-critical path.
 - Required behavior:
-  - Synthetic smoke traffic that emits logs with `service`, `traceId`, and the applicable contextual fields must land in the canonical log index pattern (`firemud-logs-*` unless an environment documents a compatibility mapping).
-  - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
-    - Default starting point for prod-like smoke: the records should be queryable within 2 minutes of emission unless an environment documents a stricter bound.
+  - An asynchronous check emits a uniquely identifiable structured record with a known `traceId`, then polls the supported operator query path until that exact record is retrievable through the collector/forwarder and selected storage backend.
+  - `firemud-logs-*` and Elasticsearch/Kibana are the default indexed profile; another backend may document an equivalent field, delay, access, and degraded-state mapping.
+  - The default starting target is queryability within 2 minutes of emission. Each profile records its configured delay and observed result; the value is not an immutable cross-platform constant.
   - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `characterId` when those fields are expected by the logging contract.
 - Failure semantics:
-  - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
+  - Missing, expired, or failing hosted evidence blocks the applicable promotion/release and indexed-observability readiness claim. It never fails process liveness, Kubernetes pod or gameplay readiness, or player-traffic admission.
+  - Runtime backend loss is explicit degraded observability. Gameplay, moderation, and domain operations do not synchronously query or wait for the log backend.
+  - The synthetic query identity is read-only and scoped to the environment and required log stream; proof by `traceId` must not create broad cross-tenant search authority.
+  - Hobby, single-node, and small profiles may prove console/journal retrieval or explicitly declare indexed search unavailable without blocking player traffic or synthesizing hosted evidence.
 
 If a required profile chooses to mirror the external signals but its monitoring product cannot emit these exact metric names, it provides a documented compatibility mapping preserving `path` semantics, authoritative external paging behavior, and runbook behavior. Omitted profiles do not need to synthesize these metrics.
 

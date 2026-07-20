@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 13 | 25 | `in-progress` |
+| 6 | Operations and delivery | 14 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **150** | **183** | `in-progress` |
+| **Total** | | **151** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -318,7 +318,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `OBS-01` — `accepted` on 2026-07-20; [bounded-cardinality observability contract](../../architecture/system-architecture-logging-monitoring.md#cardinality-guardrails-for-metrics)
 - [x] `OBS-02` — `revised` on 2026-07-20; [ADR 0155](../../architecture/decisions/adr-0155-staged-profile-aware-player-experience-slo-contract.md)
 - [x] `OBS-03` — `revised` on 2026-07-20; [ADR 0156](../../architecture/decisions/adr-0156-profile-aware-isolated-synthetic-player-flow-canaries.md)
-- [ ] `OBS-06`
+- [x] `OBS-06` — `revised` on 2026-07-20; [ADR 0157](../../architecture/decisions/adr-0157-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md)
 - [ ] `CAPACITY-01`
 - [ ] `CAPACITY-02`
 - [ ] `TEST-01`

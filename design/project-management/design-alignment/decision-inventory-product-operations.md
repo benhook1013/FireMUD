@@ -177,11 +177,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `OBS-06` - End-to-end structured-log queryability is readiness evidence
 
 - **Capability:** Primary `PO-4.4`. Secondary `PO-4.1`.
-- **Decision / status / importance:** A deployed path is not observability-ready merely because emitters are producing logs. Structured logs and trace context must be queryable through the `firemud-logs-*` index by service and request context within the default two-minute window, with missing queryability treated as evidence failure. Status `proposed/deferred`; `M/med`.
+- **Decision / status / importance:** A profile claiming indexed-log observability proves an asynchronous synthetic record end to end from emitter through collection/storage to the supported operator query path. Two minutes is a configurable starting target. Hosted failure blocks the applicable promotion/release and observability claim, never pod/gameplay readiness or player traffic; runtime loss is degraded observability. Hobby/small profiles may prove console/journal retrieval or declare indexed search unavailable. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [system-architecture-logging-monitoring.md](../../architecture/system-architecture-logging-monitoring.md) `§ Log Pipeline Queryability Contract` and `§ Health Checks`; [system-architecture-observability-incident-runbook.md](../../architecture/system-architecture-observability-incident-runbook.md) `§ Elasticsearch/Kibana Down or Indexing Stalled` and `§ Post-Incident Checklist`; [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ Observability Tests`.
-- **Strongest alternative:** Accept logger or collector output as proof without an end-to-end indexed query test.
-- **ADR recommendation:** Yes if this becomes a deployment gate; otherwise keep it as a target-state evidence check linked to `OPS-06`.
-- **Human consultation:** Yes; operations must choose the queryability SLO and evidence retention cost.
+- **Strongest alternative:** Accept logger/collector health as proof, make indexed search a gameplay readiness dependency, or require Elasticsearch/Kibana for every deployment.
+- **ADR:** [ADR 0157](../../architecture/decisions/adr-0157-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md) records the asynchronous proof boundary, profile-aware gate, soft runtime dependency, scoped credentials, and backend compatibility.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. End-to-end query proof was retained, while accidental gameplay dependency, universal Elasticsearch burden, and an immutable two-minute constant were rejected.
 
 #### `MCP-01` - Plain-text gameplay with classic-client extensions deferred
 

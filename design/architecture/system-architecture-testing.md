@@ -232,11 +232,12 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - Required when known in context: `tenantId`, `regionId`.
     - Required when a player session is authenticated/bound: `characterId`.
   - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
-  - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
-    - run a synthetic login + command + tick flow that records expected `traceId` values,
-    - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay (default starting point: within 2 minutes unless the environment documents a stricter bound),
-    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `characterId` when applicable,
-    - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
+  - For profiles claiming indexed-log observability, verify end-to-end asynchronous queryability:
+    - emit a unique structured synthetic record with a known `traceId`,
+    - verify it reaches the supported operator query path within the profile's configured delay (two minutes is the starting target),
+    - verify retrieval by `service` and `traceId`, plus applicable authorized context fields, using a narrowly scoped read identity,
+    - fail the applicable promotion/release or indexed-observability claim when current evidence is absent, but never fail pod/gameplay readiness or player admission.
+  - A hobby or small profile may instead retain console/journal retrieval evidence or an explicit indexed-search omission.
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
 
