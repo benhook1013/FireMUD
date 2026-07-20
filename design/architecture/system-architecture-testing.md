@@ -262,12 +262,12 @@ Profiles that advertise continuous player-experience monitoring validate the syn
 
 #### Where These Checks Run (Decision)
 
-To keep PR feedback fast while still preventing “it only breaks in staging” drift, FireMUD uses a two-tier expectation:
+To keep PR feedback fast while still proving real environments and recovery events, FireMUD uses three verification boundaries:
 
-- **Always (PR + main CI)**:
+- **Deterministic change verification (PR + main CI)**:
   - Design-contract validation of dashboard/snippet consistency (for example `dev-tools/observability/validate-observability-contract.py`).
   - Markdown link + lint checks so runbook references do not rot.
-- **Hosted-assurance observability smoke (nightly or staging-gated)**:
+- **Environment assurance (scheduled, release-bound, or staging/prod-like)**:
   - Alert routing smoke: trigger a test-only alert (`alert_class="test"`, `severity="P2"`) and verify Alertmanager routing and label preservation end-to-end.
   - External-authority smoke: verify the independently hosted monitoring system can page on deadman staleness or an equivalent external-only failure target without relying on Prometheus alert evaluation.
   - Private observability diagnostics: verify in-cluster or provider-native health checks without requiring Prometheus, Alertmanager, Grafana, Kibana/log-query, or Jaeger/trace-query to be externally reachable.
@@ -287,8 +287,12 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
     - `observability_deadman_heartbeat_timestamp_seconds{source}` or a documented equivalent external heartbeat signal.
     - `playerflow_canary_success{flow,path,target}` and `playerflow_canary_latency_ms{flow,path,target}` for the required login and representative command flows, or a documented equivalent mapping.
     - For the deadman path, verify the configured heartbeat interval, stale threshold, probe cadence, and resulting detection budget. The defaults are 60 and 180 seconds, not immutable constants.
+- **Event-bound recovery and traffic-open proof**:
+  - Bind restore, rewind, quarantine, participant convergence, and controlled-reopen results to the exact recovery event, artifact, environment, and current state.
+  - Do not reuse a prior generic smoke or environment-assurance result as proof that the recovered environment is safe to reopen.
+  - Keep mandatory post-rewind validation non-optional even for hobby and small profiles; automate it so one operator need not manually assemble the record.
 
-This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
+A green earlier boundary never substitutes for a later boundary. Evidence records the exact artifact, environment, event/phase, expected-binding digest, tool version, timestamps, freshness, selected assurance profile, and content-addressed underlying tool output. Hobby and small profiles run unattended local evidence for capabilities they claim and explicitly record accepted omissions such as independent monitoring or indexed search; they do not claim the omitted assurance.
 
 ---
 

@@ -277,14 +277,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** No separate ADR. [ADR 0058](../../architecture/decisions/adr-0058-class-specific-redis-loss-outcomes.md) owns the loss contract; this decision records its verification boundary.
 - **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The owner accepted targeted production-like fault evidence without making expensive Redis durability tests routine PR gates.
 
-#### `TEST-02` - Two-tier verification with retained hobby evidence
+#### `TEST-02` - Three-boundary profile-aware verification evidence
 
 - **Capability:** Primary `PO-4.4`. Secondary `PO-4.3`, `PO-3.4`, and `PO-3.1`.
-- **Decision / status / importance:** Separate fast static/contract checks in PR and main CI from backend-dependent smoke, canary, and recovery evidence in staging or prod-like environments. Hobby operators may satisfy the external proof through an explicitly retained operator-run evidence record; an in-repo check alone is not equivalent. Status `proposed/deferred`; `H/med`.
+- **Decision / status / importance:** Separate deterministic PR/main verification, scheduled or release-bound environment assurance, and event-bound recovery/traffic-open proof. Earlier green evidence never substitutes for a later boundary. Records bind exact artifact, environment, event, profile, freshness, and content-addressed automated output. Hobby deployments prove only claimed capabilities through unattended local playbooks and explicitly declare accepted omissions; actual post-rewind validation remains mandatory. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ CI/CD Integration`, `§ Observability Tests`, `§ Synthetic Player-Flow Canary Checks`, and `§ Where These Checks Run (Decision)`; [system-architecture-deploy-preflight-policy.md](../../architecture/system-architecture-deploy-preflight-policy.md) `§ Evidence Contract` and `§ Evidence Storage and Retention`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ PR Preview Environment` and `§ Staging Environment for Playtesting`.
-- **Strongest alternative:** Put every check in pull-request CI, or allow a green static report to stand in for external smoke and recovery proof.
-- **ADR recommendation:** Yes. Define which evidence is required at PR, promotion, traffic-open, and hobby self-hosting boundaries.
-- **Human consultation:** Yes; release and hobby-support owners must approve the exception and its retention standard.
+- **Strongest alternative:** Put every check in pull-request CI, allow static reports to stand in for live proof, or use one generic hobby exception that also weakens recovery gates.
+- **ADR:** [ADR 0159](../../architecture/decisions/adr-0159-three-boundary-profile-aware-verification-evidence.md) records the three boundaries, profile posture, evidence identity, automation, and scoped blocking rules.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The owner accepted automated profile-aware evidence overhead while preserving mandatory proof after destructive recovery.
 
 #### `TEST-03` - Full high-concurrency load tests are non-blocking unless promoted
 

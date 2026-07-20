@@ -172,6 +172,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0156](./adr-0156-profile-aware-isolated-synthetic-player-flow-canaries.md) | Accepted | `PO-4` | `EA-3`, `PO-2`, `AA-1` | Profile-aware isolated synthetic player-flow canaries |
 | [ADR 0157](./adr-0157-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md) | Accepted | `PO-4` |  | Profile-aware asynchronous end-to-end log-queryability evidence |
 | [ADR 0158](./adr-0158-service-owned-retention-classes-with-cross-service-safety.md) | Accepted | `SF-2` | `GR-1`, `PO-4` | Service-owned retention classes with cross-service safety |
+| [ADR 0159](./adr-0159-three-boundary-profile-aware-verification-evidence.md) | Accepted | `PO-4` | `PO-3` | Three-boundary profile-aware verification evidence |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

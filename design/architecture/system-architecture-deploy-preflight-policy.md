@@ -285,6 +285,10 @@ The report artifact must include:
 - target environment and cluster identity for live phases
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
+- `assuranceProfile` and the capability-specific `proved`, `omitted`, or `not-applicable` posture
+- `evidenceBoundary` (`change`, `environment`, or `recovery-event`)
+- `evidenceExpiresAt` where freshness is required
+- content digest or immutable reference for the underlying automated tool output
 
 For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings.
 
@@ -310,7 +314,7 @@ Illustrative `ci-static` report shape:
 }
 ```
 
-CI and manual operator runs must produce the same report shape so audit tooling can compare them.
+CI and operator automation must produce the same report shape so audit tooling can compare them. A manually authored record or shape-valid supplied object is an index, not proof by itself; it must reference the content-addressed automated output. Static change evidence cannot satisfy environment assurance, and generic environment assurance cannot satisfy an event-bound restore, rewind, quarantine, or reopen gate.
 
 ### Evidence Storage and Retention
 
