@@ -189,6 +189,70 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AA-2",
         "Accepted",
     ),
+    "design/architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md": (
+        "AA-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md": (
+        "AA-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0023-central-route-authorization-governance.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0025-explicit-open-enrollment-membership.md": (
+        "AA-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md": (
+        "AA-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0027-single-realm-admission-target.md": (
+        "AA-3",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md": (
+        "AA-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md": (
+        "PO-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0030-risk-based-active-session-revocation.md": (
+        "AA-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md": (
+        "AA-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md": (
+        "PO-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": (
+        "SF-1",
+        "Accepted",
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",
