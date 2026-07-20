@@ -211,7 +211,7 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 Game Session uses Redis for two related but distinct session concerns:
 
 - **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
-- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`.
+- **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for one binding remains `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`, while single-controller uniqueness is indexed separately by stable playable-state namespace.
 
 Authenticated gameplay session keys capture:
 
@@ -230,7 +230,7 @@ Session and region participation updates are intentionally **two-phase and monot
 
 1. A **session-only** script updates `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`:
    - It validates the session CAS fields and logical expiry.
-   - It increments or verifies a monotonic `binding_generation`.
+   - It atomically compares and advances the namespace-scoped character controller index `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` and its monotonic `binding_generation`.
    - It records reconnect/takeover intent plus any advisory region summary fields.
 2. A **region-lease** script for each affected region updates `tick:{tenantRegionTag}:session-binding:<entityId>`:
    - It validates the active region lease and expected `binding_generation` from the session contract carried in `ARGV`.
@@ -240,6 +240,7 @@ Session and region participation updates are intentionally **two-phase and monot
 4. Disconnect/takeover reconciliation is generation-based:
    - If `session:game:*` says a newer generation is active, any older `tick:{tenantRegionTag}:session-binding:<entityId>` entry is stale and must be ignored or cleaned up by the next region-lease script.
    - If a region binding survives after the session key is deleted or expires, the next lease-holder treats it as stale and removes it as part of region-local cleanup.
+   - The committed controller-transfer CAS fences new input from the displaced binding. Work durably admitted before that boundary retains its existing command/effect identity and is not recreated or blindly canceled by socket takeover.
 5. Region reset reconciliation is also generation-based:
    - A region-scoped coordination reset clears the region-local binding keys for the affected `tick:{tenantRegionTag}:*` family but preserves `session:game:*` and bootstrap `sessionctx:*` entries by default.
    - Before normal command intake resumes for the affected region, Game Session must run a bounded rebind phase for preserved sessions that still intend to participate in that region. The rebind phase reads authenticated session context, validates current account/membership/revocation state, increments or verifies `binding_generation`, and invokes the same region-lease bridge script that normal `PLAY` / reconnect uses.
@@ -390,7 +391,7 @@ Key principles:
     - Session-only Lua scripts may perform shard-local multi-key CAS/update flows across these keys, but they must not mix `{tenantGameplayTag}` session keys with `{tenantRegionTag}` tick-region keys in the same invocation.
   - Representative patterns:
     - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
-    - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`
+    - `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>`
     - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
     - `session:game:index:tenant:{tenantGameplayTag}`
 
@@ -434,7 +435,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
 | `tick:{tenantRegionTag}:session-binding:<entityId>` | Region-authoritative gameplay session binding for an entity. Stores the currently admitted `sessionId` and `binding_generation` for region-local command admission and takeover cleanup. |
 | `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` | Authenticated gameplay session record holding reconnect eligibility, auth/session CAS fields, and the latest desired gameplay binding generation for one tenant-scoped session. |
-| `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` | Tenant-scoped uniqueness index from character to active gameplay `sessionId`. Updated atomically with the session record inside the session-only CAS flow. |
+| `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` | Namespace-scoped uniqueness index from durable character state to the current gameplay `sessionId` and monotonic `bindingGeneration`. Updated atomically with the session record inside the session-only controller-transfer CAS flow. |
 | `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` and `session:game:index:tenant:{tenantGameplayTag}` | Tenant-scoped reverse indexes used for bounded revocation, reconnect, and inspection without wildcard scans. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |

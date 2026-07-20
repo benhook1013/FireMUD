@@ -140,6 +140,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0124](./adr-0124-epoch-fenced-per-instance-plugin-activation.md) | Accepted | `AS-1` | `AR-3`, `SF-1`, `AR-1`, `GR-1` | Per-instance plugin activation with monotonic epochs and acknowledged final-execution fences |
 | [ADR 0125](./adr-0125-owner-read-first-control-plane-notifications.md) | Accepted | `SF-1` | `AS-1`, `AR-3`, `PO-1`, `PO-4`, `SF-2` | Owner-read-first control-plane notifications with selectively durable asynchronous flows |
 | [ADR 0126](./adr-0126-isolated-playtest-state-modes-and-reset.md) | Accepted | `AR-3` | `AA-3`, `GR-2`, `GR-3`, `AA-1`, `AR-3` | Explicit fresh, seeded, and snapshot playtest initialization with namespace-replacement reset |
+| [ADR 0128](./adr-0128-namespace-scoped-single-character-controller.md) | Accepted | `AA-2` | `AA-2`, `EA-3`, `SF-2`, `AR-3` | One atomic character controller per stable playable-state namespace |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

@@ -4,13 +4,15 @@ This document defines gameplay takeover, reconnect, token refresh, membership-ve
 
 ## Multi-Client Behavior and Session Takeover
 
-Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.
+Each durable gameplay identity can be controlled by only one authoritative session at a time, keyed by `{tenantId, playableStateNamespaceId, characterId}`. The binding also carries `gameInstanceId` for routing and execution fences, but replacement instances that address the same namespace do not receive independent character-control authority.
 
-If a new login is received for the same active uniqueness key:
+If an authorized `PLAY` is received for the same active uniqueness key:
 
-- The existing session is terminated.
-- The Redis session is rebound to the new socket.
+- Game Session atomically advances a monotonic `bindingGeneration`, installs the new controller, and makes the previous binding non-admitting.
+- The displaced transport is closed with the canonical `session_replaced` outcome; close delivery is cleanup rather than the authority boundary.
 - Tick state, command queues, and timers are preserved.
+
+Commands durably admitted before the controller-transfer boundary retain their existing command/effect identity and may complete normally. Input submitted by the displaced transport after the committed transfer is rejected. Takeover does not recreate ambiguous client input or publish a false character exit.
 
 This enables:
 
@@ -18,7 +20,7 @@ This enables:
 - Forced logins (for example "kick and take over").
 - Session continuity with at-most-once edge delivery semantics. In-flight command loss at disconnect boundaries remains possible.
 
-All session rebinding is enforced by the Game Session Service using Redis locks. See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
+Game Session enforces takeover through one atomic monotonic controller-transfer compare-and-set in the namespace-scoped Redis session index. Automatic takeover is the default; audit, player notification, and rate limiting make unexpected transfers visible. A future separately modelled read-only attachment may mirror output but cannot submit gameplay commands. See [ADR 0128](./decisions/adr-0128-namespace-scoped-single-character-controller.md) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 
 ## Mid-Session Role Updates
 
@@ -89,14 +91,14 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
 
-- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` -> current `sessionId` and `bindingGeneration`
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
 
 Index contract requirements:
 
 - Game Session is the sole writer for these indexes.
-- The session record plus these tenant-scoped indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. This is the atomic boundary for takeover and resume decisions inside Redis Cluster.
+- The session record plus these tenant-scoped indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. The namespace-scoped character index is the atomic linearization boundary for takeover and resume decisions inside Redis Cluster; delete-then-create transfer is invalid.
 - Region-local gameplay binding is intentionally outside that atomic boundary and follows the separate session-to-region bridge contract in the Redis architecture docs.
 - Index entries must be removed or expired when the bound gameplay session ends or becomes non-resumable.
 - Billing- and membership-driven revocation flows must use these bounded indexes rather than wildcard key scans.

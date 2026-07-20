@@ -7,7 +7,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 ## Implemented Status
 
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <secret>` / `LOGON ...`. The secret is a password or an active verified-email login code according to the account's selected mode.
-- Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
+- Character selection resolves a concrete `{tenantId, gameInstanceId, characterId}` target, while single-controller takeover authority is canonicalized on `{tenantId, playableStateNamespaceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
 - The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is now implemented for first-party browser gameplay. Non-browser clients may still use the dedicated `X-Firemud-Connect-Token` header carrier, but Gateway rejects handshakes that try to present both carriers at once.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook, but current role-refresh token regeneration and periodic active-session Service JWT rotation remain implementation gaps; the placeholder response is not proof of refresh.
@@ -19,7 +19,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Revocation writer authority** – The Account Service owns durable monotonic auth generations and is the sole writer of `session:auth:generation:*` projections. Other services publish billing/security events and must not write these generation keys directly.
 - **Tenant generation scope** – `session:auth:generation:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
 - **Membership generation scope** – `session:auth:generation:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and advances when membership or tenant roles change without triggering a tenant-wide billing cutoff.
-- **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`.
+- **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, playableStateNamespaceId, characterId}`. The admitted binding separately retains `gameInstanceId` for runtime routing and fences.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal gameplay delegation boundary** – Gameplay services authenticate the concrete mTLS workload identity, enforce an exact method-level caller allowlist, and validate a typed `PlayerExecutionContext` against request and domain scope.
 - **No universal player attestation** – Routine gameplay delegation does not use signed per-action player attestations or a replay cache. Mutation replay is controlled by the owning command/effect/request idempotency contract.
@@ -588,11 +588,11 @@ First-party gameplay admission and reconnect clients should treat the following 
 | New commitment or ineligible continuity operation | `ENTITLEMENT_UNAVAILABLE` | Fresh entitlement authority is unavailable and no operation-eligible last-known-good snapshot exists | Keep auth state, retry with bounded backoff, and never use grace after hard denial, revocation, or sequence uncertainty. |
 | Gameplay command before `PLAY` | `PLAY_REQUIRED` | Client issued a world-scoped gameplay command before lobby admission completed | Keep auth state and route the client back through `PLAY`, `REALMS`, or `CHARS` as appropriate. |
 
-Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [realm] [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
+Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [realm] [character]`). Game Session resolves the selected instance's `playableStateNamespaceId`; if a resumable gameplay session exists for `{tenantId, playableStateNamespaceId, characterId}`, it resumes or takes over that binding, otherwise it creates a fresh gameplay session binding.
 
-Gameplay identity is canonicalized on `characterId` within a tenant. All Redis key formats and Game Session Service APIs must treat `characterId` as the abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, gameInstanceId, characterId}`.
+Gameplay identity is canonicalized on `characterId` within a tenant and playable-state namespace. All Redis key formats and Game Session Service APIs must treat `characterId` as the abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, playableStateNamespaceId, characterId}`; `gameInstanceId` remains part of the admitted routing bundle.
 
-Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameInstanceId, characterId}`.
+Gameplay identity has one authoritative command controller per `{tenantId, playableStateNamespaceId, characterId}` under [ADR 0128](./decisions/adr-0128-namespace-scoped-single-character-controller.md).
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 

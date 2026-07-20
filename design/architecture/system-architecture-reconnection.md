@@ -136,13 +136,15 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 > 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#multi-client-behavior-and-session-takeover).
 
-At most one active gameplay binding is supported per uniqueness key `{tenantId, gameInstanceId, characterId}` at any point in time.
+At most one active gameplay controller is supported per uniqueness key `{tenantId, playableStateNamespaceId, characterId}` at any point in time. The binding retains `gameInstanceId` separately for routing; old and replacement instances that share one namespace cannot control the same character concurrently.
 
-The active gameplay identity is `characterId`. When a new client successfully issues `LOGIN` for an identity that is already bound to another connection (whether Telnet or WebSocket), Game Session treats this as a **takeover**:
+The active gameplay identity is selected by `LOGIN` and bound by `PLAY`. When an authorized `PLAY` targets an identity already controlled through the same playable-state namespace, Game Session treats this as a **takeover**:
 
-- The previous connection is disconnected or demoted according to the takeover rules in the authentication design.
-- No ordering guarantees are provided between the last few commands on the old connection and the first commands on the new one; only **per-connection FIFO** is maintained as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+- One atomic monotonic controller-transfer CAS makes the old binding non-admitting and installs the new binding. The old transport is closed with `session_replaced`; it is not silently demoted into an undefined state.
+- Work durably admitted before the transfer may complete under its existing identity. New submissions from the old connection after transfer are rejected. Ambiguous client input is not replayed.
 - Clients and tools must not assume that keeping multiple concurrent connections (for example Telnet + Web) to the same character will preserve any cross-connection ordering; instead, they should rely on the single active binding and takeover semantics.
+
+Production and an isolated playtest may each have an active controller for the corresponding character because their `playableStateNamespaceId` values are distinct. A future read-only mirror must be a separate non-command attachment contract.
 
 ---
 
