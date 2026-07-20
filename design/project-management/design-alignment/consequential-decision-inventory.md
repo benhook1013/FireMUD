@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 1 | 17 | `in-progress` |
-| **Total** | | **163** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 2 | 17 | `in-progress` |
+| **Total** | | **164** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -339,7 +339,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 7 P2 And P3
 
 - [x] `AUTH-01` — `revised` on 2026-07-21; [ADR 0163](../../architecture/decisions/adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md)
-- [ ] `EDGE-01`
+- [x] `EDGE-01` — `accepted` on 2026-07-21; [ADR 0007](../../architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md)
 - [ ] `EDGE-02`
 - [ ] `EDGE-03`
 - [ ] `SESSION-01`
