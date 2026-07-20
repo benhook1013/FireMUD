@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 11 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 12 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **127** | **183** | `in-progress` |
+| **Total** | | **128** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -285,7 +285,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MS-SOCIAL-RELATIONSHIP-AUTHORITY` — `revised` on 2026-07-20; [ADR 0135](../../architecture/decisions/adr-0135-social-relationship-authority-and-entity-owned-value.md)
 - [x] `MS-SOCIAL-HISTORY-DURABILITY` — `revised` on 2026-07-20; [ADR 0136](../../architecture/decisions/adr-0136-communication-type-specific-history-and-retention.md)
 - [ ] `MS-SOCIAL-OBSERVER-SHOUT-POLICY`
-- [ ] `PLAYTEST-01`
+- [x] `PLAYTEST-01` — `revised` on 2026-07-20; [ADR 0138](../../architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md)
 - [ ] `LIFE-01`
 - [ ] `PLAYER-01`
 - [ ] `SAFETY-01`

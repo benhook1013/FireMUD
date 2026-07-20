@@ -306,14 +306,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes. Align lifecycle authority, paid-state behavior, and break-glass auditability with `AUTH-07`, `ADMIT-01`, and `OPS-05`.
 - **Human consultation:** Yes; product, finance, platform, and creator owners must approve the authority split.
 
-#### `PLAYTEST-01` - Explicit, expiring playtest grants with forward-looking revocation
+#### `PLAYTEST-01` - Explicit, expiring playtest grants with bounded active revocation
 
 - **Capability:** Primary `AR-3.4` Playtest forks, reset, expiry, and isolation. Secondary `AA-3.2`, `AA-2.2`, `PO-1.2`, and `EA-3.3`.
-- **Decision / status / importance:** A playtest fork requires an explicit grant, may carry `expiresAt`, and has isolated state with no merge-back. Revocation stops future visibility and admission; existing sessions may drain rather than being implicitly ejected, unless a separate safety or incident action says otherwise. Status `needs-human-review`; `H/med`.
+- **Decision / status / importance:** Account owns explicit playtest grants. Every grant expires no later than its fork, extensions are explicit, and mutation is monotonic and idempotent with revocation tombstones. Revocation or expiry immediately removes discovery and admission, fences new commands, and terminates the active binding; a friendly ending closes admission and drains before revocation. Playtest state remains isolated with no merge-back. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 4. Publish and Start a Game Instance` and `§ 7. Playtesting & Analytics`; [user-journeys-operators.md](../../architecture/user-journeys-operators.md) `§ 2. Operator Recovery Journeys`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ Staging Environment for Playtesting`.
-- **Strongest alternative:** Use implicit membership, eject all current sessions on revocation, allow indefinite grants, or merge playtest state back into production.
-- **ADR recommendation:** Yes. Define grant ownership, expiry, revocation timing, drain behavior, and the exception for safety enforcement alongside `TENANT-03`.
-- **Human consultation:** Yes; product, moderation, creator, and player-support owners must decide the session and data semantics.
+- **Strongest alternative:** Treat revocation as forward-looking admission denial and let an already connected tester continue, use implicit membership, allow indefinite grants, or merge playtest state back into production.
+- **ADR:** [ADR 0138](../../architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md) records the accepted grant authority, expiry, ordering, active revocation, friendly drain, and isolation contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current grant rows lack expiry, scoped tenant-admin management, request replay, tombstones, active-binding ejection, creator UX, and end-to-end proof; the fork lifecycle itself remains unimplemented.
 
 #### `EQUIP-01` - Equipment vocabulary is game-authored and runtime-validated
 

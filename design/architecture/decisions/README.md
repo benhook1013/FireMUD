@@ -150,6 +150,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0134](./adr-0134-explicit-communication-classes-and-owner-delivery.md) | Accepted | `EA-2` | `EA-2`, `GR-4`, `PO-1`, `SF-2` | Explicit gameplay, social-channel, and operator communication classes |
 | [ADR 0135](./adr-0135-social-relationship-authority-and-entity-owned-value.md) | Accepted | `EA-2` | `EA-2`, `AA-1`, `PO-1`, `SF-2` | Social relationship authority with Entity-owned transferable value |
 | [ADR 0136](./adr-0136-communication-type-specific-history-and-retention.md) | Accepted | `EA-2` | `SF-2`, `PO-1` | Communication-type-specific history, evidence, retention, and acknowledgement |
+| [ADR 0138](./adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md) | Accepted | `AR-3` | `AA-3`, `AA-2`, `PO-1`, `EA-3` | Expiring playtest grants with monotonic mutation and bounded active revocation |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

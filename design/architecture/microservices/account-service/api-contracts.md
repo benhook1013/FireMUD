@@ -78,8 +78,8 @@ The full-account versus tenant-scoped export split and the nonterminal billing-o
 | `POST` | `/internal/runtime/public-production-join` | Account-owned internal boundary used by explicit text-client `JOIN`; idempotently create or return the durable public-production `player` membership |
 | `GET` | `/internal/runtime/realm-access-grants/{tenantId}/{realmSlug}/{accountId}` | Internal-only authoritative lookup for one non-public realm-access grant |
 | `GET` | `/internal/runtime/accounts/{accountId}/realm-access-grants` | Internal-only authoritative listing of the caller's non-public realm-access grants for discovery/admission filtering |
-| `POST` | `/tenant-admin/tenants/{tenantId}/realm-access-grants` | Target tenant-admin surface for granting non-public realm visibility/admission to one account |
-| `DELETE` | `/tenant-admin/tenants/{tenantId}/realm-access-grants/{realmSlug}/{accountId}` | Target tenant-admin surface for revoking non-public realm visibility/admission without deleting the realm |
+| `POST` | `/tenant-admin/tenants/{tenantId}/realm-access-grants` | Target tenant-admin surface for idempotently granting or explicitly extending non-public realm visibility/admission for one account |
+| `DELETE` | `/tenant-admin/tenants/{tenantId}/realm-access-grants/{realmSlug}/{accountId}` | Target tenant-admin surface for idempotently revoking non-public realm visibility/admission and recording a monotonic tombstone without deleting the realm |
 | `GET` | `/tenant-admin/tenants/{tenantId}/realm-access-grants` | Target tenant-admin surface for listing and auditing non-public realm grants |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
@@ -175,11 +175,15 @@ Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` re
 Required semantics:
 
 - Realm-access grants are authoritative only in Account Service; other services must not persist or infer their own non-public realm grant state.
-- `accessAllowed=false` is returned when the grant is missing, revoked, or expired.
+- Mutations validate the exact tenant, world, realm, account, current fork lifecycle, and caller authority. `tenantAdmin` may manage only its own tenant's grants; `platformAdmin` uses a distinct audited break-glass path.
+- Every mutation carries a `requestId` and observes the latest monotonic `grantRevision`. Replaying one request returns the same outcome, stale commands cannot replace newer state, and revocation retains a revisioned tombstone. A deliberate re-grant is a new command that observes and advances beyond that tombstone.
+- A playtest grant carries an explicit `grantExpiresAt` no later than the fork expiry reported by the lifecycle authority. `effectiveExpiresAt = min(grantExpiresAt, forkExpiresAt)`; extending a fork or one grant never silently extends the other grants.
+- `accessAllowed=false` is returned when the grant is missing, revoked, or at or beyond its effective expiry.
 - Reads are used by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY` for non-public realms; these surfaces must share this authority rather than re-implementing grant logic separately.
-- Successful create/revoke operations must be immediately visible to subsequent runtime reads for the same `{accountId, tenantId, realmSlug}`.
+- Successful create, extend, and revoke operations must be immediately visible to subsequent runtime reads for the same `{accountId, tenantId, realmSlug}`.
 - If grant authority is unavailable, discovery/admission for non-public realms fails closed.
-- The current implementation has the internal Account Service-owned grant substrate and runtime enforcement in place. Tenant-admin list/grant/revoke APIs, expiry handling, and user-facing account search/selection remain the product control-plane work needed to make the creator playtest journey complete.
+- Revocation or expiry must publish the monotonic authority change for Game Session to terminate affected active bindings through the bounded revocation contract; Account does not own gameplay sockets. Friendly scheduled endings close and drain the realm before grant revocation rather than changing this authority meaning.
+- The current implementation has the internal Account Service-owned grant substrate and admission-time enforcement in place. It does not implement expiry, scoped-role tenant-admin management, request replay idempotency, retained monotonic revocation tombstones, active-binding ejection, creator-facing account search/list/extension UX, or end-to-end revocation proof.
 
 Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
