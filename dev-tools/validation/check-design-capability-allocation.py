@@ -157,6 +157,38 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "GR-1",
         "Accepted",
     ),
+    "design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md": (
+        "AR-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md": (
+        "GR-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md": (
+        "SF-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md": (
+        "PO-3",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md": (
+        "GR-1",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0017-capability-gated-operational-tracing.md": (
+        "PO-4",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0018-declarative-production-gateway-routes.md": (
+        "PO-2",
+        "Accepted",
+    ),
+    "design/architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md": (
+        "AA-2",
+        "Accepted",
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

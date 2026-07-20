@@ -60,6 +60,14 @@ def replace_in_line(path: Path, marker: str, old: str, new: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def summary_row_counts(path: Path, marker: str) -> tuple[int, int]:
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if marker in line]
+    if len(lines) != 1:
+        raise AssertionError(f"expected exactly one summary row containing {marker!r} in {path}")
+    cells = [cell.strip().strip("*") for cell in lines[0].strip().strip("|").split("|")]
+    return int(cells[1]), int(cells[2])
+
+
 class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -119,7 +127,12 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
         with fixture_root() as directory:
             root = Path(directory)
             path = root / self.validator.TOP_ALLOCATION
-            replace_once(path, "| **Total** | **184** |", "| **Total** | **183** |")
+            discovered, _ = summary_row_counts(path, "| **Total** |")
+            replace_once(
+                path,
+                f"| **Total** | **{discovered}** |",
+                f"| **Total** | **{discovered - 1}** |",
+            )
             expect_call_failure(
                 "architecture summary drift",
                 lambda: self.validator.validate(root),
@@ -190,11 +203,29 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
         with fixture_root() as directory:
             root = Path(directory)
             path = root / self.validator.TOP_ALLOCATION
+            adr_discovered, adr_allocated = summary_row_counts(path, "| Architecture decisions |")
+            total_discovered, total_allocated = summary_row_counts(path, "| **Total** |")
             replace_in_line(path, "`design/architecture/decisions/README.md`", "| Exempt |", "| `AS-1` |")
-            replace_once(path, "| Architecture decisions | 12 | 11 |", "| Architecture decisions | 12 | 12 |")
-            replace_once(path, "| Architecture decisions | 12 | 12 | 0; 1 registry exemption", "| Architecture decisions | 12 | 12 | 0")
-            replace_once(path, "| **Total** | **184** | **181** |", "| **Total** | **184** | **182** |")
-            replace_once(path, "| **Total** | **184** | **182** | **0; 3 explicit exemptions**", "| **Total** | **184** | **182** | **0; 2 explicit exemptions**")
+            replace_once(
+                path,
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated} |",
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} |",
+            )
+            replace_once(
+                path,
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | 0; 1 registry exemption",
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | 0",
+            )
+            replace_once(
+                path,
+                f"| **Total** | **{total_discovered}** | **{total_allocated}** |",
+                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** |",
+            )
+            replace_once(
+                path,
+                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **0; 3 explicit exemptions**",
+                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **0; 2 explicit exemptions**",
+            )
             expect_call_failure(
                 "ADR primary allocation drift with adjusted counts",
                 lambda: self.validator.validate(root),

@@ -19,8 +19,8 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 1 | 1 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 12 | 11 | 0; 1 registry exemption | 100% classified |
-| **Total** | **184** | **181** | **0; 3 explicit exemptions** | **100% classified** |
+| Architecture decisions | 20 | 19 | 0; 1 registry exemption | 100% classified |
+| **Total** | **192** | **189** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
@@ -46,6 +46,14 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md` | `SF-2` | `AA-2`, `GR-1`, `AS-1` | Accepted |
 | `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md` | `SF-1` | `PO-2`, `PO-3` | Accepted |
 | `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md` | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md` | `AR-2` | `EA-1`, `GR-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md` | `GR-1` | `AA-2`, `PO-2`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md` | `SF-1` | `AA-1`, `PO-1`, `PO-3`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md` | `PO-3` | `GR-1`, `PO-1`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md` | `GR-1` | `AA-2`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0017-capability-gated-operational-tracing.md` | `PO-4` | `AA-2`, `GR-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0018-declarative-production-gateway-routes.md` | `PO-2` | `AA-3`, `PO-1`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md` | `AA-2` | `AR-2`, `EA-3`, `GR-1`, `SF-1` | Accepted |
 
 ## Unallocated Or Ambiguous Sources
 
