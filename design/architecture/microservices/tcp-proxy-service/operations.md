@@ -99,7 +99,7 @@ In Prometheus these Micrometer meters appear with the expected naming translatio
 
 The example PromQL and Alertmanager rules in `design/observability/grafana/tcp-proxy-alerts-snippets.md` use these Prometheus-style names; treat this document as the canonical meter owner and the Grafana snippets as reference queries over them.
 
-For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a clean internal bridge close such as `1000/logout;subreason=gateway_restart`, while `bridge_shutdown_class=unattributed_failure` corresponds to abrupt bridge loss that ultimately surfaces Telnet-side as `backend_unavailable`.
+For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a clean internal `1012/service_restart` bridge close, while `bridge_shutdown_class=unattributed_failure` corresponds to abrupt bridge loss that ultimately surfaces Telnet-side as `backend_unavailable`.
 
 ## Manual Endpoint Verification
 

@@ -8,6 +8,7 @@ Accepted
 
 - Decision date: 2026-07-20
 - Decision key: `EDGE-05`
+- Related review key: `SESSION-05`, aligned on 2026-07-21
 - Primary capability: `PO-2.4` player-edge liveness and shutdown behaviour
 - Affected capabilities: `PO-2.2`, `GR-1.1`, `AA-2.2`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner
@@ -35,6 +36,8 @@ There is no `reroute` reason. Lease movement and shard ownership remain internal
 An unexpected Gateway failure emits `1011/internal_error` when a close frame can still be sent. A process crash, node loss, or abrupt transport reset may prevent any final frame; WebSocket clients classify missing close metadata as abnormal transport loss and apply the `internal_error` retry policy. When an established authenticated Proxy-to-Gateway bridge is lost without a valid top-level close, TCP Proxy cannot prove the cause and preserves the established `backend_unavailable` fallback. It does not invent terminal logout or planned-maintenance intent. Both outcomes are retryable, but their top-level attribution reflects what each transport can actually observe.
 
 Bounded subreasons may be recorded in logs and metrics and may be sent as optional wire hints. They are operational detail only. A client, TCP Proxy, or service must be able to determine terminal logout, takeover, planned restart, policy, internal failure, and backend-unavailable lifecycle behavior from the top-level close code and reason alone. Missing, unknown, or omitted subreason values must not change lifecycle behavior.
+
+A close class reports connection/session lifecycle, not whether an in-flight gameplay command committed. Clients and tools reconcile any known `commandId` through the authoritative command-status surface; they do not infer command success or failure from `logout`, `session_replaced`, `service_restart`, `internal_error`, or `backend_unavailable`.
 
 ## Consequences
 
@@ -66,7 +69,7 @@ The current Gateway and TCP Proxy implementation and focused tests prove the dis
 
 Implementation must update the Gateway close constants, upstream classification, observability normalization, TCP Proxy bridge translation, Telnet disconnect tokens, client guidance, and focused cross-service proof. Tests must show terminal logout, forced termination, takeover, planned drain, explicit internal failure, abrupt no-frame failure, backend-unavailable expiry, idle timeout, policy violation, missing or unknown subreasons, parity for explicit WebSocket and Telnet lifecycle outcomes, and the documented observation-specific fallback when no close frame exists. They must also prove that no `reroute` category is admitted and that optional subreasons cannot change lifecycle classification.
 
-Existing liveness gaps remain separate implementation obligations: the configured backend-unavailable limit must be enforced as an elapsed-time cutoff no greater than 30 seconds, recovery hysteresis and ping/pong behavior need focused proof, and stalled-input buffer exhaustion must produce an explicit `backend_unavailable` close rather than a silent drop.
+Existing liveness gaps remain separate implementation obligations: the configured backend-unavailable limit must be enforced as a continuous elapsed-time cutoff no greater than 30 seconds, retry cadence must be bounded and jittered, recovery hysteresis and ping/pong behavior need focused proof, and stalled-input buffer exhaustion must produce an explicit `backend_unavailable` close rather than a silent drop. Current Gateway code instead uses a fixed attempt count/delay and can log a failed inbound buffer emission without closing the apparently healthy downstream connection.
 
 ## Reversibility and Revisit Triggers
 

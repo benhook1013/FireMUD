@@ -183,6 +183,7 @@ Invisible recovery means the client-facing Gateway WebSocket or TCP Proxy socket
 
 - **Qualifying conditions** – one non-edge instance is lost or deliberately replaced while the edge socket, healthy same-type replacement capacity, and required shared authority remain available.
 - **Timing** – ordinary recovery targets no more than 10 seconds. Gateway stops hidden recovery after 30 seconds of continuous upstream unavailability and closes with `1013/backend_unavailable`. Retry-attempt counts alone are not an elapsed-time bound.
+- **Retry cadence** – upstream rebind uses bounded backoff with jitter inside that continuous elapsed deadline. Attempt counts and delays are tuning controls, not substitutes for the hard timer.
 - **Input during a detected stall** – input accepted into the bounded stall buffer remains FIFO and is delivered once after successful rebind. If the buffer cannot accept further input, Gateway closes or fails explicitly using the bounded taxonomy; it never silently discards input while leaving the client apparently healthy.
 - **Ambiguous in-flight work** – a command that may already have crossed the failed hop is not blindly replayed. It may be lost under the current at-most-once edge contract; durable command/effect recovery continues only from recorded internal execution identity.
 - **Lifecycle classification** – the internal Gateway-to-Game-Session hop distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and loss of current authorization. That internal classification does not add a public close category.
@@ -222,6 +223,8 @@ Clients must also treat pre-disconnect output as non-resumable transport state. 
 The hot reconnect screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every output line. Player-facing UX describes it as recent context, not missed messages, because it may repeat output already seen or omit output that was unavailable or no longer retained.
 
 Client input is not replayed either. A line or frame whose admission is ambiguous at the disconnect boundary may be lost under the edge's at-most-once contract. A command already durably admitted before transport loss is different: it continues once under its recorded server-side command/effect identity, and its later outcome may enter the authorized resume transcript. Reconnect never recreates that command from the old client input.
+
+The close reason never establishes that command outcome. A capable client or operator with a known `commandId` uses the authoritative gameplay-command status API; classic line clients receive later state reconstruction and must not treat any retryable close as proof that the last command failed.
 
 Explicit gameplay `LOGOUT` remains terminal and suppresses private replay. Planned `service_restart` follows this ordinary reconnect path, while `session_replaced` tells the displaced transport that another controller is current; neither is reclassified as gameplay logout.
 

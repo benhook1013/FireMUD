@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 5 | 17 | `in-progress` |
-| **Total** | | **167** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 6 | 17 | `in-progress` |
+| **Total** | | **168** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -343,7 +343,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `EDGE-02` — `accepted` on 2026-07-21; [ADR 0008](../../architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md)
 - [x] `EDGE-03` — `revised` on 2026-07-21; [ADR 0164](../../architecture/decisions/adr-0164-exclusive-environment-bound-tcp-proxy-trust.md)
 - [x] `SESSION-01` — `revised` on 2026-07-21; [ADR 0165](../../architecture/decisions/adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md)
-- [ ] `SESSION-05`
+- [x] `SESSION-05` — `revised` on 2026-07-21; aligned with [ADR 0127](../../architecture/decisions/adr-0127-lifecycle-distinct-gameplay-close-taxonomy.md)
 - [ ] `REDIS-02`
 - [ ] `AUTO-01`
 - [ ] `AUTO-02`
