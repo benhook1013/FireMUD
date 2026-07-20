@@ -136,6 +136,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0120](./adr-0120-manifest-complete-onload-readiness-without-durable-game-initialization.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `GR-1` | Manifest-complete bounded onLoad readiness without durable game initialization |
 | [ADR 0121](./adr-0121-routine-component-migration-and-explicit-emergency-revocation.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `PO-1` | Routine component migration separated from explicit scoped emergency security revocation |
 | [ADR 0122](./adr-0122-producer-owned-event-schemas-with-one-materialized-catalogue.md) | Accepted | `AS-1` | `AR-1`, `SF-1`, `PO-4`, `GR-1` | Producer-owned event schemas compiled into one revisioned Automation enforcement catalogue |
+| [ADR 0123](./adr-0123-preselected-exclusive-handlers-and-durable-fanout-ordering.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `PO-1` | Preselected sole exclusive handlers and durable deterministic non-exclusive fan-out ordering |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

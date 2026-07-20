@@ -368,7 +368,10 @@ Handler identity and ordering:
 - The schedulable handler identity for a plugin binding is `(tenantId, gameInstanceId, pluginId, pluginVersionId, bindingId)`. `pluginId` alone is never sufficient because one plugin version can declare multiple bindings for the same event.
 - Trigger Identity, dedupe, audit, quota attribution, timer ownership, and drain/disable cleanup must retain `bindingId` alongside `pluginId` and `pluginVersionId` whenever the unit of work is binding-scoped.
 - Runtime ordering follows the shared scripting rule: `orderIndex ASC`, `handlerType ASC`, then handler identity ASC. For plugin handlers, the final tie-breaker is `(pluginId, bindingId)`.
-- At most one binding in the resolved handler set for `{tenantId, gameInstanceId, target identity, eventType}` may have `requiresExclusiveEvent=true`. Game Design must reject conflicting plugin publication when the conflict is knowable against the target `baseVersionId`; Automation & Scripting must re-check conflicts during instance activation because active script/plugin selections are instance-scoped.
+- For non-exclusive fan-out, Automation assigns a durable `handlerSequence` from that order and preserves it through handler work, command handoff, and final application. Plugin execution priority and worker timing do not override semantic handler order.
+- At most one binding in the complete resolved handler set for `{tenantId, gameInstanceId, target identity, eventType, eventSchemaVersion}` may have `requiresExclusiveEvent=true`. An authorized exclusive binding is selected before fan-out and becomes the sole handler; no core-script or plugin sibling runs before or after it, and failure does not cause sibling fallback.
+- Game Design rejects publish-time-known multiple-exclusive or unauthorized plugin claims against the exact `baseVersionId`. Automation & Scripting re-checks the complete resolved base-script plus active-plugin set during instance activation because active selections and bindings from different declared scopes may converge on the same concrete target.
+- Plugin exclusivity requires an explicit operator grant and audit evidence bound to the plugin version, `bindingId`, target policy scope, and granting actor. Manifest intent alone grants no exclusivity.
 
 Typed selector contracts:
 
@@ -381,7 +384,7 @@ Typed selector contracts:
 Validation responsibilities:
 
 - Game Design validates that all declared bindings are structurally valid and resolvable against the targeted `baseVersionId`.
-- Game Design validates that `entrypointGraphId` references a declared graph, `orderIndex` is in the bounded platform range, `requiresExclusiveEvent` is allowed by policy, and the typed `targetSelector` can be resolved by the owner service under the exact `baseVersionId`.
+- Game Design validates that `entrypointGraphId` references a declared graph, `orderIndex` is in the bounded platform range, `requiresExclusiveEvent` has the required operator policy grant, and the typed `targetSelector` can be resolved by the owner service under the exact `baseVersionId`.
 - Automation & Scripting consumes the validated binding set during activation and registry load; it must not invent additional bindings or infer missing targets from runtime state. The current activation path now re-checks built-in `COMMAND_ALIAS` bindings against Game Session's authoritative built-in command registry and rejects instance-scoped alias/exclusive-binding conflicts against the currently pinned script patch plus already-enabled plugins before mutating runtime state.
 
 ### Plugin Component Policy Management

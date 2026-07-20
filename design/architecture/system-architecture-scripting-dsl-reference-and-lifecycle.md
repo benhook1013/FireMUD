@@ -174,17 +174,19 @@ Concrete supersession example:
 
 ## Event Fan-Out and Handler Ordering
 
-An entity may have **multiple handlers bound to the same event**, including both core scripts and plugin handlers. The Game Design and plugin registries store these bindings as ordered lists per `{entityId, eventType}`.
+An entity may have **multiple handlers bound to the same event**, including both core scripts and plugin handlers. The Game Design and plugin registries store ordered bindings, while Automation resolves the complete concrete handler set across every applicable binding scope. See [ADR 0123](./decisions/adr-0123-preselected-exclusive-handlers-and-durable-fanout-ordering.md).
 
-When an event fires, the Automation & Scripting Service evaluates bound handlers in a **single deterministic order** sorted by:
+Before fan-out, Automation checks the complete resolved set for an authorized exclusive binding. At most one exclusive binding may match the concrete event scope. When present, that binding is selected as the sole handler: no sibling is admitted, evaluated, handed off, or applied before or after it. Failure or denial of the exclusive handler does not fall back to siblings.
+
+If there is no exclusive binding, the Automation & Scripting Service evaluates bound handlers in a **single deterministic order** sorted by:
 
 1. `orderIndex ASC`
 2. `handlerType ASC` (`SCRIPT` before `PLUGIN` unless policy overrides are explicitly configured and documented)
 3. `handlerId ASC` (`scriptId` for core scripts, `(pluginId, bindingId)` for plugin bindings)
 
-This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event.
+This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event. Each resolved non-exclusive handler receives a durable `handlerSequence` or equivalent stable ordinal. Handler audit, durable work, generated commands, handoff, and command application preserve that sequence plus handler-local command order; queue position, timestamps, row IDs, worker claims, and retry timing are not semantic ordering authority.
 
-Failures are isolated per handler by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the failing binding is marked as requiring exclusive handling. Exclusive handling (`requiresExclusiveEvent=true`) short-circuits remaining handlers regardless of whether they are scripts or plugins. Quota checks (`ScriptQuotaService`) remain per handler either way.
+Failures are isolated per non-exclusive handler. If one handler fails through quota denial, sandbox exception, compilation error, infrastructure failure, or another terminal outcome, Automation records that outcome and continues sibling processing. Later handler commands become eligible for ordered application after the earlier handler reaches a terminal outcome; failure or an empty command set does not cancel siblings. Quota checks (`ScriptQuotaService`) remain per handler, including for an exclusive handler.
 
 Ingress admission and handler execution are intentionally distinct:
 
@@ -196,8 +198,9 @@ Ingress admission and handler execution are intentionally distinct:
 Governance requirements for ordering overrides and exclusivity:
 
 - Ordering policy overrides (`PLUGIN` ahead of `SCRIPT`) are operator-controlled policy, not designer-level script metadata.
-- At most one binding per `{tenantId, gameInstanceId, entityId, eventType}` may set `requiresExclusiveEvent=true`; conflicting bindings must be rejected at publish/enable time with deterministic validation errors.
-- Plugin bindings are non-exclusive by default. Granting plugin exclusivity requires explicit operator allowlisting and must be audit-visible.
+- At most one binding in the complete resolved set for `{tenantId, gameInstanceId, concrete target identity, eventType, eventSchemaVersion}` may set `requiresExclusiveEvent=true`. Game Design validates publish-time-known conflicts and Automation revalidates the complete base-script plus active-plugin set at activation. Multiple or unauthorized exclusive claims fail closed; runtime does not select one by sort order.
+- Plugin bindings are non-exclusive by default. Granting plugin exclusivity requires explicit operator authorization and audit evidence bound to the plugin version, binding, target policy scope, and granting actor.
+- `orderIndex` and `handlerSequence` define semantic effect order. Operational `priorityTag`, quota tiers, and capacity policy may affect execution timing but must not reorder final command application.
 - Admission records must include explicit, bounded reasons when exclusivity policy blocks a binding so operators can distinguish policy denial from quota/sandbox failures.
 
 ---

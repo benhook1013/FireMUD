@@ -160,6 +160,12 @@ Scripts do not execute inside the tick system. The Automation & Scripting Servic
 - Script-generated commands may fail due to lock contention or target remote regions, and Game Session handles those cases via its normal tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It never mutates entity or world data directly.
 
+For a non-exclusive multi-handler event, Automation assigns the resolved handlers a durable `handlerSequence` under [ADR 0123](./decisions/adr-0123-preselected-exclusive-handlers-and-durable-fanout-ordering.md). The event resolution record or equivalent durable manifest identifies the complete ordered set. That sequence and each handler's local command ordinal are preserved on work items, generated-command persistence, handoff records, Game Session command admission, retries, and final application. Consumers must not infer semantic order from enqueue time, database identity, Redis list position, worker claim order, scheduling priority, or arrival time.
+
+A handler's terminal failure or empty output closes its sequence position and allows later non-exclusive handler commands to proceed without canceling them. A delayed lower sequence is not equivalent to a terminal failure; downstream application must retain or reconstruct enough resolution state to avoid applying a higher sequence prematurely. The exact buffering representation may vary, but missing or contradictory sequence/completeness metadata fails explicitly rather than degrading to arrival order.
+
+An authorized exclusive binding is selected before work-item fan-out and is the only handler materialized for that event scope. If it fails or is denied, no sibling fallback is created.
+
 ## Output Budgeting and Command Fan-Out
 
 Admission and sandboxing must bound not only how often a handler runs, but also how much work a single admitted run can emit:
@@ -167,6 +173,7 @@ Admission and sandboxing must bound not only how often a handler runs, but also 
 - Each DSL run incrementally enforces `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, `maxSerializedWorkItemBytes`, declared data-dependent caps, and any known large-command payload ceilings before constructing or serializing the next over-limit output element.
 - A resolved handler's generated output is persisted atomically as one complete bounded set or not persisted at all. Exceeding an output budget fails deterministically at handler stage `DSL_EVAL` with a bounded reason such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, `work_item_size_exceeded`, or the applicable cap violation; it never leaves a partial command set.
 - A request-envelope limit known before handler resolution remains an event-ingress outcome. It does not stand in for a later generated-output result, and a handler failure does not rewrite successful event-scope admission or another handler's outcome.
+- A non-exclusive handler failure closes only that handler's durable sequence position. It does not cancel sibling work or change their Trigger Identities and outcomes.
 - Output budgets apply equally to core scripts and plugins.
 - Publish-time validation in Game Design must perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes using the same component cost metadata that Automation & Scripting uses for runtime revalidation.
 
