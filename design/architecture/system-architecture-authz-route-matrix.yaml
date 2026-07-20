@@ -12,6 +12,7 @@ classifications:
   - cross_tenant_support_safe
   - cross_tenant_billing_safe
   - cross_tenant_data_bearing
+  - internal_workload
 routes:
   - service: game-session-service
     route: LOGIN
@@ -125,6 +126,15 @@ routes:
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     mutation_contract: explicit_public_membership_atomic
   - service: account-service
+    route: DELETE /tenants/{tenantId}/memberships/me
+    scope: tenant
+    classification: billing_safe_tenant
+    subject_binding: caller_account_id
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
+    mutation_contract: caller_bound_membership_delete_generation_advance
+  - service: account-service
     route: AuthLogout
     scope: account
     classification: account_scoped
@@ -189,52 +199,70 @@ routes:
   - service: account-service
     route: Authenticate
     scope: account
-    classification: account_scoped
+    classification: internal_workload
     auth_path: mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_audience: none
     mtls_callers:
-      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     credential_source_context: required_trusted_server_derived
     delegated_subject: none_before_authentication
   - service: account-service
     route: RefreshGameplayServiceToken
     scope: tenant
-    classification: tenant_regular
+    classification: internal_workload
     auth_path: mtls_workload_plus_current_token_generation
+    issued_token_state: current_exact_private_delegation
+    accepted_token_profiles: [game-session-account-delegation]
+    token_audience: account-service
     mtls_callers:
-      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: gameplay_binding_subject
     required_live_checks: [current_token_generation, account_generation, membership_generation, membership, runtime_entitlements]
   - service: account-service
     route: GetTenantMembershipForRuntime
     scope: tenant
-    classification: tenant_regular
+    classification: internal_workload
     auth_path: mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_audience: none
     mtls_callers:
-      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
     required_live_checks: [membership]
   - service: account-service
     route: GetRealmAccessGrant
     scope: tenant
-    classification: tenant_regular
+    classification: internal_workload
     auth_path: mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_audience: none
     mtls_callers:
-      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
     required_live_checks: [conditional_realm_access_grant]
   - service: account-service
     route: ListRealmAccessGrantsForAccount
     scope: tenant
-    classification: tenant_regular
+    classification: internal_workload
     auth_path: mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_audience: none
     mtls_callers:
-      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
   - service: account-service
     route: GetTenantEntitlementsForRuntime
     scope: tenant
-    classification: tenant_regular
+    classification: internal_workload
     auth_path: internal_service
+    issued_token_state: route_variant
+    accepted_token_profiles: [game-session-account-delegation, control-ui]
+    token_audience: exact_receiver
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     response_profile: runtime_admission
@@ -242,8 +270,8 @@ routes:
       any_of: [game-session-service, logging-admin-service, platform-runtime]
     mtls_callers:
       any_of:
-        - spiffe://firemud/ns/{namespace}/sa/game-session-service
-        - spiffe://firemud/ns/{namespace}/sa/logging-admin-service
+        - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
+        - "spiffe://firemud/ns/{namespace}/sa/logging-admin-service"
     delegated_subject: typed_player_execution_context_or_operator_request
   - service: account-service
     route: GetTenantEntitlementsTenant

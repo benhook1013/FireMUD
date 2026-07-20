@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Authorization Route Matrix
 
-This document is the normative source of truth for protected route classification across HTTP and gRPC APIs.
+The machine-readable [authorization route matrix](./system-architecture-authz-route-matrix.yaml) is the normative enforcement source for protected HTTP and gRPC routes. This document is its human-readable companion and must not define a competing policy.
 
 Every protected route must be listed here with:
 
@@ -67,6 +67,7 @@ Critical-domain inventory artifacts (required):
 | `cross_tenant_support_safe` | One matching token record | No | High-level troubleshooting only |
 | `cross_tenant_billing_safe` | One matching token record | No | Billing operations for global billing roles |
 | `cross_tenant_data_bearing` | One matching token record | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
+| `internal_workload` | Route-specific: explicitly `none` or one exact delegated profile | Route-specific | Internal-only RPCs require exact mTLS workload identity and a method caller allowlist. Each entry declares whether it carries delegated subject authority; this class never inherits an end-user token requirement implicitly. |
 
 Internal-service routes must additionally declare their **service caller policy** in the machine-readable matrix:
 
@@ -103,11 +104,15 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | `AuthLogin` | `public` | Browser auth entrypoint |
 | Account Service | `PlayerBootstrapLogin` | `public` | First-party gameplay bootstrap entrypoint; issues `player-bootstrap` token profile only |
 | Account Service | `JoinPublicProductionMembership` | `public_production_onboarding` | Explicit caller-bound `Join & Play` action for a discovery-selected public production realm; transactional membership and durable audit/outbox |
+| Account Service | `DELETE /tenants/{tenantId}/memberships/me` | `billing_safe_tenant` | Caller-bound membership exit remains available while billing-blocked, requires current membership, and advances membership authority atomically |
 | Account Service | `AuthLogout` / `AuthLogoutAll` | `account_scoped` | Authenticated account scope |
 | Account Service | `GetProfile` / `UpdateProfile` (`/profiles/{accountId}`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
 | Account Service | `ExportAccount` / `DeleteAccount` / `LinkExternalAccount` (`/accounts/{accountId}/...`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only. `DeleteAccount` also requires no nonterminal owned subscriptions |
 | Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth only; global roles alone never grant gameplay admission or connect-token issuance. Live tenant membership, runtime entitlement, and admission-pointer checks remain required |
-| Account Service | `GetTenantEntitlementsForRuntime` | `tenant_regular` | Internal gameplay/runtime caller only; not edge exposed |
+| Account Service | `Authenticate` | `internal_workload` | Exact Game Session mTLS identity, no pre-existing issued token, and trusted server-derived credential source context |
+| Account Service | `RefreshGameplayServiceToken` | `internal_workload` | Exact Game Session mTLS identity plus current `game-session-account-delegation` authority for `account-service` |
+| Account Service | `GetTenantMembershipForRuntime` / `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` | `internal_workload` | Exact Game Session mTLS identity plus validated typed player context; no circular end-user token prerequisite |
+| Account Service | `GetTenantEntitlementsForRuntime` | `internal_workload` | Exact allowlisted workload identity and route-variant delegated context; not edge exposed |
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `GetSubscriptionTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |

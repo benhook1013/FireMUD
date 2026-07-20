@@ -55,12 +55,12 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 19 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
+| Existing ADR set | 35 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Reviewed through ADR 0035 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 192 architecture artifacts classified; 172 decision-scan sources plus 20 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
+| **Total unique decision keys** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0035** |
 
 ## Decision Ledger
 
