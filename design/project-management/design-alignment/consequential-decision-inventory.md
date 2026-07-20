@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 26 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 27 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **106** | **183** | `in-progress` |
+| **Total** | | **107** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -254,7 +254,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `PROC-03` — `revised` on 2026-07-20; [ADR 0114](../../architecture/decisions/adr-0114-explicit-destructive-regeneration-with-previewed-scope.md)
 - [x] `PROC-05` — `revised` on 2026-07-20; [ADR 0117](../../architecture/decisions/adr-0117-first-class-sparse-and-full-grid-world-topologies.md)
 - [x] `EQUIP-01` — `revised` on 2026-07-20; [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md)
-- [ ] `MS-AS-PLUGIN-TRUST`
+- [x] `MS-AS-PLUGIN-TRUST` — `accepted` on 2026-07-20; [ADR 0108](../../architecture/decisions/adr-0108-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)
 - [ ] `MS-AS-DRY-RUN-ISOLATION`
 - [ ] `MS-AR-DRAFT-CONCURRENCY`
 - [x] `MS-GR-EQUIPMENT-BODY-LAYOUT` — `superseded` on 2026-07-20 by `EQUIP-01`; [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md)
