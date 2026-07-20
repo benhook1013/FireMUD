@@ -48,7 +48,7 @@ Compact publication-to-runtime sequence:
 - **Game Session owns tick safety.** Game Session is the only writer for `tick:*` and enforces the version fence at execution time. Automation never writes `tick:*` directly.
 - **Pinned versions are explicit.** Runtime must never “auto-upgrade” to a newer patch without an operator/designer action captured in the control plane.
 - **Control plane is idempotent.** Every mutating operation must accept a caller-provided `controlPlaneRequestId` and be safely retryable.
-- **Auditable and observable.** Every mutating action must emit an audit entry and a durable status event that downstream tooling can consume.
+- **Auditable and observable.** Every mutating action must commit durable audit/history evidence; optional outbox notifications may accelerate downstream refresh.
 - **Pin visibility is bounded-staleness.** Services that cache pinned patch/plugin versions must enforce a max staleness bound and fail closed on stale/unknown pin state for admission-critical decisions.
 - **Runtime scope is instance-first.** Tenant-level patch readiness is only an eligibility gate; direct API mutations and read surfaces must preserve `(tenantId, gameInstanceId)` isolation.
 
@@ -64,13 +64,13 @@ Compact publication-to-runtime sequence:
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
   - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and enforces admission rules (“only `READY` is runnable”).
   - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
-  - Consumes Game Session pin events to project rollout history read models.
+  - Maintains only the local observed-pin, convergence, and freshness projection needed for safe runtime work.
 
 - **Game Session Service (gameplay + tick control plane)**
-  - Owns the pinned `scriptPatchVersion` for each `(tenantId, gameInstanceId)`.
+  - Owns the pinned `(scriptPatchVersion, scriptPinEpoch)` and append-only rollout history for each `(tenantId, gameInstanceId)`.
   - Enforces the version fence on execution: commands produced under a non-pinned patch must not execute.
-  - Exposes admin-only APIs to pause/resume ticks and to update the pin.
-  - Emits a pin change event after a successful pin update.
+  - Exposes admin-only APIs to pause/resume ticks, mutate the pin, and read current pin and bounded authoritative history.
+  - May emit a committed pin-change notification after a successful update to accelerate consumers; the notification is not the history authority.
 
 - **Logging & Admin Service (operator control plane)**
   - Presents operator workflows by orchestrating the operations companion doc, and surfaces the direct API responses to operators.
@@ -171,13 +171,14 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `pinnedScriptPatchVersion`
+- `scriptPinEpoch`
 - `pinnedAt` (timestamp)
 - `pinnedBy` (actor principal, optional)
 - `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin)
 
 #### `GetGameSessionPinConvergence`
 
-Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. That means the live service returns the observed pinned patch, observed timestamp, and the actual persisted `controlPlaneRequestId` that last changed the pin instead of leaving convergence identity implicit in actor/reason text.
+Implementation note: the current Game Session implementation exposes this convergence read directly from the persisted game-instance pin record and returns the observed patch, timestamp, and persisted `controlPlaneRequestId`. Returning and persisting the exact `scriptPinEpoch` across this surface remains target-state follow-through.
 
 Inputs:
 
@@ -188,6 +189,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
+- `observedScriptPinEpoch`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
 
@@ -213,12 +215,13 @@ Semantics:
 - The operation must validate that `targetScriptPatchVersion` is `READY` for the tenant before pinning.
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
-- On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
+- On success, Game Session atomically persists the new exact pin and an append-only rollout-history record for `(tenantId, gameInstanceId)`. It may emit `ScriptPatchPinChanged` as a refresh notification from the same transactional outbox.
 
 Outputs:
 
 - `previousScriptPatchVersion`
 - `pinnedScriptPatchVersion` (the new value)
+- `scriptPinEpoch` (the committed epoch)
 - `controlPlaneRequestId`
 - `errorCode` (optional on failure; required for deterministic business failures such as `SCRIPT_PATCH_NOT_READY`)
 
@@ -238,9 +241,32 @@ Semantics:
 - Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. Operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
-- On success, emits `ScriptPatchRollbackRequested` (or `ScriptPatchPinChanged` with `changeType=ROLLBACK`).
+- On success, atomically commits the new exact pin and rollback-history record. It may emit `ScriptPatchRollbackRequested` or `ScriptPatchPinChanged(changeType=ROLLBACK)` as a refresh notification from that commit.
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
+
+#### `ListScriptPatchRolloutHistory`
+
+Inputs:
+
+- `tenantId`
+- Optional `gameInstanceId`
+- Optional `scriptPatchVersion`
+- Optional operation or outcome filter
+- Optional `changedAfter` / `changedBefore`
+- Bounded page size and continuation token
+
+Outputs:
+
+- Stable ordered history rows containing `tenantId`, `gameInstanceId`, `controlPlaneRequestId`, operation kind, previous and resulting exact `(scriptPatchVersion, scriptPinEpoch)` tuples, actor and reason when operator-driven, outcome, and commit time.
+
+Contract rules:
+
+- Game Session serves this authoritative history from the same durable owner boundary that commits and enforces the current pin.
+- A successful mutation commits its history row atomically with the pin. Repeating a `controlPlaneRequestId` returns the same recorded outcome and does not append a second logical row.
+- Rollback or repin to a previously used patch remains a distinct epoch and history entry.
+- Logging & Admin joins these records with Automation readiness and `GetAutomationPinConvergence`; it reports any disagreement as projection lag rather than selecting Automation as a competing history authority.
+- Retention and pagination are bounded operator contracts. A later non-authoritative cache or projection must be rebuildable from this owner read and is introduced only after measured need.
 
 ### Automation & Scripting: Patch Lifecycle Visibility
 
@@ -303,27 +329,6 @@ Contract rules:
 - This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
 - The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
 - Operators may use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for the active rollback epoch in that scope.
-
-#### `ListScriptPatchInstanceRolloutEvents`
-
-Inputs:
-
-- `tenantId`
-- Optional `gameInstanceId`
-- Optional `scriptPatchVersion`
-- Optional `rolloutStatus`
-- Optional `changedAfter` / `changedBefore`
-- Optional bounded `limit`
-
-Outputs:
-
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `statusReason`, `observedAt`, and `projectionAsOf`
-
-Contract rules:
-
-- This is the append-only history companion to the current-state `GetScriptPatchInstanceRolloutStatus` and `ListScriptPatchInstanceRollouts` reads.
-- Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
-- Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
 
 #### `ListScriptHandoffEvents`
 
@@ -489,46 +494,6 @@ Contract rules:
 - Current patch, `scriptPinEpoch`, plugin, region epoch, playable-state scope, world/realm identity, and routing pointer must exactly match the admitted row. Unavailable or stale authority fails closed.
 - Missing or contradictory stage evidence and every fence mismatch leave the row `DEAD_LETTERED`.
 - `controlPlaneRequestId` has a durable request-result record so retry returns the same per-row outcomes without repeating evaluation or dispatch.
-
-#### `GetScriptPatchInstanceRolloutStatus`
-
-Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the bounded rollout vocabulary provable from the current substrate (`PINNED`, `ROLLED_BACK`, and first `REPINNED` when a previously rolled-back patch becomes pinned again). Richer event-projected convergence history still remains later follow-through rather than already-live behavior.
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-- `scriptPatchVersion`
-
-Outputs:
-
-- `tenantId`, `gameInstanceId`, `scriptPatchVersion`
-- `rolloutStatus` (for example `PINNED`, `ROLLED_BACK`, `REPINNED`)
-- `statusReason` (optional)
-- `lastChangedAt`
-- `projectionAsOf` (timestamp of projection snapshot used for this read)
-- `projectionLagMs` (non-negative projection staleness estimate)
-- `isProjectionStale` (boolean; `true` when lag breaches published freshness SLO)
-
-Read-model ownership:
-
-- The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
-- The current Automation & Scripting implementation persists an Automation-owned rollout projection keyed by `(tenantId, gameInstanceId, scriptPatchVersion)`. Projection refresh is driven by observed pin state plus durable work-item transitions until fuller event-replay history lands.
-
-#### `ListScriptPatchInstanceRollouts`
-
-Inputs:
-
-- `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `changedAfter`, `changedBefore`
-
-Outputs:
-
-- A list of `GetScriptPatchInstanceRolloutStatus` records.
-- The read model must publish and enforce explicit freshness SLOs:
-  - P95 `projectionLagMs <= 5000`
-  - P99 `projectionLagMs <= 30000`
-- Responses that breach the published SLO, currently configured by `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`, must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 

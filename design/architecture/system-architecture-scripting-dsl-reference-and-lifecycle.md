@@ -360,7 +360,7 @@ Automation & Scripting exposes this lifecycle to other services via:
 
 - A read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` that returns the current state and relevant timestamps.
 - Tenant readiness events (`ScriptPatchTenantStatusChanged`) emitted when `<tenantId, scriptPatchVersion>` transitions between readiness states.
-- Instance rollout events (`ScriptPatchInstanceRolloutChanged`) consumed from Game Session pin-change control-plane events and projected into read APIs when `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (for example `PINNED` / `ROLLED_BACK` / `REPINNED`).
+- A local exact-pin convergence projection with explicit freshness for admission and diagnostics. Game Session's direct current-pin and bounded rollout-history APIs remain authoritative for instance pin, rollback, and repin chronology.
 
 When a trigger arrives at the Automation & Scripting Service:
 

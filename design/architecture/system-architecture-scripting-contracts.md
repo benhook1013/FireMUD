@@ -106,13 +106,12 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 ### 10) Instance Rollout Read Model Ownership
 
-- The authoritative writer for `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history is Game Session control-plane writes (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`) and their committed events.
-- Automation & Scripting may project this history for query/read APIs, but projections must be idempotent and replayable from durable control-plane events.
-- Read-model records must be keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` so retries do not fork history.
-- The projection contract must define:
-  - Producer of record (`ScriptPatchPinChanged` events).
-  - Replay source and retention window.
-  - Eventual-consistency SLO for `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts`.
+- Game Session owns both the current exact pin and the append-only authoritative history of committed pin, rollback, and repin requests for each `(tenantId, gameInstanceId)`.
+- A successful mutation atomically commits the new `(scriptPatchVersion, scriptPinEpoch)` and a history record keyed idempotently by `controlPlaneRequestId`. Repeating the request returns the same result without appending another logical transition.
+- Game Session exposes bounded, paginated authoritative history reads. A rollback or repin to a previously used patch is a new epoch and history entry rather than being inferred from version equality.
+- Automation & Scripting owns only its local observed-pin, convergence, and freshness projection for admission, scheduling, handoff, and diagnostics. It must not derive authoritative rollout history from work-item presence or projection refresh.
+- Logging & Admin composes Game Session history with Automation readiness and convergence. Any disagreement is reported as convergence lag.
+- A Game Session outbox notification may accelerate refresh, but no separate mandatory `ScriptPatchInstanceRolloutChanged` family or Automation-owned event-sourced history is required without measured need.
 
 ### 11) Pin-State Unavailability Governance
 

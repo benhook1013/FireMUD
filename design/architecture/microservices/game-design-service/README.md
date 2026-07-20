@@ -62,14 +62,14 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - Notifies Automation & Scripting of the published patch so it can ingest the compiled definitions and bindings for the target `<tenantId, scriptPatchVersion>` and start or reuse the durable Temporal `script-patch-readiness` workflow.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
 - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
-- The Game Design Service queries readiness via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and subscribes to tenant + instance rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) so that UIs can show:
+- The Game Design Service queries Automation readiness via `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and Game Session's authoritative current-pin and bounded rollout-history reads so that UIs can show:
   - That a patch is published but still **pending runtime validation**.
   - The patch's `baseVersionId` and `abilitySchemaDigest` used for runtime compatibility gates and pinning checks.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
   - When a patch has been rolled back or repinned for a specific game instance.
-  - Event-family responsibilities are explicit:
-    - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
-    - `ScriptPatchInstanceRolloutChanged` drives instance rollout history and rollback audit timeline.
+  - Authority responsibilities are explicit:
+    - Automation's `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
+    - Game Session's current-pin and rollout-history APIs drive instance history and the rollback audit timeline; optional pin notifications only accelerate refresh.
 
 In the design UI:
 

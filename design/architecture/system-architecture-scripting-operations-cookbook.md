@@ -182,12 +182,12 @@ Operator actions:
 1. Identify the affected scripts and patch.
    - Use `script_event_audit` filtered by `tenantId`, `scriptPatchVersion`, and `scriptId` to confirm which handlers are failing.
    - Correlate with automation metrics such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_triggers_dropped_total` to determine scope and severity.
-   - Use `ScriptPatchTenantStatusChanged` for tenant readiness gates and `ScriptPatchInstanceRolloutChanged` for instance rollout history; do not infer one from the other.
+   - Use `ScriptPatchTenantStatusChanged` for tenant readiness gates and Game Session's `ListScriptPatchRolloutHistory` for authoritative instance rollout history; do not infer one from the other.
 2. Contain impact at the script level.
    - Use the normal disable/throttle flows in this document to set offending scripts to `runtimeStatus=DISABLED` or a drain state while you triage (for example, `DISABLE_AFTER_DRAIN`).
 3. Roll back the active script patch if necessary.
    - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance. Concretely:
-     - Query the Automation & Scripting Service via read-only APIs such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and `GetScriptPatchInstanceRolloutStatus(...)` (or consume `ScriptPatchTenantStatusChanged` / `ScriptPatchInstanceRolloutChanged` events) to confirm tenant readiness and instance rollout state.
+     - Query Automation & Scripting's `GetScriptPatchStatus(tenantId, scriptPatchVersion)` for tenant readiness, Game Session's current-pin and `ListScriptPatchRolloutHistory` reads for authoritative instance state/history, and `GetAutomationPinConvergence` for participant freshness.
      - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the request/response contracts in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) and the sequencing rules in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
    - Repinning does not attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
    - Repinning must also ensure rollback safety:

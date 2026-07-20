@@ -14,7 +14,7 @@ FireMUD has no implicit general event bus. Under [ADR 0083](decisions/adr-0083-n
 
 To keep control-plane behavior predictable, every event family records its concrete delivery transport, retention, ordering, reconstruction, and backpressure behavior:
 
-- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
+- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged` and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
 - **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
 - **Ordering**: delivery may duplicate or reorder events. Consumers apply the monotonic sequence within each event family and scope and use the authoritative reconstruction API when they detect a gap; no global order exists across tenants or instances.
@@ -34,12 +34,16 @@ Fields:
 - `tenantId`
 - `gameInstanceId`
 - `previousScriptPatchVersion`
+- `previousScriptPinEpoch`
 - `pinnedScriptPatchVersion`
-- `changeType` (`SET` | `ROLLBACK`)
+- `scriptPinEpoch`
+- `changeType` (`SET` | `ROLLBACK` | `REPIN`)
 - `instanceSequence`
 - `controlPlaneRequestId`
 - `actor` and `reason`
 - `occurredAt`
+
+This is an optional refresh notification emitted from the same transaction as the authoritative Game Session pin and history record. Consumers reconstruct current state and history through Game Session APIs after loss or a sequence gap. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
 
 ## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Delivery)
 
@@ -85,26 +89,7 @@ Operator consumption rule:
 - Use this event family for creator/operator publication history and design-time eligibility changes only.
 - Do not infer runtime activation, drain, or disablement from this event family; those remain instance-scoped runtime events.
 
-## `ScriptPatchInstanceRolloutChanged` (Game Session -> Durable Event Delivery)
-
-Emitted whenever instance rollout history changes for a patch.
-
-Fields:
-
-- `tenantId`
-- `gameInstanceId`
-- `scriptPatchVersion`
-- `previousRolloutStatus`
-- `newRolloutStatus` (`PINNED` | `ROLLED_BACK` | `REPINNED`)
-- `causedBy` (`OPERATOR` | `SYSTEM`)
-- `instanceSequence`
-- `controlPlaneRequestId` (required when `causedBy=OPERATOR`)
-- `statusReason` (optional)
-- `occurredAt`
-
-Operator consumption rule:
-
-- Use this event family for instance rollout history, rollback audit trails, and per-instance pin progression.
+There is no separate mandatory `ScriptPatchInstanceRolloutChanged` family. Game Session's append-only history is authoritative, while `ScriptPatchPinChanged` may accelerate current-state refresh. A distinct derived family requires a concrete consumer need that the committed pin record and authoritative history API cannot meet.
 
 ## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Durable Event Delivery)
 

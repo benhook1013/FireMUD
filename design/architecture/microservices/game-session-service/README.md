@@ -30,7 +30,7 @@ This doc set is the authoritative source for:
 - Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
-- Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
+- Own the authoritative pinned `(scriptPatchVersion, scriptPinEpoch)` and append-only rollout history for each running game instance, and enforce exact version-and-epoch fencing for script-generated work.
 - Publish coordination and tick-health metrics per `<tenantId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - Accept bootstrap-backed bare `LOGIN` for first-party `/ws/game/**` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
