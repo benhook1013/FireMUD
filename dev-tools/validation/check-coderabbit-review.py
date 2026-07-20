@@ -165,6 +165,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
         nodes {
           author { login }
           body
+          state
           submittedAt
           url
         }
@@ -233,6 +234,7 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
         nodes {
           author { login }
           body
+          state
           submittedAt
           url
         }
@@ -393,6 +395,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
                 latest_coderabbit_review_finished_at = created_at
 
     for review in (pr.get("reviews") or {}).get("nodes", []):
+        if review.get("state") == "DISMISSED":
+            continue
         author = (review.get("author") or {}).get("login", "")
         submitted_at = review.get("submittedAt")
         submitted_at_dt = parse_timestamp(submitted_at)
@@ -512,6 +516,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             duplicate_actionable_comments = extract_section_count(body, DUPLICATE_COMMENTS_MARKER)
 
     for review in (pr.get("reviews") or {}).get("nodes", []):
+        if review.get("state") == "DISMISSED":
+            continue
         author = (review.get("author") or {}).get("login", "")
         body = review.get("body") or ""
         submitted_at_dt = parse_timestamp(review.get("submittedAt"))

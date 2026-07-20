@@ -123,8 +123,18 @@ cat >"$TMP_DIR/submitted-review.json" <<'JSON'
                 "login": "coderabbitai"
               },
               "body": "**Actionable comments posted: 1**\n\n<summary>♻️ Duplicate comments (4)</summary>",
+              "state": "COMMENTED",
               "submittedAt": "2026-07-19T06:02:35Z",
               "url": "https://example.test/submitted-review"
+            },
+            {
+              "author": {
+                "login": "coderabbitai"
+              },
+              "body": "**Actionable comments posted: 1**\n\n<summary>♻️ Duplicate comments (8)</summary>",
+              "state": "DISMISSED",
+              "submittedAt": "2026-07-19T06:03:35Z",
+              "url": "https://example.test/dismissed-review"
             }
           ]
         }

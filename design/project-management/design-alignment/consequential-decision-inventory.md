@@ -2,6 +2,10 @@
 
 Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative and ready for the human-led adversarial review.
 
+## Implementation Status
+
+`Complete` applies only to inventory scan coverage and fidelity auditing. Decision implementation, approval, and adversarial-review state remain authoritative in the row statuses and review queue below; proposed, conflicting, and human-review-required decisions remain unresolved.
+
 This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It prepares evidence for a later adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
 
 ## Decision Threshold
