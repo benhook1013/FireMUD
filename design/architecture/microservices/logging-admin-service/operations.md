@@ -10,9 +10,11 @@ This document collects Logging & Admin operational behavior, readiness expectati
 
 ## Availability and Degradation Expectations
 
-- Core operator control-plane features remain writable and supported even when observability backends are unavailable.
+- Core operator control-plane features remain supported during observability-only failure when their authentication/scope, durable audit/intent, authoritative owner/fence, stable request identity, and durable owner acknowledgement remain available. Missing mandatory owner or audit prerequisites fail the specific action closed.
 - Observability-backed features may become read-only, partially unavailable, or hidden behind degraded-state messaging.
+- Risk-reducing actions remain available under the core prerequisites. Exposure-increasing and recovery actions additionally retain their ordinary action-specific compatibility, recovery, freshness, and safety gates; missing telemetry alone neither authorizes nor prohibits them.
 - Readiness and degradation reporting must distinguish core operator control-plane capability from observability backend degradation so moderation and remediation controls are not withdrawn just because Elasticsearch, Prometheus, Grafana, Kibana, Jaeger, or Alertmanager are unhealthy.
+- Fault-injection evidence must prove that backend failure and saturation cannot consume the pools or deadlines reserved for core control. Split the deployable if that isolation cannot be maintained.
 
 ## Operator Workflows
 

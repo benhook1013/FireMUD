@@ -33,15 +33,20 @@ This service has two intentionally different availability classes:
 - Core operator control plane: moderation actions, feature-flag requests, quota overrides, reports, saga inspection, and tick-remediation controls.
 - Observability-backed experiences: embedded dashboards, log search, metric exploration, traces, and alert-centric investigations.
 
-The core operator control plane must remain available when Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager are degraded. Implementations should preserve this with independent readiness/degradation behavior, resource isolation, and defensive timeouts/circuit breakers around observability backends.
+The core operator control plane must remain available when Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager are degraded, but observability loss does not waive ordinary authorization, authority, fencing, audit, idempotency, or action-specific safety gates. Implementations preserve this with independent readiness/degradation behavior, resource isolation, and defensive timeouts/circuit breakers around observability backends.
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
 - Core control-plane endpoints include moderation actions, feature-flag and quota controls, reports, saga inspection, and tick-remediation APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success.
+- A core write proceeds only while authentication and tenant/jurisdiction binding, required durable audit or intent persistence, authoritative owner state and fences, stable request identity, and durable owner acknowledgement remain available. If any mandatory input is unavailable, that action fails closed.
+- Risk-reducing actions such as close admission, pause ticks, disable features, lower quotas, and add restrictions remain available when those prerequisites hold. Exposure-increasing and recovery actions retain their normal compatibility, recovery, freshness, fence, and owner-state gates; missing telemetry alone is neither permission nor prohibition.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
+- Stale or cached telemetry is time-labelled and cannot be presented as current authority. Unavailable current state is reported as unavailable or `unknown`.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
 - If a future implementation cannot preserve those guarantees inside one service boundary, the architecture should split the deployable into separate operator-control and observability surfaces rather than weakening the availability rule.
+
+See [ADR 0160](../../decisions/adr-0160-authoritative-control-actions-during-observability-loss.md).
 
 ## Script Patch and Plugin Control-Plane Coordination
 

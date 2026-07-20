@@ -67,5 +67,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 
 | Endpoint family | Availability class | Required behavior during observability outage |
 | --- | --- | --- |
-| `/moderation/actions`, `/moderation/appeals*`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | Core operator/player case control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
-| `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |
+| Risk-reducing core writes | Add restrictions, close admission, pause ticks, disable features, lower quotas | Remain available during observability-only loss when authentication/scope, durable audit/intent, authoritative owner/fence, stable request identity, and durable acknowledgement are available; otherwise fail closed |
+| Exposure-increasing or recovery core writes | Open/cut over admission, resume ticks, enable features, raise quotas/capacity, lift restrictions, remediation | Observability loss alone does not block them, but every normal compatibility, recovery, freshness, fence, audit, and owner-state gate remains mandatory |
+| Core reads/cases | Reports, appeals, owner/control state, local saga state | Remain available from authoritative PostgreSQL/owner APIs; never present stale telemetry as owner truth |
+| `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | Degrade independently to explicit unavailable, read-only, or `unknown`; cached results are time-labelled and non-authoritative |
