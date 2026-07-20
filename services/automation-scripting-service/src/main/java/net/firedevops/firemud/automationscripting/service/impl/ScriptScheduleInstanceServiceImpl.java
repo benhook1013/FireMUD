@@ -1304,6 +1304,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     StringBuilder identity = new StringBuilder();
     for (String value : values) {
       String normalized = blankToEmpty(value);
+      // UTF-8 byte framing is part of persisted dedup identity across language boundaries.
       identity
           .append(normalized.getBytes(StandardCharsets.UTF_8).length)
           .append(':')
