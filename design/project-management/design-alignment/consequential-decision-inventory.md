@@ -93,7 +93,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `TRACE-01` | Resolved target: metrics and structured logs are the dependable baseline; named workflow tracing, service sampling, and tenant/region sampling are progressively advertised only after end-to-end environment proof. Current tracing remains a narrower best-effort surface. |
 | `EDGE-06` / `MS-GW-DYNAMIC-ROUTES` | Resolved target: the version-controlled release catalog is the sole player-facing route authority; bounded ephemeral mutation is dev/test-only, and any production runtime control plane requires a separate future decision. Current endpoint gating, isolation, validation, and proof remain incomplete. |
 
-These are inventory findings, not decisions made by this workstream. They remain inputs to the later human-led adversarial review and explicit human resolution.
+These rows preserve the original conflict inventory and now summarize its human-reviewed resolutions. The linked ADRs and canonical design are authoritative for the accepted target state; implementation gaps remain tracked separately.
 
 ## Adversarial Review Queue
 

@@ -412,7 +412,7 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 
 ## Management Plane Security
 
-- Spring Cloud Gateway exposes REST and gRPC management endpoints (such as dynamic route operations and `GatewayManagementService` RPCs) **only on internal network surfaces**, not via the public player-facing ingress.
+- Where explicitly enabled for local, development, or test use, Spring Cloud Gateway exposes REST and gRPC route-mutation endpoints **only on internal network surfaces**, never via player-facing ingress. Player-facing deployments leave those mutation components and endpoints disabled or absent.
 - In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP and WebSocket data-plane traffic.
 - Authentication and authorization for these management endpoints is enforced at the gateway boundary: operator tooling must connect using mutual TLS (mTLS) client certificates (issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, with `clientAuth` EKU), and only trusted operator identities are permitted to invoke management operations. JWT-based admin roles apply to product/admin APIs behind the gateway, but gateway-owned management endpoints do not rely on downstream services for authorization. Implementation details and the recommended internal-only exposure model are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
 
@@ -462,8 +462,7 @@ This approach minimizes latency and matches the protocol table in the
 | Dev | `http://service:8080` | Docker Compose DNS |
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles defined in `application.yml` and selected via
-Baseline routing targets are defined in `routes.yml`, and any environment-variable overrides or dynamic route changes apply *on top* of that file rather than replacing it as the canonical source of truth.
+Spring profiles select environment-specific endpoint values. Baseline routing targets are defined by the released declarative route catalog, currently represented by `routes.yml`. Environment-variable endpoint substitution may specialize that released catalog, while dynamic route overrides are limited to explicitly enabled local, development, or test profiles and never become player-facing route authority.
 
 ---
 
