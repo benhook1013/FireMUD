@@ -79,20 +79,21 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 
 The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
 
-- The presented client certificate chains to the cluster trust root (cert-manager under ClusterIssuer `firemud-ca-issuer`), and
-- The certificate contains an expected SAN identity for the TCP Proxy Service.
+- The presented client certificate chains to the trust bundle or issuer assigned to this deployment environment, has client-auth usage, and
+- The certificate contains the exact environment-specific URI SAN/SPIFFE identity allowlisted for the TCP Proxy Service.
 
 If either check fails, the gateway rejects the WebSocket handshake and does not promote any `X-Proxy-*` inputs.
 
-Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. The canonical production model is:
+Gateway config selects exactly one trust profile; settings from another profile make startup or admission fail closed:
 
-- **Canonical (prod):** allowlist the TCP Proxy by **URI SAN** (SPIFFE-style identity), configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans` (for example `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`).
-- **Transitional (migration only):** allowlist by **DNS SAN** when URI SANs are not yet consistently issued, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans` (for example `tcp-proxy-service.<namespace>.svc.cluster.local`).
-- **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
+- **`production_uri`:** exact environment-specific URI SAN/SPIFFE identity; required for steady-state player-facing traffic.
+- **`migration_dns`:** exact DNS SAN during a named, owned, expiring migration only.
+- **`breakglass_fingerprint`:** one leaf SHA-256 fingerprint under a named, expiring incident only.
+- **`development_cidr`:** insecure source-CIDR trust for local development and isolated automated tests only; prohibited in hosted, hobby/self-hosted player-facing, staging, and production profiles.
 
-This policy is normative per `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
+The profiles are alternatives, not an ordered any-of matcher. Public ingress strips all proxy-provided and gateway-owned identity/admission headers before any consumer; only this authenticated internal listener rebuilds canonical values. This policy is normative per [ADR 0164](./decisions/adr-0164-exclusive-environment-bound-tcp-proxy-trust.md).
 
-Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
+Non-mTLS acceptance of `X-Proxy-*` headers is a development/test-only mechanism. Network isolation is defense in depth and never substitutes for authenticated workload identity in a player-facing environment.
 
 ### Gateway Output Rules (Downstream-Trusted)
 

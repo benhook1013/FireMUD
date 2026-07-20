@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0164](./adr-0164-exclusive-environment-bound-tcp-proxy-trust.md).
 
 ## Context
 
