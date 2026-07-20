@@ -51,7 +51,7 @@ Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is
 
 - Jaeger receives OTLP data from the collector.
 - The web UI is exposed on port `16686` within the cluster.
-- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days.
+- Retention is finite and profile-specific according to the sensitivity, incident need, storage budget, and privacy/export/erasure policy. FireMUD makes no universal 30-day production promise.
 - Access the UI locally with:
 
   ```bash
@@ -86,10 +86,12 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `recovery_converge_participant` – span for one declared recovery participant's safe disposition, tagged with bounded participant type and outcome.
   - Tick pause/resume spans belong to maintenance, reset, migration, and future scoped-recovery traces. Routine backup does not emit or require them.
 
-All spans should include, where applicable:
+Named span families may include only the attributes their documented incident queries require. Availability in request context is not permission to copy an attribute onto every span. Where allowlisted:
 
-- `tenantId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant and environment.
+- `tenantId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) may support tenant/environment investigation on the named span families that require them.
 - Error attributes such as `error.code` and `error.type` drawn from the same bounded catalogs used by `grpc.app_error` and domain error handling.
+
+The `command` attribute is always a normalized bounded verb/type, never the raw command line. Free-form application error messages are not span attributes.
 
 ## Sampling and Sensitive Attributes
 
@@ -99,11 +101,13 @@ All spans should include, where applicable:
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
   - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
 - **Sensitive attributes**
-  - Attributes such as `characterId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
-  - `characterId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
-  - Client address attributes in production traces must be privacy-safe and bounded: use `remote_ip_hash` for stable correlation and optionally `remote_ip_prefix` (`/24` for IPv4, `/56` for IPv6) for coarse network triage. Do not store raw full client IP addresses in long-retention traces.
-  - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
-  - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
+  - Exact gameplay identifiers such as `characterId` are operationally useful but sensitive. They appear only on allowlisted named span families and require least-privilege environment-scoped query access, query auditing, finite retention, and declared export/privacy/erasure handling.
+  - Raw client IP addresses are forbidden in all traces. Where stable network correlation is justified, `remote_ip_hash` is a rotating environment-specific keyed HMAC with documented custody and correlation window. It remains pseudonymous network data.
+  - `remote_ip_prefix` (`/24` for IPv4 or `/56` for IPv6) is disabled by default. A profile may enable it only for justified abuse investigation with short retention and equivalent access/audit controls.
+  - Do not attach user-provided text, chat, raw commands, descriptions, payloads, free-form error or exception messages, secrets, or credentials as span attributes. Use bounded codes and types; separately protected logs may carry redacted detail under their own policy.
+  - External/shared exporters and backends require equivalent producer/collector filtering, encryption, environment isolation, query authorization/audit, retention, export, and deletion controls.
+
+See [ADR 0162](./decisions/adr-0162-allowlisted-sensitive-trace-attributes.md).
 
 ### Incident-Mode Sampling Procedure (Design Contract)
 

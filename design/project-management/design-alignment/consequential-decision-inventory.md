@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 23 | 25 | `in-progress` |
+| 6 | Operations and delivery | 24 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **160** | **183** | `in-progress` |
+| **Total** | | **161** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -328,7 +328,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MS-PO-OWNER-REMEDIATION` — `revised` on 2026-07-20; [typed owner remediation boundary](../../architecture/microservices/logging-admin-service/api-contracts.md#rest)
 - [x] `SCRIPT-14` — `revised` on 2026-07-20; [ADR 0161](../../architecture/decisions/adr-0161-attributable-script-breakers-and-tenant-first-fairness.md)
 - [x] `SCRIPT-15` — `revised` on 2026-07-20; [bounded scripting metrics](../../architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix)
-- [ ] `TRACE-02`
+- [x] `TRACE-02` — `revised` on 2026-07-20; [ADR 0162](../../architecture/decisions/adr-0162-allowlisted-sensitive-trace-attributes.md)
 
 #### Packet 6 P2 And P3
 

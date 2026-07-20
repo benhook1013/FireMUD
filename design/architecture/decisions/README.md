@@ -175,6 +175,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0159](./adr-0159-three-boundary-profile-aware-verification-evidence.md) | Accepted | `PO-4` | `PO-3` | Three-boundary profile-aware verification evidence |
 | [ADR 0160](./adr-0160-authoritative-control-actions-during-observability-loss.md) | Accepted | `PO-4` | `PO-1`, `SF-1`, `SF-2` | Authoritative control actions during observability loss |
 | [ADR 0161](./adr-0161-attributable-script-breakers-and-tenant-first-fairness.md) | Accepted | `AS-1` | `PO-1`, `PO-4`, `GR-1`, `SF-2` | Attributable script breakers and tenant-first fairness |
+| [ADR 0162](./adr-0162-allowlisted-sensitive-trace-attributes.md) | Accepted | `PO-4` | `SF-1`, `PO-1`, `PO-3` | Allowlisted sensitive trace attributes |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
