@@ -233,11 +233,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `PROC-05` - World density and movement cost are product choices
 
 - **Capability:** Primary `GR-2.2` Location, occupancy, movement, exits, and spatial reads. Secondary `GR-2.1` and `AR-1.1`.
-- **Decision / status / importance:** Sparse versus full-grid generation and the `spacingMultiplier` effect on movement/travel cost are part of the world-design contract, not merely storage optimizations. The source supplies algorithms and defaults but does not settle the desired density or player travel budget. Status `needs-human-review`; `M/med`.
+- **Decision / status / importance:** `SPARSE_GRAPH` and bounded `FULL_GRID` are first-class version-scoped semantic topology modes. Full-grid guarantees every valid cell is a stable authoritative location without requiring one database row per cell or continuous simulation. Topology density and typed movement policy are independent authored choices. Representation remains opaque behind World Management: eager rows are allowed within proved limits, while large grids require immutable digest-attested chunk topology plus durable runtime deltas before scale is claimed. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [system-architecture-procedural-generation.md](../../architecture/system-architecture-procedural-generation.md) `§ 1. SimpleDungeonGenerator`, `§ Algorithm`, `§ 2. OverworldMapGenerator`, `§ Generation Pipeline:`, and `§ Integration Guidelines`; [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 2. World and Entity Design`.
-- **Strongest alternative:** Require a full grid with uniform movement cost, or treat spacing as an implementation-only tuning knob.
-- **ADR recommendation:** Yes before generation defaults become a platform-wide content contract; record per-game configurability if that is the choice.
-- **Human consultation:** Yes; game designers and player-experience owners must set density and travel expectations.
+- **Strongest alternative:** Standardize on sparse persisted graphs, or require eager room and exit rows for every full-grid cell and couple density directly to travel cost.
+- **ADR recommendation:** [ADR 0117](../../architecture/decisions/adr-0117-first-class-sparse-and-full-grid-world-topologies.md) records the revised semantic modes, orthogonal movement policy, and scalable representation boundary.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; full-grid simulated worlds were confirmed as a required target, while row-per-cell storage and continuous inactive-cell simulation were rejected as implied requirements.
 
 ### Capacity, Environments, And Verification
 

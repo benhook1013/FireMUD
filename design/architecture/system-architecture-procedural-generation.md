@@ -178,7 +178,7 @@ Concrete replay example:
 
 ### 2. `OverworldMapGenerator`
 
-Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Room creation is configurable: either generate **sparse rooms** only at points of interest (POIs), or generate a **full grid of rooms** based on the terrain data.
+Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Topology creation is configurable: either generate a sparse graph containing selected points of interest and path nodes, or generate a bounded full grid in which every valid cell is an authoritative gameplay location.
 
 #### Generation Pipeline:
 
@@ -192,19 +192,24 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 | **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata |
 | **Feature Placement** | Place towns, dungeons, landmarks | `Poisson Disk Sampling`, seeded rules |
 | **Connectivity Graph** | Generate roads, rivers, and path exits | A*, flow maps, elevation-aware routing |
-| **Room Graph Export** | Convert terrain grid into room data | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
+| **Topology Export** | Convert terrain into authoritative location data | Either `SPARSE_GRAPH` nodes and edges or a bounded `FULL_GRID` eager/chunked topology |
 
-> The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
+The topology mode is a version-scoped semantic design input selected for the generation request:
+
+- `SPARSE_GRAPH` emits selected locations such as POIs and waypoints plus their declared connectivity.
+- `FULL_GRID` defines a bounded lattice in which every valid cell is a stable authoritative location. The design declares supported adjacency directions, bounds, impassable terrain, and other typed traversal rules.
+
+`FULL_GRID` does not require one database row or stored exit row per cell, nor does it require continuous simulation of inactive cells. World Management must expose the same authoritative cell facts, stable identity, adjacency, movement, targeting, occupancy, and snapshot behavior regardless of whether the physical representation is eager rows or an immutable chunked topology with durable runtime deltas.
 
 ---
 
 ## Output and Metadata (Common)
 
-All generators emit a normalized structure:
+Generators emit a normalized sparse graph or a bounded grid/chunk topology. Their logical locations expose the following common semantic fields even when a large grid stores them in immutable chunks rather than one row per cell:
 
 | Field | Description |
 | --- | --- |
-| `roomKey` | Unique identifier within the generator output graph (not a persisted template/instance id) |
+| `roomKey` / `cellKey` | Stable logical identifier within the generated topology; World Management resolves the canonical persisted or virtualized template/runtime identity |
 | `coordinates` | Grid location (used for spatial logic and editing) |
 | `exitMap` | Map of direction → `roomKey` |
 | `tags` | Optional labels like `"start"`, `"town"`, etc. |
@@ -212,17 +217,26 @@ All generators emit a normalized structure:
 | `elevation` | Numeric terrain height (used for visuals or logic) |
 | `regionKey` | Optional grouping key for partitioned maps (not a persisted template/instance id) |
 
-`spacingMultiplier` is stored on the containing region (World Management) and can globally scale movement speed across the map. In sparse layouts Game Logic uses room coordinates and this `spacingMultiplier` to derive movement/travel cost, so nearby rooms are quick to traverse while large gaps produce longer travel times.
+Topology density and movement policy are independent versioned choices. A sparse game may make every declared exit one uniform movement, while another may use geometric distance. A full grid may likewise use uniform steps, explicit costs, or terrain/elevation-sensitive movement. `spacingMultiplier` is stored on the containing region and participates only when the selected typed movement policy declares it. Sparse topology does not implicitly make travel slower, and full-grid topology does not implicitly make travel uniform.
 
-In **full-grid mode**, every terrain tile becomes a room.
-In **sparse mode**, only selected POIs and waypoints are emitted, and the distance between them determines travel cost.
+In `FULL_GRID`, every valid cell is logically addressable and traversable according to the declared adjacency and terrain rules. Walls, invalid cells, impassable terrain, and lattice bounds may still block a direction. In `SPARSE_GRAPH`, only selected nodes and their declared edges are locations. Neither choice dictates movement cost by itself.
 
-World Management assigns canonical persisted identifiers when saving generator outputs:
+World Management exclusively assigns or resolves canonical identifiers when finalizing and exposing generator output:
 
-- Design-time/template generation persists `roomTemplateId` values keyed by `(tenantId, versionId)`.
-- Runtime/instance generation persists `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
+- Design-time/template locations resolve to stable `roomTemplateId` values keyed by `(tenantId, versionId)`.
+- Runtime locations exposed to gameplay resolve to stable `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
 
-Generator outputs must not embed or assume these persisted identifiers; they are assigned at persistence time by World Management.
+Generator outputs must not assume database row identity. World Management may eagerly persist bounded graphs or resolve a cell from an immutable chunked base plus durable instance state, but the same logical cell must resolve to the same authoritative identity for its required lifetime.
+
+### Large Full-Grid Representation
+
+Physical topology representation is opaque behind World Management:
+
+- Sparse and bounded moderate graphs may use eager template, instance, and exit rows within enforced and tested limits.
+- Before large full-grid scale is claimed, generation must produce an immutable digest-attested chunk topology or equivalent bounded representation. A validated root manifest identifies the complete lattice and immutable chunks, and one short finalize selects that root atomically so readers never observe a partial grid.
+- Runtime reads compose the immutable base cell with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable locations. Caches and lazy materialization remain derived projections rather than authority.
+
+Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running the historical generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.
 
 ---
 
@@ -234,14 +248,14 @@ The following rules align generators with the core runtime and tooling:
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions and may only exceed the normal budget when `solo_tick_budget_ms` is enabled for that deployment/profile.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
-5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
+5. **Topology and Traversal Policy** – Density and movement policy are separate version-scoped inputs. World Management resolves authoritative locations, geometry, adjacency, and occupancy for both `SPARSE_GRAPH` and `FULL_GRID`; Game Logic applies the selected typed movement policy. Coordinate distance, terrain, elevation, explicit costs, and region `spacingMultiplier` affect cost only when that policy declares them.
 6. **Post-generation Population** – After rooms are created and persisted, population work follows different rules by mode. In design-time/template generation, post-generation population may create only declarative World-owned spawn/population binding rows under `(tenantId, versionId)`; Automation & Scripting must not persist template rows, spawn bindings, or live entities as a side effect of a design-time generation revision. In runtime/instance generation, Automation & Scripting may emit runtime commands through the canonical tick/workflow handoff after topology is visible. Those commands act on `RoomInstanceRef` and runtime entity state; they do not directly mutate world topology.
 
    Failure and retry semantics:
 
    - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
    - Launch-time topology generation/persistence for instance creation is a pre-activation workflow owned by World Management (Class A rollback semantics in `system-architecture-transactions.md`) and is not routed through Game Session ticks. Post-activation population and subsequent dynamic generation follow Class B retry-until-convergence semantics, with runtime generation using the `requiresSoloTick` command path.
-   - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
+   - Authoritative topology persistence or digest-attested root installation must complete atomically in World Management before population is admitted.
    - Runtime population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus `RoomInstanceRef` so downstream services can safely no-op on replays.
    - Design-time binding materialization must instead carry `tenantId`, `versionId`, the target template identifiers, `commitId`, `revisionId`, and `expectedDraftScopeRevisionEpoch`; duplicate revision replay must no-op through the same Draft write idempotency rules as other design-time mutations.
    - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), retryable items retry until convergence using the original identities. A permanently invalid item reaches an explicit terminal failure with durable diagnostics rather than retrying forever.
@@ -258,7 +272,7 @@ The following rules align generators with the core runtime and tooling:
    - World Management must enforce single-writer semantics per target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs cannot both commit.
    - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
    - An output within enforced and proved row and serialized-byte limits may write the complete result and idempotency outcome in one owner-local transaction. Readers see either the prior scope or the complete new scope.
-   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph.
+   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.
    - The initial implementation may reject oversized output deterministically until the staged path exists. Callers may not bypass the bounded-transaction limits.
    - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
@@ -315,7 +329,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### World Management Service
 
-- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomTemplateId` / `roomInstanceId` values at persistence time
+- Owns invocation of generators as pure functions and persists or installs the authoritative generated topology; assigns or resolves canonical `roomTemplateId` / `roomInstanceId` values without exposing physical row or chunk identity
 - Persists generator metadata (`seed`, `generatorType`, and an immutable config
   snapshot with `schemaVersion`) and editor overlays, including a snapshot of
   the effective procedural rule configuration used for each generation run
@@ -334,7 +348,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### Game Logic Service (Movement/Travel)
 
-- **Computes movement/travel costs** using World geometry (`coordinates`, region `spacingMultiplier`, biome/elevation rules)
+- **Computes movement/travel costs** from World-owned facts under the published typed movement policy; coordinates, explicit edge/cell cost, region `spacingMultiplier`, biome, and elevation participate only when that policy declares them
 
 ---
 
