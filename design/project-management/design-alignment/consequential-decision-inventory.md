@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 0 | 21 | `not-started` |
+| 5 | Gameplay and player experience | 1 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **116** | **183** | `in-progress` |
+| **Total** | | **117** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -270,7 +270,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 5 P0
 
-- [ ] `TENANT-03`
+- [x] `TENANT-03` — `revised` on 2026-07-20; [ADR 0126](../../architecture/decisions/adr-0126-isolated-playtest-state-modes-and-reset.md)
 - [ ] `EDGE-05`
 - [ ] `SESSION-02`
 - [ ] `SESSION-03`

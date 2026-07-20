@@ -20,7 +20,7 @@ FireMUD separates **global identity** from **per-game state** so that one person
   - Additional realms are explicitly authorized non-production realms such as playtest forks. They are never public-discovery realms in v1 and require explicit access grants owned by Account Service and evaluated through the same runtime grant authority across bootstrap discovery and gameplay admission.
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
 - **Account–tenant membership and roles** – For each tenant a platform account participates in, the platform records membership and roles (for example, `player`, `designer`, `tenantAdmin`) that appear in JWT `scopedRoles[tenantId]` claims. Membership is many-to-many: one account can join many tenants, and each tenant can host many accounts.
-- **Character (`characterId`)** – A gameplay identity controlled by a platform account within a specific tenant. Character identity is tenant-scoped, but gameplay session binding and any realm- or instance-local character state, inventories, or progress must also include `gameInstanceId`.
+- **Character (`characterId`)** – A gameplay identity controlled by a platform account within a specific tenant. Character identity is tenant-scoped. Durable realm-local character state, inventory, and progression are scoped by `playableStateNamespaceId`; an active gameplay binding also carries the executing `gameInstanceId` that currently resolves that namespace.
 - **Gameplay session** – A transient session binding between a connected client and a character in a tenant, managed by the Game Session Service and stored in Redis using keys such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`. These gameplay session keys are always tenant- and instance-scoped and never change the global `accountId`. Sessions bind sockets to character identities within a tenant (see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) and [Session and Identity Management](./system-architecture-authentication.md#session-and-identity-management)).
   - Uniqueness for takeover/resume is enforced as `{tenantId, gameInstanceId, characterId}`.
 - **Auth token session** – A short-lived issued-token registry record (`session:auth:token:<tokenHash>`) backing a revocable JWT for meta/control or admission APIs, as described in [Authentication & Authorization](./system-architecture-authentication.md#session-and-identity-management).
@@ -33,17 +33,17 @@ Tenant membership, tenant roles, and character ownership answer "which game does
 FireMUD distinguishes between:
 
 - **Tenant-scoped identity and ownership** – platform accounts, tenant membership, role grants, and the fact that a character belongs to a tenant.
-- **Realm- or instance-scoped playable state** – the gameplay state that applies when a player enters a specific realm resolved to a specific `gameInstanceId`.
+- **Playable-state namespace** – the durable gameplay-state boundary that applies when a player enters a realm. The current `gameInstanceId` resolves to a `playableStateNamespaceId`, but runtime replacement may change the instance without changing the namespace.
 
 Realm-scoped playable state may follow either of these patterns:
 
 - **Shared-state realm** – the realm uses the tenant's normal live character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
-- **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId` rather than the tenant's normal live character state. That isolated state may start from a copied source snapshot, seeded/sample data, or fresh standalone state. Playtest forks are the canonical copied-state example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
+- **Isolated-state realm** – the realm uses its own `playableStateNamespaceId` rather than the tenant's normal live character state. That isolated state may start fresh, from versioned seed/sample data, or from an owner-consistent source snapshot. Copied characters remain associated with the same platform account and tenant, but the realm keeps separate progression, inventory, and other durable playable state across runtime-instance replacement.
 
 Minimum downstream consequences of realm policy:
 
 - Shared-state realms reuse the tenant's normal live gameplay state namespace for the selected character.
-- Isolated-state realms must treat at least the following as realm-/instance-scoped gameplay state keyed to the resolved `gameInstanceId`:
+- Isolated-state realms must treat at least the following as namespace-scoped gameplay state keyed to the resolved `playableStateNamespaceId`:
   - visible character roster for `CHARS`;
   - character progression/resources;
   - durable inventory/equipment/containment state;
@@ -67,6 +67,8 @@ This distinction is normative for all realm-aware flows:
 - `PLAY` binds the session to that same `{tenantId, gameInstanceId, characterId}` target.
 
 Services must therefore avoid collapsing "character belongs to tenant" into "all character-associated data is keyed only by tenant." Tenant ownership remains stable, while playable state may be shared across realms or isolated per realm according to the resolved realm policy.
+
+Each new playtest lifecycle receives a fresh `playableStateNamespaceId`. Playtest creation explicitly chooses `fresh`, `seeded`, or `snapshot`; a snapshot declares `whole-realm` or `selected-roster` scope and is not admitted unless every required state owner validates one complete dependency closure against the same source/build boundary. Reset prepares another fresh namespace and generation, then atomically moves admission to it rather than destructively rewriting the active state. Billing and authentication authority, token replay state, and source moderation/audit records are never cloned; production external effects are suppressed or sent to test sinks; runtime state never merges automatically back into production. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#isolated-state-initialization-for-playtest-realms) and [ADR 0126](./decisions/adr-0126-isolated-playtest-state-modes-and-reset.md).
 
 This model underpins both authentication and authorization:
 
@@ -144,7 +146,7 @@ Pointer freshness and cutover rules:
 - Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
 - Gameplay clients may select worlds using `tenantSlug` values returned by `WORLDS` in the lobby flow, but `tenantSlug` must never be used as a substitute for `tenantId` in APIs or persistence outside of lobby selection.
 - Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
-- Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse tenant-shared character state or use isolated state scoped to the selected `gameInstanceId`.
+- Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse the tenant-shared `playableStateNamespaceId` or use an isolated namespace; `gameInstanceId` identifies the runtime currently executing against that state rather than the durable state itself.
 - Friend lists and guilds are maintained by the Social & Groups Service. Per-game friendships store `tenantId` plus player IDs, while account-to-account friendships reference global account IDs.
 - Tenant roles, profiles, characters, purchases, subscriptions, entitlements, grants, and gameplay state are tenant-scoped relationships or records. Leaving one game changes only that relationship under its retention rules and does not delete the account or unrelated relationships.
 - Tenant operators may see only the minimum account reference and tenant-owned data authorized for their tenant. Global credentials, recovery state, linked external identities, security history, and the existence or contents of unrelated tenant relationships are platform authority and must not be exposed through tenant roles.

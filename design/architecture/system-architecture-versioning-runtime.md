@@ -129,7 +129,7 @@ Ownership is split between the Game Design Service and domain services:
   - References from revisions/versions to assets, scripts, and templates via stable identifiers.
 - Domain services such as World Management, Entity Management, Game Logic, and others are the canonical stores for:
   - Versioned template graphs keyed by `(tenantId, versionId)` (world topology, entity templates, balance records, etc.).
-  - Runtime/instance state keyed by `(tenantId, gameInstanceId)` or equivalent.
+  - Durable playable state keyed by `(tenantId, playableStateNamespaceId)` and explicitly ephemeral runtime state keyed by `(tenantId, gameInstanceId)`, according to the ADR 0101 state classification.
 
 Domain services must not persist their own commit histories; they expose only the current and historical template snapshots keyed by `(tenantId, versionId)`. Game Design Service must not maintain a second, divergent copy of world or entity template graphs; it references domain templates via stable IDs and version metadata.
 
@@ -183,7 +183,7 @@ Published versions are immutable from the perspective of domain templates:
 - The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Failed`, `Retired`).
 - Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`. Authoring tools call these APIs incrementally as revisions are saved so Draft template graphs in domain services always reflect the latest committed design state for that version.
 - Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published, Active, or Failed version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
-- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version` and write to runtime/instance tables keyed by `(tenantId, gameInstanceId)` or equivalent.
+- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId)` for durable playable state and `(tenantId, gameInstanceId)` only for explicitly instance-scoped ephemeral state under ADR 0101.
 
 At a high level, each `(tenantId, versionId)` template graph in a domain service follows this lifecycle:
 
@@ -574,21 +574,30 @@ Realm-routing contract (required):
 - Pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only until the bounded drain ends; fresh `PLAY` and reconnect use the current target.
 - One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
 
-### Fork-Snapshot Boundary For Playtest Realms
+### Isolated-State Initialization For Playtest Realms
 
-Creator-managed playtest forks are temporary player-addressable realms derived from a source realm snapshot. The fork-snapshot boundary is normative for v1:
+Creator-managed playtests are temporary, isolated player-addressable realms. Creation explicitly selects one initialization mode:
 
-- **Source identity** – A fork is created from a specific `{tenantId, sourceRealmSlug, sourceGameInstanceId}` plus the resolved source build identity (`runtimeVersionId` and optional `scriptPatchVersion`) captured at snapshot time.
-- **Account model** – Forks reuse the same platform `accountId` identities as production. Visibility is controlled by explicit tester/creator/operator access grants; unauthorized accounts must not see the fork in `REALMS <world>`.
-- **Copied gameplay state** – The snapshot copies the source realm's player gameplay state needed for realistic validation, including character progression, inventory, learned abilities, and other realm-scoped runtime/world state required to reproduce gameplay behavior.
-- **Fork-local identity** – Copied gameplay state becomes fork-local runtime state keyed to the fork's `gameInstanceId`. A copied character in the fork remains associated with the same platform account, but it is a separate fork-local gameplay record, not a live reference back to production rows.
-- **Relation to tenant ownership** – This fork-local gameplay record does not create a new tenant or a new platform account. It is an isolated realm-state variant of a tenant-owned character, which is why discovery and admission still resolve through the same `{tenantId, gameInstanceId, characterId}` contract.
-- **Build selection** – A fork may launch on the source realm's current build for reproduction or on a different published `versionId` and optional `scriptPatchVersion` for validation. Published/runtime version pointers are copied from source only when they are also the chosen target build.
-- **Excluded state** – Billing records, invoices, payment methods, live auth sessions, connect-token replay state, and source moderation/audit cases are never cloned as active source records into the fork.
-- **Fork-generated records** – Analytics, moderation reports, audit entries, and similar operational data created during the playtest are written as new fork-scoped records tagged to the fork realm rather than appended to the source realm's production history.
-- **External side effects** – Fork gameplay must not emit production-side effects. Outbound integrations, monetization effects, and any other irreversible external actions must be suppressed, redirected to test sinks, or otherwise isolated so the fork cannot mutate production state outside the fork-local datastore boundary.
-- **No merge-back** – Runtime writes from a fork never merge automatically into production. Promotion from a successful playtest occurs only through the normal launch/cutover workflow against the target production realm.
-- **Reset semantics** – Resetting a fork replaces its fork-local gameplay state with a fresh application of the chosen source snapshot and preserves only the control-plane identity and audit history needed to track the fork lifecycle.
+- `fresh` starts with an empty playable-state namespace and only the minimum state materialized by the chosen published build and its normal creation policy;
+- `seeded` starts from an explicit versioned seed or sample-data definition rather than mutable production runtime state; or
+- `snapshot` starts from an explicit source realm and either a `whole-realm` or `selected-roster` scope.
+
+Every new playtest lifecycle receives a fresh `playableStateNamespaceId` and an initial monotonic playtest-state generation. Runtime replacement within that lifecycle retains the namespace; a later playtest lifecycle or reset does not reuse it. `gameInstanceId` remains the replaceable execution and routing identity, not the durable identity of fork-local playable state.
+
+The initialization boundary is normative:
+
+- **Source and build evidence** – Snapshot preparation records the exact source `{tenantId, sourceRealmSlug, sourceGameInstanceId, sourcePlayableStateNamespaceId}`, the source runtime version and optional script patch, the chosen target build, and immutable evidence from every required state owner. A fork may use the source build for reproduction or another published build for validation, but source pointers are not copied implicitly.
+- **Snapshot scope and closure** – `whole-realm` includes the complete source-realm state covered by the snapshot contract. `selected-roster` includes the selected accounts or characters plus the complete dependency closure required to reproduce their chosen gameplay behavior, including namespace-scoped progression, resources, inventory, equipment, abilities, loadouts, ownership links, and required shared runtime/world state. Copying only roster rows is not a valid selected-roster snapshot.
+- **Owner-consistent preparation** – Each required owning service returns a manifest bound to the same accepted source boundary and build evidence, declaring its included families, scope, completeness evidence, and immutable digest or snapshot identity. Game Session admits the playtest only after all manifests agree and the target namespace and build validate. Missing ownership, unresolved dependency closure, source/build disagreement, or partial materialization rejects preparation; independently timed best-effort reads are not a snapshot.
+- **Account model** – Playtests reuse the same platform `accountId` identities as production. Visibility is controlled by explicit tester/creator/operator access grants under `PLAYTEST-01`; unauthorized accounts must not see the playtest in `REALMS <world>`.
+- **Fork-local identity** – Copied or seeded gameplay state becomes new state in the playtest's `playableStateNamespaceId`. A copied character remains associated with the same platform account and tenant but is not a live reference to production rows. Discovery and admission still resolve the current `{tenantId, gameInstanceId, characterId}` execution target, which in turn resolves the playtest namespace.
+- **Excluded authority** – Billing records, invoices, payment methods, purchases, subscriptions, entitlement authority, authentication sessions, credentials, token/connect-token replay state, source moderation cases, source audit history, and source incident records are never cloned as active playtest authority.
+- **Playtest-generated evidence** – Analytics, moderation reports, audit entries, and similar operational data created during the playtest are new records scoped and tagged to that playtest rather than additions to the source realm's production history.
+- **External side effects** – Playtest gameplay must not emit production side effects. Outbound integrations, monetization effects, and other irreversible external actions are suppressed, redirected to explicit test sinks, or otherwise isolated in every initialization mode.
+- **No merge-back** – Runtime currency, items, progression, world changes, and other writes from a playtest never merge automatically into production or another playtest. Promotion uses the normal published-build launch and cutover workflow. A future narrow diagnostic export may carry explicitly classified non-authoritative evidence, but does not establish a general state-import contract.
+- **Reset semantics** – Reset prepares a fresh `playableStateNamespaceId` from the selected `fresh`, `seeded`, or `snapshot` input, advances the playtest-state generation, and validates the same all-or-nothing preparation boundary. It then atomically moves the playtest realm's admission pointer to a runtime bound to the new namespace. Failure before that move leaves the old generation authoritative; after the move, the old generation is fenced from new admission and retired through the bounded lifecycle and retention contract.
+
+See [ADR 0126](./decisions/adr-0126-isolated-playtest-state-modes-and-reset.md) for the rationale, alternatives, and proof obligations. Playtest grant ownership, expiry, revocation, and connected-session treatment remain a separate `PLAYTEST-01` decision.
 
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 
