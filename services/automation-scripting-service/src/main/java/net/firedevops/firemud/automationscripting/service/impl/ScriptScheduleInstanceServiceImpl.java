@@ -58,6 +58,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String STATUS_PENDING_RUNTIME_PROGRESS = "PENDING_RUNTIME_PROGRESS";
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
   private static final String SOURCE_SERVICE = "automation-scripting-service";
+  private static final boolean SCHEDULER_IS_DRY_RUN = false;
+  private static final String SCHEDULER_TRIGGER_MODE = TriggerMode.TRIGGER_MODE_CATCH_UP.name();
   private static final String FINAL_STAGE_ADMISSION = "ADMISSION";
   private static final String FINAL_OUTCOME_CANCELED = "canceled";
   private static final String REASON_CATCH_UP_TRUNCATED = "catch_up_truncated";
@@ -665,7 +667,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             DEFAULT_SCHEMA_VERSION,
             instance.getScriptPatchVersion(),
             scriptEventId,
-            false)) {
+            SCHEDULER_IS_DRY_RUN)) {
       return;
     }
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -685,9 +687,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
     audit.setScriptEventId(scriptEventId);
-    audit.setDryRun(false);
+    audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
-    audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setTriggerMode(SCHEDULER_TRIGGER_MODE);
     audit.setSourceKind("SCHEDULE_TIMER");
     audit.setSourceState("SCHEDULE_DROPPED");
     audit.setSourceOrdinal(candidate.dueOrderValue());
@@ -787,7 +789,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             DEFAULT_SCHEMA_VERSION,
             instance.getScriptPatchVersion(),
             scriptEventId,
-            false)) {
+            SCHEDULER_IS_DRY_RUN)) {
       return false;
     }
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
@@ -811,9 +813,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
     item.setScriptEventId(scriptEventId);
-    item.setDryRun(false);
+    item.setDryRun(SCHEDULER_IS_DRY_RUN);
     item.setSourceService(SOURCE_SERVICE);
-    item.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    item.setTriggerMode(SCHEDULER_TRIGGER_MODE);
     item.setSourceKind("SCHEDULE_TIMER");
     item.setSourceState("SCHEDULE_DUE_CLAIMED");
     item.setSourceOrdinal(candidate.dueOrderValue());
@@ -862,9 +864,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
     audit.setScriptEventId(workItem.getScriptEventId());
-    audit.setDryRun(false);
+    audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
-    audit.setTriggerMode(TriggerMode.TRIGGER_MODE_CATCH_UP.name());
+    audit.setTriggerMode(SCHEDULER_TRIGGER_MODE);
     audit.setSourceKind("SCHEDULE_TIMER");
     audit.setSourceState("WORK_ITEM_PERSISTED");
     audit.setSourceOrdinal(workItem.getSourceOrdinal());
@@ -1272,25 +1274,21 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String identity() {
-      return instance.getTenantId()
-          + "|"
-          + instance.getGameInstanceId()
-          + "|"
-          + regionId
-          + "|"
-          + regionEpoch
-          + "|"
-          + targetEntityId(instance)
-          + "|"
-          + instance.getScriptId()
-          + "|"
-          + instance.getEventType()
-          + "|"
-          + instance.getScriptPatchVersion()
-          + "|"
-          + instance.getScheduleDefinitionId()
-          + "|"
-          + (wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);
+      return lengthPrefixedIdentity(
+          instance.getTenantId(),
+          instance.getGameInstanceId(),
+          instance.getPlayableStateScope(),
+          regionId,
+          String.valueOf(regionEpoch),
+          targetEntityId(instance),
+          instance.getScriptId(),
+          instance.getEventType(),
+          DEFAULT_SCHEMA_VERSION,
+          instance.getScriptPatchVersion(),
+          instance.getScheduleDefinitionId(),
+          wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
+          Boolean.toString(SCHEDULER_IS_DRY_RUN),
+          SCHEDULER_TRIGGER_MODE);
     }
 
     private String finalReason() {
@@ -1300,6 +1298,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String lengthPrefixedIdentity(String... values) {
+    StringBuilder identity = new StringBuilder();
+    for (String value : values) {
+      String normalized = blankToEmpty(value);
+      // UTF-8 byte framing is part of persisted dedup identity across language boundaries.
+      identity
+          .append(normalized.getBytes(StandardCharsets.UTF_8).length)
+          .append(':')
+          .append(normalized);
+    }
+    return identity.toString();
   }
 
   private static long zeroIfNull(Long value) {

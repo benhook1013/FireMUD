@@ -71,8 +71,20 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 
 After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world, optional realm, and character via the lobby commands (`WORLDS`, `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; first-party WebSocket reconnects must also acquire a fresh connect token before the `/ws/game/**` handshake. Gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. If Telnet smart-client attach hints return later, they should ride hidden MCP metadata on the new TCP connection and remain advisory only.
 
-Redis-backed session state allows resumable recovery when still valid, or a fresh login when it is not.
-Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
+Redis-backed session state allows resumable recovery when the gameplay binding is still logically valid, or a fresh login when it is not. Logical binding expiry and physical Redis deletion are separate:
+
+- **Logical gameplay binding expiry** – On successful gameplay admission at `admissionAt`, Game Session sets the immutable `gameplaySessionExpiresAt` anchor:
+
+  `gameplaySessionExpiresAt = admissionAt + session_expiration_ms`
+
+  A resume, takeover, reconnect, or backend-token rotation may update socket and token metadata, but never moves this anchor. For a binding disconnected or suspended at `disconnectAt`, the resume deadline is:
+
+  `resumeDeadline = min(gameplaySessionExpiresAt, disconnectAt + effective resume-window-ms)`
+
+  Resume requires the current time to be before both limits and still requires current identity, membership, entitlement, and revocation checks. A genuinely fresh `PLAY` admission creates a new binding and anchor; it does not extend the old binding or its resume window.
+- **Physical Redis deletion** – The Redis key TTL is storage cleanup for the binding. Expiration processing, failover, or AOF replay can leave a key present after logical expiry, while cleanup can remove it earlier. Key presence is never permission to resume, and refreshing the physical TTL must never rewrite `gameplaySessionExpiresAt`.
+
+`session_expiration_ms` derives the immutable logical gameplay-binding lifetime established at admission and the key's initial physical cleanup TTL from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. It is not a JWT validity period: every server-side JWT remains valid only through its own `exp` claim. Rotating that JWT can preserve backend-call authorization before `exp` is reached, but cannot extend the gameplay expiry anchor or the resume deadline. Transcript retention under `firemud.reconnection.buffer.*` is independent and never extends resume eligibility.
 
 Resume is authorized from current identity and current membership/entitlement authority, not from the previous backend token alone. After a fresh successful `LOGIN`, Game Session must rebind any resumed gameplay session to a fresh backend token and reject resume if current membership authority for the tenant has been removed.
 
@@ -146,7 +158,7 @@ The active gameplay identity is `characterId`. When a new client successfully is
 | Gateway ↔ Game Session link degraded (`unreachable` sustained) | Gameplay becomes impossible; WebSocket sessions are closed with `1013` (`backend_unavailable`) and clients should reconnect with backoff as described below. Telnet clients are closed by the TCP Proxy with `backend_unavailable` when the gateway closes the upstream gameplay WebSocket or when the proxy cannot establish or maintain its bridge; clients reconnect and re-`LOGIN`, then re-`PLAY`. |
 | Game Session Service restart | **Target state:** usually invisible to clients, with gameplay continuity recovered from shared state after a short stall. **Current implementation may still be visible in some paths** if the upstream gameplay WebSocket is dropped; treat that as implementation debt to remove rather than canonical behavior. |
 | Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
-| Redis session expired/missing | Treated as fresh login; gameplay starts anew |
+| Gameplay binding logically expired or Redis key physically missing | Treated as non-resumable; fresh login and gameplay admission start a new binding |
 | New client logs in as same character | Old session terminated; new one resumes control |
 
 ---

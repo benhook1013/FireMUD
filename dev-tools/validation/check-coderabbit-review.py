@@ -161,6 +161,19 @@ query($owner:String!, $repo:String!, $number:Int!) {
           endCursor
         }
       }
+      reviews(first:100) {
+        nodes {
+          author { login }
+          body
+          state
+          submittedAt
+          url
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
     }
   }
 }
@@ -213,6 +226,27 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
   }
 }
 """.strip()
+    reviews_query = """
+query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$number) {
+      reviews(first:100, after:$after) {
+        nodes {
+          author { login }
+          body
+          state
+          submittedAt
+          url
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+""".strip()
 
     payload = run_gh_query(
         base_query,
@@ -221,6 +255,7 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
     pr = payload["data"]["repository"]["pullRequest"]
     review_threads = list(pr["reviewThreads"]["nodes"])
     comments = list(pr["comments"]["nodes"])
+    reviews = list((pr.get("reviews") or {}).get("nodes", []))
 
     review_threads_page = pr["reviewThreads"].get("pageInfo", {})
     while review_threads_page.get("hasNextPage"):
@@ -254,8 +289,24 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
         comments.extend(comments_connection["nodes"])
         comments_page = comments_connection.get("pageInfo", {})
 
+    reviews_page = (pr.get("reviews") or {}).get("pageInfo", {})
+    while reviews_page.get("hasNextPage"):
+        reviews_payload = run_gh_query(
+            reviews_query,
+            {
+                "owner": owner,
+                "repo": name,
+                "number": pr_number,
+                "after": reviews_page["endCursor"],
+            },
+        )
+        reviews_connection = reviews_payload["data"]["repository"]["pullRequest"]["reviews"]
+        reviews.extend(reviews_connection["nodes"])
+        reviews_page = reviews_connection.get("pageInfo", {})
+
     pr["reviewThreads"] = {"nodes": review_threads}
     pr["comments"] = {"nodes": comments}
+    pr["reviews"] = {"nodes": reviews}
     return payload
 
 
@@ -280,6 +331,34 @@ def extract_section_count(body: str, marker: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def actionable_summary_candidate(
+    author: str,
+    body: str,
+    timestamp: str | None,
+    url: str | None,
+    state: str | None,
+    latest_explicit_review_request_dt: datetime | None,
+) -> tuple[datetime, str | None, int, int] | None:
+    if state == "DISMISSED":
+        return None
+    if author != "coderabbitai" or ACTIONABLE_COMMENTS_MARKER not in body:
+        return None
+    timestamp_dt = parse_timestamp(timestamp)
+    if timestamp_dt is None:
+        return None
+    if (
+        latest_explicit_review_request_dt is not None
+        and timestamp_dt < latest_explicit_review_request_dt
+    ):
+        return None
+    return (
+        timestamp_dt,
+        url,
+        extract_section_count(body, OUTSIDE_DIFF_MARKER),
+        extract_section_count(body, DUPLICATE_COMMENTS_MARKER),
+    )
+
+
 def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime | None:
     match = REVIEW_LIMIT_WINDOW_PATTERN.search(body)
     if not match:
@@ -287,6 +366,10 @@ def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime |
     amount = int(match.group(1))
     unit = match.group(2).lower()
     return created_at + timedelta(**{"minutes" if unit.startswith("minute") else "hours": amount})
+
+
+def is_substantive_review_body(body: str) -> bool:
+    return SUBSTANTIVE_REVIEW_MARKER in body or ACTIONABLE_COMMENTS_MARKER in body
 
 
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:
@@ -338,6 +421,30 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             ):
                 latest_coderabbit_review_finished_dt = created_at_dt
                 latest_coderabbit_review_finished_at = created_at
+
+    for review in (pr.get("reviews") or {}).get("nodes", []):
+        if review.get("state") == "DISMISSED":
+            continue
+        author = (review.get("author") or {}).get("login", "")
+        submitted_at = review.get("submittedAt")
+        submitted_at_dt = parse_timestamp(submitted_at)
+        if (
+            author != "coderabbitai"
+            or submitted_at_dt is None
+            or not is_substantive_review_body(review.get("body") or "")
+        ):
+            continue
+        if (
+            latest_coderabbit_review_finished_dt is None
+            or submitted_at_dt > latest_coderabbit_review_finished_dt
+        ):
+            latest_coderabbit_review_finished_dt = submitted_at_dt
+            latest_coderabbit_review_finished_at = submitted_at
+        if latest_commit_at_dt is not None and submitted_at_dt >= latest_commit_at_dt and (
+            latest_review_outcome_dt is None or submitted_at_dt >= latest_review_outcome_dt
+        ):
+            latest_review_outcome_dt = submitted_at_dt
+            latest_review_outcome = "substantive"
 
     explicit_review_after_latest_commit = (
         latest_explicit_review_request_dt is not None
@@ -419,22 +526,43 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         )
     )
     latest_review_request_noop = latest_review_outcome == "noop"
-    for comment in pr["comments"]["nodes"]:
-        author = (comment.get("author") or {}).get("login", "")
-        body = comment.get("body", "")
-        created_at = comment.get("createdAt")
-        created_at_dt = parse_timestamp(created_at)
-        if author != "coderabbitai" or ACTIONABLE_COMMENTS_MARKER not in body:
+    actionable_items = [
+        (
+            (comment.get("author") or {}).get("login", ""),
+            comment.get("body") or "",
+            comment.get("createdAt"),
+            comment.get("url"),
+            None,
+        )
+        for comment in pr["comments"]["nodes"]
+    ]
+    actionable_items.extend(
+        (
+            (review.get("author") or {}).get("login", ""),
+            review.get("body") or "",
+            review.get("submittedAt"),
+            review.get("url"),
+            review.get("state"),
+        )
+        for review in (pr.get("reviews") or {}).get("nodes", [])
+    )
+    for author, body, timestamp, url, state in actionable_items:
+        candidate = actionable_summary_candidate(
+            author,
+            body,
+            timestamp,
+            url,
+            state,
+            latest_explicit_review_request_dt,
+        )
+        if candidate is None:
             continue
-        if latest_explicit_review_request_dt is not None and (
-            created_at_dt is None or created_at_dt < latest_explicit_review_request_dt
-        ):
-            continue
-        if latest_actionable_comment_dt is None or created_at_dt > latest_actionable_comment_dt:
-            latest_actionable_comment_dt = created_at_dt
-            latest_actionable_comment_url = comment.get("url")
-            outside_diff_actionable_comments = extract_section_count(body, OUTSIDE_DIFF_MARKER)
-            duplicate_actionable_comments = extract_section_count(body, DUPLICATE_COMMENTS_MARKER)
+        timestamp_dt, candidate_url, outside_count, duplicate_count = candidate
+        if latest_actionable_comment_dt is None or timestamp_dt > latest_actionable_comment_dt:
+            latest_actionable_comment_dt = timestamp_dt
+            latest_actionable_comment_url = candidate_url
+            outside_diff_actionable_comments = outside_count
+            duplicate_actionable_comments = duplicate_count
 
     unresolved_total = unresolved_non_outdated + unresolved_outdated
     latest_review_request_still_running = (

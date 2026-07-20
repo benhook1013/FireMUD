@@ -1,6 +1,6 @@
 # Recurring Code Review Sweeps
 
-This is the standing guide for repeated review patterns found by CodeRabbit, human, or AI review. It identifies reusable sweep families; it is not permission for speculative repo-wide churn. [AGENTS.md](../../AGENTS.md) owns repository workflow, delegation, validation, and model selection. [review-checklists.md](./review-checklists.md) and [testing-focus-areas.md](./testing-focus-areas.md) supply broader completion and regression-risk context.
+This is the standing guide for repeated review patterns found by CodeRabbit, human, or AI review. It identifies reusable sweep families; it is not permission for speculative repo-wide churn. [AGENTS.md](../../AGENTS.md) owns always-on process and safety rules; [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) and [validation and runtime proof](../developer-workflows/validation-and-runtime-proof.md) own their conditional procedures. [review-checklists.md](./review-checklists.md) and [testing-focus-areas.md](./testing-focus-areas.md) supply broader completion and regression-risk context.
 
 ## 1. Evidence and Execution Rules
 
@@ -9,7 +9,7 @@ This is the standing guide for repeated review patterns found by CodeRabbit, hum
 - `Aggressive` means standardize throughout the touched cluster when the pattern is clear. `Bounded` means keep the change in the declared seam and prove its local assumption. `Needs proof` means correctness, external contract, schema, routing, CI, or observability behavior is at stake; never treat it as style cleanup.
 - Preserve target-state behavior directly. FireMUD is pre-v1: replace obsolete paths and update their callers, tests, and docs rather than adding compatibility scaffolding unless it is explicitly required.
 - Keep delegated write scopes disjoint. A worker may perform `Aggressive` work in its assigned cluster and obvious local `Bounded` work, but must not self-direct a repo-wide `Needs proof` sweep.
-- Use the validation required by [AGENTS.md](../../AGENTS.md): formatting and affected code checks for code changes; `linkCheck lintMarkdown` for documentation; canonical fresh smoke proof for runtime wiring, startup, auth, persistence, migrations, or packaged behavior. Diagnostic output and partial test runs are not completion evidence.
+- Use [validation and runtime proof](../developer-workflows/validation-and-runtime-proof.md): formatting and affected code checks for code changes; `linkCheck lintMarkdown` for documentation; canonical fresh smoke proof for runtime wiring, startup, auth, persistence, migrations, or packaged behavior. Diagnostic output and partial test runs are not completion evidence.
 - Record completed commands, the proof surface inspected, and any excluded danger. For an exhaustive external audit, require a per-item coverage ledger, named source/design documents read, and an incomplete-review gate; an unsupported "no findings" result is not evidence.
 
 ## 2. Recurring Sweep Matrix
@@ -35,7 +35,7 @@ This is the standing guide for repeated review patterns found by CodeRabbit, hum
 
 1. The orchestrator selects one cluster or invariant seam, reads its authoritative architecture/service docs, and records the candidate pattern, boundary, exclusions, mode, and expected proof.
 2. The investigator inventories occurrences with the appendix commands and returns a coverage ledger that distinguishes confirmed instances from search noise.
-3. The implementer receives a disjoint scope and explicit success conditions. The orchestrator retains design decisions, integration, and all `Needs proof` ownership. Select and supervise roles according to [AGENTS.md](../../AGENTS.md).
+3. The implementer receives a disjoint scope and explicit success conditions. The orchestrator retains design decisions, integration, and all `Needs proof` ownership. Select and supervise roles according to [AI delegation and review](../developer-workflows/ai-delegation-and-review.md).
 4. The verifier checks the exact public contract, implementation, and focused proof. For runtime, schema, routing, authentication, or packaging changes, it requires the relevant canonical fresh proof rather than stale local state.
 5. The orchestrator records completed validation and exclusions, then either converges every in-scope adopter or leaves a narrowly described follow-up; do not claim a broad sweep from partial coverage.
 

@@ -87,7 +87,7 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
   - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
     - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
   - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `characterId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
-  See [AGENTS.md](../../AGENTS.md) for required logging and metrics interceptor conventions.
+  Shared logging, metrics, and tracing interceptors implement the observability requirements of this contract; RPC handlers or response-aware wrappers remain responsible for returning the typed `ErrorDetail`. Services must register the interceptors for every gRPC server.
 
 Example implementation:
 

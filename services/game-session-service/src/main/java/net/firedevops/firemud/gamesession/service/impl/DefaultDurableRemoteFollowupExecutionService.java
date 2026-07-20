@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 public final class DefaultDurableRemoteFollowupExecutionService
     implements DurableRemoteFollowupExecutionService {
   private static final String CLAIMED_STATUS = RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED;
+  private static final String TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND = "trigger_script_event";
 
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
@@ -142,6 +143,11 @@ public final class DefaultDurableRemoteFollowupExecutionService
       try {
         root = objectMapper.readTree(payloadJson);
       } catch (IOException ex) {
+        if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(followup.getPayloadKind())) {
+          return failure(
+              "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
+              "Target-side remote followup payload is not valid JSON");
+        }
         if ((followup.getPayloadKind() == null || followup.getPayloadKind().isBlank())
             && (followup.getRequestedCommand() == null
                 || followup.getRequestedCommand().isBlank())) {
@@ -175,6 +181,18 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "REMOTE_FOLLOWUP_KIND_REQUIRED",
           "Target-side remote followup payload must declare a kind");
     }
+    PlayableStateScope playableStateScope;
+    try {
+      playableStateScope =
+          TriggerScriptEventRequestFactory.requirePlayableStateScope(
+              authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
+    } catch (IllegalArgumentException ex) {
+      return failure(
+          TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)
+              ? "REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID"
+              : "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
+          ex.getMessage());
+    }
     if ("enqueue_gameplay_command".equals(payloadKind)) {
       return executeEnqueueGameplayCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
@@ -183,8 +201,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return executeEnqueueAutomationCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
-    if ("trigger_script_event".equals(payloadKind)) {
-      return executeTriggerScriptEvent(root, coordinator, followup);
+    if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
+      return executeTriggerScriptEvent(root, coordinator, followup, playableStateScope);
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -351,8 +369,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private PayloadExecution executeTriggerScriptEvent(
-      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+      JsonNode root,
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      PlayableStateScope playableStateScope) {
     try {
+      if (root != null && !root.isMissingNode() && !root.isObject()) {
+        throw new IllegalArgumentException("payload must be a JSON object");
+      }
       String scriptId = authoritativeText(coordinator.getScriptId(), root, "scriptId");
       String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
       String pluginVersionId =
@@ -368,6 +392,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
           GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
               worldSlug, realmSlug, pointerVersion);
+      boolean isDryRun = authoritativeBoolean(false, root, "isDryRun");
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequestFactory.builder(
               new TriggerScriptEventRequestFactory.CommonFields(
@@ -384,8 +409,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   requiredAuthoritativeText(
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
+                  isDryRun,
                   triggerMode(root, followup),
-                  playableStateScope(followup.getPlayableStateScope()),
+                  playableStateScope,
                   requiredAuthoritativeText(
                       followup.getReadSnapshotToken(), root, "readSnapshotToken"),
                   eventPayloadJson(root, followup)),
@@ -555,17 +581,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       return payloadNode.toString();
     }
     throw new IllegalArgumentException("eventPayload is required");
-  }
-
-  private static PlayableStateScope playableStateScope(String value) {
-    if (value == null || value.isBlank()) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    }
-    return switch (value) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> throw new IllegalArgumentException("Unsupported playableStateScope=" + value);
-    };
   }
 
   private static Long optionalLong(JsonNode root, String fieldName) {

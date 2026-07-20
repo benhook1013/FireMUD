@@ -96,6 +96,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                           "v1",
                           scope.scriptPatchVersion(),
                           command.getCommandId(),
+                          false,
                           TriggerMode.TRIGGER_MODE_NORMAL,
                           scope.playableStateScope(),
                           "game-session:onCommand:"
@@ -312,6 +313,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                     "v1",
                     scope.scriptPatchVersion(),
                     scriptEventId,
+                    false,
                     TriggerMode.TRIGGER_MODE_NORMAL,
                     scope.playableStateScope(),
                     readSnapshotToken,
@@ -396,13 +398,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
           entityId);
       return null;
     }
+    PlayableStateScope playableStateScope;
+    try {
+      playableStateScope = resolvePlayableStateScope(context, command);
+    } catch (IllegalArgumentException ex) {
+      LOG.debug(
+          "Skipping script event publish because playable state scope is not explicit: {}",
+          ex.getMessage());
+      return null;
+    }
     return new PublishingScope(
         Long.toString(tenantId),
         Long.toString(gameInstanceId),
         scopeRegion.regionId(),
         scopeRegion.regionEpoch(),
         entityId,
-        resolvePlayableStateScope(context, command),
+        playableStateScope,
         scriptPatchVersion,
         resolveRoutingBundle(context, command));
   }
@@ -445,12 +456,11 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private static PlayableStateScope resolvePlayableStateScope(
       SessionContext context, GameplayCommand command) {
-    if (command != null && StringUtils.hasText(command.getPlayableStateScope())) {
-      return resolvePlayableStateScope(command.getPlayableStateScope());
-    }
-    return context == null
-        ? PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
-        : resolvePlayableStateScope(context.playableStateScope());
+    String playableStateScope =
+        command != null && StringUtils.hasText(command.getPlayableStateScope())
+            ? command.getPlayableStateScope()
+            : context == null ? null : context.playableStateScope();
+    return TriggerScriptEventRequestFactory.requirePlayableStateScope(playableStateScope);
   }
 
   private static TriggerScriptEventRequestFactory.RoutingBundle resolveRoutingBundle(
@@ -551,19 +561,6 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
 
   private record PublishedRegionScope(String regionId, long regionEpoch) {}
-
-  private static PlayableStateScope resolvePlayableStateScope(String playableStateScope) {
-    if (!StringUtils.hasText(playableStateScope)) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    }
-    return switch (playableStateScope) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default ->
-          throw new IllegalArgumentException(
-              "Unsupported playableStateScope=" + playableStateScope);
-    };
-  }
 
   private static long positive(Long value, long fallback) {
     return value != null && value > 0 ? value : fallback;

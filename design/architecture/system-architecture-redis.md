@@ -255,40 +255,42 @@ Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) a
 Key properties:
 
 - `sessionId` is an opaque, server-generated identifier (for example, a UUID or fixed-length hash) chosen so key length stays bounded and independent of the raw JWT or account token.
-- Session entries use a **derived session TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
-
-  - A logical expiry timestamp is stored inside the session value.
-  - The Redis TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
-- The logical expiry timestamp is the **authoritative bound** on reconnection:
-
-  - Reconnect/resume attempts are rejected as expired once the logical expiry has passed, even if the Redis TTL has not yet removed the key (for example, due to AOF replay or failover drift).
-  - When either the key is missing or the logical expiry has passed, the session is treated as non-resumable and requires a fresh `LOGIN`.
-- The derived `session_expiration_ms` window is computed as:
+- Session entries use a **derived physical Redis TTL** computed from authentication settings (see `infrastructure/environment-and-secrets-catalog.md#authentication--jwt`):
 
   - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
-  - This ensures the reconnection window is aligned with JWT lifetime; operators who want a shorter window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a separate “session TTL” knob.
-- Logical expiry is necessary but not sufficient for resuming gameplay: Game Session must also validate current account identity, current membership authority, and current revocation state as defined in `system-architecture-authentication.md`. Redis session bindings therefore store rebinding metadata such as `authTokenHash`, `authTokenIssuedAt`, and `membershipVersion`, but resume must rebind to a fresh backend token after a fresh successful `LOGIN` rather than depending on the old token still being valid.
+  - `session_expiration_ms` derives the immutable logical gameplay-binding lifetime established at admission and the key's initial physical cleanup TTL. It is not a JWT validity period and does not replace the JWT `exp` claim.
+  - On successful gameplay admission at `admissionAt`, the session value stores an immutable logical expiry anchor:
 
-Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The combination of JWT expiry, derived session TTL, and Redis TTL defines the maximum reconnection window; TTL acts as garbage collection, while logical expiry governs gameplay semantics.
+    `gameplaySessionExpiresAt = admissionAt + session_expiration_ms`
 
-### Operational Trade-Offs for Session TTL vs JWT Lifetime
+  - The Redis TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` is physical cleanup metadata and may be refreshed while the binding is active, but it must never move `gameplaySessionExpiresAt`.
+- Logical gameplay binding expiry is authoritative for resumption. Game Session rejects reconnect/resume once `gameplaySessionExpiresAt` has passed, even if the Redis key remains after delayed expiration, AOF replay, or failover drift. Physical deletion can remove the key earlier; a missing key is also non-resumable. Key presence and physical TTL are never permission to resume.
+- For a binding disconnected or suspended at `disconnectAt`, the effective resume deadline is:
 
-The coupling between `session_expiration_ms` and JWT lifetime is intentional:
+  `resumeDeadline = min(gameplaySessionExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`
 
-- It avoids drift between “how long a JWT is valid” and “how long a Redis session can be resumed”.
-- It keeps the reconnection window easy to reason about for both operators and game designers.
+  Resume also requires current account identity, membership authority, entitlement, and revocation checks. A resume, takeover, reconnect, or server-token rotation cannot change the logical anchor or this resume deadline. A genuinely fresh `PLAY` admission creates a new binding and anchor only after ordinary admission succeeds.
+- JWT validity remains bounded by each token's own `exp` claim. Game Session may rotate `authTokenHash` and `authTokenIssuedAt` to obtain a currently valid backend token, but token rotation cannot extend gameplay expiry or resume eligibility.
+
+Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The effective disconnected-resume window is the stricter of the remaining logical gameplay lifetime and `firemud.reconnection.policy.resume-window-ms`.
+
+### Operational Trade-Offs for Session and Resume Lifetimes
+
+`session_expiration_ms` is sized from the configured JWT lifetime for server-side storage and binding cleanup, while JWT validity and disconnected resume remain separate policies:
+
+- Each JWT remains unusable after its own `exp`, regardless of the Redis TTL or gameplay binding anchor.
+- The immutable gameplay binding anchor prevents token rotation from extending a session beyond its server-side ceiling.
+- Tenant/game continuity policy can choose a shorter resume window without changing credential or token validity semantics.
 
 When changing authentication settings, keep these trade-offs in mind:
 
-- **Shorter JWT lifetime, shorter reconnect window**
-  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` directly shrinks both authentication TTL and reconnection TTL.
-  - Use this when you want stricter auth/security guarantees and are comfortable with players needing to re-authenticate more often after disconnects.
-- **Longer reconnect window**
-  - To lengthen the reconnection window without materially weakening JWT lifetime, prefer increasing `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in small, documented increments rather than introducing a separate “session TTL” knob.
-  - Document any non-default safety margin in environment docs so operators understand that reconnects can remain valid slightly past JWT expiry, but always within a bounded, intentional window.
+- **Shorter JWT lifetime**
+  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the derived logical gameplay-binding lifetime, initial physical cleanup TTL, and normal service-token lifetime for new admissions. It does not make any individual JWT valid beyond its `exp` or permit token rotation to move an existing gameplay anchor.
+- **Different disconnected-resume policy**
+  - Adjust `firemud.reconnection.policy.resume-window-ms` through the canonical effective-settings path. Increasing it never permits resume beyond the remaining logical gameplay binding lifetime.
 - **Unsupported combinations**
-  - Do not add independent per-environment or per-tenant “session TTL” controls that diverge from `session_expiration_ms`; they make reconnection semantics harder to reason about and are considered out of scope for this design.
-  - If requirements emerge that truly need a different model (for example, long-lived reconnect windows with very short JWTs), they should be captured as a dedicated design change that revisits the coupling in this section rather than as ad-hoc overrides.
+  - Do not treat transcript retention, cache TTL, Redis key presence, or physical deletion timing as permission to resume.
+  - Do not add another binding/session TTL outside the derived server-side ceiling and the canonical disconnected-resume policy.
 
 For full details on how session keys integrate with reconnect and takeover flows, see:
 

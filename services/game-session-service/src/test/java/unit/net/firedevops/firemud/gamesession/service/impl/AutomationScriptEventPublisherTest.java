@@ -24,6 +24,9 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -83,6 +86,7 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getEventType()).isEqualTo("onCommand");
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
+    assertThat(request.getIsDryRun()).isFalse();
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");
     assertThat(request.getPayloadJson()).contains("\"commandId\":\"cmd-1\"");
     assertThat(request.getPayloadJson()).contains("\"commandName\":\"LOOK\"");
@@ -111,6 +115,36 @@ class AutomationScriptEventPublisherTest {
             Runnable::run);
 
     publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"", " ", "UNSPECIFIED", "UNKNOWN"})
+  void skipsCommandEventWhenPlayableStateScopeIsNotExplicit(String playableStateScope) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishCommandEvent(
+        gameplayContext("R-1", playableStateScope), command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
   }
@@ -421,6 +455,10 @@ class AutomationScriptEventPublisherTest {
   }
 
   private static SessionContext sharedGameplayContext(String roomId) {
+    return gameplayContext(roomId, "SHARED");
+  }
+
+  private static SessionContext gameplayContext(String roomId, String playableStateScope) {
     return new SessionContext(
         17L,
         9L,
@@ -436,7 +474,7 @@ class AutomationScriptEventPublisherTest {
         "demo",
         "production",
         7L,
-        "SHARED");
+        playableStateScope);
   }
 
   private static BuiltInTextCommandAliasResolver builtInAliasResolver() {

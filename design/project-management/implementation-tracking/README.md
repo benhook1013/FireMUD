@@ -1,6 +1,6 @@
 # Domain Implementation Tracking
 
-These files are the permanent domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md).
+These files are the permanent domain-oriented implementation tracking surface. They do not define product or architecture target state; canonical design remains under [`design/architecture`](../../architecture/README.md). The [Capability Allocation](./capability-allocation.md) assigns every leaf in the [Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md) to exactly one primary tracker and records secondary handoffs.
 
 Each tracker is scan-first. Its `Consolidated Implementation Record` describes current domain capabilities, authority boundaries, active gaps, and future decisions in reader-facing domain language.
 
@@ -13,6 +13,28 @@ Each tracker contains:
 - decisions and service-map context where the domain boundary requires them.
 
 Use the relevant tracker as the reader-facing account of implementation status. Keep its status, implementation record, validation, gaps, decisions, and service-map sections aligned when a domain boundary changes, while keeping target-state design in the canonical architecture documents.
+
+## Capability Status Contract
+
+Each tracker contains one `Capability Status` row for every capability it primarily owns. Existing narrative records remain useful context, but the capability rows are the complete scan-first status surface.
+
+Implementation states:
+
+- `implemented`: the complete currently designed capability boundary exists in production code and contracts;
+- `partial`: a bounded implementation exists but designed behavior remains missing;
+- `not-implemented`: no credible production implementation of the designed capability exists;
+- `design-unresolved`: competing or insufficient canonical target states prevent implementation classification; and
+- `not-applicable`: the capability is intentionally outside this product boundary, with a recorded rationale.
+
+Verification states:
+
+- `proven`: current executable proof covers the claimed implemented boundary;
+- `audited`: implementation and tests were inspected, but current executable proof was not established for the whole claimed boundary;
+- `unverified`: no adequate proof or completed audit supports the claim;
+- `drift-found`: proof or inspection contradicts the tracker/design claim; and
+- `not-applicable`: no verification is required because implementation is intentionally not applicable.
+
+Every row links canonical design, records the most relevant secondary tracker handoffs, and states the remaining gap or decision. `implemented` and `partial` rows name concrete production anchors. A `not-implemented` row always records an explicit `No production anchor:` rationale; `design-unresolved` and `not-applicable` rows use the same marker when no production implementation exists. Links to adjacent production substrate may still provide context without implying implementation. A `proven` row must also name focused executable proof. An `audited`, `unverified`, or `not-applicable` row may omit executable proof only when its proof cell uses the explicit `No focused executable proof:` marker; a local `README.md` or `package.json` may provide context but never counts as proof. Evidence targets must be repository-local and resolvable: design anchors stay under `design/architecture`, production anchors stay outside test-only and documentation-only surfaces, and executable proof anchors target tests or canonical validation/CI/smoke tooling. The self-validating `dev-tools/tests/architecture-doc-contracts.sh` may also appear as the implementation anchor for the verification capability it enforces. The [Capability Allocation](./capability-allocation.md) is the exhaustive handoff ledger; status rows may name the smaller operational subset needed to understand that capability. `implemented` does not imply `proven`, and a historical broad test run does not substitute for focused proof.
 
 ## Trackers
 

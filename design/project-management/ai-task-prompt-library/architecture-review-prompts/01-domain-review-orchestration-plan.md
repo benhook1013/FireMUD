@@ -4,9 +4,9 @@ Use this plan to run the architecture review prompts as a coordinated convergenc
 
 Scope for this pass:
 
-- Include prompts `01` through `15`.
-- Exclude `16-monetization-and-account-lifecycle.md` unless a blocker discovered elsewhere requires a billing or entitlement decision.
-- Use `17-per-service-deep-dive-template.md` only as a follow-up when a convergence pass identifies a service that still has unresolved implementation-blocking ambiguity.
+- Include the 16 domain prompts listed in the suggested lane split.
+- Exclude `25-monetization-and-account-lifecycle.md` unless a blocker discovered elsewhere requires a billing or entitlement decision.
+- Use `30-per-service-deep-dive-template.md` only as a follow-up when a convergence pass identifies a service that still has unresolved implementation-blocking ambiguity.
 
 Required setup:
 
@@ -27,19 +27,19 @@ Recommended execution model:
 Suggested lane split:
 
 1. Core architecture lane
-   Prompts: `01-main-architecture-overview.md`, `02-game-loop-and-tick-core.md`, `03-redis-runtime-and-data-contracts.md`
+   Prompts: `10-main-architecture-overview.md`, `11-game-loop-and-tick-core.md`, `12-redis-runtime-and-data-contracts.md`
    Focus: service boundaries, tick ownership, transactional rules, Redis ownership and mutation contracts
 2. Operations lane
-   Prompts: `04-redis-operations-and-recovery.md`, `11-observability-contracts.md`, `12-operations-runbooks-and-recovery.md`
+   Prompts: `13-redis-operations-and-recovery.md`, `20-observability-contracts.md`, `21-operations-runbooks-and-recovery.md`
    Focus: operator actions, failure handling, recovery, alerts, traces, verification contracts
 3. Authoring lane
-   Prompts: `05-scripting-dsl-and-runtime.md`, `06-designer-tooling-and-modding.md`, `07-world-and-content-authoring.md`
+   Prompts: `17-scripting-dsl-and-runtime.md`, `18-designer-tooling-and-modding.md`, `19-world-and-content-authoring.md`
    Focus: authoring lifecycle, validation, packaging, publish semantics, rollback and designer workflows
 4. Data and platform lane
-   Prompts: `08-persistence-assets-and-migrations.md`, `13-environments-and-secrets.md`, `14-deployment-cicd-and-platform-security.md`
-   Focus: persistence ownership, asset handling, migrations, environment isolation, deployment and rollback safety, platform security
+   Prompts: `16-persistence-assets-and-migrations.md`, `22-environments-and-secrets.md`, `23-deployment-cicd-and-platform-security.md`, `24-saas-platform-and-product-coherence.md`
+   Focus: persistence ownership, asset handling, migrations, environment isolation, deployment and rollback safety, platform security, and SaaS/product coherence
 5. Access and client lane
-   Prompts: `09-networking-protocols-and-reconnection.md`, `10-auth-sessions-and-multi-tenancy.md`, `15-user-journeys-and-ux.md`
+   Prompts: `14-networking-protocols-and-reconnection.md`, `15-auth-sessions-and-multi-tenancy.md`, `26-user-journeys-and-ux.md`
    Focus: client entry flows, protocol handling, reconnection, session and tenant boundaries, whether user journeys are actually implementable
 
 Why use lanes instead of one prompt per thread:
@@ -76,7 +76,7 @@ Coordinator responsibilities:
 - Merge duplicate findings across lanes.
 - Collapse wording variants into a single canonical blocker when multiple lanes identify the same underlying issue.
 - Identify cross-lane contradictions where one lane assumes a contract another lane leaves undefined or defines differently.
-- Decide whether any remaining blockers are truly architecture-level or should be handled by a service-specific review using `17-per-service-deep-dive-template.md`.
+- Decide whether any remaining blockers are truly architecture-level or should be handled by a service-specific review using `30-per-service-deep-dive-template.md`.
 - Stop when the remaining open items are either:
   - implementation-blocking decisions that need human resolution, or
   - worthwhile non-blocking follow-ups that should not delay implementation

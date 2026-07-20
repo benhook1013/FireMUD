@@ -55,7 +55,11 @@ class MultiplayerLoadProofCrossServiceTest {
     GameplayCrossServiceStack stack = STACK;
     STACK = null;
     if (stack != null) {
-      stack.close();
+      try {
+        assertThat(stack.gameDesignStub().publishedReleaseBundleRequests()).isPositive();
+      } finally {
+        stack.close();
+      }
     }
   }
 

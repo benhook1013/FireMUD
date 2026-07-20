@@ -5,9 +5,10 @@ Thank you for your interest in improving the FireMUD Game Platform! This documen
 ## Branching Strategy
 
 - The `main` branch contains the latest stable code.
-- Create feature branches from `main` using the format `feature/<short-description>` or `bugfix/<issue-number>`.
-- Keep your branch up to date by regularly pulling from `main` and rebasing or merging as needed.
-- Open pull requests (PRs) against `main` when your changes are ready for review.
+- `develop` is the working integration branch; `main` contains stable code.
+- Create feature branches from `develop` using the format `feature/<short-description>` or `bugfix/<issue-number>`.
+- Keep your branch up to date by regularly pulling from `develop` and rebasing or merging as needed.
+- Open pull requests (PRs) against `develop` when your changes are ready for review.
 
 ## Onboarding
 
@@ -23,7 +24,7 @@ Once your environment is running you can create a feature branch and submit a PR
 
 ## Code Style Summary
 
-- Follow the patterns in [AGENTS.md](./AGENTS.md). The `.windsurfrules` file in the repository root should reference this document for IDE integration.
+- Follow the repository guidance in [AGENTS.md](./AGENTS.md), with conditional procedures indexed in [developer workflows](./design/developer-workflows/README.md).
 - Use four spaces for indentation and avoid trailing whitespace.
 - Favor immutable data structures, clear method names, and concise classes.
 - Backend code targets Java 21+ with Spring Boot 4.x; frontend code follows standard React/TypeScript conventions.
@@ -58,7 +59,7 @@ Hooks run `spotlessApply` on commit and then run file-scoped fixes/checks for Ma
 3. Make your code and documentation changes.
 4. Run the test suite locally and ensure all checks pass.
 5. Commit using clear, descriptive messages and push your branch to your fork.
-6. Open a pull request against the `main` branch of this repository.
+6. Open a pull request against the `develop` branch of this repository.
 7. Fill out the PR template, describing your changes and referencing any related issues.
 8. Participate in the review process by addressing feedback promptly.
 

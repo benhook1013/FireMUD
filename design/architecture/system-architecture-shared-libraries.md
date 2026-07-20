@@ -6,7 +6,7 @@ FireMUD's microservices share a set of utility classes and data transfer objects
 
 ## Common DTOs & Error Handling
 
-These classes define the basic request/response shapes recommended in [AGENTS.md](../../AGENTS.md):
+These classes define FireMUD's basic shared request/response shapes:
 
 - **`ApiResponse<T>`** – Standard wrapper returned by controllers with `success()` and `error()` helpers.
 - **`ResultStatus`** – Enum used by `ApiResponse` (`SUCCESS` / `ERROR`).

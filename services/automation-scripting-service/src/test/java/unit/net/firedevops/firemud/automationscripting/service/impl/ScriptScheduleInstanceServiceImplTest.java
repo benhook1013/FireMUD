@@ -546,7 +546,10 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getWorldSlug()).isEqualTo("demo");
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
+    assertThat(workItem.getEventSchemaVersion()).isEqualTo("v1");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
+    assertThat(workItem.getScriptEventId())
+        .isEqualTo("timer-b89521820ef0eb4931c1c67f180a41dbc674dd3d7b769d2bbf8097f701ea");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -563,6 +566,58 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueTickId()).isEqualTo(160L);
               assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
             });
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesTimerIdentityByPlayableStateScope() {
+    ScriptScheduleInstance shared =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance isolated =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    isolated.setPlayableStateScope("ISOLATED");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(shared, isolated));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    service.observeRuntimeTickProgress(
+        new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+            "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2)).saveAndFlush(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates()
+        .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesTimerIdentityWhenFieldsContainDelimiters() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc|guard", "guard.patrol.v1", 30L, 130L);
+    first.setEventType("onInterval");
+    ScriptScheduleInstance second = tickSchedule("guard-1", "npc", "guard.patrol.v1", 30L, 130L);
+    second.setEventType("guard|onInterval");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    service.observeRuntimeTickProgress(
+        new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+            "1", "game-1", "region-1", 12L, 131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2)).saveAndFlush(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates()
+        .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
   }
 
   @Test

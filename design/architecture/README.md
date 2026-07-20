@@ -34,8 +34,10 @@ Open or amend the architecture docs before implementation when a change would al
 
 ## Directories
 
+- [**decisions/**](./decisions/README.md) – Consequential architecture decision records and their current status.
 - [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
+- [**product-capability-taxonomy.md**](./product-capability-taxonomy.md) – Stable capability identifiers for design navigation, decision review, and implementation alignment.
 - [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
 
 ## Runtime Architecture
