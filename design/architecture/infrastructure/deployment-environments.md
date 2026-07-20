@@ -113,6 +113,7 @@ FireMUD uses Docker Compose for local development and testing:
   - `/actuator/health/readiness` for traffic-admission readiness.
 - Liveness means the process is alive and not wedged. It must not fail only because a downstream dependency is unavailable.
 - Readiness means the service can safely accept new traffic for the contract it currently exposes. For user-facing and gameplay-path services, readiness is dependency-aware rather than process-only.
+- Dependencies used by health or admission are classified as `admission-critical`, `feature-degradable`, `background-control-plane`, or `startup-only`. A dependency is not admission-critical merely because ideal operation normally uses it.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart containers that become `unhealthy`.
@@ -180,12 +181,16 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - **Readiness probes** call `/actuator/health/readiness` to determine whether a pod should receive new traffic.
   - **Liveness probes** call `/actuator/health/liveness` to detect wedged or dead processes.
 - Readiness must represent safe traffic admission for the service’s current public contract, not merely successful boot.
+- Pod readiness becomes false only when the pod is unsafe for every route represented by that Kubernetes Service. A bounded route or feature failure uses a route-specific admission gate or, where justified, a distinct Service so unrelated safe traffic remains admitted.
+- Every dependency is classified for the concrete route contract as admission-critical, feature-degradable, background/control-plane, or startup-only. Upstream readiness does not recursively import every downstream optional or route-local dependency.
 - Dependency-aware readiness checks should prefer bounded, operation-shaped canaries over raw ping endpoints when the user-visible contract immediately depends on a downstream RPC path. These canaries must remain side-effect free. A synthetic probe that intentionally exercises an RPC with invalid or missing identifiers may still count as reachable when it returns an application-level error such as `INVALID_ARGUMENT`, `NOT_FOUND`, or `AUTH_INVALID_CREDENTIALS`; transport failures, timeouts, and upstream-failure responses do not count as ready.
 - Readiness-only downstream RPC canaries must use explicit short deadlines so readiness timing remains bounded even when the normal client channel uses a longer retry or timeout budget.
+- Probe deadlines, Kubernetes timeouts, cache age, hysteresis, edge admission, and client-visible timeout budgets must form one bounded timing model. Brief dependency noise must not flap admission continuously, while cached success must not outlive the safety window.
 - Synthetic probe identifiers must be explicitly reserved for readiness-only traffic rather than borrowing plausible real IDs like `0`. Use obvious sentinel values such as `__readiness__` or dedicated out-of-band numeric ranges for internal probes.
 - Liveness must remain local-only and must not fail because a dependency is degraded.
 - When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.
 - For the Telnet edge path, the TCP Proxy Service must refuse new sockets with an explicit startup-unavailable disconnect until the downstream `connect -> LOGIN -> first LOOK` path is ready rather than accepting the connection and allowing later gameplay commands to stall or fail.
+- Readiness primarily governs new admission. Existing sessions continue during admission closure only when their established path remains safe; otherwise the owning runtime applies its documented pause, rejection, drain, or disconnect behavior.
 - Dependency-aware readiness payloads use one shared shape:
   - `contract`: the traffic contract protected by readiness.
   - `admissionMeaning`: a short canonical statement of what `UP` means for new traffic.

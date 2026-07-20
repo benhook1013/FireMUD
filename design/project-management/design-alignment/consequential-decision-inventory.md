@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 7 | 25 | `in-progress` |
+| 6 | Operations and delivery | 8 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **144** | **183** | `in-progress` |
+| **Total** | | **145** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -309,7 +309,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `RECOVERY-01` — `revised` on 2026-07-20; [ADR 0149](../../architecture/decisions/adr-0149-automated-recovery-proof-and-differentiated-traffic-open-gates.md)
 - [x] `RECOVERY-02` — `revised` on 2026-07-20; [ADR 0150](../../architecture/decisions/adr-0150-automated-event-classified-post-restore-trust-reset.md)
 - [x] `OPS-02` — `revised` on 2026-07-20; [ADR 0151](../../architecture/decisions/adr-0151-risk-tiered-progressive-rollout-with-compatibility-bounded-rollback.md)
-- [ ] `HEALTH-01`
+- [x] `HEALTH-01` — `revised` on 2026-07-20; [ADR 0152](../../architecture/decisions/adr-0152-dependency-classified-liveness-readiness-and-route-admission.md)
 - [ ] `OBS-04`
 - [ ] `OBS-05`
 

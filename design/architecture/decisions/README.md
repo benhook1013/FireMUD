@@ -165,6 +165,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0149](./adr-0149-automated-recovery-proof-and-differentiated-traffic-open-gates.md) | Accepted | `PO-3` | `PO-4`, `GR-1`, `SF-2` | Automated recovery proof and differentiated traffic-open gates |
 | [ADR 0150](./adr-0150-automated-event-classified-post-restore-trust-reset.md) | Accepted | `PO-3` | `SF-1`, `PO-4`, `GR-1` | Automated event-classified post-restore trust reset |
 | [ADR 0151](./adr-0151-risk-tiered-progressive-rollout-with-compatibility-bounded-rollback.md) | Accepted | `PO-3` | `PO-1`, `PO-4`, `AR-3` | Risk-tiered progressive rollout with compatibility-bounded rollback |
+| [ADR 0152](./adr-0152-dependency-classified-liveness-readiness-and-route-admission.md) | Accepted | `PO-4` | `PO-2`, `PO-3`, `GR-1` | Dependency-classified liveness, readiness, and route admission |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

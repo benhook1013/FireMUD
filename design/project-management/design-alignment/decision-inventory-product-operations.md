@@ -259,14 +259,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes. Define the retention classes, partition/GC ownership, command-status minimum, and replay/audit exceptions.
 - **Human consultation:** Yes; database, runtime, compliance, and operations owners must balance recovery evidence against storage cost.
 
-#### `HEALTH-01` - Liveness is local; readiness protects admission
+#### `HEALTH-01` - Dependency-classified readiness protects the narrowest admission boundary
 
 - **Capability:** Primary `PO-4.2`. Secondary `PO-2.2`, `GR-1.1`, and `PO-3.2`.
-- **Decision / status / importance:** Liveness checks answer whether the process is alive and remain local. Readiness is dependency-aware and must remove a path from player admission when required dependencies or startup contracts are not safe; process health alone is not readiness. Status `accepted-implicit`; `H/med`.
+- **Decision / status / importance:** Liveness is strictly process-local, startup probes cover initialization only, and every dependency is classified as admission-critical, feature-degradable, background/control-plane, or startup-only. Whole-pod readiness fails only when the whole Service contract is unsafe; bounded failures use route-specific admission. Timings use bounded deadlines, cache/hysteresis, and reserved synthetic identities. Readiness primarily protects new admission while existing sessions continue only where safe. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ Docker Health Checks`, `§ Kubernetes Health Monitoring`, `§ Kubernetes Auto Recovery`, and `§ Monitoring & Logging`; [system-architecture-deploy-preflight-policy.md](../../architecture/system-architecture-deploy-preflight-policy.md) `§ Enforcement Boundaries`.
-- **Strongest alternative:** Use process-only liveness as readiness and let traffic reach instances whose dependencies are unavailable.
-- **ADR recommendation:** Yes. Define dependency classes, readiness failure behavior, and the relationship between readiness and edge admission.
-- **Human consultation:** Yes; operations and service owners must set the dependency and degraded-operation boundary.
+- **Strongest alternative:** Use process-only readiness, or put every direct/transitive dependency into liveness or whole-pod readiness and accept cascading restarts/admission loss.
+- **ADR:** [ADR 0152](../../architecture/decisions/adr-0152-dependency-classified-liveness-readiness-and-route-admission.md) records health meanings, dependency classes, narrow route admission, stable timing, existing-session behavior, and reserved probe identity.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current dependency-aware gameplay checks are substantial but over-aggregate some route failures and use plausible real identifiers in several probe paths.
 
 #### `TEST-01` - Test Redis is not production durability proof
 
