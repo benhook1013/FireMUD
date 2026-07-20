@@ -186,7 +186,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
   - `auth_failed` suggests account/JWT or session binding problems.
-- Check the external synthetic probe result first:
+- For profiles with independent monitoring, check the external synthetic probe result first; otherwise use the strongest available local edge check and keep the degraded-detection posture visible:
   - If the blackbox probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat this as an ingress/LB/TLS/DNS edge outage rather than an application-level success-ratio problem.
 
 ### Act (Entry path availability)

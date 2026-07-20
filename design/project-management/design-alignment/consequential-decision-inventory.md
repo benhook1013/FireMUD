@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 9 | 25 | `in-progress` |
+| 6 | Operations and delivery | 10 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **146** | **183** | `in-progress` |
+| **Total** | | **147** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -311,7 +311,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `OPS-02` — `revised` on 2026-07-20; [ADR 0151](../../architecture/decisions/adr-0151-risk-tiered-progressive-rollout-with-compatibility-bounded-rollback.md)
 - [x] `HEALTH-01` — `revised` on 2026-07-20; [ADR 0152](../../architecture/decisions/adr-0152-dependency-classified-liveness-readiness-and-route-admission.md)
 - [x] `OBS-04` — `revised` on 2026-07-20; [ADR 0153](../../architecture/decisions/adr-0153-simplified-observability-degradation-without-fallback-alert-authority.md)
-- [ ] `OBS-05`
+- [x] `OBS-05` — `revised` on 2026-07-20; [ADR 0154](../../architecture/decisions/adr-0154-profile-dependent-independent-deadman-and-public-path-monitoring.md)
 
 #### Packet 6 P1
 

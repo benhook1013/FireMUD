@@ -165,14 +165,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR:** [ADR 0153](../../architecture/decisions/adr-0153-simplified-observability-degradation-without-fallback-alert-authority.md) records soft dependencies, durable audit, routed-alert ownership, explicit unknown state, optional diagnostics, and removal of duplicate fallback-alert machinery.
 - **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The simpler model loses a replacement alert list during Alertmanager failure but avoids an unimplemented second alert product and preserves authoritative safety controls.
 
-#### `OBS-05` - Independent deadman detection for total monitoring and edge failure
+#### `OBS-05` - Profile-dependent independent deadman and public-path monitoring
 
 - **Capability:** Primary `PO-4.4`. Secondary `PO-2.1` and `PO-4.2`.
-- **Decision / status / importance:** An external pager or blackbox path must detect total monitoring-stack failure and public gameplay-edge failure; a Prometheus mirror alone is insufficient. The deadman freshness threshold defaults to three expected intervals, with a 60-second interval and 180-second threshold where the runbook applies. Status `proposed/deferred`; `H/hard`.
+- **Decision / status / importance:** Hosted production profiles claiming externally verified availability require an off-cluster deadman/pager plus real public browser/WebSocket and Telnet probes. Hobby, single-node, and small profiles may explicitly omit that infrastructure; preflight warns and records the weaker posture without blocking traffic. Prometheus mirrors are optional convenience telemetry, observability UIs may remain private, and detection budgets use configurable 60-second/180-second defaults. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-logging-monitoring.md](../../architecture/system-architecture-logging-monitoring.md) `§ External Probe and Deadman Contract (Normative)` and `§ Synthetic Player-Flow Canaries (Target-State Prod-Like Contract)`; [system-architecture-observability-incident-runbook.md](../../architecture/system-architecture-observability-incident-runbook.md) `§ Independent Detection Contract` and `§ Deadman Freshness Contract`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ Monitoring & Logging`.
-- **Strongest alternative:** Rely on Prometheus and Alertmanager inside the same failure domain, including when that stack is the failed system.
-- **ADR recommendation:** Yes. Choose the external monitoring owner, failure-domain separation, probe inventory, and deadman freshness authority.
-- **Human consultation:** Yes; operations and incident-communications owners must approve pager ownership and alert severity.
+- **Strongest alternative:** Require off-cluster monitoring for every deployment, rely only on in-cluster Prometheus/Alertmanager, or require every observability UI to be externally probed.
+- **ADR:** [ADR 0154](../../architecture/decisions/adr-0154-profile-dependent-independent-deadman-and-public-path-monitoring.md) records the hosted assurance, optional small-deployment posture, public-path scope, configurable detection budget, private observability surfaces, and evidence obligations.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The owner explicitly accepted weaker, visible detection for small deployments rather than imposing unavailable or disproportionate infrastructure.
 
 #### `OBS-06` - End-to-end structured-log queryability is readiness evidence
 

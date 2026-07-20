@@ -242,6 +242,8 @@ Typical components:
 - Jaeger stores these traces for debugging and analysis.
 - Fluent Bit ships logs to Elasticsearch; Kibana is used for log queries.
 
+Independent outage detection is a deployment-profile claim, not a universal Kubernetes prerequisite. Hosted production profiles claiming externally verified availability or monitoring-resilient readiness must add an off-cluster deadman/pager and real public browser/WebSocket and Telnet probes. Hobby, single-node, and small profiles may omit that infrastructure when unavailable or disproportionate; preflight records a non-blocking degraded-detection warning, and those deployments must not claim independent outage detection or off-cluster paging. The observability services themselves may remain private in either posture.
+
 ### Docker Compose (Optional)
 
 The Docker Compose environment omits the full observability stack by default. Operators may run a small local observability stack for debugging when needed, but Docker Compose is not treated as the canonical, prod-like observability deployment.

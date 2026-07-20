@@ -352,7 +352,7 @@ Alertmanager owns current alert-routing state while healthy; it is not game, mod
 
 When Alertmanager is unavailable, Logging & Admin displays an explicit `alert routing unavailable` state. If Prometheus remains reachable, it may also show a bounded diagnostic snapshot of selected canonical recording-rule values. That snapshot is labelled diagnostic and time-bound; it is never merged into a second authoritative active-alert list and requires no duplicate-suppression or alert-family equivalence engine.
 
-Diagnostic values include `observed_at` and freshness. After the configured budget, five minutes by default, their state becomes `unknown`; stale values must not appear current. If Prometheus is also unavailable, the UI reports observability state unavailable and relies on the independent deadman path for external paging.
+Diagnostic values include `observed_at` and freshness. After the configured budget, five minutes by default, their state becomes `unknown`; stale values must not appear current. If Prometheus is also unavailable, the UI reports observability state unavailable and relies on the independent deadman where the profile provides one; omitted profiles retain their explicit degraded-detection warning.
 
 Operational and safety actions use authoritative domain and control-plane state such as command status, tick ownership, moderation records, admission controls, and recovery records. Required audit records for operator or moderation mutations are durable domain evidence and are not best-effort observability. Elasticsearch indexing, metrics, dashboards, traces, and alert delivery remain enrichments rather than commit dependencies for those actions.
 
@@ -360,12 +360,9 @@ Operational and safety actions use authoritative domain and control-plane state 
 
 Observability backends are best-effort enrichments for gameplay and moderation workflows, but they still require first-class alerts because their failure can mask player-visible incidents and break operator triage.
 
-- Prod-like environments must also provide an **independent meta-monitoring path** outside the Prometheus + Alertmanager failure domain:
-  - An authoritative externally hosted pager for deadman/heartbeat freshness.
-  - Authoritative externally hosted liveness checks for Prometheus, Alertmanager, Grafana, Elasticsearch/Kibana, and Jaeger/OpenTelemetry Collector entrypoints.
-  - Authoritative externally hosted reachability checks for the public gameplay entry paths.
-  - This independent path is required because Prometheus cannot reliably page on its own total outage.
-- The authoritative external path and the Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
+- Hosted production profiles that claim externally verified availability or monitoring-resilient readiness must provide an **independent monitoring path** outside the Prometheus + Alertmanager failure domain. It pages on deadman freshness and probes the real public browser/WebSocket and Telnet gameplay paths.
+- Hobby, single-node, and small profiles may explicitly omit that external path. Preflight records and warns about the weaker detection posture without blocking traffic; those profiles cannot claim independent outage detection, externally verified public-path availability, off-cluster paging, or monitoring-resilient readiness.
+- The authoritative external path and any Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
 - Prod-like environments must install a canonical `platform`-owned alert set for:
   - Prometheus rule evaluation or scrape health problems.
   - Alertmanager routing/configuration failures.
@@ -391,11 +388,22 @@ Observability backends are best-effort enrichments for gameplay and moderation w
   - `GrafanaDatasourceUnavailable`
   - `GrafanaServiceUnavailable`
 - Environment overlays may adapt metric expressions to local exporter/job naming, but they should preserve the canonical alert names and routing labels so Logging & Admin and incident docs remain consistent.
-- The in-cluster alert set above complements, but does not replace, the required independent meta-monitoring path for total observability-stack outages.
+- For profiles that require independent monitoring, the in-cluster alert set above complements but does not replace the off-cluster path for total observability-stack outages.
 
 #### External Probe and Deadman Contract (Normative)
 
-To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like environments must expose a small canonical contract for signals that originate outside the Prometheus + Alertmanager failure domain:
+Deployment profiles must declare whether independent external detection is `required` or `omitted`. Hosted production profiles that claim externally verified availability use `required`; hobby, single-node, and small profiles may use `omitted` with a non-blocking preflight warning and an explicit degraded-detection status.
+
+For a `required` profile, the independent monitor:
+
+- runs outside the monitored cluster and its Prometheus + Alertmanager failure domain;
+- evaluates the freshness of the canonical in-cluster heartbeat;
+- exercises the real public browser/WebSocket and Telnet gameplay paths; and
+- pages through an off-cluster notification authority.
+
+The default heartbeat interval is 60 seconds and the default stale threshold is 180 seconds. Each profile records its actual heartbeat interval, stale threshold, probe cadence, and maximum detection budget; the defaults may be changed only with matching evidence and operational claims. Prometheus, Alertmanager, Grafana, Kibana, Jaeger, and collector interfaces may remain private. Provider-native or in-cluster checks may diagnose those components, but external reachability of every observability UI is not part of this contract.
+
+To keep optional mirrors, dashboards, and runbooks aligned:
 
 - **Authoritative external monitor**
   - Must page using its own native checks and thresholds even when Prometheus is fully unavailable.
@@ -405,31 +413,18 @@ To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like envir
   - The mirrored metrics are not sufficient by themselves to satisfy the independent detection requirement.
 
 - `entrypath_blackbox_probe_success{path,target}`:
-  - Required as the Prometheus-facing mirror for each public player entry path.
+  - May mirror the external result for each public player entry path.
   - `path` is a bounded enum and must use `websocket` for the browser/Gateway path and `telnet` for the TCP Proxy path.
   - `target` identifies the externally probed endpoint or monitor target and must remain low-cardinality.
   - Values are boolean-like: `1` when the synthetic probe can complete the target handshake and `0` when it cannot.
   - Canonical alerts and dashboards may aggregate across `target`, but must preserve `path`.
 - `observability_deadman_heartbeat_timestamp_seconds{source}`:
-  - Required as the Prometheus-facing mirror for the independently hosted deadman/meta-monitoring path.
+  - May mirror the independently hosted deadman/meta-monitoring result.
   - `source` identifies the emitting in-cluster monitor instance or environment and must remain low-cardinality.
   - The signal records the latest successful heartbeat time as observed by the independent monitor, not by Prometheus itself.
   - Deadman paging should trigger when this timestamp becomes stale according to the environment's configured heartbeat budget.
 
-Prod-like environments must also define a canonical contract for observability entrypoint checks in the authoritative external monitor:
-
-- Required externally hosted checks:
-  - Prometheus
-  - Alertmanager
-  - Grafana
-  - Kibana or the Elasticsearch-backed log query entrypoint
-  - Jaeger query UI or trace query endpoint
-- These checks must remain part of readiness evidence and prod-like smoke even when an environment cannot mirror them into Prometheus.
-- If an environment mirrors these checks into Prometheus, the mirror must use a bounded vocabulary or a documented compatibility mapping that preserves:
-  - which observability entrypoint is being checked,
-  - the independent external paging behavior,
-  - the existing runbook behavior for operator-access outages.
-- If an environment does not mirror them into Prometheus, it must still document the authoritative external check names/targets and the expected non-production test method used to prove that operator-access outages are actionable.
+The Prometheus mirror is optional convenience telemetry, not proof that the independent monitor or pager works. Required profiles retain current off-cluster evidence for heartbeat evaluation, both public probes, monitor health, and page delivery. Expired evidence becomes `unknown`. Omitted profiles expose their common-failure-domain or operator-dependent posture instead of synthesizing green external evidence.
 
 ### Log Pipeline Queryability Contract
 
@@ -445,7 +440,7 @@ Structured log emission is not sufficient by itself. Prod-like environments must
 - Failure semantics:
   - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
 
-If an environment cannot emit these exact metric names because of a hosted monitoring product constraint, it must provide a documented compatibility mapping to equivalent mirrored signals and keep the canonical alert names, `path` semantics, authoritative external paging behavior, and runbook behavior unchanged. Logging & Admin, runbooks, and smoke tests should treat the canonical names above as the default contract.
+If a required profile chooses to mirror the external signals but its monitoring product cannot emit these exact metric names, it provides a documented compatibility mapping preserving `path` semantics, authoritative external paging behavior, and runbook behavior. Omitted profiles do not need to synthesize these metrics.
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 

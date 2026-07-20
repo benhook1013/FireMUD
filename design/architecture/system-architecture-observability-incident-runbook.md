@@ -12,22 +12,20 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ## Independent Detection Contract
 
-- Prod-like environments must not rely solely on Prometheus + Alertmanager to detect failure of that same observability stack.
-- Required independent detection:
-  - An authoritative externally hosted deadman/heartbeat pager for the in-cluster monitoring stack.
-  - Authoritative externally hosted blackbox checks for public observability entrypoints and public gameplay entrypaths.
-- During an incident, treat these external checks as the source of truth for “is the monitoring stack itself alive?” and “is the public edge reachable at all?” when in-cluster telemetry is missing.
-- Mirrored Prometheus metrics for those checks are useful for dashboards and smoke tests, but they do not satisfy the independent detection requirement by themselves. See `design/observability/external-monitoring/README.md`.
+- Hosted production profiles claiming externally verified availability or monitoring-resilient readiness must not rely solely on Prometheus + Alertmanager to detect failure of that same stack. They require an off-cluster deadman/heartbeat pager plus real public browser/WebSocket and Telnet path checks.
+- Hobby, single-node, and small profiles may explicitly omit the independent path. Their preflight and status surfaces must warn that detection is operator-dependent or shares the deployment failure domain; omission does not itself block player traffic.
+- During an incident in a required profile, treat the off-cluster monitor as the source of truth for heartbeat freshness, public-edge reachability, and page delivery when in-cluster telemetry is missing. Observability UIs need not be externally reachable.
+- Mirrored Prometheus metrics are useful for dashboards and smoke tests, but do not satisfy independent detection by themselves. See `design/observability/external-monitoring/README.md`.
 
 ### Deadman Freshness Contract
 
 - The canonical independent heartbeat signal is `observability_deadman_heartbeat_timestamp_seconds{source}` as defined in `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`.
 - `source` should identify the emitting environment or monitor instance and remain low-cardinality.
-- Deadman paging should treat the signal as stale when the externally observed timestamp is older than `3 * heartbeat_interval_seconds`.
-- Default target-state guidance for prod-like environments:
+- The default stale threshold is three expected heartbeat intervals. Each required deployment profile records its actual heartbeat interval, stale threshold, probe cadence, and maximum detection budget.
+- Default target-state guidance:
   - `heartbeat_interval_seconds = 60`
   - page when the heartbeat age exceeds `180` seconds
-- If an environment uses a hosted monitoring product that cannot expose the canonical metric name directly, it must document an equivalent query and threshold that preserves the same semantics: “page when the independently observed in-cluster heartbeat has been missing for more than three expected heartbeat intervals.”
+- If a required profile uses a hosted monitoring product that cannot expose the canonical metric name directly, it documents an equivalent query and threshold preserving the configured detection budget.
 - The authoritative external monitor must also retain its own native check definition and paging rule; the Prometheus mirror is only a secondary representation of that state.
 
 ## Common Fallbacks (When Dashboards Are Unavailable)
@@ -72,9 +70,9 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 3. Confirm a known “heartbeat” metric updates (for example a service uptime gauge).
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
 5. Confirm the canonical tail-loss and entry-path recording rules are evaluating again (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`, short-window entry-path availability, and 1-day entry-path availability), since operator fallback depends on them.
-6. Confirm the independent deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
+6. For profiles requiring independent detection, confirm the deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
    - Verify that `observability_deadman_heartbeat_timestamp_seconds{source=...}` (or the documented equivalent external signal) advances again.
-   - Verify that the external monitor’s staleness threshold still matches the `3 * heartbeat_interval_seconds` contract for the environment.
+   - Verify that the external monitor's interval, staleness threshold, and probe cadence still match the deployment profile's recorded detection budget.
 
 ## Alertmanager Down or Not Routing
 
@@ -179,7 +177,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Document the root cause and whether the observability stack failure masked a player-visible incident.
 - Add or tighten alerts on observability backend health (Prometheus target availability, Alertmanager routing errors, Elasticsearch disk pressure, collector export failures).
-- If detection depended on an external deadman or edge blackbox path, confirm that path is documented and tested as part of the prod-like monitoring contract rather than left as environment-specific tribal knowledge.
+- If the deployment profile requires an external deadman or edge blackbox path, confirm it is documented and tested as part of that profile's monitoring contract rather than left as environment-specific tribal knowledge. If the profile omits it, confirm the degraded-detection warning remains visible.
 - If the incident required manual fallback steps, encode them into a small, repeatable operator checklist or one-shot script rather than leaving them as tribal knowledge.
 
 ## Fallback Query Cheat Sheet
