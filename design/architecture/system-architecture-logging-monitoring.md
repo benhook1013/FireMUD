@@ -160,21 +160,23 @@ FireMUD’s metrics are designed around low- and medium-cardinality labels so da
 
 ### Player Experience SLIs and SLOs (Target-State Contract)
 
-In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are target-state Prometheus metrics with environment-specific SLO targets. The current services emit narrower gameplay and edge metrics; do not treat the metric names in this section as implemented until producers and smoke checks exist.
+In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. The SLI families are the target contract; the numeric values below are initial calibration objectives rather than release promises, promotion gates, or universal paging thresholds. A hosted profile may promote a value to an enforced objective only after representative measurement defines the eligible event population, completion boundary, bounded scope, minimum sample behavior, and multi-window burn policy. Hobby and small profiles expose these values informationally unless they explicitly claim managed availability.
+
+The current services emit narrower gameplay and edge metrics; do not treat the metric names in this section as implemented until producers and smoke checks exist. Empty or statistically insufficient windows are `unknown`, not healthy or breached. User mistakes, invalid credentials, syntactically invalid requests, and traffic rejected as abuse are reported separately rather than counted as server-attributable availability failures. Platform timeouts, dependency failures, internal errors, and incorrectly rejected eligible traffic do count.
 
 - **Login success ratio**
   - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
-  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per approved tenant/region scope once the metric label shape is reconciled with the cardinality policy.
+  - Calibration starting point: ≥ 99.5% success over a 15-minute rolling window for eligible attempts, evaluated per approved bounded scope once the metric label shape and minimum sample policy are reconciled with the cardinality contract.
   - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and any approved tenant/region scope. Do not add raw `tenantId` or `regionId` labels until the exception or bounded replacement is documented here.
 - **Command end-to-end latency**
   - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `scope` and `command`.
-  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per approved tenant/region scope.
+  - Calibration starting point: 99% of eligible core gameplay commands complete in < 250ms over a 5-minute window, per approved bounded scope. A profile must replace or qualify this value when its declared command-completion boundary legitimately includes a longer tick wait or other intentional scheduling delay.
   - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for command and any approved tenant/region scope. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
   - Recording rules and alerts for the bounded core-command SLO set must preserve the `command` label. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands.
   - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,scope,command,stage,le}` where `scope` is an approved bounded tenant/region scope and `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
 - **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
-  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per approved scope and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
+  - Calibration starting point: ≥ 99.9% of eligible connection attempts succeed over a 1-day window, evaluated per approved scope and `path`. A sustained, high-confidence outage may become P0; a low-volume ratio alone does not.
   - Instrumentation:
     - Edge services (TCP Proxy and Gateway) must emit a bounded attempts counter such as `entrypath_connection_attempts_total{scope,path,outcome}` where:
       - `scope` is an approved low-cardinality tenant/region/environment scope, not a raw unbounded identifier.
@@ -191,13 +193,15 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
     - Blackbox probe alerts must exist alongside the in-service SLI alerts so “no requests reached the service” is still detected as a P0 edge-path outage.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by approved scope and chat channel type.
-  - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
-  - Instrumentation: emitted by the chat/social service responsible for delivering chat events, with labels for approved scope and `channel_type`, plus an explicit distinction between player-visible channels (global, zone, party) and system channels.
+  - Calibration starting point: 99% of eligible chat messages are delivered in < 1s over a 5-minute window for active regions.
+  - Instrumentation: emitted by the chat/social service responsible for delivering chat events, with labels for approved scope and `channel_type`, plus an explicit distinction between player-visible channels (global, zone, party) and system channels. Each enforced profile declares whether delivery means durable server acceptance, dispatch to every intended server-side recipient, transport write, or client acknowledgement; unlike boundaries are not compared as the same SLI.
 
 Environment and service docs that introduce new player-facing flows should:
 
 - Reuse these SLIs where possible (for example by tagging `command_end_to_end_latency_ms` with a new `command` label), or
 - Add new SLIs to this section so that operators have a single, authoritative list of player-centric targets.
+
+Enforced profiles use short and long windows together so alerts represent material error-budget burn rather than one noisy ratio. Missing producers, absent series, and too few eligible observations remain explicit `unknown` evidence. The checked-in rules and dashboards currently encode the initial numeric values before producers and calibration exist; they are templates and implementation drift, not proof that FireMUD has adopted measured hard gates.
 
 Grafana dashboards under `design/observability/grafana` include:
 

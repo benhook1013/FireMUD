@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 11 | 25 | `in-progress` |
+| 6 | Operations and delivery | 12 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **148** | **183** | `in-progress` |
+| **Total** | | **149** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -316,7 +316,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 6 P1
 
 - [x] `OBS-01` — `accepted` on 2026-07-20; [bounded-cardinality observability contract](../../architecture/system-architecture-logging-monitoring.md#cardinality-guardrails-for-metrics)
-- [ ] `OBS-02`
+- [x] `OBS-02` — `revised` on 2026-07-20; [ADR 0155](../../architecture/decisions/adr-0155-staged-profile-aware-player-experience-slo-contract.md)
 - [ ] `OBS-03`
 - [ ] `OBS-06`
 - [ ] `CAPACITY-01`

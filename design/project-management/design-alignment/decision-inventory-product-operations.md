@@ -141,11 +141,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `OBS-02` - Player-experience SLO targets are a product reliability contract
 
 - **Capability:** Primary `PO-4.2` Health, readiness, reliability policy, SLOs, and degraded operation. Secondary `PO-2.4`, `GR-1.2`, and `EA-2.1`.
-- **Decision / status / importance:** Use target-state player SLIs/SLOs, not infrastructure health alone: login at least 99.5% over 15 minutes, core move/look/combat commands at least 99% under 250 ms over 5 minutes, entry path at least 99.9% over one day with sustained P0 treatment, and chat at least 99% under 1 second over 5 minutes. Status `proposed/deferred`; `H/med`.
+- **Decision / status / importance:** Retain login, command-latency, entry-path, and chat player SLIs, but treat the existing numeric thresholds as calibration starting points rather than hard promises or gates. Enforced hosted objectives require explicit eligible outcomes and completion boundaries, bounded scope, minimum-sample `unknown` behavior, representative measurement, and multi-window burn alerts. Hobby/small profiles remain informational unless they claim managed availability. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-logging-monitoring.md](../../architecture/system-architecture-logging-monitoring.md) `§ Player Experience SLIs and SLOs (Target-State Contract)` and `§ Player Experience Metrics Catalog (Target-State Contract)`; [system-architecture-player-experience-incident-runbook.md](../../architecture/system-architecture-player-experience-incident-runbook.md) `§ Incident Types`, `§ Login Success Ratio Below SLO`, `§ Command Latency Above SLO`, `§ Chat Delivery Latency Above SLO`, and `§ Telnet and WebSocket Path Availability Below SLO`.
-- **Strongest alternative:** Operate on process health, CPU, and error rate without player-facing budgets, or choose different windows and thresholds.
-- **ADR recommendation:** Yes. Product and operations should approve these as release and incident budgets before they become hard gates.
-- **Human consultation:** Yes; product, SRE, and player-support owners must accept the user-visible tradeoffs.
+- **Strongest alternative:** Enforce the existing values immediately, remove numeric starting points entirely, or rely only on infrastructure health and generic error rate.
+- **ADR:** [ADR 0155](../../architecture/decisions/adr-0155-staged-profile-aware-player-experience-slo-contract.md) records the staged profile-aware SLI/SLO contract, outcome attribution, completion boundaries, low-traffic semantics, and measured enforcement gate.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Player-facing reliability measurement was retained, but unmeasured numbers, ambiguous denominators, and tick-incompatible latency assumptions were rejected as current promises.
 
 #### `OBS-03` - Independent synthetic player-flow canaries
 
