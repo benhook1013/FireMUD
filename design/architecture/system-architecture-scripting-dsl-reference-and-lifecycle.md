@@ -106,7 +106,7 @@ The authoritative outbox, queue-pointer contract, and drain/handoff semantics no
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
 - **Script lifecycle events**
-  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is becoming tenant-`READY`. In the first implementation slice it is limited to ephemeral readiness work (for example, validating configuration and warming recomputable in-process caches) rather than per-entity setup or durable shared-state creation.
+  - `onLoad` is a **script-level lifecycle event** with one stable logical execution identity per declared handler, tenant, and patch while that patch is becoming tenant-`READY`. It is limited to bounded validation and optional warming of recomputable caches rather than per-entity setup or durable game initialization.
 
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
@@ -130,23 +130,25 @@ See the Automation & Scripting Service README and service protos for the full, u
 
 ### `onLoad` Semantics
 
-`onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and script patch for a tenant, not once per NPC or player.
+`onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and produces one successful logical outcome per required handler declared by the immutable script patch, not once per NPC or player. The manifest may declare an explicitly empty handler set.
 
 - **When it fires**
-  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is the tenant readiness candidate, before it becomes eligible for a Game Session pin. In practice this means:
+  - The scheduler admits one logical `onLoad` trigger for each exact required handler identity declared by the immutable patch while that patch is the tenant readiness candidate, before it becomes eligible for a Game Session pin. In practice this means:
     - When a script first becomes part of the tenant’s pending script set under a given `scriptPatchVersion` (lifecycle `PENDING_VALIDATION` → `ONLOAD_RUNNING`), and
-    - After a successful hot reload that introduces a new pending patch for that tenant, `onLoad` fires once for each script in that pending patch.
+    - After a successful hot reload that introduces a new pending patch for that tenant, every declared handler is admitted under its stable logical identity.
+  - A patch becomes `READY` only after every declared identity is admitted and succeeds. Missing expected work or failed admission is failure; observing no work is sufficient only when the immutable manifest explicitly declares zero handlers.
   - If readiness validation fails and the patch never reaches `READY`, no Game Session instance pin changes and no additional `onLoad` events are generated for that patch.
 
 - **Per-script vs per-entity**
-  - `onLoad` runs **without an entity context**; it executes once per `<tenantId, scriptId, scriptPatchVersion>`.
-  - It may validate graphs and prepare ephemeral or recomputable candidate-local state, but it must not emit gameplay commands, mutate instance or entity state, or create shared gameplay side effects.
+  - `onLoad` runs **without an entity context**; each required handler has one logical execution identity scoped to its tenant and patch.
+  - It may validate graphs and optionally warm ephemeral or recomputable caches, but it must not emit gameplay commands, mutate instance or entity state, or create shared gameplay side effects. Correctness cannot depend on warmed state, losing it after `READY` cannot affect correctness, and tenant-level success does not promise that every worker is warm.
   - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
+  - Schema evolution uses deployment migrations, authored data uses Draft and publication, player-state transformation uses an explicit cutover/remap workflow, and instance initialization uses a separately fenced instance-lifecycle workflow.
 
 - **Interaction with reloads and recovery**
-  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
+  - The Automation & Scripting Service gives each declared handler one stable logical execution identity across process restarts and leader changes. Bounded infrastructure retries reuse that identity and deterministic `scriptEventId`; “once” means one successful logical outcome, not that infrastructure may never repeat an attempt. Persistent completion metadata prevents a duplicate or late attempt from creating a second readiness result.
   - `onLoad` triggers are enqueued only while the tenant readiness candidate has lifecycle `ONLOAD_RUNNING`. Success advances only that candidate to `READY`; it does not activate the patch for any instance. Scripts never run `onLoad` as part of an instance pin or repin.
-  - Tenant readiness allows only **one pending patch per tenant** at a time. If Game Design publishes a newer patch while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch is transitioned deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight `onLoad` executions for it must be prevented from later advancing the patch to `READY`.
+  - Tenant readiness allows only **one pending patch per tenant** at a time and orders candidates by a monotonic accepted-publication sequence. Only a candidate with a greater accepted sequence may supersede the current candidate. When it does, the older non-terminal patch transitions deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight completion is prevented from later advancing the patch to `READY`.
   - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
 - Each `onLoad` trigger uses the tenant-readiness identity defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`: `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, with no `gameInstanceId`, `regionId`, `regionEpoch`, or `entityId`. Automation & Scripting generates `scriptEventId` deterministically from that tuple and reuses it for bounded infrastructure retries.
 - Each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed. Because `onLoad` must not persist gameplay effects or hand off tick commands, successful readiness uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`, and is separately reflected in patch lifecycle state (`READY`) rather than claiming `handoff_accepted`.
@@ -154,7 +156,7 @@ See the Automation & Scripting Service README and service protos for the full, u
 Concrete supersession example:
 
 - Patch `P21` is published for tenant `T1` and enters `ONLOAD_RUNNING`.
-- Before all `P21` `onLoad` handlers finish, Game Design publishes `P22` for the same tenant and the publish is accepted for readiness ingestion.
+- Before all `P21` `onLoad` handlers finish, Game Design publishes `P22` for the same tenant and the publish is accepted for readiness ingestion with an accepted-publication sequence greater than `P21`.
 - Automation & Scripting transitions `P21` to `SUPERSEDED` with `statusReason=superseded_by_newer_patch` and records `supersededByScriptPatchVersion=P22` in patch-status surfaces.
 - Any not-yet-started `onLoad` work for `P21` is canceled. If an already-running `P21` `onLoad` handler finishes later, that completion may be recorded in audit history for its own Trigger Identity but must not advance patch `P21` back to `READY`.
 - Only `P22` remains eligible to progress through `ONLOAD_RUNNING` to `READY`.
@@ -343,17 +345,17 @@ Interpretation rules:
 The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
-- `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
-- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible for explicit instance pinning by Game Session but is not active merely because it is ready.
-- `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
+- `ONLOAD_RUNNING` – the exact `onLoad` handler identities declared by the immutable patch are being admitted and executed for the tenant under stable logical identities.
+- `READY` – every handler declared by the immutable patch has been admitted and reached one successful logical terminal outcome for the tenant, or the manifest explicitly declared zero handlers. The patch is eligible for explicit instance pinning by Game Session but is not active merely because it is ready.
+- `FAILED` – expected work was missing, a required handler was not admitted, or one or more `onLoad` handlers failed for the tenant with a logical, sandbox, or infrastructure error after retries were exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
 - `SUPERSEDED` – a newer publish for the same tenant was accepted while this patch was still non-terminal (`PENDING_VALIDATION` or `ONLOAD_RUNNING`). The superseded patch remains visible for audit/history but is no longer eligible for pinning or further readiness progression.
 
 Typical transitions are:
 
 1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose durable publish workflow fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
-2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
-3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; running instances continue using their previously pinned patch.
-4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a newer publish is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work.
+2. `ONLOAD_RUNNING → READY` when every exact handler identity declared by the immutable patch has been admitted and succeeds for the tenant, or when the manifest explicitly declares zero handlers.
+3. `PENDING_VALIDATION|ONLOAD_RUNNING → FAILED` when expected work is missing, admission fails, or any `onLoad` execution fails fatally after bounded retries; running instances continue using their previously pinned patch.
+4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a publish with a greater monotonic accepted-publication sequence is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work; a late old-candidate completion may be audited but cannot reopen readiness.
 
 Per-instance rollout state is tracked separately (for example `PINNED`, `ROLLED_BACK`, `REPINNED`) and is driven by control-plane APIs/events (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, `ScriptPatchPinChanged`). An instance rollback does not imply tenant patch state transition away from `READY`.
 

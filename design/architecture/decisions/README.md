@@ -133,6 +133,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0117](./adr-0117-first-class-sparse-and-full-grid-world-topologies.md) | Accepted | `GR-2` | `GR-2`, `AR-1`, `SF-2` | First-class sparse and bounded full-grid topologies with independent movement policy and opaque scalable representation |
 | [ADR 0118](./adr-0118-command-plan-preview-dry-run-isolation.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `SF-2` | Honest no-side-effect command-plan previews with exact inputs and live-protecting isolation |
 | [ADR 0119](./adr-0119-durable-fenced-multi-owner-draft-commits.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `EA-3`, `SF-2` | Durable exact-base Draft commits with owner-local CAS and a fully synchronized visibility fence |
+| [ADR 0120](./adr-0120-manifest-complete-onload-readiness-without-durable-game-initialization.md) | Accepted | `AS-1` | `AR-1`, `AS-1`, `GR-1` | Manifest-complete bounded onLoad readiness without durable game initialization |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

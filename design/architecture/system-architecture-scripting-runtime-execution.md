@@ -263,19 +263,22 @@ Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the
 The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
-- Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once.
-- Allowed uses are limited to ephemeral or trivially recomputable runtime initialization.
+- The immutable patch declares the exact required `onLoad` handler identities, including an explicitly empty set when no handlers are required.
+- Each required handler uses one stable logical execution identity keyed to its tenant and patch. Bounded infrastructure retries reuse the same deterministic `scriptEventId`; “once” means one successful logical outcome rather than one physical attempt.
+- Allowed uses are limited to bounded validation and optional warming of ephemeral, recomputable caches. Correctness cannot depend on warmed state, cache loss after `READY` cannot affect correctness, and tenant-level success does not promise that every worker is warm.
 - `onLoad` must not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores.
 - There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture.
-- If future requirements demand durable patch-managed shared state, the platform must add a symmetric deactivation/cleanup lifecycle first.
+- Schema evolution, authored data, player-state transformation, and instance initialization use their owning migration, publication, cutover/remap, or separately fenced lifecycle workflows rather than `onLoad`.
 
 Failure handling:
 
 - `onLoad` admission uses a dedicated publish-time initialization budget, not the normal live-trigger quota windows enforced by `ScriptQuotaService`.
-- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant.
+- Automation & Scripting may mark the patch `READY` only after every identity declared in the immutable handler manifest has been admitted and reached one successful logical terminal outcome. Observing no work is sufficient only for an explicitly empty manifest.
+- Missing expected work or failure to admit any required handler fails the patch rather than leaving readiness ambiguous or treating an incomplete observed set as success.
 - If `onLoad` fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant and events that reference the failed patch are rejected at admission with `version_unavailable` or a more specific bounded variant such as `onload_failed`.
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
-- If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations.
+- If `onLoad` fails with `infrastructure_error`, the service may optionally retry a bounded number of times using the same logical execution identity, `scriptEventId`, and idempotent operations.
+- Candidate supersession is fenced by the tenant's monotonic accepted-publication sequence. Only a greater accepted sequence may terminally supersede the current non-terminal candidate, and late completion for the older candidate may be audited but cannot reopen it or advance it to `READY`.
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not claim `handoff_accepted`.
-Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all per-script `onLoad` runs; the patch becomes `READY` only after every required `onLoad` handler succeeds.
+Patch-level readiness for `<tenantId, scriptPatchVersion>` compares the immutable declared handler set with admitted logical outcomes; it is not inferred from the set of work that happened to be observed.

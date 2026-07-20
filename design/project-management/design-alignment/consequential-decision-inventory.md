@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 29 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 30 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **109** | **183** | `in-progress` |
+| **Total** | | **110** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -258,7 +258,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `MS-AS-DRY-RUN-ISOLATION` — `revised` on 2026-07-20; [ADR 0118](../../architecture/decisions/adr-0118-command-plan-preview-dry-run-isolation.md)
 - [x] `MS-AR-DRAFT-CONCURRENCY` — `revised` on 2026-07-20; [ADR 0119](../../architecture/decisions/adr-0119-durable-fenced-multi-owner-draft-commits.md)
 - [x] `MS-GR-EQUIPMENT-BODY-LAYOUT` — `superseded` on 2026-07-20 by `EQUIP-01`; [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md)
-- [ ] `SCRIPT-05`
+- [x] `SCRIPT-05` — `revised` on 2026-07-20; [ADR 0120](../../architecture/decisions/adr-0120-manifest-complete-onload-readiness-without-durable-game-initialization.md)
 - [ ] `SCRIPT-09`
 - [ ] `SCRIPT-10`
 - [ ] `SCRIPT-11`
