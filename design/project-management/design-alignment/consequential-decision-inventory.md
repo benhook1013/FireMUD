@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 4 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 5 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **120** | **183** | `in-progress` |
+| **Total** | | **121** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -274,7 +274,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `EDGE-05` — `revised` on 2026-07-20; [ADR 0127](../../architecture/decisions/adr-0127-lifecycle-distinct-gameplay-close-taxonomy.md)
 - [x] `SESSION-02` — `revised` on 2026-07-20; [ADR 0128](../../architecture/decisions/adr-0128-namespace-scoped-single-character-controller.md)
 - [x] `SESSION-03` — `revised` on 2026-07-20; [ADR 0129](../../architecture/decisions/adr-0129-fresh-edge-reconnect-without-client-input-replay.md)
-- [ ] `CMD-04`
+- [x] `CMD-04` — `revised` on 2026-07-20; [ADR 0130](../../architecture/decisions/adr-0130-bounded-durable-semantic-reconnect-context.md)
 
 #### Packet 5 P1
 
