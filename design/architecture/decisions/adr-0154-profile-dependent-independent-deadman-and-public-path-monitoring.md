@@ -74,6 +74,14 @@ FireMUD does not require a specific external monitoring or paging vendor. A mana
 
 Vendor selection does not change the required deployment-profile claim or allow the independent path to depend on the same cluster, network boundary, credentials, or alert-routing authority it is intended to detect as failed.
 
+### Detection Does Not Grant Broad Recovery Authority
+
+Kubernetes remains responsible for ordinary in-cluster self-healing: removing unready pods from traffic, replacing failed pods, rescheduling after ordinary node loss, and applying the approved rollout strategy. The off-cluster monitor detects and pages; it does not gain general cluster-administrator or database-recovery authority merely because it can observe an outage.
+
+A hosted profile may later add a minimal external remediation runner when measured recovery time or one-operator availability requires unattended non-destructive repair. That runner may invoke only predeclared, idempotent actions such as provider-supported node or cluster repair, reapplying the exact attested manifests and digests, starting a replacement boundary in quarantine, and running preflight, health, and smoke checks. It uses least-privilege credentials, bounded retries, cooldowns, durable audit, and a kill switch. A deployment claiming unattended recovery from total cluster loss must place the required invocation path outside that cluster, but it may use CI, provider automation, a managed service, serverless execution, or a small independent host rather than another Kubernetes cluster.
+
+The runner does not infer that unreachability means data corruption, select or apply a PostgreSQL rewind, create a competing live gameplay authority, destroy durable storage, or switch player traffic to a replacement boundary. Those actions require the recovery authorization, fencing, candidate proof, and controlled-reopen contract. A second management cluster or warm/active standby gameplay cluster is not part of the baseline. Adopting one requires a separate RPO/RTO and multi-cluster authority decision covering old-boundary fencing, replicated durable state, Redis/session treatment, external effects, routing, failback, credentials, and split-brain proof.
+
 ## Consequences
 
 - Hosted production availability claims remain detectable during total in-cluster observability or edge failure.
@@ -84,6 +92,7 @@ Vendor selection does not change the required deployment-profile claim or allow 
 - Hobby and small operators can run FireMUD without a second monitoring environment, but must accept and expose the weaker detection posture.
 - Multiple acceptable implementations avoid vendor lock-in while still requiring genuine failure-domain independence.
 - Hosted operators incur the cost of external probes, paging, evidence retention, and periodic failure testing as a condition of the stronger availability claim.
+- External detection does not create a second broad production control plane or allow monitoring failure signals to authorize destructive recovery.
 
 ## Alternatives Considered
 

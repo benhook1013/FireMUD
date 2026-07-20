@@ -155,6 +155,8 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 
 Routine service, pod, node, and environment restarts that do not rewind PostgreSQL remain automatic availability operations and do not enter this destructive restore workflow. For an actual rewind, automation establishes quarantine and fencing, verifies the candidate, restores and reconciles the environment, runs hardening and smoke checks, and prepares controlled reopen through idempotent durable steps.
 
+Automation needed to recover from complete cluster loss must have an invocation location outside that cluster when a deployment claims unattended repair, but it does not require a second Kubernetes control plane. An external allowlisted runner may rebuild or restart the same attested boundary and run checks in quarantine; it may not select a recovery point, activate a competing authority, or reopen traffic unless the separately authorized recovery state permits it.
+
 The destructive recovery-point choice and displayed data-loss window require operator authorization by default. A future explicitly configured automatic-DR policy may pre-authorize a maximum loss window only with strict old-authority fencing and candidate-selection proof; this baseline does not enable it.
 
 ### Logical Backup Scale and PITR Trigger

@@ -208,6 +208,8 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - Restarts failing pods based on probe failures
   - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` and serves as the default configuration.
 - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
+- Independent monitoring detects total cluster or public-edge failure but does not hold broad restart or database-recovery authority. If a hosted profile later claims unattended repair after total cluster loss, a minimal runner outside the cluster may execute only allowlisted, idempotent, non-rewind playbooks and must leave uncertain or replacement environments quarantined.
+- A second management or standby gameplay cluster is not required by the baseline. Introduce one only through a separate multi-cluster RPO/RTO, data replication, routing, credential, external-effect, old-authority fencing, and failback decision.
 
 ---
 
