@@ -19,7 +19,11 @@ Equipment templates now use game-authored equipment schema data rather than a pl
 
 Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
 
-Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.
+Entity Management owns every persisted character identity and its authoritative account association. “Character” is the generic primary controllable gameplay actor and does not imply a humanoid or fixed RPG schema. Game-authored components and facts define race, class, stats, ship, nation, or equivalent game-specific state.
+
+Character ownership is tenant-scoped and playable-state-namespace-scoped. Shared realms may expose a tenant's durable live characters; isolated realms use distinct fork-local character rows. A copied character receives a new fork-local `characterId` and may retain `sourceCharacterId` only as provenance, never as a live cross-namespace identity or mutation link.
+
+Each published realm declares one entry policy: player-created using a versioned creation descriptor, pre-seeded/copied actors only, or one idempotently auto-provisioned actor from a published template after explicit join/entry. Entity Management lists only realm-valid actors, auto-selects only when exactly one exists, and never synthesizes an ID from `accountId`, username, or a hash. Truly characterless and multi-primary-controller sessions remain deferred.
 
 Character discovery/creation contract consequence:
 
@@ -50,7 +54,7 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Support for both tenant-shared character state and isolated realm-local character state, depending on the resolved realm/runtime contract
 - Supports instance-based spaces in conjunction with the World Management Service so characters can enter private dungeons or personalized housing without affecting the shared world state
 - Crafting recipe management with validation
-- Cross-game character listing via account linkage
+- Account-facing character discovery through an Entity-owned bounded projection
 
 ## Document Map
 

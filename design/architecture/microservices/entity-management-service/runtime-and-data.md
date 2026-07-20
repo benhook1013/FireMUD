@@ -58,6 +58,7 @@ Entity Management must classify its runtime persistence surface for cutover and 
 Initial-slice row-family inventory:
 
 - `character` rows are `S1` only within the resolved `playableStateNamespaceId`. Shared-state realms use the stable tenant namespace, isolated-state realms use a stable realm namespace independent of `gameInstanceId`, and each new playtest lifecycle uses a fresh namespace.
+- Every character row carries an Entity-allocated canonical identity and an authoritative account association. Isolated materialization allocates a distinct target-namespace identity; optional `sourceCharacterId` is provenance only and grants no read, write, resume, or controller authority over the source namespace.
 - Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `{tenantId, playableStateNamespaceId}` and authorized runtime context as the character row. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
 - Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
 - `equipment_bindings` rows are `S2`.
@@ -234,6 +235,10 @@ The actor is the shared subject for gameplay targeting, effects, stats, conditio
 For published targeting predicates whose facts it owns, Entity Management exposes a bounded `TargetingFactSnapshot` for the requested scoped actor ids. The response includes only the requested actor-state facts and an actor-state revision token; it is not a general actor read. Before applying an approved effect plan, Entity Management validates the recorded token for every material Entity-owned fact. If any token is stale, it reports a pre-commit mismatch so Game Logic can discard and re-resolve the plan under the same effect id before any source cost or target mutation commits.
 
 Character and NPC records remain the durable domain records for their respective variants. The runtime actor links those records into one gameplay subject model; it does not replace character progression, authored NPC definitions, or World Management location state.
+
+For normal gameplay, one session attaches to one persisted realm-valid `PLAYER` character. The “character” record is a generic primary controllable actor: authored component rows and facts, not fixed platform fields, express RPG attributes or non-RPG concepts such as ships and nations. Entry follows the published realm's `PLAYER_CREATED`, `PRESEEDED_ONLY`, or `AUTO_PROVISIONED` policy. Entity Management owns idempotent creation/provisioning, account association, and canonical ID allocation; no service may fall back to `accountId`, username, display-name hashing, or another synthetic identity when the row is absent.
+
+The current `characters` table and creation contract still contain fixed RPG-oriented columns, and Game Session currently has account-ID and name-hash identity fallbacks when Entity lookup does not resolve a persisted character. Those are implementation drift, not compatibility behavior to preserve. Missing creation descriptors, policy-specific zero/one/many roster behavior, Entity-owned account-association projections, isolated-copy provenance, and end-to-end admission/session proof remain incomplete.
 
 ### Containment and Equipment Model
 

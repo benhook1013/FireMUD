@@ -426,11 +426,11 @@ Required postconditions for the explicit public-production join:
 
 Canonical character-creation contract for this flow:
 
-- The player-facing control-plane surface is `POST /characters` using the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target.
-- Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
-- `POST /characters` is allowed only after the caller has explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
+- Every published realm declares `PLAYER_CREATED`, `PRESEEDED_ONLY`, or `AUTO_PROVISIONED` entry. The player-facing `POST /characters` surface exists only for `PLAYER_CREATED` and uses the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target and exact versioned creation descriptor.
+- Entity Management owns canonical `characterId` allocation, actor-to-account association, creation/provisioning semantics, and persistence. Account owns the admission prerequisites and may consume an Entity projection; no service may synthesize character identity from account identity, username, or a hash.
+- `POST /characters` or idempotent auto-provision is allowed only after the caller explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
-- The current realm-scoped backend creation substrate carries `{tenantId, accountId, name, gameInstanceId, playableStateScope}` into Entity Management. The richer player-facing descriptor for template/race/class/options is still a required product contract before first-party clients can render nontrivial character creation without game-specific assumptions.
+- Exactly one realm-valid actor may auto-select; multiple actors require a selector. Zero actors follows the published entry policy rather than a platform-global creation fallback. Game-specific fields belong to the versioned descriptor/template and authored component model.
 
 Example first-party browser sequence for a playtest fork:
 

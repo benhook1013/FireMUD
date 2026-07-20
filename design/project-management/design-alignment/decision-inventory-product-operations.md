@@ -324,14 +324,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md) records the game-authored authority, creator-default, publication, runtime, and cutover rules.
 - **Human consultation:** Completed through human-led adversarial review; extensible layouts and the additional schema-maintenance burden were explicitly accepted on 2026-07-20.
 
-#### `PLAYER-01` - Character selection is explicit and realm-local
+#### `PLAYER-01` - Realm-authored entry uses one persisted controllable actor
 
 - **Capability:** Primary `AA-2.1` Gameplay login, character selection, and session binding. Secondary `AA-3.2`, `GR-3.1`, and `EA-3.1`.
-- **Decision / status / importance:** Character rosters and selection are scoped to the selected game realm; an account has no implicit default character across realms. Login requires explicit character selection or an explicit creation path, and character identity/state remains isolated per realm. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** Every normal gameplay session binds to one persisted realm-valid generic controllable actor. Entity owns canonical IDs and account association; IDs are never synthesized. Each published realm chooses player-created, pre-seeded-only, or idempotent auto-provision entry. Exactly one actor may auto-select, while multiple require selection. Game-specific state is authored, isolated copies receive new fork-local identity, and characterless or multi-primary sessions are deferred. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 2. Join a Game for the First Time`, `§ 3. Character Creation & Selection`, `§ 4. Player Login and Gameplay`, and `§ 8. Switch Games or Manage Multiple Games`; [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Authentication and Session Handling`.
-- **Strongest alternative:** Maintain a tenant-wide roster, choose an account-wide default character, or auto-create/select a character on first entry.
-- **ADR recommendation:** Yes. Define character-creation descriptors, missing-descriptor behavior, realm-local data, and the session-binding contract with `AUTH-01` and `SESSION-02`.
-- **Human consultation:** Yes; product, game-design, and player-support owners must approve the creation and selection experience.
+- **Strongest alternative:** Derive one actor from the account, require conventional RPG creation everywhere, make Account the character owner, or generalize sessions to zero or many primary actors now.
+- **ADR:** [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md) records the accepted persisted identity, entry policy, ownership, authored state, isolated-copy, and deferred-session-shape contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current synthetic-ID fallbacks, fixed RPG fields, missing descriptors/policy flows, ownership-document drift, and isolated-copy proof remain implementation gaps.
 
 #### `SAFETY-01` - Moderation outcomes are scoped by enforcement category and owner
 
