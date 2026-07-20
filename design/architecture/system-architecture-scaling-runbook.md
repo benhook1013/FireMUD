@@ -66,13 +66,17 @@ Key steps:
   - cross-region follow-up tables
   - effect reconciliation backlog tables
   - command ingress / command outcome status tables keyed by `(tenantId, gameInstanceId, commandId)`
-- Treat these as one retention policy surface during capacity review:
-  - define the retention horizon for each family,
-  - define the partitioning scheme or archive strategy,
-  - define vacuum/GC cadence,
-  - confirm the command-status retention window outlives expected player/client retry windows,
-  - verify oldest-pending-row age and write-latency SLOs across the whole surface rather than table-by-table in isolation.
+- Treat these as one cross-service retention-class and compatibility surface during capacity review, while each service remains responsible for its own schema and cleanup:
+  - classify live/recoverable work, retry/idempotency receipts, recovery/reconciliation lineage, purpose-bound audit/safety evidence, and diagnostic/content payload separately;
+  - never age-delete nonterminal, inconsistent, quarantined, or still-actionable recovery work;
+  - define each family's terminality and safe-watermark predicate, blocking references, horizon, partition/compaction/archive strategy, vacuum/GC cadence, hold behavior, and bounded metrics;
+  - preserve compact consumer receipts and effect guards through every producer/client retry, duplicate-delivery, replay, restore, and reconciliation window that can address the logical action;
+  - permit bulky payload or diagnostic detail to expire earlier than the minimum correctness receipt only after replay, investigation, and governance no longer require it;
+  - drop a partition only when every row is eligible, otherwise move protected rows or use a bounded row-level strategy;
+  - verify oldest-blocking-row age, cleanup lag, write latency, storage growth, and dependency inequalities across the whole surface rather than table-by-table in isolation; and
   - confirm dashboards and operator playbooks still map command-status rows onto the canonical terminal-state vocabulary in `design/architecture/system-architecture-tick-execution-flows.md`.
+
+Exact durations are deployment policy derived from declared retry/recovery/governance horizons and measured growth, not one platform-wide constant. See [ADR 0158](./decisions/adr-0158-service-owned-retention-classes-with-cross-service-safety.md).
 
 ## Verification
 

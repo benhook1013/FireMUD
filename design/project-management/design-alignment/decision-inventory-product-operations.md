@@ -250,14 +250,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** No ADR for non-binding load-test seeds. A future hard limit, autoscaling threshold, admission policy, or public capacity promise requires its own measured decision.
 - **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `accepted`. The owner accepted calibration cost and rejected false precision; existing ten-client proof and the checked-in `/ping` Gatling scenario do not validate the envelope.
 
-#### `CAPACITY-02` - Unified retention policy for high-churn persistence
+#### `CAPACITY-02` - Service-owned retention classes with cross-service safety
 
 - **Capability:** Primary `SF-2.1` PostgreSQL ownership, schemas, migrations, and retention. Secondary `GR-1.4`, `PO-4.2`, and `PO-4.3`.
-- **Decision / status / importance:** High-churn PostgreSQL tables, tick history, and command-status records need one explicit retention, partitioning, and garbage-collection policy. Command status must outlive the retry window; retention cannot be chosen independently per table without considering replay, reconciliation, and operational query cost. Status `proposed/deferred`; `H/med`.
+- **Decision / status / importance:** Use one shared retention-class and compatibility contract, not one duration or central collector. Each service cleans its own schema. Live/recoverable work is never age-deleted; compact retry/idempotency receipts survive every supported retry/replay/restore window; recovery lineage waits for complete terminal reconciliation; governance owns audit/safety retention; and bulky diagnostics may be minimized earlier only when no longer required. GC uses safe watermarks and cross-service dependency inequalities. Exact durations follow declared horizons and measured growth. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-scaling-runbook.md](../../architecture/system-architecture-scaling-runbook.md) `§ Scaling PostgreSQL`, `§ Tick- and Redis-Aware Scaling Indicators`, and `§ Capacity Model (Required Inputs)`; [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ Cross-Service Integration Testing`.
-- **Strongest alternative:** Let each service choose table retention independently or retain all history indefinitely.
-- **ADR recommendation:** Yes. Define the retention classes, partition/GC ownership, command-status minimum, and replay/audit exceptions.
-- **Human consultation:** Yes; database, runtime, compliance, and operations owners must balance recovery evidence against storage cost.
+- **Strongest alternative:** Let each service choose unrelated durations, run one central cross-schema collector, or retain all history indefinitely.
+- **ADR:** [ADR 0158](../../architecture/decisions/adr-0158-service-owned-retention-classes-with-cross-service-safety.md) records the shared classes, service ownership, safe-watermark GC, dependency inequalities, and deferred duration calibration.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The owner accepted classification and validation overhead to prevent duplicate effects and lost recovery/status evidence without retaining bulky identity-bearing content forever.
 
 #### `HEALTH-01` - Dependency-classified readiness protects the narrowest admission boundary
 
