@@ -5,24 +5,30 @@ This document defines the Social & Groups Service runtime model, persistent data
 ## Architecture and Design Notes
 
 - Uses WebSocket channels for chat delivery
-- Stores guild and friend relationships in PostgreSQL
+- Stores relationship lifecycle, guild/group metadata, typed membership, roles, alliances, social ACLs, and message/mail envelopes in PostgreSQL
 - Integrates with the Logging & Admin Service for moderation events
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a moderation report
 - Guild creation and membership changes may participate in short synchronous saga workflows so other services remain consistent; see [Transaction Strategies](../../system-architecture-transactions.md)
-- Chat history and guild data are stored with a `tenantId` so conversations are isolated per game; Redis list keys also include this prefix, as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
-- Cross-service calls always forward the `tenantId` so features remain isolated; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md) for details
+- Tenant-local relationship, group, chat, and mail records carry `tenantId` so game-local state remains isolated; Redis list keys also include the applicable scope, as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- Genuinely account-global relationship records are tenant-free canonical account pairs. APIs and calls include a tenant only when operating on tenant-local state; they must not manufacture a tenant scope for a global friendship.
 - APIs require authenticated JWTs from the Account Service for role checks; these tokens are exchanged only between services, and all inter-service communication is encrypted via mutual TLS following the [Security Architecture](../../system-architecture-security.md)
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics
 
 ## Data Model
 
 - `chat_message` table persists guild and private messages
-- `guild` and `guild_member` tables store group ownership and membership roles
-- `friend_links` table stores per-game friendships scoped by `tenantId`
-- `account_friend_links` table stores account-to-account friendships shared across games
+- `guild` and `guild_member` tables store group ownership, one declared membership-subject type, subject identity, and membership roles. A group uses either account subjects or `{playableStateNamespaceId, characterId}` subjects and does not mix them implicitly.
+- Tenant-qualified relationship records store game-local friend and block lifecycle independently from global relationships.
+- Tenant-free account-pair records store account-global request, acceptance, rejection, removal, and directional block state. Ordinary users control consensual transitions; operator authority is limited to explicit moderation and repair and cannot fabricate friendship.
 - Games can mirror these links in their UI when the feature is enabled
-- `mail_message` table stores asynchronous player mail
+- `mail_message` stores asynchronous mail envelopes, content references, and delivery lifecycle. Social owns no attached item or currency value.
+- A Social-owned guild ACL may bind a guild to an Entity-owned container. Deposits, withdrawals, and mail attachments use owner-controlled transfer or escrow; Social stores stable references and lifecycle state, never independent `itemName + quantity` rows.
+- Account owns identity, account status, and profile-visibility policy. Game Session owns raw current/recent presence and connected transports. Social reads those authorities to construct a bounded social projection.
 - `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation; integration with this service for NPC behavior is available
+
+### Implementation Alignment
+
+The current schema is not yet aligned with [ADR 0135](../../decisions/adr-0135-social-relationship-authority-and-entity-owned-value.md). `account_friend_links` still includes `tenant_id`, guild membership is account-only, and `guild_storage_items` persists `item_name` and `quantity` in Social. The current friend path also does not prove the complete bilateral lifecycle or operator limits. These are implementation and proof gaps, not alternate supported contracts.
 
 ## Redis Role and Prefixes
 

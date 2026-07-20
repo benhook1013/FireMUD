@@ -6,11 +6,11 @@ Provides chat, guild, and social networking features across games. Basic REST an
 
 ### Responsibilities
 
-- Deliver real-time chat notifications
-- Synchronize guild and friend lists in real time
-- Manage guild creation, membership, and roles
-- Maintain friend lists and cross-game social graphs
-- Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
+- Own friend and block relationships, including request, acceptance, rejection, removal, and blocking lifecycle
+- Own guild and group metadata, declared membership-subject type, membership and role policy, alliances, and social ACLs
+- Resolve social audiences and store messaging and mail envelopes and history
+- Apply Social-owned moderation enforcement and integrate moderation reporting with Logging & Admin
+- Coordinate authorized guild-container and mail-attachment operations without owning items, currency, or containment
 
 ## Key Features
 
@@ -18,8 +18,8 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Private messaging between players
 - Asynchronous player-to-player mail
 - Guild creation and membership management
-- Shared guild storage and alliance system
-- Friend lists scoped both to individual games and to overall accounts; account-level friends automatically appear in-game when enabled
+- Entity-backed shared guild storage and a Social-owned alliance and ACL system
+- Separate tenant-local relationships and genuinely tenant-free account-global relationships; accepted account friendships can appear in-game when enabled
 - In-game social chat plus account-to-account direct messaging
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
@@ -42,6 +42,8 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 - World/gameplay communication enters Game Logic first so topology, gameplay perception, surveillance, magical listening, and similar mechanics can participate consistently. Game Logic produces a bounded resolved plan; Social & Groups applies relevant social audience, moderation, history, and durable social-delivery responsibilities; Game Session owns connected gameplay transport delivery.
 - Account messaging, ordinary guild/group channels, mail, and browser social interactions enter Social & Groups directly after authentication, membership, privacy, and moderation checks. In-game commands may adapt to those APIs without turning private platform communication into a Game Logic action or exposing it to tenant-authored scripts. Gameplay `tell` may remain distinct when its contract deliberately permits game rules or interception.
 - Operator and platform-system communication enters through the service that owns the originating authorization and audit contract. See [ADR 0134](../../decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md) for the canonical communication classes and owner handoffs.
+- Each guild or group declares whether membership identifies accounts or `{playableStateNamespaceId, characterId}` characters. Account owns account identity and profile visibility, Game Session owns raw presence and transports, and Social owns only the relationship and group projection.
+- Entity Management owns real guild containers, items, currency, and mail attachments. Social may own the guild ACL and container binding, but attached value uses an owner-controlled transfer or escrow rather than Social-local item or quantity records. See [ADR 0135](../../decisions/adr-0135-social-relationship-authority-and-entity-owned-value.md).
 
 ## Document Map
 
@@ -58,6 +60,9 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 
 - **Internal:**
   - Account Service for user identities
+  - Game Session Service for raw presence and connected gameplay delivery
+  - Entity Management Service for guild containers, items, and attachment escrow
+  - Game Logic Service only when a declared world-specific communication or mail rule requires gameplay semantics
   - Logging & Admin Service consumes chat logs for moderation
 - **External:** PostgreSQL for social data
 

@@ -9,11 +9,16 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Basic health check returning `"pong"` |
-| `POST` | `/friends` | Create a friend link |
+| `POST` | `/friends/requests` | Request a tenant-local or account-global friendship; account-global requests omit tenant scope |
+| `POST` | `/friends/requests/{requestId}/accept` | Accept a pending friendship request as its target |
+| `POST` | `/friends/requests/{requestId}/reject` | Reject a pending friendship request as its target |
+| `DELETE` | `/friends/{relationshipId}` | Remove an accepted relationship as either participant |
+| `PUT` | `/blocks/{accountId}` | Create a directional block in the declared global or tenant-local scope |
+| `DELETE` | `/blocks/{accountId}` | Remove the caller's directional block in the declared scope |
 | `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
 | `POST` | `/mail` | Send an asynchronous in-game mail message; mail retrieval endpoints are also available |
 | `POST` | `/guilds` | Create a guild |
-| `POST` | `/guilds/storage` | Add an item to guild storage |
+| `POST` | `/guilds/{guildId}/container-binding` | Bind the Social-owned guild ACL to an Entity-owned container; item mutation remains an Entity operation |
 | `POST` | `/guilds/alliances` | Create a guild alliance |
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
@@ -47,10 +52,20 @@ curl -X POST http://localhost:8080/voice/token \
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
 - `SendMessage` – publishes a chat message to an in-game channel or player
-- `CreateGuild` – establishes a new guild with an owner account
-- `AddFriend` – adds a friend relationship at the game or account level
+- `CreateGuild` – establishes a new guild or group with an owner and one declared `ACCOUNT` or `CHARACTER` membership-subject type
+- Relationship lifecycle operations – request, accept, reject, remove, block, and unblock tenant-local or genuinely tenant-free account-global relationships; no operation lets one caller create an accepted friendship unilaterally
 - `ListFriendPresence` – returns bounded account-scoped friend presence, including canonical world/realm labels, conservative last-seen facts, and recent disconnect disposition when policy allows it. Social & Groups reads raw current/recent presence facts from Game Session and current profile visibility in one bounded Account Service bulk read; missing or unavailable Account policy defaults to `PRIVATE` before any field projection.
 - `SendMail` – stores asynchronous player mail for later retrieval
+
+### Relationship, Group, and Value Authority
+
+- Account-global relationships use tenant-free account-pair identity. Tenant-local relationships are separate tenant-qualified records; callers must select the scope explicitly.
+- A group with `ACCOUNT` membership identifies members by `accountId`. A group with `CHARACTER` membership identifies them by `{playableStateNamespaceId, characterId}` within the tenant. Membership, role, ownership, audience, and ACL operations reject identifiers of the wrong type.
+- Account supplies account identity/status and profile-visibility policy. Game Session supplies raw presence and owns connected transports. These are inputs to a Social projection, not Social mutation APIs.
+- Social authorizes its guild ACL and exposes the binding to an Entity-owned container, but has no API that creates item-name/quantity or currency rows. Item and currency owners perform deposits, withdrawals, and escrow.
+- Mail without world-specific semantics enters Social directly. Attached value is represented by stable owner-controlled escrow references. World-specific mail rules may enter Game Logic, but ordinary private mail is not exposed to tenant-authored scripts.
+- Ordinary users own friendship consent and block transitions. Tenant operators have only explicitly authorized moderation/support operations and cannot call an override that fabricates an accepted friendship.
+- The current OpenAPI, proto, schema, and authorization implementation do not yet prove this target lifecycle, typed membership, or value-transfer boundary and must converge before the surfaces are claimed implemented.
 
 ### Friend Presence Privacy Contract
 

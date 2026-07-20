@@ -148,6 +148,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0132](./adr-0132-future-compatible-localization-boundary.md) | Accepted | `EA-1` | `EA-3`, `AR-1` | Future-compatible localization boundary with deferred tooling selection |
 | [ADR 0133](./adr-0133-owner-local-moderation-enforcement.md) | Accepted | `PO-1` | `EA-2`, `AA-1`, `PO-4` | Owner-local moderation enforcement through acknowledged typed commands |
 | [ADR 0134](./adr-0134-explicit-communication-classes-and-owner-delivery.md) | Accepted | `EA-2` | `EA-2`, `GR-4`, `PO-1`, `SF-2` | Explicit gameplay, social-channel, and operator communication classes |
+| [ADR 0135](./adr-0135-social-relationship-authority-and-entity-owned-value.md) | Accepted | `EA-2` | `EA-2`, `AA-1`, `PO-1`, `SF-2` | Social relationship authority with Entity-owned transferable value |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
