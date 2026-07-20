@@ -122,6 +122,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0106](./adr-0106-game-session-owned-script-rollout-history.md) | Accepted | `AS-1` | `AR-3`, `SF-1`, `SF-2`, `PO-4` | Game Session-owned exact pin and append-only rollout history with Automation-only convergence projection |
 | [ADR 0107](./adr-0107-explicit-opt-in-schedule-continuity-across-script-transitions.md) | Accepted | `AR-3` | `AS-1`, `AR-1`, `GR-1`, `SF-2` | Default-reset interval transitions with explicit stable-owner schedule continuity |
 | [ADR 0108](./adr-0108-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) | Accepted | `AS-1` | `AR-1`, `GR-4`, `SF-1` | One DSL runtime with distinct embedded-script and linked-plugin lifecycles, explicit acceptance, and typed-engine hot-path authority |
+| [ADR 0109](./adr-0109-materialized-starter-profiles-with-conservative-draft-upgrades.md) | Accepted | `AR-2` | `AR-1`, `GR-4` | Game-owned materialized starter profiles with preserved lineage and conservative creator-initiated Draft upgrades |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

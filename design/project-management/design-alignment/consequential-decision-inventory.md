@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 16 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 17 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **96** | **183** | `in-progress` |
+| **Total** | | **97** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -245,7 +245,7 @@ No implementation-blocking override is active. Record an override here with the 
 #### Packet 4 P1
 
 - [x] `CONTENT-03` — `revised` on 2026-07-20; [ADR 0108](../../architecture/decisions/adr-0108-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)
-- [ ] `CONTENT-04`
+- [x] `CONTENT-04` — `revised` on 2026-07-20; [ADR 0109](../../architecture/decisions/adr-0109-materialized-starter-profiles-with-conservative-draft-upgrades.md)
 - [ ] `CONTENT-05`
 - [ ] `CMD-02`
 - [ ] `SET-02`
