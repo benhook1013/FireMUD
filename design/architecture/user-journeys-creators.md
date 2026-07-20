@@ -56,7 +56,7 @@ Each new game maps to a tenant (`tenantId`) under the [Multi-Tenancy](./system-a
 For v1, the creator lifecycle is:
 
 1. **Create a Draft Tenant** – A creator can create and edit a tenant before paying for production gameplay. Draft tenants support authoring and internal setup but do not expose a public production realm.
-2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns tenant runtime lifecycle for that tenant: launching the production realm, creating playtest forks, pinning script patches, initiating cutovers, and rolling back. `platformAdmin` can override these actions for platform incidents or support.
+2. **Assign Roles** – `designer` authors content and publishes versions but receives no runtime authority merely by publishing. `tenantAdmin` is accountable for the tenant's routine runtime lifecycle: launch, admission open/close, drain, stop/restart, playtest fork/reset/expiry, patch pinning, cutover, rollback, retirement, and failed-launch cleanup. `platformAdmin` acts only through a distinct reasoned and audited break-glass path for platform incidents, safety, billing, or support; it does not impersonate a tenant administrator.
 3. **Resolve Billing and Go-Live Readiness** – Before the first public production realm is started, the tenant must satisfy plan/entitlement requirements and have at least one published version ready to launch. The Account Service owns the runtime entitlement source of truth consumed by launch and admission; the creator-facing UX must expose enough billing-safe controls for `tenantAdmin` users to choose or repair a hosting plan, view high-level entitlement status, and understand why launch is blocked without requiring operator intervention.
 
 ```plaintext
@@ -105,11 +105,15 @@ Once the world is ready:
 
 1. **Publish a Version** – A `designer` or `tenantAdmin` publishes the current design in the Game Design Service.
 2. **Launch the Production Realm** – A `tenantAdmin` instructs the [Game Session Service](./microservices/game-session-service/README.md) to launch the tenant's default production realm on that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how initial world state is seeded from the published world data when a brand new world is created.
-3. **Check Entitlements** – Launch fails closed unless billing and plan entitlements permit gameplay for the tenant.
+3. **Check Production Gates** – Launch or another capacity-increasing action fails closed unless publication and release attestation, billing and plan entitlements, quota, compatibility or remap, and owner readiness all permit the exact operation.
 4. **Open Player Admission** – Once the realm is healthy, it becomes the default production realm surfaced to players in `WORLDS` / `REALMS` / `PLAY`. In v1, this production realm is also the only realm that may be publicly discoverable to authenticated players who do not already hold tenant membership.
-5. **Emergency Override** – `platformAdmin` can perform the same launch path during incident response, but creators do not depend on operators for routine tenant launches.
+5. **Emergency Intervention** – `platformAdmin` may invoke a separate reasoned and audited break-glass action during incident response, but cannot bypass release cohesion, data integrity, compatibility, or readiness invariants. Creators do not depend on operators for routine tenant launches.
 
 If launch fails for billing or entitlement reasons, the creator remains in the control plane and sees a billing-safe recovery path rather than a generic launch failure. Minimum recovery actions are: inspect the tenant's high-level entitlement state, update or create the hosting subscription/payment method through the Account Service billing surface, acknowledge any account-shared payment-instrument impact when required, then retry launch after the entitlement snapshot reports gameplay availability. Starting or editing live gameplay configuration is not billing-safe and remains blocked while the tenant is `suspended` or `canceled`.
+
+Blocked start or expansion does not block actions that reduce exposure or converge failed work. An authorized actor can still close admission, drain, stop, clean up a failed launch, perform billing-safe repair, and inspect audit state. Platform safety or billing authority may force closure or suspension; reopening is a new lifecycle action and must pass the normal production gates.
+
+Marketplace listing and public discovery eligibility are separate from lifecycle authority and technical launch readiness. A valid private or playtest realm need not be marketplace-listed, while marketplace approval neither grants `tenantAdmin` authority nor makes an invalid release launchable. Fine-grained delegated lifecycle roles are deferred; any future playtest delegation must distinguish fresh or seeded state from access to production-derived snapshots.
 
 ```plaintext
 Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session Service (launch realm)

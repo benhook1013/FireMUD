@@ -503,6 +503,16 @@ Illustrative compatibility responses:
 
 The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](./user-journeys-creators.md#4-publish-and-start-a-game-instance) for the high level flow.
 
+### Runtime Lifecycle Authority and Gate Classes
+
+`tenantAdmin` is the accountable routine owner for launch, admission open/close, drain, stop/restart, playtest fork/reset/expiry, patch pinning, cutover, rollback, retirement, and failed-launch cleanup within that tenant. A `designer` may publish a version but gains no runtime authority from publication. Fine-grained delegated lifecycle roles are deferred; any future playtest delegation must distinguish fresh or seeded operation from access to production-derived snapshots.
+
+`platformAdmin` uses a separate reasoned and audited break-glass request rather than impersonating `tenantAdmin`. Break-glass identifies the platform actor, target tenant and realm or instance, action, reason, and stable request identity. It uses the same authoritative lifecycle APIs and cannot bypass release cohesion, data-integrity, compatibility, remap, fencing, or readiness invariants. Platform safety or billing authority may force closure or suspension, but reopening is a new ordinarily gated lifecycle action.
+
+Production start and any capacity-increasing operation fail closed unless the current publication and release-attestation proof, entitlement and billing state, plan and operator quota, compatibility or remap result, and required owner readiness all authorize the exact attempt. Marketplace listing and public-discovery eligibility are separate policy decisions: neither substitutes for runtime proof or lifecycle authority.
+
+Gate failure does not disable operations that reduce exposure, converge failed state, or repair the blocking authority. Stop, close admission, drain, failed-launch cleanup, billing-safe repair, and authorized audit remain available under their own authorization while start or expansion is forbidden. Rollback, restart, or recovery that does not increase capacity follows the separately bounded entitlement-continuity contract below and still satisfies compatibility, fencing, and integrity requirements. See [ADR 0139](./decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md).
+
 - When starting a game, it reads the desired `version_id` from a manifest or launch request and stores this value as `runtime_version` in the `game_instances` table.
 - The available versions a tenant can launch are listed in the `game_manifest`
   table managed by the Game Session Service.

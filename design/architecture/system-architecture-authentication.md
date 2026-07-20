@@ -67,16 +67,18 @@ For the data model underpinning `accountId`, `tenantId`, characters, and members
 FireMUD standardizes a small, explicit role set so tenant authorization and cross-tenant behavior remain consistent across services:
 
 - **Global roles (`globalRoles`)**
-  - `platformAdmin` – Full cross-tenant administrative access, including starting and stopping game instances, viewing cross-tenant analytics, and reading billing and subscription state for any tenant.
+  - `platformAdmin` – Cross-tenant platform administration, including explicit break-glass runtime lifecycle actions, cross-tenant analytics, and billing/subscription reads. Runtime intervention is a distinct reasoned and audited route class; it does not impersonate `tenantAdmin`, create tenant membership, or bypass integrity and readiness gates.
   - `support` – Limited cross-tenant support tools, subject to audit. Support roles may view high-level subscription state and entitlements for troubleshooting (for example, whether a tenant is `active` or `suspended` and what quotas apply), but cannot view detailed billing artifacts such as invoices or payment methods and cannot modify subscriptions.
   - `billingAdmin` – Cross-tenant access to billing-safe control-plane APIs (for example, viewing invoices, updating payment methods, and managing subscriptions) but no gameplay or design privileges.
 - **Tenant roles (`scopedRoles[tenantId]`)**
   - `player` – Can join gameplay for the tenant subject to entitlements and quotas; no design, admin, or billing capabilities.
   - `designer` – Can edit design-time content for the tenant via Game Design tools; cannot control runtime instances or billing.
-  - `tenantAdmin` – Owns the tenant in day-to-day operations: can manage game instances, configure runtime settings, and manage subscriptions and billing for that tenant.
+  - `tenantAdmin` – Accountable routine tenant operator: can launch, open/close admission, drain, stop/restart, fork/reset/expire playtests, pin patches, cut over, roll back, retire, clean up failed launches, configure runtime settings, and manage subscriptions and billing for that tenant.
   - `moderator` – Performs tenant-scoped moderation actions (for example, muting or banning players) but cannot alter billing or platform-wide configuration.
 
 Services must not introduce ad-hoc roles without updating this model and the Tenant Authorization Contract. Where finer-grained behavior is required, services should prefer additional capabilities/flags derived from these core roles rather than inventing new top-level roles.
+
+Publishing content as `designer` does not grant runtime lifecycle authority. V1 keeps routine lifecycle accountability with `tenantAdmin`; fine-grained delegation is deferred. A future delegated playtest capability must distinguish fresh or published-seed operation from the data-bearing authority to select, copy, or operate production-derived snapshots.
 
 ### Global Role to Route-Class Matrix (Normative)
 
@@ -91,6 +93,8 @@ Global roles must not be interpreted as broad tenant access shortcuts. Authoriza
 Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`REALMS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data or the canonical public-production admission policy for the target realm; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
 
 Global roles also confer no authority after ordinary gameplay admission. Gameplay presence, commands, actor capabilities, and `PlayerExecutionContext` must ignore `globalRoles`; only explicit tenant-scoped gameplay grants may produce moderator, administrator, game-master, or equivalent in-world capabilities. A `platformAdmin`, `support`, or `billingAdmin` account that joins a public game without such a tenant-scoped grant appears and acts as an ordinary `PLAYER`. Break-glass platform operations remain separate audited control-plane actions and must not create a player actor or gameplay session.
+
+Lifecycle break-glass requests require the authenticated platform actor, exact tenant and realm or instance, bounded action, explicit reason, stable request identity, and durable audit outcome. They follow the same owner-local fencing, publication, compatibility, readiness, and integrity checks as routine lifecycle requests. Safety or billing authority may force closure or suspension, but later reopening is a new ordinarily gated action. Marketplace listing and public-discovery eligibility do not grant lifecycle authority.
 
 The current target has no support impersonation, live-session attachment, or hidden-observer mode. Support uses minimized support-safe reads, logs, dashboards, reports, moderation records, and explicit control-plane operations. Adding any impersonation or observation product requires a new human-reviewed privacy, tenant-consent, notification, audit, and capability decision; implementations must not preserve speculative bypass hooks.
 

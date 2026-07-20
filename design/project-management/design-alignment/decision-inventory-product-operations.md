@@ -300,11 +300,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `LIFE-01` - Tenant-owned routine lifecycle with platform break-glass
 
 - **Capability:** Primary `AR-3.1` Runtime instance launch, lifecycle, and termination. Secondary `AA-1.5`, `PO-1.1`, and `AR-3.3`.
-- **Decision / status / importance:** `tenantAdmin` owns routine game-instance launch, fork, patch pinning, cutover, and rollback within billing and entitlement controls. `platformAdmin` is reserved for break-glass intervention; a creator cannot bypass paid or safety gates merely by owning content. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** `tenantAdmin` is accountable for routine launch, admission, drain, stop/restart, playtest lifecycle, pinning, cutover, rollback, retirement, and failed-launch cleanup. Starts and capacity increases fail closed on release, entitlement, quota, compatibility, and readiness gates, while closure, cleanup, repair, and audit remain available. `platformAdmin` uses distinct reasoned audited break-glass without impersonation or integrity bypass. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 1. Game Creation`, `§ 4. Publish and Start a Game Instance`, `§ 5. Patch and Update a Live Game`, and `§ 7. Playtesting & Analytics`; [user-journeys-operators.md](../../architecture/user-journeys-operators.md) `§ 2. Operator Recovery Journeys` and `§ 4. Deployment & Environment Configuration`.
-- **Strongest alternative:** Make platform operators own every launch and cutover, or let tenant admins launch without billing, entitlement, or safety enforcement.
-- **ADR recommendation:** Yes. Align lifecycle authority, paid-state behavior, and break-glass auditability with `AUTH-07`, `ADMIT-01`, and `OPS-05`.
-- **Human consultation:** Yes; product, finance, platform, and creator owners must approve the authority split.
+- **Strongest alternative:** Make platform operators own every launch and cutover, let publication grant runtime authority, allow tenant administrators to override gates, or introduce fine-grained lifecycle roles immediately.
+- **ADR:** [ADR 0139](../../architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md) records the accepted authority, gate classes, recovery availability, break-glass, and deferred delegation contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current operator-oriented and broad moderator guards, missing tenant-facing surfaces, incomplete entitlement/readiness composition, and absent distinct break-glass proof remain implementation gaps.
 
 #### `PLAYTEST-01` - Explicit, expiring playtest grants with bounded active revocation
 
