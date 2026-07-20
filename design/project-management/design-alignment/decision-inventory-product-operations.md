@@ -132,11 +132,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `OBS-01` - Bounded-cardinality observability identity
 
 - **Capability:** Primary `PO-4.1` Logging, metrics, tracing, dashboards, and alerting. Secondary `SF-1.1` and `PO-4.4`.
-- **Decision / status / importance:** Keep tenant, game, region, session, and player identity in structured logs and trace context, but do not use raw high-cardinality identifiers as ordinary metric labels. Runtime identity exposure and any bounded exception must be explicit and reviewed. Status `accepted-implicit`; `H/med`.
+- **Decision / status / importance:** Keep exact opaque tenant, game, region, session, player, request, and runtime identity selectively in structured logs and traces when relevant and known, but never use raw high-cardinality identifiers as ordinary metric labels. Metrics use reviewed bounded dimensions; incident tooling may relate aggregate metrics to identity-bearing logs/traces or exemplars. Any exception must declare and enforce its bounded vocabulary. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-logging-monitoring.md](../../architecture/system-architecture-logging-monitoring.md) `§ Request-Path Logging Baseline and Bounded Exceptions`, `§ Runtime Identity Exposure`, `§ Metrics Cardinality Rule For Runtime Identity`, and `§ Cardinality Guardrails for Metrics`.
 - **Strongest alternative:** Put raw player, session, tenant, or trace IDs on all metrics for easy filtering.
-- **ADR recommendation:** Yes before granting an exception; otherwise cross-reference the existing observability contract and record only the bounded label set.
-- **Human consultation:** Yes; operations and privacy/security owners must approve identity exposure and retention.
+- **ADR recommendation:** No new ADR for the existing boundary. A future raw-identity or exceptional metric dimension requires a separate reviewed decision with a numeric series budget, ownership, and proof.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `accepted`. Exact drilldown remains available through logs, traces, exemplars, and platform-supplied correlation tools without multiplying Prometheus series. Identity-bearing observability still requires access control, retention, redaction, and query auditing.
 
 #### `OBS-02` - Player-experience SLO targets are a product reliability contract
 
