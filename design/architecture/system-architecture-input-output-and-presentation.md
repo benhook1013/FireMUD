@@ -13,8 +13,8 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Communication actor and recipient responses now flow through the same late renderer from metadata-only Game Logic delivery views. The first-party WebSocket edge now also projects structured command-response, async-player-output, and reconnect-refresh envelopes, but no first-party browser application is implemented and proven to consume a supported version of that schema. Classic transport replay still projects derived text, while canonical durable entries retain structured metadata and replay only replay-eligible outputs rather than whole command responses; first-party replay wraps compatibility text in explicit transcript envelopes instead of falling back to raw text.
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text.
 - Prompt output now has the pre-`06` baseline pipeline: prompt coalescing, a narrow per-session prompt-throttling window, reconnect prompt regeneration, and structured first-party prompt delivery are live. Richer burst-end scheduling, broader game-defined composition, and canonical buffered prompt/status replay remain future work.
-- Built-in/system text now has the first usable localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests.
-- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work.
+- Built-in/system text now has a first bounded localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests. This is partial technical groundwork, not a completed localization product or tooling workflow.
+- Authored localized content also has a first bounded implementation seam: locale-tagged explicit variants with a required source locale. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots also localize adjacent exit target room naming before rendering. Broader authored-content adoption, creator workflows, external tooling integration, and product-level localization proof remain future work.
 - The canonical resume-transcript model is substantially live: replay-eligible structured entries are retained durably as one bounded per-character resume context, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth. Game Session persists ordered `resume_transcript_entry` rows and uses Redis only as a best-effort hot cache. The current rows remain keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable; those are implementation gaps against [ADR 0130](./decisions/adr-0130-bounded-durable-semantic-reconnect-context.md). The implementation already drops an entry that cannot fit the hard ceiling, which is partial evidence for the revised strict-bound rule.
 - The current `LOOK` seam compares World and Entity snapshot fields that are derived from the same static room scope. Matching those fields proves scope agreement, not temporal agreement. The required temporal causal-floor and participant-version evidence in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md) remains unimplemented.
 
@@ -366,12 +366,16 @@ The exact wire-level implementation may vary by client capability, but the setti
 
 ### Localization and translation
 
-Localization should distinguish between two complementary mechanisms:
+Localization and translation are future product capabilities rather than a current implementation target. FireMUD should preserve a minimal future-compatible boundary now without preselecting a provider, authoring workflow, coverage promise, or complete localization product.
 
-- template/key-based localization for built-in platform and system text;
-- explicit localized content variants for authored world/game prose such as room descriptions, lore text, and item descriptions.
+That boundary distinguishes four concerns that must not be collapsed into one runtime translation mechanism:
 
-These mechanisms solve different problems and should coexist rather than compete.
+- built-in platform and system strings, represented by stable templates or keys;
+- authored world/game content such as room descriptions, lore text, and item descriptions;
+- first-party browser UI strings and assets;
+- player-generated speech and other user-authored communication.
+
+Each authored content bundle must declare one canonical source locale. Additional stored translations are optional, and FireMUD does not promise that every game or surface will be available in every supported player locale.
 
 For built-in runtime rendering, locale selection should currently follow this precedence:
 
@@ -381,13 +385,15 @@ For built-in runtime rendering, locale selection should currently follow this pr
 
 The first authored-content model should stay small and explicit:
 
-- one canonical source locale is required;
 - localized variants are stored by locale tag;
 - runtime resolves:
   - exact locale first;
-  - then language-only match where available;
+  - then an explicitly stored base-language variant;
   - then the source locale text;
+- runtime never chooses an arbitrary regional sibling as a fallback;
 - the runtime should not synthesize or fetch missing translations on demand during live gameplay.
+
+For example, a request for `fr-CA` may fall back to an explicitly authored `fr` variant, but it must not choose between `fr-FR` and `fr-BE` merely because they share a language.
 
 The first authored-content runtime adoption should stay equally small and explicit:
 
@@ -396,17 +402,13 @@ The first authored-content runtime adoption should stay equally small and explic
 - World Management should resolve stored localized room variants before returning the authoritative room snapshot;
 - richer item/world/lore adoption can follow the same model later without moving localization onto the live renderer hot path.
 
-For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. The platform should not assume per-message external translation during active gameplay because added network latency and jitter would directly hurt responsiveness.
+For runtime behavior, FireMUD serves accepted stored localized variants rather than making live translation calls on the gameplay hot path. This keeps latency and availability predictable. Player-generated speech is not automatically translated by default; any later player-speech translation feature requires a separate product, privacy, abuse, cost, and gameplay-semantics decision.
 
-The preferred future AI-enabled model is:
+When a concrete localization use case is scheduled, the implementation work must first research the approaches and remote localization tooling or services then available. This field is evolving, so the project must not lock in today's provider or workflow speculatively. The evaluation must cover creator-workflow integration, privacy and data residency, security, cost, translation quality, tone and glossary control, provider dependency, offline or export options, and creator review.
 
-1. creators author canonical source content in one original language;
-2. creators provide world/tone/glossary guidance where needed;
-3. an offline or out-of-band AI localization workflow generates draft localized variants;
-4. creators optionally review and edit those generated variants;
-5. runtime serves the stored localized variants without depending on live translation APIs.
+Any AI- or service-generated translation remains an authoring-time draft. It must be reviewed as appropriate, persisted as an explicit locale variant, versioned with its authored bundle, and accepted before publication. Runtime never treats an ephemeral provider response as published game content.
 
-This keeps runtime latency predictable while still allowing AI to reduce the authoring burden for accessibility and internationalization.
+See [ADR 0132](./decisions/adr-0132-future-compatible-localization-boundary.md) for the product deferral, fallback, and revisit rules.
 
 ### BRIEF mode
 
