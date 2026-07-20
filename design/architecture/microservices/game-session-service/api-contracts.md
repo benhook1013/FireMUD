@@ -30,12 +30,13 @@ Game Session deliberately separates socket ownership from region execution owner
 
 The internal front-end to lease-owner path is a fenced gameplay contract, not a best-effort proxy hop:
 
-- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
-- Forwarded requests include the current region lease/epoch fence. Lease owners reject stale or missing fences with an application-level stale-lease response rather than silently executing.
-- The session front-end preserves per-connection FIFO when emitting forwarded work. Cross-connection ordering remains undefined during takeovers as described in the reconnection and protocol-bridging docs.
-- If the lease owner rejects a stale fence before execution, the front-end refreshes ownership and may retry the request once against the new lease owner when the request is still valid.
-- If forwarding fails after the executor may already have started, the front-end must treat the result as ambiguous and use the normal structured command-failure or reconnect path; it must not re-issue potentially mutating work without an idempotency guarantee.
-- All forwarded execution attempts and stale-lease rejections must emit dedicated metrics and traces so operators can distinguish edge socket health from region-executor health.
+- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, active `frontEndGeneration`, `characterId`, target `regionId`, stable `commandId`, `sessionSequence`, and the expected executor fence.
+- Owner-directory or lease-projection data is a routing hint. The receiving executor validates current ownership and fence at admission and rejects stale or missing authority rather than silently executing.
+- `sessionSequence` preserves FIFO within one live connection generation only. `commandId` and effect/request identities provide dedupe and retry safety; sequencing is not an idempotency key or distributed transaction fence.
+- A stale-owner rejection before admission may refresh routing and retry the same logical identity. If execution may have started, the front-end reconciles that same `commandId` through `GetGameplayCommandStatus` and never invents a replacement identity.
+- Cross-region movement converges through the authoritative spatial/effect result. The front-end updates its execution-region pointer only after that durable result; it does not coordinate a separate source-release/destination-accept transaction.
+- Asynchronous output targets the active `{sessionId, frontEndGeneration}` registration. Superseded generations cannot deliver to the replacement controller.
+- Forwarding, in-flight work, retries, output buffering, and route refresh are bounded and expose saturation, timeout, stale-fence, ambiguous-result, and generation-mismatch metrics.
 
 ## gRPC APIs
 

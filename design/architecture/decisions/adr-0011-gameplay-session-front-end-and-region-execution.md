@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0165](./adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md).
 
 ## Context
 

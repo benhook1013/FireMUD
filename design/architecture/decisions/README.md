@@ -24,7 +24,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0008](./adr-0008-multi-cluster-gameplay-sharding-scope.md) | Accepted | `GR-1` | `PO-2`, `PO-3`, `SF-2` | Single-cluster gameplay execution and multi-cluster adoption gate |
 | [ADR 0009](./adr-0009-coordination-redis-ownership-boundary.md) | Accepted | `SF-2` | `AA-2`, `GR-1`, `AS-1` | Coordination Redis ownership and participation boundaries |
 | [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md) | Superseded | `SF-1` | `PO-2`, `PO-3` | Historical ordered TCP Proxy identity fallback |
-| [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Session front-end and fenced lease-owner execution model |
+| [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution.md) | Superseded | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Historical session front-end and region execution forwarding contract |
 | [ADR 0012](./adr-0012-settings-value-precedence-and-constraints.md) | Accepted | `AR-2` | `EA-1`, `GR-1`, `SF-2` | Settings value precedence, source eligibility, and separately enforced constraints |
 | [ADR 0013](./adr-0013-bounded-invisible-non-edge-restart-recovery.md) | Accepted | `GR-1` | `AA-2`, `PO-2`, `PO-4`, `SF-2` | Bounded invisible non-edge restart recovery and explicit fallback |
 | [ADR 0014](./adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) | Accepted | `SF-1` | `AA-1`, `PO-1`, `PO-3`, `PO-4` | Phased planned JWT rotation, compromise hard cutover, validator convergence, and player-facing readiness |
@@ -178,6 +178,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0162](./adr-0162-allowlisted-sensitive-trace-attributes.md) | Accepted | `PO-4` | `SF-1`, `PO-1`, `PO-3` | Allowlisted sensitive trace attributes |
 | [ADR 0163](./adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) | Accepted | `AA-3` | `AA-2`, `SF-1` | Snapshot-bound lobby selectors and stable realm identity |
 | [ADR 0164](./adr-0164-exclusive-environment-bound-tcp-proxy-trust.md) | Accepted | `SF-1` | `PO-2`, `PO-3` | Exclusive environment-bound TCP Proxy trust |
+| [ADR 0165](./adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Fenced command forwarding and authoritative region transition |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
