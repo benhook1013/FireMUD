@@ -388,7 +388,7 @@ Minimal interoperability requirements for the fence token:
 - `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed or mixed fences; services must not silently upgrade to a newer snapshot.
 - A retry obtains a fresh room snapshot and therefore a fresh fence value; an older fence is not reused across later room-refresh attempts.
 
-Operator-facing command convergence reads must use the durable `GetCommandStatus` surface after replay/reset/remediation. Redis queue inspection is diagnostic only and must not be treated as the canonical post-remediation status answer.
+Operator-facing command convergence reads must use the durable `GetGameplayCommandStatus` surface after replay/reset/remediation. Redis queue inspection is diagnostic only and must not be treated as the canonical post-remediation status answer.
 
 Minimal canonical room-read example:
 

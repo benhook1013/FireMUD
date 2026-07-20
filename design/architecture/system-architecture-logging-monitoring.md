@@ -383,7 +383,7 @@ Logging & Admin should:
 - Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
 - Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
 - Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
-- When command convergence is involved, alerts should link operators to the durable `GetCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
+- When command convergence is involved, alerts should link operators to the durable `GetGameplayCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
 
 #### Logging & Admin Alert-State Contract (Normative)
 

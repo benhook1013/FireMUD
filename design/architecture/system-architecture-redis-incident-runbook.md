@@ -35,7 +35,7 @@ The incident flows below describe the target operator model. In the current impl
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.
    - If a reset is required, use the coordination reset model and key enumeration strategy from `design/architecture/system-architecture-redis-reset-and-recovery.md` to clear affected prefixes safely.
 4. **Inspect durable command outcomes**
-   - After replay/reset work, use the canonical `GetCommandStatus` surface described in `design/architecture/system-architecture-tick-failures-and-operations.md` to confirm commands converged to their final durable outcomes.
+   - After replay/reset work, use the canonical `GetGameplayCommandStatus` surface described in `design/architecture/system-architecture-tick-failures-and-operations.md` to confirm commands converged to their final durable outcomes.
    - Do not treat raw Redis queue/key inspection as the primary operator answer for player-visible command status after remediation.
 
 ### Coordination Redis Recovery Behaviour

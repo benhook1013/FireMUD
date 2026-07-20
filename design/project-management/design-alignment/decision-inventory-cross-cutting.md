@@ -8,7 +8,7 @@ Status: Complete and independently coverage/fidelity-audited. This artifact is n
 
 This ledger continues the completed read-only decision scan. It preserves the prior decision keys, sources, statuses, alternatives, ADR recommendations, flags, and review queue while allocating every decision to the exact capability identifiers in the [Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md). It does not create, accept, supersede, or amend canonical design.
 
-The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-backed additions. The counted source partition is exactly 22 paths. The existing [main consequential-decision-inventory](./consequential-decision-inventory.md) is intentionally unchanged; its nine ADR-ledger keys are cross-referenced below.
+The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-backed additions. The counted source partition is exactly 22 paths. The [main consequential-decision inventory](./consequential-decision-inventory.md) remains the compact control crosswalk; reviewed dispositions and ADR references are synchronized across both inventories.
 
 ## Status And Review Notation
 
@@ -139,7 +139,7 @@ The first 22 source-index entries are the counted cross-cutting partition. `WE`,
 
 ## Main Inventory Crosswalk
 
-The main inventory remains unchanged. These aliases preserve its existing nine ADR records while allowing this file to use the finer-grained taxonomy. The 9 additions below have no main-inventory alias because the control inventory is intentionally outside this three-file update.
+The main inventory remains the compact control crosswalk. These aliases preserve its nine decision keys while allowing this file to use the finer-grained taxonomy. The 9 additions below have no main-inventory alias because they remain source-ledger-only decisions.
 
 | Main inventory key | Cross-cutting key | Exact primary capability here |
 | --- | --- | --- |

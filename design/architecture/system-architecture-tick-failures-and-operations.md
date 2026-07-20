@@ -182,7 +182,7 @@ Minimum command-status surface for operators and clients:
   - `tickBatchId`
   - bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`)
 - Canonical control-plane naming for first implementation is:
-  - `GetCommandStatus` for authoritative lookup
+  - `GetGameplayCommandStatus` for authoritative lookup
   - optional `StreamCommandOutcomes` for advisory event delivery
 - `executionOutcome` uses the shared terminal vocabulary:
   - `APPLIED`
@@ -197,7 +197,7 @@ Minimum command-status surface for operators and clients:
 - `LOST_BEFORE_STAGING` is a first-class terminal execution outcome, not an internal-only repair code.
 - Durable storage rule:
   - The authoritative status surface must persist both `executionOutcome` and `gameplayResult`, either on the command-ingress row itself or in a durable outcome projection keyed by `(tenantId, gameInstanceId, commandId)`.
-  - Recovery and reset tooling update that durable status surface directly; they do not rely on Redis queues or in-memory command trackers to answer `GetCommandStatus`.
+  - Recovery and reset tooling update that durable status surface directly; they do not rely on Redis queues or in-memory command trackers to answer `GetGameplayCommandStatus`.
   - Schema docs may use storage-oriented names such as `execution_outcome` / `gameplay_result`, but the logical command-status contract remains the camel-case field set above.
 
 ### EffectId, Ledger Rows, and Guard Keys

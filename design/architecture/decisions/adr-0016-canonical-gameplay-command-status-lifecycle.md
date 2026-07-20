@@ -73,6 +73,10 @@ Keep the live status values as the complete contract. This reduces immediate sch
 
 Persist and re-drive all accepted intent. This provides stronger delivery semantics but can execute stale movement or combat after the player context has changed, and it adds durable intake and replay cost to every interactive command. Durable acceptance remains opt-in by feature instead.
 
+### Use Redis as the Status Authority
+
+Store and query the status lifecycle from Redis coordination state. This reduces the apparent durable-write surface, but Redis is reset and loss-prone coordination state and cannot provide the authoritative recovery or audit boundary. PostgreSQL remains the durable command-status authority.
+
 ## Implementation and Proof Obligations
 
 - Evolve the existing proto and durable persistence to expose the canonical fields and migrate current state values without creating a second authority.
