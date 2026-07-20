@@ -96,7 +96,9 @@ The main mechanisms include:
 - **Cluster-wide ceilings** on automation work, including CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`.
 - **Priority tags** (`high`, `normal`, `background`) that determine how scripts are throttled when budgets are tight.
 
-These controls work alongside the **failure-rate circuit breaker**, which can automatically place scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds in a window.
+These controls work alongside the **failure-rate circuit breaker**, which can automatically place one exact immutable script/plugin version and runtime activation scope into `DISABLED_DUE_TO_ERRORS` after a minimum eligible sample count exceeds configured rolling-window thresholds within platform hard bounds.
+
+Only handler-attributable deterministic evaluation, sandbox-limit, and authored-output failures count. Quota/capacity denial, infrastructure or owner unavailability, rollback/version fencing, expected gameplay precondition rejection, dry-run/test traffic, operator cancellation, and player-controlled invalid input do not. A trip blocks new admission but does not cancel accepted work or reverse effects. Recovery requires a new version or explicit audited reset after validation; emergency component revocation remains a separate immediate fence. The classified samples and policy version are retained as durable audit evidence.
 
 ### Plugin Workloads
 
@@ -201,9 +203,12 @@ Budgets operate at three main levels:
 
 - **Cluster-wide**:
   - Global ceilings on automation work (for example, CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`) protect the cluster.
-  - When limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work.
+  - Scheduling provides tenant fairness before applying priority within each tenant's share. Bounded weights favor `high` over `normal` and `background`, but no tier bypasses per-script, tenant, sandbox-capacity, or cluster ceilings.
+  - Under sustained overload, declared best-effort background work may be delayed or dropped and its starvation must be measurable. Correctness-bearing work must use a recovery class that does not depend on eventual execution of best-effort background traffic.
 
 All script-side keys remain scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Operator-facing metrics, however, must use the bounded `scope`, category, family, or tier labels defined in the canonical observability contract rather than raw tenant/runtime identifiers. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
+
+See [ADR 0161](./decisions/adr-0161-attributable-script-breakers-and-tenant-first-fairness.md).
 
 ### Quota & Budget Summary
 
