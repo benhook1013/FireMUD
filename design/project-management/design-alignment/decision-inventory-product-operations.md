@@ -183,14 +183,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes if this becomes a deployment gate; otherwise keep it as a target-state evidence check linked to `OPS-06`.
 - **Human consultation:** Yes; operations must choose the queryability SLO and evidence retention cost.
 
-#### `MCP-01` - Optional structured protocol extension with plain-text fallback
+#### `MCP-01` - Plain-text gameplay with classic-client extensions deferred
 
 - **Capability:** Primary `PO-2.3` Client protocol negotiation and structured protocol extensions. Secondary `PO-2.2`, `EA-1.2`, and `PO-2.4`.
-- **Decision / status / importance:** MCP is optional and negotiated per connection; plain text remains canonical, unknown packages are ignored, malformed packages are dropped, and MCP is never gameplay-critical. Budgets for active cords, data tags, control lines, and negotiation failures are per connection/auth key/cord state. Status `accepted-implicit`; `M/med`.
+- **Decision / status / importance:** Plain text is the universal classic-client gameplay contract, while the first-party WebSocket uses the separate versioned `PlayerOutput` contract. MCP, GMCP, and other classic-client extensions are currently experimental, disabled, unadvertised, and unimplemented until current-client research selects a bounded adapter and proves it end to end. If MCP is selected, Game Session alone owns negotiation and semantic state; TCP Proxy retains only generic transport limits. MCP authentication keys are correlation values, never identity or gameplay authority. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [system-architecture-mud-client-protocol.md](../../architecture/system-architecture-mud-client-protocol.md) `§ Protocol Handshake`, `§ Message Format`, `§ Optional Packages`, `§ Interaction with abuse heuristics`, `§ MCP resource limits & abuse budgets`, and `§ Reconnection & Session Recovery`; [system-architecture-protocol-bridging.md](../../architecture/system-architecture-protocol-bridging.md) `§ Ordering & Delivery Invariants` and `§ Backpressure & Slow Clients`.
-- **Strongest alternative:** Make structured MCP messages required, use them as the canonical gameplay representation, or silently reconnect and reattach negotiated state.
-- **ADR recommendation:** No new ADR while MCP remains optional. Yes before making MCP gameplay-critical or promising a compatibility-stable package/limit contract.
-- **Human consultation:** Yes before a client-compatibility promise; otherwise the current optional boundary is sufficient.
+- **Strongest alternative:** Promote the existing TCP Proxy marker/greeting seam into supported MCP 2.1, commit to MCP before comparing current clients, or make a structured extension the universal gameplay protocol.
+- **ADR:** [ADR 0145](../../architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md) records the universal plain-text baseline, research gate, Game Session ownership, non-authoritative correlation keys, fresh negotiation, and exact evidence-gated compatibility claims.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current proxy marker/greeting recognition is explicitly not MCP support, and classic-client extension implementation remains deferred until research and exact public-path interoperability proof exist.
 
 ### Procedural Generation And Runtime Authoring
 

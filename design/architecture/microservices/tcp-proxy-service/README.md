@@ -13,8 +13,9 @@ For TCP Proxy’s position in the overall system (DMZ, Telnet edge, and WebSocke
 > - Telnet bridge metadata and header propagation.
 > - `NotifyDisconnect` event semantics and layering guarantees.
 > - Proxy metrics naming, bounded label taxonomies, and cardinality rules.
+> - Generic Telnet framing, line-size protection, and opaque extension-marker rate protection.
 >
-> Other docs should summarize behavior and link back here instead of redefining protocol details.
+> Game Session owns any future classic-client extension negotiation and semantics under [ADR 0145](../../decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md). Other docs should summarize behavior and link back here instead of redefining proxy details.
 
 ## Implementation Status
 
@@ -24,15 +25,15 @@ When code, tests, and docs diverge, align implementation to this doc set and the
 
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
-| Telnet login-first flow | All Telnet clients may optionally browse `WORLDS` before login, then issue `LOGIN`, then `PLAY`. Telnet shares the same admission pipeline as WebSocket clients. Hidden smart-client attach hints may return later through MCP metadata only; they are not player-facing commands. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Implemented at the current player-access and session boundary; focused automated proofs exist, with manual end-to-end QA remaining. | [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md) |
+| Telnet login-first flow | All Telnet clients may optionally browse `WORLDS` before login, then issue `LOGIN`, then `PLAY`. Telnet shares the same admission pipeline as WebSocket clients. Any future extension-carried smart-client attach hint is advisory to Game Session and is not a player-facing command or authority. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Implemented at the current player-access and session boundary; focused automated proofs exist, with manual end-to-end QA remaining. | [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md) |
 | Proxy -> Gateway WebSocket mTLS | Telnet -> Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). | Implemented. Player-facing environments fail closed if client-certificate identity verification is unavailable. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
-| MCP control-line handling and Telnet heuristics | MCP 2.1 control lines, Telnet heuristics, and connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Implemented. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
-| Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and MCP/Telnet safety budgets protect the DMZ boundary. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
+| Classic-client extension boundary | Plain text remains canonical. TCP Proxy may apply generic line-size and opaque extension-marker rate protection but owns no extension greeting, negotiation, package, cord, tag, or authentication-key semantics. | MCP-looking marker recognition and a disabled-by-default greeting path exist, but they are not compliant negotiation or supported MCP 2.1 behavior. Classic-client extensions remain experimental, disabled, unadvertised, and unimplemented pending the ADR 0145 research and end-to-end proof gate. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
+| Connection limits and abuse protection | Connection caps, idle timeouts, generic input size limits, and opaque marker-rate protection protect the DMZ boundary without duplicating extension semantics. | Core generic limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
 | Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy and forwarding to the TCP Proxy Service using PROXY protocol on an internal-only listener/port. | Implemented. In player-facing environments, PROXY protocol on the internal listener is required and the raw Telnet listener is never exposed directly to the Internet. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
 
 ## Responsibilities
 
-- Accept Telnet connections and perform protocol negotiation.
+- Accept Telnet connections and perform bounded Telnet option handling and line framing.
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames while the Telnet connection remains open.
 - Provide graceful disconnect and reconnection handling.
 - Refuse new user-facing traffic while the downstream gameplay path is not yet ready for first-session admission.
@@ -55,7 +56,7 @@ Plaintext/raw Telnet remains available for local development, automated proof, a
 Canonical TCP Proxy documentation is now split by concern:
 
 - [`protocols.md`](./protocols.md)
-  - Telnet login flow, hidden bridge metadata, bridge data flow, Telnet command handling, and MCP budgets.
+  - Telnet login flow, hidden bridge metadata, bridge data flow, Telnet command handling, and opaque extension-marker safety limits.
 - [`api-contracts.md`](./api-contracts.md)
   - `NotifyDisconnect` semantics, failure handling, correlation rules, REST/gRPC endpoints, and proto ownership.
 - [`runtime-and-data.md`](./runtime-and-data.md)

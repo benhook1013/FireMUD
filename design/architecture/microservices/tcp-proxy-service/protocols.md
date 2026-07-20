@@ -20,7 +20,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Future smart-client flow**
-  - If advanced attach hints return, they should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line.
+  - If advanced attach hints return after a classic-client adapter is selected and proven, they may travel through that extension rather than a typed `SESSION` gameplay line.
   - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> `PLAY` flow.
 
 ## Advanced Multi-Connection Scenarios
@@ -80,14 +80,14 @@ The proxy writes this line best-effort and then closes the TCP connection. If th
 
 ## Hidden Attach Metadata
 
-Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If advanced smart clients need attach hints in the future, those hints should travel through hidden MCP metadata rather than through visible player input.
+Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If advanced smart clients need attach hints in the future, those hints may travel through a selected and proven classic-client extension rather than through visible player input.
 
 Current rules:
 
 - normal Telnet players use `WORLDS` (optional), `LOGIN`, and `PLAY`;
 - the proxy bootstraps hidden default gameplay instance and tenant metadata for the connection;
 - typed attach hints do not exist on the player-facing wire contract;
-- future MCP-carried attach hints must remain advisory and must never bypass `LOGIN` + `PLAY`.
+- future extension-carried attach hints must remain advisory to Game Session and must never bypass `LOGIN` + `PLAY`;
 - PROXY protocol trust follows the same principle: on the internal-only PROXY listener, malformed or truncated PROXY headers are a hard failure and the proxy must not silently fall back to the TCP peer IP. The canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.
 - PROXY parsing must never be enabled on the public Telnet listener. Accepting PROXY headers directly from the Internet would allow client-IP spoofing.
 
@@ -103,7 +103,9 @@ Detailed identifiers such as `gameInstanceId` and client IP are captured in stru
 
 ## Telnet Command Handling
 
-The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Mud Client Protocol (MCP) 2.1 negotiation and messages are carried over the line-based text channel and are not affected by the low-level Telnet command whitelist.
+The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Plain text is the only supported universal gameplay contract. MCP, GMCP, and other classic-client extensions remain experimental, disabled, and unadvertised under [ADR 0145](../../decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md).
+
+TCP Proxy may recognize an opaque reserved marker solely to enforce a per-connection marker-line rate limit, then forwards allowed lines unchanged. This recognition is not negotiation or semantic parsing. If MCP is later selected, Game Session alone owns the greeting, negotiation, authentication-key correlation, packages, cords, and multiline data tags; TCP Proxy must not maintain duplicate state.
 
 Allowed Telnet commands:
 
@@ -125,30 +127,23 @@ Hard abuse signals include:
 - line-length floods or repeated lines exceeding `TCP_PROXY_MAX_LINE_BYTES`; and
 - excessive connection churn from the same IP that collides with global connection-limit policy.
 
-Diagnostic-only signals include unknown or malformed MCP control lines.
+The proxy does not classify unknown packages, malformed extension messages, cord state, or data-tag state. Those are Game Session semantic concerns only after an adapter has been selected and implemented.
 
 ### Compatibility Notes
 
 - Classic MUD clients that rely only on standard text I/O and basic Telnet negotiation are expected to work without special configuration.
 - Clients that depend on advanced Telnet options should treat those features as best-effort.
-- MCP-aware clients should assume that MCP negotiation and messages are the primary extensibility mechanism, including any future hidden smart-client attach metadata.
+- No client should currently assume MCP 2.1, GMCP, `mcp-negotiate`, `mcp-cord`, or any FireMUD extension package is supported.
 
-## MCP Resource Limits and Abuse Budgets
+## Experimental Extension Marker Safety Boundary
 
-The TCP Proxy Service enforces MCP-specific budgets in addition to generic Telnet connection and line limits:
+TCP Proxy's extension-related safety boundary is intentionally semantic-free:
 
-- Each connection has a bounded number of active cords and concurrent `_data-tag` continuations.
-- MCP control-line volume is subject to a per-connection MCP control-line rate budget.
-- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits.
+- every line participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits;
+- lines matching a configured reserved extension marker may participate in a per-connection opaque marker-line rate budget;
+- gameplay never depends on an optional extension line being accepted;
+- the proxy does not track negotiation failures, active packages, cords, authentication keys, or multiline tags.
 
-Metrics and diagnostics for these budgets integrate with the existing observability surface:
+Current MCP-looking recognition and greeting code is not compliant negotiation and must remain disabled and unadvertised. The proxy does not make package or protocol compatibility claims from marker forwarding or generic rate protection.
 
-- `tcpproxy.telnet.discarded{reason="mcp_budget"}`
-- `tcpproxy.mcp.negotiation_failures`
-- `tcpproxy.mcp.control_lines`
-- `tcpproxy.mcp.discarded`
-- `tcpproxy.mcp.active_cords`
-
-Once MCP negotiation failures exceed `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` within `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, the connection closes with `policy_violation`.
-
-Normal Telnet abuse detection remains focused on Telnet control bytes, connection churn, and generic line-size limits. MCP parsing errors and unknown MCP packages are diagnostic-only and must not, on their own, cause connections to be hard-closed.
+If research later selects MCP, exact package/version advertisement and semantic resource budgets belong to Game Session and require current-client end-to-end proof. Operational limits are safety controls, not blanket MCP compatibility promises.
