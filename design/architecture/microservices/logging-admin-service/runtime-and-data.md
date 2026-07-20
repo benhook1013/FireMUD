@@ -14,9 +14,11 @@ In addition to log and moderation tooling, the service acts as a control-plane c
   - request scoped coordination remediation through Game Session control APIs and operator runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md).
 - Implements guarded automation that:
   - automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected; and
-  - may request safe, narrow remediation through Game Session-owned control APIs without requiring an operator to be present, while still emitting audit events for every action.
+  - may request a closed, typed, risk-reducing action through the authoritative owner without requiring an operator to be present only when the durable request identifies the service principal, policy/rule version, trigger evidence, exact scope, and idempotent payload digest.
 
 Game Session remains the only service allowed to mutate gameplay coordination state or execute tick pause/resume behavior. Logging & Admin owns operator UX, automation policy, and audit only; it does not become the runtime state owner for remediation.
+
+There is no generic remediation command language. Ordinary actions use named owner contracts. Composed recovery exposes only a small high-level vocabulary such as pause, status, recover/reset, and resume through one durable workflow owner. Exceptional direct Redis maintenance remains separate version-matched break-glass tooling with dedicated narrow credentials, forced verification and recovery evidence; Logging & Admin may invoke that owner/tool but never receives those credentials itself.
 
 Operator and support diagnostics do not impersonate a player, attach to a live player session, or observe gameplay through a hidden actor. They use purpose-built, minimized support-safe reads, logs, dashboards, reports, moderation records, and explicit control-plane operations. Break-glass controls remain separately authorized and audited and must not create a player actor, gameplay session, or tenant-scoped gameplay capability.
 
@@ -57,6 +59,8 @@ Logging & Admin provides the operator-facing audit and coordination layer around
 - runtime mutation authority remains with the owning domain services rather than with Logging & Admin itself.
 
 Logging & Admin does not write to Redis directly and does not define a competing script/plugin state-mutation API. It coordinates operator UX and audit around the documented service-owned APIs so operators can explain why automation behavior changed.
+
+The same boundary applies to rollback workflow state: Game Session owns the authoritative script pin and rollback history, Automation owns its admission/plugin convergence, and Logging & Admin projects those owner states rather than creating another orchestration authority.
 
 ## Data Model
 

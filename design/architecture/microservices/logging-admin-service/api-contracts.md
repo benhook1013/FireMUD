@@ -6,7 +6,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 
 - Admission-pointer workflows, feature-flag toggles, and scoped tick-remediation pause/resume forwarding are live in the current service.
 - Quota-override ingress remains target-state until Account exposes the canonical owner-side override mutation contract.
-- Broader tick-remediation `remediate` remains target-state until Game Session exposes the canonical owner-side remediation RPC.
+- No generic tick-remediation payload is part of the target. Each future recovery operation requires a named typed contract implemented by its authoritative workflow owner.
 
 ## REST
 
@@ -31,7 +31,11 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}` – reserved future operator-facing quota override removal using the same owner-side contract as creation/update.
 - `POST /tick-remediation/pause` – operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
-- `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
+- Future coordination/tick recovery operations use a closed catalog of named typed actions. Logging & Admin may invoke the authoritative versioned maintenance owner/tool, but it does not expose a generic `remediate(action, payload)` endpoint, reveal internal recovery phases as public verbs, or hold Redis write credentials.
+
+Every supported operator write follows [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md): Logging & Admin persists scope-complete intent before forwarding, uses one caller-reusable request ID bound to a payload digest, and reconciles uncertain outcomes; the owner atomically persists its mutation and idempotent result. Unsupported actions and scopes fail explicitly.
+
+Quota overrides, when implemented, are Account-owned bounded overlays with exact key/scope/value, actor/reason, stable request identity, start/expiry/removal, platform-cap validation, and monotonic entitlement-sequence propagation. They do not rewrite subscription or billing-provider history.
 
 ```bash
 curl http://localhost:8080/ping

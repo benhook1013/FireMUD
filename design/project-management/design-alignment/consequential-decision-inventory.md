@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 20 | 25 | `in-progress` |
+| 6 | Operations and delivery | 21 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **157** | **183** | `in-progress` |
+| **Total** | | **158** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -325,7 +325,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `TEST-02` — `revised` on 2026-07-20; [ADR 0159](../../architecture/decisions/adr-0159-three-boundary-profile-aware-verification-evidence.md)
 - [x] `TEST-03` — `accepted` on 2026-07-20; [scoped load-test promotion contract](../../architecture/system-architecture-testing.md#high-concurrency-load-testing)
 - [x] `MS-OPS-AVAILABILITY-PARTITION` — `revised` on 2026-07-20; [ADR 0160](../../architecture/decisions/adr-0160-authoritative-control-actions-during-observability-loss.md)
-- [ ] `MS-PO-OWNER-REMEDIATION`
+- [x] `MS-PO-OWNER-REMEDIATION` — `revised` on 2026-07-20; [typed owner remediation boundary](../../architecture/microservices/logging-admin-service/api-contracts.md#rest)
 - [ ] `SCRIPT-14`
 - [ ] `SCRIPT-15`
 - [ ] `TRACE-02`
