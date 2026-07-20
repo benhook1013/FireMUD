@@ -10,9 +10,11 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 The release-attestation, launch-resolution, version-state, settings, asset-purge, script-patch publication read APIs, and the first complete plugin publication workflow (`UploadPluginBundle`, `PublishPluginVersion`, `GetPublishedPluginVersion`, and `ListPluginVersionStatuses`) are live in the current proto/service path. Full-version publish now runs on the canonical Temporal `publish` workflow family when Temporal is enabled: the synchronous `PublishVersion` API still returns one immediate success/error answer to callers, but the durable release-attestation orchestration now survives service restarts and exposes workflow runtime metadata through `GetPublishedReleaseBundle`. `UploadPluginBundle` now parses signed plugin bundles, enforces bounded ZIP intake limits, verifies allowlisted Ed25519 signatures, extracts immutable manifest metadata, persists the raw bundle in Game Design storage, and records a durable `SIGNATURE_VERIFIED` publication row. `PublishPluginVersion` now validates against that uploaded bundle and the published base-version release attestation instead of trusting arbitrary caller metadata: the target `baseVersionId` must already have a published bundle, the requested plugin `abilitySchemaDigest` must match the attested `AUTOMATION_SCRIPTING` participant digest for that base version, blocked component-policy decisions fail the design-time transition, plugin asset refs are exported into a plugin-version-scoped distribution manifest before the version becomes `PUBLISHED`, and older published versions for the same `pluginId` are marked `SUPERSEDED`. Explicit design-time revoke transitions and a durable append-only plugin publication-event read surface are now live too through `RevokePluginVersion` and `ListPluginVersionStatusEvents`; the main remaining follow-through is broader activation-time alias/binding validation in owning runtime services.
 
+The current `SaveRevision` path is not the complete target Draft-concurrency contract from [ADR 0119](../../decisions/adr-0119-durable-fenced-multi-owner-draft-commits.md). It lacks a Game Design-owned durable commit/proposal record bound to exact base and canonical digest, complete affected-scope capture, per-owner apply status, and a creator-visible synchronized read fence. Owner storage-level compare-and-swap and partial-application isolation also remain implementation and proof gaps.
+
 ## gRPC APIs
 
-- `SaveRevision` – persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path, including scoped multi-row `WORLD_GENERATION_SUBTREE` payloads for generated room, exit, generation-rule, and spawn-binding changes.
+- `SaveRevision` – currently persists a version-scoped design revision and can optionally apply a typed World Management design mutation in the same control-plane path, including scoped multi-row `WORLD_GENERATION_SUBTREE` payloads for generated room, exit, generation-rule, and spawn-binding changes. It is an implementation seam, not proof that a multi-owner commit is synchronized.
 - `PublishVersion` – freezes a set of revisions and now drives durable full-version publish / release-attestation orchestration through the Game Design Temporal `publish` workflow family when Temporal is enabled.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `GetPublishedScriptPatchVersion` – authoritative design-time read API for script-patch publication lifecycle and digest identity.
@@ -32,6 +34,19 @@ The release-attestation, launch-resolution, version-state, settings, asset-purge
 - `FinalizePurgeVersionAssets` – CAS-guarded purge completion that transitions purge-in-progress artifacts to `PURGED` after byte-deletion confirmation.
 
 These gRPC entries are the discoverability index for the control-plane contracts described in [Game Templates and Configuration Tools](game-templates.md) and related architecture docs. When request/response schemas evolve, the proto contract and those architecture sections must be updated in the same change so launch-resolution and template-phase semantics do not drift.
+
+### Draft Commit and Proposal Semantics (Target State)
+
+The eventual creator-facing proto/OpenAPI shape must expose these semantics without treating a private frontend endpoint as a stable public API by accident:
+
+- submitting or accepting a commit/proposal binds its stable identity to the exact base commit, canonical digest of the complete diff, canonical revision order, and complete affected owner/aggregate/scope epoch set;
+- exact replay returns the existing result, while changed-digest identity reuse fails deterministically;
+- a creator-visible status read reports the overall coordination state and each required owner's durable apply outcome for the exact commit/digest;
+- normal Draft reads return or require the fully synchronized commit fence and do not expose a partial owner application as current Draft truth;
+- stale affected epochs return a typed conflict containing enough current fence/epoch identity to construct a new proposal, but the service never silently rebases or merges it; and
+- AI-assisted and external clients use the same proposal acceptance, concurrency, status, and error semantics as ordinary creator tools.
+
+Concrete RPC names, message fields, enums, pagination, and transport exposure remain deferred until the proto/OpenAPI contract is implemented. Whatever shape is selected must preserve the authority and visibility rules in ADR 0119.
 
 ## REST & gRPC Endpoints
 

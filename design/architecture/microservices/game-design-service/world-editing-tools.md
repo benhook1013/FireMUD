@@ -45,11 +45,7 @@ Example consequence:
 2. Each change is stored as a **revision** linked to the author's account and
    associated with concrete domain objects (rooms, regions, NPCs, items) via
    stable identifiers defined by the owning domain services.
-3. As revisions are committed, the Game Design Service applies them
-   incrementally to domain services’ **Draft** template rows via idempotent
-   design APIs keyed by `(tenantId, versionId)`. Draft templates in World
-   Management and Entity Management are therefore the authoritative snapshots of
-   world and entity data for each version.
+3. Game Design durably records each commit's exact base, canonical request or proposal digest, affected aggregates/scopes and expected epochs, revision order, and per-owner apply status before coordinating idempotent owner writes. World Management and Entity Management remain authoritative for their Draft template graphs, while Game Design owns which exact all-owner commit is the synchronized Draft fence.
 4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
    At publish time, the workflow validates the Draft templates already stored in
@@ -66,21 +62,31 @@ Example consequence:
 
 ### Draft Write Concurrency
 
-Eventually consistent application does not permit last-writer-wins mutation of Draft templates.
+Durable cross-owner application does not permit last-writer-wins mutation of Draft templates or make a partially applied commit accepted Draft truth. See [ADR 0119](../../decisions/adr-0119-durable-fenced-multi-owner-draft-commits.md).
 
 Initial-slice concurrency contract:
 
-- Each design-time mutation against a domain-owned Draft aggregate must carry:
+- Each complete commit or proposal must bind:
+  - its exact `baseCommitId`;
+  - a stable request or proposal identity and canonical digest of the complete diff;
+  - canonical commit and revision order;
+  - every affected owner, aggregate, and scope; and
+  - the expected aggregate and scope epochs for every affected mutation.
+- Each design-time mutation against a domain-owned Draft aggregate therefore carries:
   - stable `revisionId`;
   - containing `commitId`;
+  - the exact commit/request digest;
   - the target `(tenantId, versionId)`;
   - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
 - World topology edits and generation revisions that can touch more than one room use an explicit scope aggregate keyed by `(tenantId, versionId, scopeType, scopeId)`, for example `REGION_SUBTREE:<regionTemplateId>` or `ZONE_SUBTREE:<zoneTemplateId>`. Manual edits inside that scope and generation revisions targeting that scope must check and advance the same `draftScopeRevisionEpoch`.
 - The scope epoch is the canonical conflict boundary for subtree generation. A room-level edit may still carry a room aggregate epoch for precise UI conflict messages, but it must also validate the containing scope epoch whenever the edit changes topology or publish-visible room semantics inside a generation-addressable scope.
-- World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
-- Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
+- Each owner must derive or validate the complete scope set required by its typed mutation. Omitting a containing affected scope is a malformed request, not a way to bypass its epoch.
+- World Management, Entity Management, and every other design owner must reject the write with a conflict error if any required expected epoch does not match current Draft state.
+- The owner performs its epoch checks, local content mutation, epoch advances, and exact commit/digest ledger write in one storage-level atomic transaction. A read followed by an unconditional update does not meet this contract.
+- Replays of the same commit/digest remain idempotent. Reuse of the same commit, request, proposal, or revision identity with different input or digest is rejected rather than treated as a replay.
 - Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
-- Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
+- A proposal's base commit remains immutable provenance. Changes to disjoint scopes may proceed when every affected epoch remains current; a changed affected epoch rejects the proposal.
+- Publish reconciliation follows canonical commit and revision order. It must not reorder concurrent conflicting edits into a synthetic merged result.
 
 Generation-specific conflict rules:
 
@@ -99,15 +105,21 @@ Illustrative request/response shapes:
   "request": {
     "tenantId": "t1",
     "versionId": "v42",
+    "baseCommitId": "c900",
     "commitId": "c901",
+    "requestDigest": "sha256:commit-c901",
     "revisionId": "r-room-12",
     "aggregateType": "ROOM_TEMPLATE",
     "aggregateId": "roomTemplateId:inn-foyer",
-    "expectedDraftRevisionEpoch": 7
+    "expectedDraftRevisionEpoch": 7,
+    "scopeType": "REGION_SUBTREE",
+    "scopeId": "regionTemplateId:town",
+    "expectedDraftScopeRevisionEpoch": 12
   },
   "response": {
     "result": "APPLIED",
-    "newDraftRevisionEpoch": 8
+    "newDraftRevisionEpoch": 8,
+    "newDraftScopeRevisionEpoch": 13
   }
 }
 ```
@@ -117,15 +129,21 @@ Illustrative request/response shapes:
   "request": {
     "tenantId": "t1",
     "versionId": "v42",
+    "baseCommitId": "c900",
     "commitId": "c901",
+    "requestDigest": "sha256:commit-c901",
     "revisionId": "r-room-12",
     "aggregateType": "ROOM_TEMPLATE",
     "aggregateId": "roomTemplateId:inn-foyer",
-    "expectedDraftRevisionEpoch": 7
+    "expectedDraftRevisionEpoch": 7,
+    "scopeType": "REGION_SUBTREE",
+    "scopeId": "regionTemplateId:town",
+    "expectedDraftScopeRevisionEpoch": 12
   },
   "response": {
     "result": "NO_OP_ALREADY_APPLIED",
-    "currentDraftRevisionEpoch": 8
+    "currentDraftRevisionEpoch": 8,
+    "currentDraftScopeRevisionEpoch": 13
   }
 }
 ```
@@ -135,11 +153,16 @@ Illustrative request/response shapes:
   "request": {
     "tenantId": "t1",
     "versionId": "v42",
+    "baseCommitId": "c900",
     "commitId": "c902",
+    "requestDigest": "sha256:commit-c902",
     "revisionId": "r-room-13",
     "aggregateType": "ROOM_TEMPLATE",
     "aggregateId": "roomTemplateId:inn-foyer",
-    "expectedDraftRevisionEpoch": 7
+    "expectedDraftRevisionEpoch": 7,
+    "scopeType": "REGION_SUBTREE",
+    "scopeId": "regionTemplateId:town",
+    "expectedDraftScopeRevisionEpoch": 12
   },
   "error": {
     "code": "DRAFT_WRITE_CONFLICT",
@@ -149,20 +172,18 @@ Illustrative request/response shapes:
 }
 ```
 
-If a later implementation introduces multi-branch merging semantics, that workflow must be specified explicitly. Until then, the canonical first-slice rule is optimistic concurrency plus deterministic replay order, not implicit merge behavior.
+If a creator requests conflict assistance, the resulting rebased or revised diff is a new proposal with a new digest, exact base, and affected epoch set. The creator reviews and accepts it explicitly. A later multi-branch merge workflow must be specified separately; there is no implicit merge behavior.
 
-When domain templates for a `(tenantId, versionId)` are temporarily out of sync
-with the revision set recorded in the Game Design Service (for example due to
-transient failures when calling design APIs), the version’s `designSyncStatus`
-is marked `OUT_OF_SYNC` and a reconciliation process replays the canonical
-revisions until domain services report a matching draft digest for that scope. Each participating domain service exposes a read-only `GetDraftDesignDigest` API with a typed scope selector (`oneof {versionId, scriptPatchVersion}`) and returns at minimum:
+Game Design coordinates each multi-owner commit as a durable workflow and records each required owner's application status. Until every owner has durably applied the exact commit and digest, the version's `designSyncStatus` is `OUT_OF_SYNC` and normal authoring reads continue to bind to the prior fully synchronized commit fence. Partial owner state is exposed only through creator/operator diagnostics; it cannot become the base of a normal edit or a publish target. Reconciliation resumes the same commit identities until the workflow synchronizes or reaches an explicit conflict/failure outcome.
+
+Each participating domain service exposes a read-only `GetDraftDesignDigest` API with a typed scope selector (`oneof {versionId, scriptPatchVersion}`) and returns at minimum:
 
 - `tenantId`, and exactly one scope key (`versionId` or `scriptPatchVersion`)
 - `appliedCommitId`, meaning the highest commit whose full revision set has been durably applied for that scope
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
 
-Services may keep revision-granularity ledgers internally for replay and diagnostics, but publish gating and reconciler comparisons must use `appliedCommitId` only. A participant must not expose only `lastAppliedRevisionId` as its convergence token for a multi-revision commit.
+Services may keep revision-granularity ledgers internally for replay and diagnostics. Commit visibility also requires the Game Design synchronized fence and exact-digest owner results; publish gating and reconciler comparisons use `appliedCommitId` plus `contentDigest`. A participant must not expose only `lastAppliedRevisionId` as its convergence token for a multi-revision commit.
 
 `designSyncStatus` must transition to `OUT_OF_SYNC` whenever publish-affecting generation inputs for a target version change. Such inputs must be changed through Game Design-controlled Draft workflows and committed like any other design asset; mutable World Management operational defaults are not allowed to alter the effective Draft graph for a version.
 
@@ -208,15 +229,17 @@ For exported world bundles in the initial slice, these `artifactDigests[]` and `
 Use this checklist when wiring the first implementation slice for world and content authoring:
 
 1. Apply design revisions only to Draft domain templates keyed by `(tenantId, versionId)`.
-2. Enforce optimistic concurrency on Draft aggregate writes and no-op replay on duplicate `revisionId`.
-3. Mark versions `OUT_OF_SYNC` or `UNRESOLVED_REFERENCE` instead of treating failed cross-service application as healthy Draft state.
-4. Gate full publish on documented participant digests plus the Game Design control-plane digest.
-5. Persist `published_release_bundle` before treating a version as publish-complete.
-6. Resolve one immutable launch descriptor before any persistent instance rows are created.
-7. Verify `GetTemplateReferencePhase == ENFORCED` and validate `GetPublishedReleaseBundle` before launch.
-8. Drive world creation only from the resolved descriptor and attested `generationConfigRevision`.
-9. Treat design-time generation as an explicit revision with declared scope and replacement policy.
-10. Replay generation revisions and later manual edits in original order; fail Draft convergence rather than silently erasing authored changes.
+2. Persist the exact-base, canonical-digest, complete affected-epoch commit record before owner application.
+3. Enforce owner-local atomic compare-and-swap and digest-bound no-op replay.
+4. Keep partial owner application behind the last fully synchronized commit fence and expose it only as diagnostic workflow state.
+5. Mark versions `OUT_OF_SYNC` or `UNRESOLVED_REFERENCE` instead of treating failed cross-service application as healthy Draft state.
+6. Gate full publish on the synchronized commit plus documented participant digests and the Game Design control-plane digest.
+7. Persist `published_release_bundle` before treating a version as publish-complete.
+8. Resolve one immutable launch descriptor before any persistent instance rows are created.
+9. Verify `GetTemplateReferencePhase == ENFORCED` and validate `GetPublishedReleaseBundle` before launch.
+10. Drive world creation only from the resolved descriptor and attested `generationConfigRevision`.
+11. Treat design-time generation as an explicit revision with declared scope and replacement policy.
+12. Replay generation revisions and later manual edits in original order; fail Draft convergence rather than silently erasing authored changes.
 
 Authoritative schema source rule:
 
@@ -225,7 +248,7 @@ Authoritative schema source rule:
 
 When digest semantics evolve, the system must follow the explicit “Digest Schema Migration” workflow described in `design/architecture/microservices/game-design-service/version-control.md` so publish gating never compares incompatible hashes.
 
-The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
+The Game Design Service coordinator records the per-service digest it observed for a given `commitId` when that owner applied the exact digest, and later compares current digests against those recorded values. Publish-time validation must require that the target is the fully synchronized commit, all participating services report `appliedCommitId == commitId`, and `contentDigest` equals the recorded digest for that commit.
 
 Participant selection is explicit by publish type and must follow the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`:
 
@@ -251,7 +274,7 @@ must be `IN_SYNC` before they can be published.
 
 ## Draft Reference Validation
 
-Eventually consistent design application is not permission to persist unresolved cross-service references as healthy Draft data.
+Durable coordinated design application is not permission to expose unresolved cross-service references as healthy Draft data.
 
 - A draft write that introduces references to missing or schema-incompatible world/entity/script objects must be recorded as `UNRESOLVED_REFERENCE` or equivalent invalid-draft state, not as a normal in-sync Draft.
 - Designers must see the unresolved dependency set explicitly (referenced identifier, owning service, failing constraint, last validation time).
