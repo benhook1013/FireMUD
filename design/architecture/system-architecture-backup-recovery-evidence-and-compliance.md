@@ -4,7 +4,7 @@ This document defines the machine-checkable evidence, metrics, and compliance re
 
 ## Implementation Notes
 
-Current backup checks prove artifact existence and selected evidence shape, not the accepted environment-wide cold-start recovery boundary. The scheduled dump does not yet emit complete environment/schema/service/tool lineage, preflight does not dereference and validate the required recovery record and participant results, and no checked-in production-equivalent drill proves backup-under-write through controlled reopen. Player-facing restore readiness remains blocked.
+Current backup checks prove artifact existence and selected evidence shape, not the accepted environment-wide cold-start recovery boundary. The scheduled dump does not yet emit complete environment/schema/service/tool lineage, preflight does not dereference and validate the required recovery record and participant results, and no automated production-equivalent drill proves backup-under-write through controlled reopen. No resumable recovery controller or crash-recoverable traffic-release state machine exists. Player-facing hosted restore readiness remains blocked.
 
 ## Backup Observability and Alerts
 
@@ -61,6 +61,7 @@ Required fields:
 - `candidateMigrationPathRef`
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
+- `newestVerifiedRestorablePointAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
 - `restoreRecoveryRecordRef`
@@ -73,7 +74,8 @@ Required fields:
 
 Freshness policy:
 
-- `backupLastSuccessAt` within 90 minutes of production preflight
+- `newestVerifiedRestorablePointAt` within the 15-minute hosted RPO objective at production preflight; schedule start or object existence does not satisfy this field
+- `backupLastSuccessAt` records pipeline execution separately and cannot substitute for the verified restorable point
 - `backupVerifyLastSuccessAt` within 36 hours
 - `restoreDrillLastSuccessAt` within 30 days; a waiver may postpone an isolated drill or salvage exercise but cannot authorize player-facing first-live, post-rewind reopen, or `roll-forward-only` promotion without the required proof
 
@@ -83,6 +85,7 @@ Evidence reuse and invalidation:
 - an invalidating recovery-contract change requires a new production-equivalent drill even when the 30-day window has not expired
 - a `roll-forward-only` release never reuses only the cadence record; its source artifact comes from the current production database lineage under representative writes and is restored using candidate recovery tooling, exact candidate service digests, the candidate migration path, and candidate config/bindings
 - first-live and reopen events require environment-specific proof for the boundary being opened
+- scheduled isolated drills and their evidence production are automated; routine success does not depend on an operator transcribing timestamps or result fields
 
 Validation rules:
 
@@ -114,7 +117,7 @@ The evaluator compares backup/restore tool compatibility, database and migration
 
 ## Production Traffic-Open Backup Evidence
 
-Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
+Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, automated playbooks must record proof that the backup and recovery path functions for that environment. The operator authorizes the protected transition rather than manually constructing routine evidence.
 
 Traffic-open evidence is a separate event-bound wrapper around the canonical recovery and backup-readiness evidence. It uses the existing writer/preflight namespace for both first-live and reopen events.
 
@@ -157,7 +160,7 @@ Validation rules:
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path
-- `PREFLIGHT-BACKUP-002` validates the event while `trafficOpenStatus=authorized`; the gated traffic-open transition atomically finalizes any actual-recovery record, records `trafficOpenedAt`, and advances this event record to `finalized` before routing player traffic
+- `PREFLIGHT-BACKUP-002` validates the event while `trafficOpenStatus=authorized`; an idempotent crash-recoverable traffic-open state machine then verifies the same recovery, releases routing through controlled steps, records `trafficOpenedAt`, and advances the records to `finalized`
 - retained evidence for a completed first-live/reopen event must use `trafficOpenStatus=finalized`; a merely authorized record is not proof that the transition completed
 - the canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`
 
@@ -171,7 +174,7 @@ Required fields:
 
 - `schemaVersion`
 - `environment`
-- `status` (`pass`)
+- `status` (`verified` or `recovery-unverified`)
 - `lastSuccessfulBackupAt`
 - `lastSuccessfulRestoreDrillAt`
 - `lastRestoreDrillAt`
@@ -181,7 +184,7 @@ Required fields:
 - `recoveryContractFingerprint`
 - `evidenceRefs[]`
 
-Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is missing, stale, or below baseline.
+`recovery-unverified` records include the operator acknowledgement, timestamp, and reason and make no restore-readiness claim. Verified status requires the supported automated local rehearsal and current evidence. Restore hardening for hobby/self-hosted always fails closed for post-restore player-traffic reopen if verified actual-recovery evidence is missing, stale, or below baseline.
 
 ## Hobby Traffic-Open Evidence
 
@@ -199,7 +202,9 @@ Required fields:
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`
-- `baselineRecoveryRecordRef`
+- `recoveryPosture` (`verified` or `recovery-unverified`)
+- `baselineRecoveryRecordRef` when `recoveryPosture=verified`
+- `recoveryUnverifiedAcknowledgement` when a first-live event uses `recovery-unverified`
 - `actualRecoveryRecordRef` when `eventType=reopen`
 - `preflightReportPath`
 - `trafficOpenedAt` when `trafficOpenStatus=finalized`
@@ -207,11 +212,12 @@ Required fields:
 
 Validation rules:
 
-- `backupComplianceRef` must point to a current compliant record
-- `baselineRecoveryRecordRef` must point to a finalized isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; a reopen event must additionally reference the actual recovery record for that restore
+- a verified first-live event requires `backupComplianceRef` and `baselineRecoveryRecordRef` to point to a current verified record and finalized automated local rehearsal proving the environment-wide `cold_start_restore` contract
+- a first-live event may instead use `recoveryPosture=recovery-unverified` with explicit acknowledgement and a clear no-recovery-promise diagnostic; it must not claim verified status
+- every reopen event requires verified posture plus the actual recovery record for that restore; the first-live exception never applies after a rewind
 - a reopen actual-recovery record must be `ready_to_reopen` when preflight authorizes the event; the gated transition finalizes both records before traffic flows
 - `preflightReportPath` must show `PREFLIGHT-BACKUP-003=pass`
-- hobby player traffic must not open when this evidence is missing, stale, or bound to a failed preflight run
+- hobby player traffic must not open when the applicable verified or explicitly acknowledged first-live evidence is missing, malformed, or bound to a failed preflight run
 - the traffic-open artifact should be written or refreshed for each first-live or reopen event even when the referenced compliance record did not change, so the evidence remains bound to the current deployment or recovery lineage
 
 ## Canonical Recovery Record
@@ -247,6 +253,7 @@ Required top-level fields:
 - `finalizedAt` when `recoveryStatus=finalized`
 - `restoredAt`
 - `restoredBy`
+- `recoveryPointApprovedBy` and the displayed effective data-loss window for an actual rewind, or a reference to a separately accepted automatic-DR policy
 - `preflightReportPath` when applicable
 - `expectedBindingsRef`
 - `coordinationRecoveryEvidence`
@@ -280,7 +287,7 @@ Nested control-group requirements:
 Validation rules:
 
 - quarantine remains in place while `recoveryStatus=collecting`; once every required pre-release control group passes and `reopenApprovedBy` is recorded, the controller records `readyToReopenAt` and advances the record to `ready_to_reopen`
-- the gated reopen transition atomically releases quarantine, records `quarantineReleasedAt` and `finalizedAt`, and advances `recoveryStatus` to `finalized`; actual player traffic may flow only after that transition succeeds
+- controlled reopen uses durable monotonic progress and idempotent retries to release quarantine and traffic, record `quarantineReleasedAt` and `finalizedAt`, and advance `recoveryStatus` to `finalized`; an interrupted or uncertain transition remains closed with its exact incomplete step recorded
 - a `production-equivalent-drill` uses `trafficExposure=isolated-drill`; its controlled reopen authorizes only the isolated test boundary and cannot authorize production traffic
 - an `actual-recovery` that will reopen player traffic uses `trafficExposure=player-facing-reopen` and is bound to that exact target boundary
 - `coordinationRecoveryMode` must be `cold_start_restore` for player-facing recovery; `scoped_reset_restore` experiments remain quarantined and cannot satisfy this record
@@ -294,7 +301,7 @@ Operator credential evidence representation:
 - when the expected binding is a certificate or key fingerprint, store that fingerprint in `observedValue`
 - do not store competing canonical representations in one result unless one is clearly marked as supporting detail
 
-Illustrative player-facing recovery records must follow the canonical environment-wide `cold_start_restore` shape from the backup architecture baseline so automation and manual drills produce comparable artifacts across environments. A quarantined `scoped_reset_restore` experiment must use a distinct non-readiness evidence type and cannot be referenced by production preflight.
+Illustrative player-facing recovery records must follow the canonical environment-wide `cold_start_restore` shape from the backup architecture baseline so automated drills and actual recovery produce comparable artifacts across environments. Every recovery step is idempotent and resumable from durable state. A quarantined `scoped_reset_restore` experiment must use a distinct non-readiness evidence type and cannot be referenced by production preflight.
 
 ## Naming Rule
 

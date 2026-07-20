@@ -5,7 +5,7 @@ This document defines FireMUD’s canonical backup model, restore-mode selection
 Backup expectations are defined by environment class:
 
 - **production**: scheduled backups and verification are mandatory; the initial hosted RPO objective is 15 minutes measured from the newest verified restorable point.
-- **hobby-self-hosted**: backups are mandatory with a minimum baseline of at least daily logical backup, at least 7 daily restore points retained, and at least one restore drill every 30 days.
+- **hobby-self-hosted**: the supported default configures backups and an automated local restore rehearsal. A deployment may explicitly open first-live as `recovery-unverified` with no restore-readiness promise. Retaining verified status requires at least daily logical backup, at least 7 daily restore points, and a current restore drill. No unverified option bypasses quarantine after an actual restore.
 - **staging**: disposable by default with no scheduled backups unless explicitly enabled for specific goals.
 - **local-dev / pr-preview / dev-demo-cluster**: ad hoc or no-backup posture unless explicitly upgraded. `pr-preview` persists mutable state only for the lifetime of the PR and loses that state if the preview node or its storage is lost.
 
@@ -21,6 +21,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term maintenance and reset contract.
 - Region pause/status remains incomplete for maintenance and future scoped recovery, but routine online backups do not depend on tick pause.
 - Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-record validation are not implemented end to end.
+- Scheduled isolated drills, resumable recovery orchestration, operator-authorized recovery-point selection, and crash-recoverable controlled reopen are not implemented. Existing scripts remain bootstrap helpers rather than the unattended playbooks required for single-operator production.
 - Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 
 Canonical current-state note:
@@ -151,6 +152,10 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 - tenant-local or region-local rewind from the whole-database artifact is unsupported.
 
 `scoped_reset_restore` is a deferred future mode for quarantined experiments only. It requires a separate accepted design and complete region ownership, scope inventory, stale-state rejection, session policy, and reconciliation proof before it can become player-facing.
+
+Routine service, pod, node, and environment restarts that do not rewind PostgreSQL remain automatic availability operations and do not enter this destructive restore workflow. For an actual rewind, automation establishes quarantine and fencing, verifies the candidate, restores and reconciles the environment, runs hardening and smoke checks, and prepares controlled reopen through idempotent durable steps.
+
+The destructive recovery-point choice and displayed data-loss window require operator authorization by default. A future explicitly configured automatic-DR policy may pre-authorize a maximum loss window only with strict old-authority fencing and candidate-selection proof; this baseline does not enable it.
 
 ### Logical Backup Scale and PITR Trigger
 
