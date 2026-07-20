@@ -37,6 +37,7 @@ Revocation watermark contract requirements:
 
 - Watermark values are UTC epoch seconds so they can be compared directly to JWT `iat` without unit conversion drift.
 - All watermark boundaries are inclusive (`iat <= watermark`); a token issued in the watermark's same epoch second is revoked. The boundary is the same for account, tenant, membership, and issuer watermarks.
+- Account must not issue or rotate a token whose `iat` is less than or equal to an applicable watermark; a same-second collision waits for a representable later `iat` or fails closed rather than weakening revocation.
 - Watermark keys must have TTL at least `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` after the last relevant event so all tokens that could still be valid are covered.
 - Account Service is the authoritative writer for watermark updates triggered by account-security and billing-state events.
 - Account Service is also the authoritative writer for `session:auth:revoked_after:membership:<accountId>:<tenantId>` updates triggered by membership or tenant-role changes that affect caller-bound tenant authority.
