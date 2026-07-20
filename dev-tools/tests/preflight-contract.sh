@@ -221,7 +221,10 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
   FIREMUD_TRAFFIC_OPEN_EVENT=first-live \
   FIREMUD_TRAFFIC_OPEN_EVIDENCE="$TRAFFIC_EVIDENCE" \
-  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out
+  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out 2>&1 && {
+    echo "expected incomplete checked-in hobby backup evidence to fail first-live preflight" >&2
+    exit 1
+  }
 
 python3 - <<'PY' "$REPORT_PATH"
 import json
@@ -234,8 +237,66 @@ backup_003 = [
     for check in report["checkResults"]
     if check["policyId"] == "PREFLIGHT-BACKUP-003"
 ]
-if len(backup_003) != 1 or backup_003[0]["status"] != "pass":
-    raise SystemExit(f"PREFLIGHT-BACKUP-003 did not pass: {backup_003}")
+if len(backup_003) != 1 or backup_003[0]["status"] != "fail":
+    raise SystemExit(f"PREFLIGHT-BACKUP-003 did not fail closed: {backup_003}")
+if "status must be pass" not in backup_003[0]["message"]:
+    raise SystemExit(f"PREFLIGHT-BACKUP-003 failed for the wrong reason: {backup_003}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import importlib.util
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
+compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
+preflight_path = tmp / "passing-hobby-preflight.json"
+preflight_path.write_text(
+    json.dumps(
+        {
+            "environment": "hobby-self-hosted",
+            "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+            "deploymentRef": {"manifestRef": "contract-hobby"},
+            "checkResults": [{"policyId": "PREFLIGHT-DIGEST-002", "status": "fail"}],
+        }
+    ),
+    encoding="utf-8",
+)
+traffic_path = tmp / "passing-hobby-traffic-open.json"
+traffic_path.write_text(
+    json.dumps(
+        {
+            "schemaVersion": "traffic-open-record/v1",
+            "environment": "hobby-self-hosted",
+            "eventType": "first-live",
+            "deploymentRef": "contract-hobby",
+            "assessedAt": "2026-01-01T00:00:00Z",
+            "assessedBy": "preflight-contract",
+            "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
+            "preflightReportPath": str(preflight_path),
+            "evidenceRefs": ["contract-test"],
+        }
+    ),
+    encoding="utf-8",
+)
+status, message = module.hobby_traffic_check(
+    compliance_path,
+    traffic_path,
+    "first-live",
+    "contract-hobby",
+    root,
+)
+if status != "pass":
+    raise SystemExit(f"synthetic compliant hobby evidence did not pass: {message}")
 PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
