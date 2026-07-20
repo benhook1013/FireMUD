@@ -120,11 +120,13 @@ Redis participates in several layers of the test strategy:
   - Testcontainers typically start a `redis-coord` and `redis-cache` pair, mirroring the role separation from `docker-compose` and Helm.
   - Tests treat coordination state as reset-tolerant within the suite: they rely on the tick replay and session recovery rules described in [System Architecture: Redis](./system-architecture-redis.md), but do not assume persistence across independent test runs.
 
-In all of these test layers, coordination Redis behaves like the **“single-node without AOF (ephemeral coordination)”** profile from [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md):
+In the default unit, integration, and cross-service test layers, coordination Redis behaves like the **“single-node without AOF (ephemeral coordination)”** profile from [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md):
 
 - Coordination Redis instances used by tests are disposable and fully reset-tolerant; they do **not** validate tail-loss SLOs, AOF replay guarantees, or the long-running coordination buffer semantics described for persistent environments. Durable effect history and idempotency behavior are exercised primarily via PostgreSQL-ledger and domain-state checks, not by asserting properties of Redis AOF files.
 - Cache/Rate-Limit Redis in tests mirrors the production role separation (dedicated cache instance) but is likewise treated as ephemeral and safe to reset between suites.
-- Staging and production environments remain responsible for validating AOF behavior, tail-loss envelopes, and reset runbooks; tests focus on correctness of flows under idealized, fresh coordination state rather than persistence characteristics.
+- A targeted production-like durability/fault harness is responsible for validating AOF restart, crash and bounded tail loss, persistent-volume behavior, replica promotion where applicable, and PostgreSQL-led reconciliation. Staging or an isolated production-shaped environment supplies the exact topology and storage identity; a real production incident is not required as proof.
+
+The production-like harness is required before an environment claims a measured Redis write-loss window, AOF recovery, replica-promotion safety, or production recovery readiness. It is not a default gate for every ordinary pull request. Enabling AOF in all functional tests would add state, latency, and filesystem sensitivity without reproducing the production disk, replication, promotion, or Kubernetes failure domain, so it does not replace this bounded fault evidence.
 
 When adding new Redis-dependent tests:
 

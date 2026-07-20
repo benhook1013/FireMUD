@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 16 | 25 | `in-progress` |
+| 6 | Operations and delivery | 17 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **153** | **183** | `in-progress` |
+| **Total** | | **154** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -321,7 +321,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `OBS-06` — `revised` on 2026-07-20; [ADR 0157](../../architecture/decisions/adr-0157-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md)
 - [x] `CAPACITY-01` — `accepted` on 2026-07-20; [calibration-envelope contract](../../architecture/system-architecture-scaling-runbook.md#starting-guardrails-baseline-sizing)
 - [x] `CAPACITY-02` — `revised` on 2026-07-20; [ADR 0158](../../architecture/decisions/adr-0158-service-owned-retention-classes-with-cross-service-safety.md)
-- [ ] `TEST-01`
+- [x] `TEST-01` — `revised` on 2026-07-20; [canonical Redis test proof boundary](../../architecture/system-architecture-testing.md#redis-in-tests)
 - [ ] `TEST-02`
 - [ ] `TEST-03`
 - [ ] `MS-OPS-AVAILABILITY-PARTITION`

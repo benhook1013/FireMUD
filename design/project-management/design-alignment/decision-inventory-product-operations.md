@@ -268,14 +268,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR:** [ADR 0152](../../architecture/decisions/adr-0152-dependency-classified-liveness-readiness-and-route-admission.md) records health meanings, dependency classes, narrow route admission, stable timing, existing-session behavior, and reserved probe identity.
 - **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current dependency-aware gameplay checks are substantial but over-aggregate some route failures and use plausible real identifiers in several probe paths.
 
-#### `TEST-01` - Test Redis is not production durability proof
+#### `TEST-01` - Default test Redis is not production durability proof
 
 - **Capability:** Primary `PO-4.3` Unit, integration, contract, static, and load verification. Secondary `SF-2.2` and `PO-4.4`.
-- **Decision / status / importance:** Test Redis is ephemeral, does not run production AOF durability, and cannot prove the production tail-loss or recovery contract. Durable behavior must be proved through PostgreSQL-backed ledgers and targeted production-like evidence; tests must not flush shared Redis. Status `accepted-implicit`; `H/med`.
+- **Decision / status / importance:** Default unit, integration, and cross-service Redis is isolated, ephemeral, and AOF-free. It proves functional flows and PostgreSQL-ledger recovery behavior but not AOF persistence, replication, promotion, crash tail loss, or production topology. A bounded production-like fault harness is required before claiming those guarantees and need not gate every ordinary PR. Tests may reset their own containers but never flush shared Redis. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ Redis in Tests`, `§ Cross-Service Integration Testing`, and `§ Observability Tests`; [system-architecture-scaling-runbook.md](../../architecture/system-architecture-scaling-runbook.md) `§ Tick- and Redis-Aware Scaling Indicators`.
-- **Strongest alternative:** Treat integration tests against ephemeral Redis as proof of AOF persistence, tail-loss bounds, and restore behavior.
-- **ADR recommendation:** Yes if the proof boundary is not already captured by `REDIS-01` and `TICK-03`; otherwise cross-reference those keys and keep this as verification evidence.
-- **Human consultation:** Yes; operations and reliability owners must accept the production-like evidence requirement.
+- **Strongest alternative:** Run most functional tests with AOF and persistent volumes, accepting slower and more stateful CI despite its inability to reproduce production disks, replication, promotion, or Kubernetes topology.
+- **ADR recommendation:** No separate ADR. [ADR 0058](../../architecture/decisions/adr-0058-class-specific-redis-loss-outcomes.md) owns the loss contract; this decision records its verification boundary.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The owner accepted targeted production-like fault evidence without making expensive Redis durability tests routine PR gates.
 
 #### `TEST-02` - Two-tier verification with retained hobby evidence
 
