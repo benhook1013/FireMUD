@@ -33,12 +33,13 @@ Each scenario below assumes Redis/database metrics are wired according to the Re
 
 Tick incidents often benefit from trace-level diagnosis, but mitigation must not block on trace availability.
 
-- Baseline expectation: production-like environments keep non-zero trace sampling (the tracing contract uses ~1% as the common usability baseline for high-volume paths).
+- Baseline expectation: consult the environment's advertised tracing capability and covered tick workflows. Tracing may be explicitly disabled; approximately 1% is only a calibration seed where sampling capability is proved.
 - If `tick_execute` / `tick_apply_effect` traces are too sparse:
-  - First apply temporary service-scoped sampling escalation for affected services and record start/end times.
+  - Apply service-scoped escalation only if that capability is advertised and proved, with an incident identity, volume budget, automatic expiry, and verified reversion.
   - If collector tail-sampling by `tenantId`/`regionId` is supported, prefer scoped escalation for the impacted region and remove it after triage.
 - If the environment does not satisfy collector capability requirements for scoped escalation, treat it as service-scoped-only.
 - If traces remain unavailable, continue with metrics + logs and proceed with region/tenant reset decisions using runbook thresholds.
+- Missing sampled traces are not evidence that a tick/effect did not execute.
 
 ## Stalled Tick Region
 

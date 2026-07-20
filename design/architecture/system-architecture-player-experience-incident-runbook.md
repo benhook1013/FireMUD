@@ -17,12 +17,13 @@ Synthetic canary identities used in this runbook are operational probes, not ord
 
 Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
 
-- Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
+- Check the environment's advertised tracing capability and covered workflow. Tracing may be explicitly disabled; approximately 1% is only a possible calibration seed for a sampling-capable high-volume path.
 - If traces are too sparse:
-  - First escalate service-scoped sampling temporarily (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) and record start/end times in the incident timeline.
+  - If service-scoped escalation is advertised and proved, apply its supported sampler control with an incident identity, volume budget, automatic expiry, and verified reversion. Environment variables are usable only where the environment declares them wired.
   - If the environment supports collector tail-sampling by `tenantId`/`regionId`, prefer scoped escalation for the impacted tenant/region and remove the policy immediately after triage.
 - If the environment does not meet the collector capability contract for tenant/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
 - If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
+- Missing trace evidence does not prove that the player event did not occur.
 
 ## Login Success Ratio Below SLO
 

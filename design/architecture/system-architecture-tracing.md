@@ -96,10 +96,11 @@ The `command` attribute is always a normalized bounded verb/type, never the raw 
 ## Sampling and Sensitive Attributes
 
 - **Sampling**
-  - An environment at a sampling-capable level declares and proves its baseline. A common target for high-volume entry paths is at least ~1%, but this is an operational usability target rather than a correctness boundary.
-  - Incident mode may be promised only at a proved service-scoped or tenant/region-scoped level, and every escalation must return to its declared baseline.
+  - A deployment may explicitly disable tracing and rely on metrics, structured logs, health, durable audit, and authoritative owner state. It advertises no workflow-tracing or sampling-escalation capability.
+  - An environment at a sampling-capable level declares and proves its baseline, covered workflows, root-trace ratio, span/byte budget, and evidence. Approximately 1% may be a calibration seed for high-volume entry paths, not a universal minimum or correctness boundary.
+  - Incident mode may be promised only at a proved service-scoped or tenant/region-scoped level. Every escalation is time- and volume-bounded, audited, has an automatic revert deadline, and verifies return to the declared baseline.
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
-  - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
+  - Absence of a sampled trace is absence of trace evidence, not proof that an event did not occur. Traces never gate mitigation, reset, recovery, or an authoritative domain decision.
 - **Sensitive attributes**
   - Exact gameplay identifiers such as `characterId` are operationally useful but sensitive. They appear only on allowlisted named span families and require least-privilege environment-scoped query access, query auditing, finite retention, and declared export/privacy/erasure handling.
   - Raw client IP addresses are forbidden in all traces. Where stable network correlation is justified, `remote_ip_hash` is a rotating environment-specific keyed HMAC with documented custody and correlation window. It remains pseudonymous network data.
@@ -111,7 +112,7 @@ See [ADR 0162](./decisions/adr-0162-allowlisted-sensitive-trace-attributes.md).
 
 ### Incident-Mode Sampling Procedure (Design Contract)
 
-FireMUD defines two target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record start/end times and scope in the incident timeline.
+FireMUD defines two optional target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record scope, incident identity, start time, automatic expiry, volume budget, completion, and verified reversion.
 
 1. **Service-scoped sampling (fast, coarse)**
    - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
@@ -120,7 +121,7 @@ FireMUD defines two target escalation levels for incident-mode sampling. An oper
    - Operational shape:
      - Roll out a temporary configuration change to the affected Deployment(s).
      - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
-     - Revert: restore the baseline ratio after the incident.
+     - Revert: restore the baseline ratio at the declared deadline even if the incident workflow is abandoned, then verify volume returns to baseline.
    - Limits: this cannot scope sampling to a specific `tenantId` or `regionId`; it increases volume for the service overall.
    - Current implementation note: the manual shared SDK configuration does not yet consume these variables, so their presence alone does not establish this capability.
 
@@ -129,7 +130,7 @@ FireMUD defines two target escalation levels for incident-mode sampling. An oper
    - Operational shape:
      - Add a temporary “always sample” policy for the target `<tenantId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
      - Verify: in Jaeger, filtering by `tenantId`/`regionId` should yield traces even when baseline sampling is low.
-     - Revert: remove the temporary policy and reload the collector configuration.
+     - Revert: automatically remove the temporary policy at its declared deadline, reload safely, and verify volume returns to baseline.
    - Limits: this requires tail sampling, relevant span attributes, and an upstream sampling strategy that delivers candidate traces to the collector. Tail sampling cannot recover a trace already discarded by service-side head sampling.
 
 Declared sampler controls and their current support status are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.

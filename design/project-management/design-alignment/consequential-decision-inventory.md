@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 24 | 25 | `in-progress` |
+| 6 | Operations and delivery | 25 | 25 | `completed` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **161** | **183** | `in-progress` |
+| **Total** | | **162** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -332,7 +332,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 6 P2 And P3
 
-- [ ] `TRACE-03`
+- [x] `TRACE-03` — `revised` on 2026-07-20; [profile-aware tracing fallback](../../architecture/system-architecture-tracing.md#sampling-and-sensitive-attributes)
 
 ### Packet 7: Existing ADR-Backed And Lower-Risk Remainder
 
