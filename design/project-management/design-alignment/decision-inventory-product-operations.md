@@ -212,14 +212,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** [ADR 0098](../../architecture/decisions/adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md) records the revised human decision and bounded compatibility lifetime.
 - **Human consultation:** Completed through human-led adversarial review; intentional regeneration using newer generators and the loss of indefinite seed-only reconstruction were explicitly accepted.
 
-#### `PROC-03` - Revision-scoped replacement preserves manual edits
+#### `PROC-03` - Explicit destructive regeneration with previewed scope
 
 - **Capability:** Primary `AR-1.1`. Secondary `AR-1.5`, `AR-2.3`, and `GR-2.1`.
-- **Decision / status / importance:** Generation revisions are first-class and scope-aware. `REPLACE_SCOPE` may replace only the declared generated scope; `SEED_APPEND_ONLY` may append without rewriting prior generated or manual content. Scope epochs and generation configuration revisions prevent a later run from silently overwriting manual edits. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Historical replay reproduces its original generation revision and reapplies later manual revisions. Safe additions use `SEED_APPEND_ONLY`; deliberate replacement is a new `REPLACE_SCOPE` revision whose exact destructive preview, reference treatment, identity mappings, generator inputs, and current scope epoch are bound by a canonical plan digest. Changed facts require replanning, and ambiguous semantic changes require explicit creator resolution rather than a generic merge. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-procedural-generation.md](../../architecture/system-architecture-procedural-generation.md) `§ Deterministic Replay Contract for Design-Time Generation`, `§ Generation Pipeline:`, and `§ Integration Guidelines`; [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 5. Patch and Update a Live Game`.
-- **Strongest alternative:** Overwrite or rebase all generated output on every run and require creators to reapply manual edits.
-- **ADR recommendation:** Yes. Define scope ownership, revision/epoch semantics, conflict reporting, and the publish-time freeze.
-- **Human consultation:** Yes; creators must choose replacement and append semantics for each generator family.
+- **Strongest alternative:** Automatically overwrite or three-way merge generated, local, and new topology, or rely on an epoch check without showing the exact destructive set.
+- **ADR recommendation:** [ADR 0114](../../architecture/decisions/adr-0114-explicit-destructive-regeneration-with-previewed-scope.md) records the revised replay, preview, identity, and fail-closed reference rules.
+- **Human consultation:** Completed through human-led adversarial review; explicit destructive regeneration and its additional creator friction were accepted on 2026-07-20.
 
 #### `PROC-04` - Bounded atomic generation with staging for large outputs
 

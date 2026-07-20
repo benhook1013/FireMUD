@@ -112,10 +112,13 @@ Generation revisions are explicit and scope-bound:
 - The revision must also declare its replacement policy:
   - `REPLACE_SCOPE` means the generated output fully replaces the previously authored topology inside that declared target scope; rows outside the scope are untouched.
   - `SEED_APPEND_ONLY` means generation may add new rows inside the target scope but may not rewrite or delete previously existing manually authored rows.
-- `REPLACE_SCOPE` must carry `expectedDraftScopeRevisionEpoch` for the target scope and fail as `DRAFT_WRITE_CONFLICT` if the scope has advanced.
+- `SEED_APPEND_ONLY` is the safe default wherever the requested generation can be expressed without rewriting or deletion.
+- Before `REPLACE_SCOPE` can be accepted, Game Design presents an exact destructive plan identifying creates, retained objects, replacements, deletions, affected references, identifier mappings, and blockers. The approved request carries a canonical plan digest bound to the exact generation inputs and current `expectedDraftScopeRevisionEpoch`.
+- `REPLACE_SCOPE` fails as `DRAFT_WRITE_CONFLICT` and requires a new preview when the scope epoch, plan inputs, or relevant reference facts have changed.
 - `SEED_APPEND_ONLY` must carry the same expected scope epoch and fail as `OUT_OF_SYNC` or a more specific generation conflict if replay would require rewriting or deleting rows already present in the scope.
-- Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. It must never rerun generation over a scope that has later manual edits unless the recorded generation revision itself declared `REPLACE_SCOPE` for that same scope.
-- Manual edits applied after a generation revision are canonical authored state. A later replay that would erase those edits without an explicit replacement revision is invalid and must fail the Draft as `OUT_OF_SYNC`.
+- Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. Replaying the same historical generation revision never turns it into permission to erase later edits; destructive regeneration is a new, explicitly previewed `REPLACE_SCOPE` revision.
+- References crossing the replacement boundary must remain valid, map through an explicit typed mapping, or block replacement. Stable persisted identifiers remain only for the same logical objects; semantic replacements, splits, merges, and re-scopes require explicit durable mappings.
+- No generic old/local/new merge is implied. Ambiguous local changes or semantic replacements require explicit creator resolution.
 
 Illustrative revision examples:
 

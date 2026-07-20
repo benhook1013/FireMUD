@@ -81,6 +81,26 @@ Ownership note:
 - Publish-affecting generation inputs are stored in World Management but authored only through Game Design-controlled design workflows.
 - World Management remains the schema owner and runtime executor, not the independent authority for publishable generation history.
 
+Current implementation note:
+
+- The current generator implementations and registry are located in Automation & Scripting, which contradicts the target ownership above.
+- World Management accepts typed generated Draft mutation payloads but does not yet expose either a design-generation or runtime-generation API that invokes a World-owned engine.
+
+## Destructive Regeneration Plans
+
+Reconciliation of a historical generation revision replays that revision and all later manual revisions in order. It does not rerun the generator over later edits or infer new destructive authority from the historical `REPLACE_SCOPE` value.
+
+`SEED_APPEND_ONLY` is the safe default where generation can add without rewriting or deleting existing content. A new `REPLACE_SCOPE` revision is an intentionally destructive operation and requires an exact preview before mutation:
+
+- the plan identifies creates, retained objects, replacements, deletions, affected inbound and outbound references, stable identities, explicit mappings, and blockers;
+- its canonical digest is bound to the exact generation inputs, target scope, relevant reference facts, and current Draft scope epoch;
+- any epoch, input, or relevant reference change makes the plan stale and requires replanning; and
+- cross-boundary references must remain valid, map explicitly, or block the operation.
+
+Stable identifiers may survive only when the plan establishes that the output is the same logical object. Semantic replacements, splits, merges, and re-scopes use explicit durable mappings. World Management does not perform a generic old/local/new merge.
+
+Current implementation proves scoped Draft epochs and applies `REPLACE_SCOPE` and `SEED_APPEND_ONLY` mutations. It does not yet implement or prove the destructive preview, plan-digest binding, complete cross-boundary reference analysis, or identity-mapping contract.
+
 ## Audit and Publish-Gating Notes
 
 - Every publish-affecting generation-input update must persist provenance fields such as `changedBy`, `changedAt`, `changeReason`, `changeDigest`, and source `commitId` / `revisionId`.
