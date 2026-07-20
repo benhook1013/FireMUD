@@ -131,6 +131,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0115](./adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md) | Accepted | `GR-3` | `AR-1`, `AR-3`, `GR-3` | Game-authored equipment layouts with materialized defaults and fail-closed publication, runtime, and cutover |
 | [ADR 0116](./adr-0116-untrusted-models-and-scoped-authoring-tools.md) | Accepted | `AR-1` | `AS-1`, `EA-3`, `SF-1` | Ordinary external creator API clients and a future first-party agent with scoped tools and reviewable Draft proposals |
 | [ADR 0117](./adr-0117-first-class-sparse-and-full-grid-world-topologies.md) | Accepted | `GR-2` | `GR-2`, `AR-1`, `SF-2` | First-class sparse and bounded full-grid topologies with independent movement policy and opaque scalable representation |
+| [ADR 0118](./adr-0118-command-plan-preview-dry-run-isolation.md) | Accepted | `AS-1` | `AS-1`, `AR-3`, `SF-2` | Honest no-side-effect command-plan previews with exact inputs and live-protecting isolation |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

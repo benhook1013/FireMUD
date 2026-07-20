@@ -30,7 +30,7 @@ The table below captures the required sandbox behavior contract (target-state se
 | Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. |
 | Outcome taxonomy | Use canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) in `script_event_audit` consistent with the observability and normative contract docs. |
 | Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
-| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
+| Test / dry-run parity | Command-plan previews use the same evaluator, component allowlist, sandbox, loop guards, and per-run limits as live runs while remaining isolated for identity, quotas, breakers, metrics, side effects, and capacity. |
 | Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires. |
 
 ---
@@ -96,6 +96,7 @@ Each script run follows a consistent lifecycle:
    - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed into the rebuildable `automation:queue:*` projection for later durable execution.
    - Before persistence, the engine must enforce explicit output budgets such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`; exceeding those ceilings is a non-success outcome and must not partially commit an oversized work item.
    - Handoff is subject to automation execution limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
+   - Dry-run command-plan previews take a non-committing branch after the same output validation. They return the complete ordered would-be command list and exact input/snapshot identity without persisting a gameplay work item, indexing a gameplay queue entry, calling a domain owner, or invoking an external side effect. Only the isolated audit and bounded inspectable preview result may be persisted.
 
 5. **Outcome recording**
    - The engine records a **stage-aware outcome** for the run in `script_event_audit`:
@@ -229,6 +230,8 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
   - Sandbox-enforced timeouts ensure that runaway scripts do not cause automation work to exceed the configured `AUTOMATION_TICK_BUDGET_MS` per tick window.
 
 The combined effect is that noisy or buggy scripts are throttled or disabled quickly, while well-behaved scripts continue to run at their configured cadence.
+
+Dry-run command-plan previews use separate principal and tenant quotas, failure metrics, circuit breakers, and capacity accounting. A shared executor is permitted only when admission reserves a hard minimum for live work or provides an equivalent partition, and saturation proof demonstrates that preview work cannot consume the last live worker capacity. Preview evaluation may consume authorized live facts only through one explicitly supplied snapshot or epoch fence; otherwise it uses declared fixtures. The result must identify those exact inputs and state that evaluator success does not prove production contention, downstream command acceptance, or resulting gameplay state.
 
 ---
 

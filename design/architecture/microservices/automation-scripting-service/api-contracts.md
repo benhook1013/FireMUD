@@ -90,19 +90,20 @@ Transport-level retries:
 
 ## Dry-Run and Test Execution Contract
 
-In addition to live event handling, the service exposes a non-committing test path used by Game Design and Logging & Admin tools:
+In addition to live event handling, the service exposes the non-committing command-plan preview defined by [ADR 0118](../../decisions/adr-0118-command-plan-preview-dry-run-isolation.md) for Game Design and Logging & Admin tools:
 
-- Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
-- Instead of persisting and indexing work items or handing off to tick queues, test runs return the would-be commands to the caller for inspection.
-- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful test executions use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `TICK_HANDOFF` or `handoff_accepted`.
-- Dry-run and test requests must use an idempotency namespace separate from live traffic so test calls cannot dedupe, suppress, or overwrite live trigger records.
-- Dry-run and test APIs should use server-generated `scriptEventId` values by default. If tooling passes a caller-supplied value, the service must enforce namespace validation and reject identity collisions deterministically.
-- By default, dry runs do not consume `ScriptQuotaService` windows or tenant automation budgets and must not increment live-traffic error counters.
-- By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`).
-- Separate dry-run budgets cap how much test traffic a tenant or principal can generate.
-- Dry-run and test work must execute on isolated capacity so privileged tooling cannot consume the last available live automation workers.
-- Dry-run and test execution must require explicit authorization scope or role and must persist the calling principal in audit metadata.
-- Dry-run and test authorization and budget failures must be returned as deterministic application-level outcomes such as `DRY_RUN_UNAUTHORIZED` or `DRY_RUN_RATE_LIMITED`, not transport errors.
+- Preview runs execute the selected immutable handler through the same evaluator, component allowlist, sandbox, loop guards, and per-run input, resource, and output limits as live runs.
+- A preview may read live gameplay facts only when the caller is authorized and all such reads use one explicitly supplied snapshot or epoch fence. Otherwise, simulated facts must come from declared fixtures. Missing, unauthorized, stale, or unsatisfied fences fail explicitly; the evaluator must not use unfenced live reads or silently substitute a newer snapshot.
+- Instead of persisting or indexing a gameplay work item or handing off to a tick or domain queue, the preview returns the complete ordered list of would-be commands together with the exact handler artifact/version, event or fixture input identity, and snapshot token or epoch used.
+- The result must label itself as a command-plan preview and state that success does not prove production contention or queue timing, downstream domain-command acceptance, or resulting gameplay state.
+- Preview execution must not invoke gameplay services or email, network, payment, filesystem, object-store, or other external side effects. The service may persist the isolated audit record and a bounded inspectable preview result, but no simulated gameplay or domain state.
+- Preview executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful previews use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `WORK_ITEM_PERSIST`, `TICK_HANDOFF`, or `handoff_accepted`.
+- Preview requests use identity, idempotency, and audit namespaces separate from live traffic so test calls cannot dedupe, suppress, or overwrite live trigger records. Preview APIs use server-generated `scriptEventId` values by default; if tooling passes a caller-supplied value, the service enforces namespace validation and rejects collisions deterministically.
+- Preview runs do not consume live `ScriptQuotaService` windows or tenant automation budgets and must not increment live-traffic error counters or contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). Separate tenant and principal budgets, metrics, and breakers govern preview traffic.
+- Preview work uses isolated capacity so privileged tooling cannot consume the last available live automation workers. Physical workers may be shared only with a hard live-capacity reservation or equivalent admission partition whose isolation is proved under preview saturation; a separate deployment is not required.
+- Preview execution requires an explicit authorization scope or role and persists the calling principal in audit metadata. Authorization and budget failures are deterministic application-level outcomes such as `DRY_RUN_UNAUTHORIZED` or `DRY_RUN_RATE_LIMITED`, not transport errors.
+
+A later high-fidelity simulation may execute real commands in a disposable playtest fork with deterministic fakes for external integrations. That is a separate future operation and must not be inferred from command-plan preview success.
 
 ## Reload Backpressure Contract
 
