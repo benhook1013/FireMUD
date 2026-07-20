@@ -128,6 +128,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0112](./adr-0112-bounded-pull-settings-distribution-with-freshness-classes.md) | Accepted | `AR-2` | `SF-2`, `GR-1` | Pull-based typed settings snapshots with monotonic revisions, freshness classes, and class-specific stale behavior |
 | [ADR 0113](./adr-0113-separate-generation-ingress-with-one-world-owned-engine.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `GR-2`, `AS-1` | Separate typed design and runtime generation ingress backed by one World-owned pure engine |
 | [ADR 0114](./adr-0114-explicit-destructive-regeneration-with-previewed-scope.md) | Accepted | `AR-1` | `AR-1`, `AR-2`, `GR-2` | Historical replay preserves later edits while new destructive regeneration requires an exact bound preview |
+| [ADR 0115](./adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md) | Accepted | `GR-3` | `AR-1`, `AR-3`, `GR-3` | Game-authored equipment layouts with materialized defaults and fail-closed publication, runtime, and cutover |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

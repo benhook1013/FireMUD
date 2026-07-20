@@ -253,11 +253,14 @@ Room-ground containers must feel attached to a room instance rather than like an
 Equipment is intentionally not modeled as "just another bag position":
 
 - Equipped items remain owned by the same runtime entity but are represented through a first-class equipment relation.
-- Equipment slot definitions are game-configured design data, not fixed platform-wide enums.
-- Body layouts or equivalent runtime configuration determine which slots are available to a particular character/NPC/species.
-- Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints rather than through a hardcoded universal slot set.
+- Versioned game-authored equipment slot definitions and body layouts are the sole authority, not fixed platform-wide enums or hidden runtime defaults.
+- Starter profiles may materialize conventional editable definitions into a Draft, and authored presentation metadata may guide clients without controlling compatibility.
+- Every equipment-capable published version has a valid schema, and every equip-capable character, NPC, species, or other actor resolves a valid body layout.
+- Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints, and runtime validates slot existence, layout membership, compatibility, and occupancy before binding.
+- Missing schemas and unknown layouts fail closed. The legacy direct-slot-string bootstrap behavior must be retired rather than retained as a second authority.
+- Version cutover validates surviving equipped state against the target release and requires explicit mappings or resolution for removed, renamed, split, merged, or newly incompatible definitions.
 
-This keeps the platform compatible with games that need unusual body plans or attachment models such as horns instead of hands, asymmetric limbs, species-specific slot topologies, or non-humanoid wearable layouts.
+This keeps the platform compatible with games that need unusual body plans or attachment models such as horns instead of hands, asymmetric limbs, species-specific slot topologies, or non-humanoid wearable layouts while failing before gameplay when authored equipment data is incomplete. See [ADR 0115](../../decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 ### Inventory Queries and Type Filtering
 

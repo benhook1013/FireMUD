@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 22 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 23 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **102** | **183** | `in-progress` |
+| **Total** | | **103** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -253,7 +253,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `PROC-01` — `revised` on 2026-07-20; [ADR 0113](../../architecture/decisions/adr-0113-separate-generation-ingress-with-one-world-owned-engine.md)
 - [x] `PROC-03` — `revised` on 2026-07-20; [ADR 0114](../../architecture/decisions/adr-0114-explicit-destructive-regeneration-with-previewed-scope.md)
 - [ ] `PROC-05`
-- [ ] `EQUIP-01`
+- [x] `EQUIP-01` — `revised` on 2026-07-20; [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md)
 - [ ] `MS-AS-PLUGIN-TRUST`
 - [ ] `MS-AS-DRY-RUN-ISOLATION`
 - [ ] `MS-AR-DRAFT-CONCURRENCY`

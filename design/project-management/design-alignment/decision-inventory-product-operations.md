@@ -318,11 +318,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `EQUIP-01` - Equipment vocabulary is game-authored and runtime-validated
 
 - **Capability:** Primary `GR-3.3` Equipment, body layouts, slots, and loadouts. Secondary `AR-1.1` and `GR-3.1`.
-- **Decision / status / importance:** Equipment slots and body layouts are authored per game and carried by published content; the runtime validates against the resolved game definitions rather than a platform-global enum. Status `accepted-implicit`; `M/med`.
+- **Decision / status / importance:** Versioned game-authored slots and body layouts are the sole equipment authority. Starter profiles materialize editable defaults; authored presentation metadata assists clients without controlling compatibility. Equipment-capable releases fail publication on incomplete schemas, runtime fails closed on missing or unknown definitions, and cutover requires explicit resolution of incompatible equipped state. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 2. World and Entity Design` and `§ 6. Branding and Customization`; [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 3. Character Creation & Selection`.
-- **Strongest alternative:** Define one platform-global slot vocabulary and reject game-specific body layouts.
-- **ADR recommendation:** Yes only if the slot vocabulary crosses a shared persistence or protocol boundary; otherwise cross-reference the content-schema decision in `CONTENT-01` and `CONTENT-03`.
-- **Human consultation:** Yes; game designers and client owners must agree on the extensibility boundary.
+- **Strongest alternative:** Define one platform-global slot vocabulary, or retain a permissive direct-string fallback whenever a game omits authored schema.
+- **ADR recommendation:** [ADR 0115](../../architecture/decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md) records the game-authored authority, creator-default, publication, runtime, and cutover rules.
+- **Human consultation:** Completed through human-led adversarial review; extensible layouts and the additional schema-maintenance burden were explicitly accepted on 2026-07-20.
 
 #### `PLAYER-01` - Character selection is explicit and realm-local
 

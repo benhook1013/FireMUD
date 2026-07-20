@@ -22,7 +22,10 @@ Current equipment-authoring model:
 - slot definitions can carry an optional slot group key so templates can say "this item fits any slot in this group" without making the platform own universal humanoid anatomy;
 - runtime body layouts are authored as sets of allowed slot keys, and characters carry a `bodyLayoutKey` that selects which slot set applies;
 - item templates keep a default `equipmentSlot` for the first runtime command loop and may also declare an `equipmentSlotGroupKey` compatibility guard;
-- if no slot/body-layout schema has been authored for a version, Entity Management allows the legacy direct slot string as a bootstrap fallback, but once a schema exists the runtime validates slot existence, item compatibility, and body-layout membership before equipment binds.
+- starter profiles can materialize conventional equipment schemas as ordinary editable Draft content; they do not remain a hidden runtime inheritance layer;
+- authored presentation metadata supplies client labels, order, grouping, icons, and optional semantic hints without becoming a global slot vocabulary;
+- publishing an equipment-capable game fails unless its schema is valid and every equip-capable actor resolves a valid body layout; and
+- runtime fails closed on missing or unknown schemas and validates slot, compatibility, layout membership, and occupancy. The legacy direct-string bootstrap fallback must be retired, and cutover must validate or explicitly remap surviving equipped state. See [ADR 0115](../../decisions/adr-0115-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 Illustrative generation/revision sequence:
 
