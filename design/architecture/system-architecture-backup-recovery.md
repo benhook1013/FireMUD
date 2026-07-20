@@ -136,6 +136,7 @@ Every player-facing restore that rewinds PostgreSQL uses environment-wide `cold_
 - Coordination Redis must be empty for the restored environment before recovery participants run.
 - Recovery advances or recreates every gameplay epoch/fence, invalidates gameplay and Account sessions, obtains a safe disposition for every declared and enabled durable workflow and external-effect family, and rebuilds coordination state only from restored durable authority plus new post-restore activity.
 - Proof of empty coordination state, complete participant disposition, post-restore hardening, external credential validation, secret-compliance refresh, and smoke verification is required before reopen.
+- One durable recovery controller is the runtime authority for the release boundary. It idempotently reconciles `ready_to_reopen -> releasing -> finalized`, keeps ingress fail-closed until it applies and observes the quarantine release, and only then permits traffic. Checked-in recovery evidence is exported as an immutable projection after `finalized`; it is not a cross-system transaction participant.
 
 Ambiguous or mixed-timeline restore behavior is not allowed:
 
@@ -166,7 +167,7 @@ Manual bootstrap example sequence:
 5. Prove empty Coordination Redis and record environment-wide `cold_start_restore`.
 6. Complete offline participant convergence, epoch/fence reset, session invalidation, and coordination initialization before any normal Game Session or automation worker can create fresh coordination state.
 7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification.
-8. Start normal workloads and reopen traffic only after the recovery record and refreshed secret-compliance evidence are complete.
+8. Request the controller release, retrying its idempotent reconciliation until it applies and observes the quarantine release and reaches `finalized`; start or route normal player traffic only after that observation. Export the checked-in recovery and traffic-open evidence projections afterward.
 
 ## Local Development
 

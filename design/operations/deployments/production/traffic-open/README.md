@@ -13,7 +13,7 @@ Required fields:
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment` (`production`)
 - `eventType`
-- `trafficOpenStatus` (`authorized` before the transition; `finalized` after it)
+- `trafficOpenStatus` (`finalized` in the checked-in projection; runtime authorization is held by the recovery controller)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`
@@ -23,7 +23,7 @@ Required fields:
 - `restoreDrillLastSuccessAt`
 - `backupReadinessRef`
 - `baselineRecoveryRecordRef`
-- `actualRecoveryRecordRef` when `eventType=reopen`
+- `actualRecoveryRecordRef` when `eventType=reopen` (durable actual-recovery controller reference; checked-in projection follows finalization)
 - `backupCoverage` (`environment-wide-postgresql`)
 - `backupArtifactRef`
 - `backupToolDigest`
@@ -35,4 +35,4 @@ Required fields:
 - `trafficOpenedAt` when finalized
 - `evidenceRefs`
 
-Production preflight must require the referenced preflight report to pass and must dereference a current baseline recovery record proving the environment-wide cold-start contract. A `reopen` event must also reference the `ready_to_reopen` actual-recovery record for the exact player-facing target boundary; an isolated drill cannot replace it. The gated transition finalizes both records and records `trafficOpenedAt` before routing traffic. The current executable validates only the older evidence shape, so first-live and reopen remain blocked until it implements this contract.
+Production preflight must require the referenced preflight report to pass and must dereference a current baseline recovery projection proving the environment-wide cold-start contract. A `reopen` event must also read the durable actual-recovery controller in `ready_to_reopen` for the exact player-facing target boundary; an isolated drill cannot replace it. The controller idempotently reconciles `ready_to_reopen -> releasing -> finalized`, applies and observes quarantine release, and only then permits traffic. The exporter records `trafficOpenedAt` and writes both immutable projections after `finalized`. The current executable validates only the older evidence shape, so first-live and reopen remain blocked until it implements this contract.

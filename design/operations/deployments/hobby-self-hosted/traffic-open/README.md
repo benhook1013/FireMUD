@@ -13,15 +13,15 @@ Required fields:
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment` (`hobby-self-hosted`)
 - `eventType`
-- `trafficOpenStatus` (`authorized` or `finalized`)
+- `trafficOpenStatus` (`finalized` in the checked-in projection; runtime authorization is held by the recovery controller)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`
 - `baselineRecoveryRecordRef`
-- `actualRecoveryRecordRef` when `eventType=reopen`
+- `actualRecoveryRecordRef` when `eventType=reopen` (durable actual-recovery controller reference; checked-in projection follows finalization)
 - `preflightReportPath`
 - `trafficOpenedAt` when finalized
 - `evidenceRefs`
 
-Hobby preflight requires the traffic-open record to reference the canonical backup-compliance file, the current environment-wide cold-start baseline, and a successful hobby preflight report that consumed `design/operations/environments/hobby-self-hosted/expected-bindings.yaml`. Reopen additionally references the actual recovery in `ready_to_reopen`; the gated transition finalizes both records before routing traffic.
+Hobby preflight requires the traffic-open projection to reference the canonical backup-compliance file, the current environment-wide cold-start baseline, and a successful hobby preflight report that consumed `design/operations/environments/hobby-self-hosted/expected-bindings.yaml`. Reopen additionally reads the durable actual-recovery controller in `ready_to_reopen`; the controller idempotently reconciles through `releasing`, applies and observes quarantine release, and reaches `finalized` before traffic flows. The exporter writes both immutable projections only afterward.

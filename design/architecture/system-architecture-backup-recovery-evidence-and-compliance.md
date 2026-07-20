@@ -4,7 +4,7 @@ This document defines the machine-checkable evidence, metrics, and compliance re
 
 ## Implementation Notes
 
-Current backup checks prove artifact existence and selected evidence shape, not the accepted environment-wide cold-start recovery boundary. The scheduled dump does not yet emit complete environment/schema/service/tool lineage, preflight does not dereference and validate the required recovery record and participant results, and no checked-in production-equivalent drill proves backup-under-write through controlled reopen. Player-facing restore readiness remains blocked.
+Current backup checks prove artifact existence and selected evidence shape, not the accepted environment-wide cold-start recovery boundary. The scheduled dump does not yet emit complete environment/schema/service/tool lineage, preflight does not dereference and validate the required recovery-controller state and participant results, and no durable controller plus post-finalization evidence export proves backup-under-write through controlled reopen. Player-facing restore readiness remains blocked.
 
 ## Backup Observability and Alerts
 
@@ -87,7 +87,7 @@ Evidence reuse and invalidation:
 Validation rules:
 
 - evidence must match the promoted attestation
-- `restoreRecoveryRecordRef` must point to a finalized `production-equivalent-drill` record with `trafficExposure=isolated-drill` that completed quarantine, post-restore hardening, external credential validation, smoke verification, and the isolated controlled-reopen transition
+- `restoreRecoveryRecordRef` must point to a finalized exported projection of a `production-equivalent-drill` controller state with `trafficExposure=isolated-drill` that completed quarantine, post-restore hardening, external credential validation, smoke verification, and the isolated controlled-reopen transition
 - the recovery record must prove `cold_start_restore`, empty Coordination Redis, environment-wide session and epoch/fence invalidation, safe durable-participant and external-effect dispositions, and controlled reopen
 - `backupCoverage` must be `environment-wide-postgresql`; a tenant/region pair cannot stand in for the whole database
 - `backupToolDigest` must match the tool that produced the source artifact and its source lineage; `recoveryToolDigest` and the recovery-contract fingerprint must match the candidate proved by the drill
@@ -116,7 +116,7 @@ The evaluator compares backup/restore tool compatibility, database and migration
 
 Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
 
-Traffic-open evidence is a separate event-bound wrapper around the canonical recovery and backup-readiness evidence. It uses the existing writer/preflight namespace for both first-live and reopen events.
+Traffic-open evidence is a separate event-bound projection around the canonical recovery and backup-readiness evidence. Preflight authorizes the event from the durable recovery controller; the writer exports the checked-in immutable projection only after the controller has observed/applied the release and reached `finalized`.
 
 Canonical evidence path:
 
@@ -127,7 +127,7 @@ Required fields:
 - `schemaVersion`
 - `environment`
 - `eventType` (`first-live` or `reopen`)
-- `trafficOpenStatus` (`authorized` or `finalized`)
+- `trafficOpenStatus` (`finalized` in the checked-in projection; the controller may hold a runtime authorization before release)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`
@@ -138,7 +138,7 @@ Required fields:
 - `restoreDrillLastSuccessAt`
 - `backupReadinessRef`
 - `baselineRecoveryRecordRef`
-- `actualRecoveryRecordRef` when `eventType=reopen`
+- `actualRecoveryRecordRef` when `eventType=reopen` (durable actual-recovery controller reference; the checked-in projection is exported after finalization)
 - `backupCoverage`
 - `backupArtifactRef`
 - `backupToolDigest`
@@ -153,12 +153,12 @@ Required fields:
 Validation rules:
 
 - backup and verification evidence must bind to the production source lineage; `backupReadinessRef` and `baselineRecoveryRecordRef` must identify a finalized isolated drill and prove compatibility with the production boundary being opened
-- a `reopen` event submitted to preflight must also dereference `actualRecoveryRecordRef`, require `recoveryStatus=ready_to_reopen`, `recoveryPurpose=actual-recovery`, and `trafficExposure=player-facing-reopen`, and match the exact target boundary being reopened
+- a `reopen` event submitted to preflight must also dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and match the exact target boundary being reopened
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path
-- `PREFLIGHT-BACKUP-002` validates the event while `trafficOpenStatus=authorized`; the gated traffic-open transition atomically finalizes any actual-recovery record, records `trafficOpenedAt`, and advances this event record to `finalized` before routing player traffic
-- retained evidence for a completed first-live/reopen event must use `trafficOpenStatus=finalized`; a merely authorized record is not proof that the transition completed
+- `PREFLIGHT-BACKUP-002` validates the event against the durable controller while the actual recovery is `ready_to_reopen`; the controller idempotently reconciles `ready_to_reopen -> releasing -> finalized`, applying and observing quarantine release before permitting player traffic
+- the exporter writes the checked-in traffic-open projection, including `trafficOpenedAt`, only after the controller reaches `finalized`; a runtime authorization or partially written file is not proof that the transition completed
 - the canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`
 
 ## Hobby Backup Compliance Evidence
@@ -194,7 +194,7 @@ Required fields:
 - `schemaVersion`
 - `environment`
 - `eventType` (`first-live` or `reopen`)
-- `trafficOpenStatus` (`authorized` or `finalized`)
+- `trafficOpenStatus` (`finalized` in the checked-in projection; the controller may hold a runtime authorization before release)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`
@@ -208,15 +208,15 @@ Required fields:
 Validation rules:
 
 - `backupComplianceRef` must point to a current compliant record
-- `baselineRecoveryRecordRef` must point to a finalized isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; a reopen event must additionally reference the actual recovery record for that restore
-- a reopen actual-recovery record must be `ready_to_reopen` when preflight authorizes the event; the gated transition finalizes both records before traffic flows
+- `baselineRecoveryRecordRef` must point to a finalized exported projection of an isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; a reopen event must additionally reference the durable actual-recovery controller for that restore
+- a reopen actual-recovery controller must be `ready_to_reopen` when preflight authorizes the event; its idempotent release reconciliation must apply and observe quarantine release and reach `finalized` before traffic flows, after which the exporter writes both checked-in projections
 - `preflightReportPath` must show `PREFLIGHT-BACKUP-003=pass`
 - hobby player traffic must not open when this evidence is missing, stale, or bound to a failed preflight run
 - the traffic-open artifact should be written or refreshed for each first-live or reopen event even when the referenced compliance record did not change, so the evidence remains bound to the current deployment or recovery lineage
 
 ## Canonical Recovery Record
 
-Every production-equivalent drill and actual player-facing restore produces one canonical recovery record. An actual recovery must advance that record to `ready_to_reopen` before quarantine is lifted and finalize the same record as part of the gated release transition:
+Every production-equivalent drill and actual player-facing restore has one durable recovery-controller state machine. The checked-in records below are immutable projections exported only after that controller reaches `finalized`; they are not runtime authority or release-transaction inputs. For an actual recovery, preflight reads the controller in `ready_to_reopen`, and the controller owns the release reconciliation:
 
 - `production`: `design/operations/deployments/production/recovery/<recovery-ref>.json`
 - `staging`: `design/operations/deployments/staging/recovery/<recovery-ref>.json`
@@ -227,7 +227,7 @@ Required top-level fields:
 - `schemaVersion`
 - `environment`
 - `recoveryRef`
-- `recoveryStatus` (`collecting`, `ready_to_reopen`, or `finalized`)
+- `recoveryStatus` (`finalized` in the checked-in projection; the runtime controller also uses `collecting`, `ready_to_reopen`, and `releasing`)
 - `recoveryPurpose` (`production-equivalent-drill` or `actual-recovery`)
 - `sourceEnvironmentBinding`
 - `targetBoundary`
@@ -242,9 +242,9 @@ Required top-level fields:
 - `recoveryContractFingerprint`
 - `recoveryParticipantInventoryRef`
 - `quarantineStartedAt`
-- `readyToReopenAt` when `recoveryStatus` is `ready_to_reopen` or `finalized`
-- `quarantineReleasedAt` when `recoveryStatus=finalized`
-- `finalizedAt` when `recoveryStatus=finalized`
+- `readyToReopenAt` when the controller reached `ready_to_reopen`
+- `quarantineReleasedAt` when the controller observed the release
+- `finalizedAt` when the controller reached `finalized`
 - `restoredAt`
 - `restoredBy`
 - `preflightReportPath` when applicable
@@ -261,7 +261,7 @@ Required top-level fields:
 - `sanitizationEvidenceRef` when staging is restored from production-origin data
 - `smokeStatus`
 - `smokeEvidence`
-- `reopenApprovedBy` when `recoveryStatus` is `ready_to_reopen` or `finalized`
+- `reopenApprovedBy` when the controller reached `ready_to_reopen`
 
 Nested control-group requirements:
 
@@ -279,13 +279,14 @@ Nested control-group requirements:
 
 Validation rules:
 
-- quarantine remains in place while `recoveryStatus=collecting`; once every required pre-release control group passes and `reopenApprovedBy` is recorded, the controller records `readyToReopenAt` and advances the record to `ready_to_reopen`
-- the gated reopen transition atomically releases quarantine, records `quarantineReleasedAt` and `finalizedAt`, and advances `recoveryStatus` to `finalized`; actual player traffic may flow only after that transition succeeds
+- quarantine remains in place while the controller is `collecting`; once every required pre-release control group passes and `reopenApprovedBy` is recorded, the controller records `readyToReopenAt` and advances its durable state to `ready_to_reopen`
+- a release request is idempotently reconciled from `ready_to_reopen` to `releasing`; the controller repeatedly applies and observes the quarantine-routing release while keeping traffic closed. Any failed or ambiguous apply remains fail-closed in `releasing` and cannot produce `finalized`
+- after the controller applies and observes the release, it advances its durable state to `finalized`; only then may actual player traffic flow, and only then may the checked-in recovery and traffic-open projections be exported
 - a `production-equivalent-drill` uses `trafficExposure=isolated-drill`; its controlled reopen authorizes only the isolated test boundary and cannot authorize production traffic
 - an `actual-recovery` that will reopen player traffic uses `trafficExposure=player-facing-reopen` and is bound to that exact target boundary
 - `coordinationRecoveryMode` must be `cold_start_restore` for player-facing recovery; `scoped_reset_restore` experiments remain quarantined and cannot satisfy this record
 - every declared and enabled participant named by `recoveryParticipantInventoryRef` must have a safe disposition; a durable fenced backlog may survive reopen only when the participant remains disabled and its owning recovery contract defines the later operator action
-- `readyToReopenAt` must be later than restore-safe-mode entry, coordination recovery, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times; `quarantineReleasedAt` and `finalizedAt` must be later than `readyToReopenAt`
+- `readyToReopenAt` must be later than restore-safe-mode entry, coordination recovery, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times; `quarantineReleasedAt` and `finalizedAt` must be later than `readyToReopenAt`, and exported projections must carry the controller's finalized release identity
 - traffic reopen is non-compliant if this record is missing, incomplete, or inconsistent with the restore event
 
 Operator credential evidence representation:

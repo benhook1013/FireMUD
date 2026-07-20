@@ -26,4 +26,4 @@ Staging production-origin requirements:
 
 `dev-tools/restores/validate-external-credentials.sh staging` requires `SANITIZATION_EVIDENCE_REF` to point to one of these records, but it still expects the legacy hardening key names. It must be updated to the canonical control-group names; a legacy-script pass is not complete recovery proof.
 
-Sanitization evidence supplements the environment-wide cold-start, quarantine, convergence, hardening, smoke, and controlled-reopen record; it does not replace those controls.
+Sanitization evidence supplements the environment-wide cold-start, quarantine, convergence, hardening, smoke, and controlled-reopen controller state; it does not replace those controls. The checked-in staging record is an immutable projection exported after the controller reaches `finalized`, not runtime authority.

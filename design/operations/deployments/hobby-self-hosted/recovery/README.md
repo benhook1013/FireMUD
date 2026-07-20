@@ -27,4 +27,4 @@ Hobby-specific requirements:
 
 `dev-tools/restores/validate-external-credentials.sh hobby-self-hosted` requires `EXTERNAL_CREDENTIAL_EVIDENCE_REF` to point to one of these records, but it still expects the legacy `certificateReissuanceEvidence`, `jwtRestoreHardeningEvidence`, and `databaseCredentialRotationEvidence` aliases. It must be updated to the canonical control-group names; a legacy-script pass is not complete recovery proof.
 
-Current implementation note: the checked-in hobby evidence and writer do not yet produce or validate the complete cold-start recovery record, so player-facing reopen remains blocked.
+Current implementation note: the checked-in hobby evidence and writer do not yet export or validate the durable controller's complete cold-start recovery state, including `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized`; player-facing reopen remains blocked. The checked-in record is a post-finalization immutable projection, not runtime authority.

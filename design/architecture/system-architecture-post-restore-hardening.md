@@ -16,7 +16,7 @@ Required quarantine actions:
 
 It is not sufficient to rely on “operators will not send traffic yet” as a procedural control. The restored environment must be technically unable to accept player-facing traffic until the hardening sequence is complete.
 
-Restore quarantine is a full restore-safe mode, not only an ingress block. Restored workloads must not be able to process queued work, emit outbound communications, publish assets, run gameplay automation, or create new Coordination Redis state with snapshot-era credentials before the hardening and coordination gates complete. Maintenance Jobs required for recovery may run, but they must use narrowly scoped service accounts and write evidence into the recovery record.
+Restore quarantine is a full restore-safe mode, not only an ingress block. Restored workloads must not be able to process queued work, emit outbound communications, publish assets, run gameplay automation, or create new Coordination Redis state with snapshot-era credentials before the hardening and coordination gates complete. Maintenance Jobs required for recovery may run, but they must use narrowly scoped service accounts and submit their results to the durable recovery controller.
 
 ## Post-Restore Secret Hardening
 
@@ -100,11 +100,11 @@ Expected inputs include environment-specific values such as:
 - `EXTERNAL_CREDENTIAL_EVIDENCE_REF`
 - optionally `PRODUCTION_PG_DUMP_BUCKET` and `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation
 
-For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at the required in-repo sanitization evidence before traffic may reopen.
+For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at the required controller-visible sanitization result before release; its checked-in sanitization projection is exported after the controller reaches `finalized`.
 
 ### 5. Secret-compliance evidence refresh
 
-Post-restore hardening changes the Tier A trust lineage for the environment. Before quarantine can be lifted, operators must refresh `design/operations/secret-compliance/<environment>.yaml` and its immutable supporting evidence so promotion, DR-readiness, and traffic-open checks no longer point at pre-restore credential evidence.
+Post-restore hardening changes the Tier A trust lineage for the environment. Before release, operators must refresh the environment secret-compliance record and its immutable supporting evidence, submit that ref to the recovery controller, and ensure promotion, DR-readiness, and traffic-open checks no longer point at pre-restore credential evidence. Any checked-in recovery projection is exported after controller finalization.
 
 The refresh must include the credential classes affected by restore hardening:
 
@@ -148,10 +148,10 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 8. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the recovery record.
 9. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
 10. Start normal workloads in a controlled order and confirm application health checks, fresh login/session flows, gameplay smoke, JWT validation, and recovery-participant invariants while ingress remains quarantined.
-11. Complete every pre-release control group, record operator approval, and advance the canonical recovery record to `ready_to_reopen`.
-12. Use the gated transition to remove quarantine; that transition atomically records release/finalization and only then routes external or player traffic to the restored cluster.
+11. Complete every pre-release control group, record operator approval in the durable recovery controller, and advance its state to `ready_to_reopen`.
+12. Ask the controller to reconcile `ready_to_reopen -> releasing -> finalized`. It must apply and observe quarantine release before routing external or player traffic; failed or ambiguous release remains fail-closed. Export the immutable checked-in recovery and traffic-open evidence projections only after `finalized`.
 
-For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and writes the canonical recovery record before reopening player traffic.
+For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and updates the durable recovery controller before requesting release. Its immutable checked-in recovery projection is exported only after the controller reaches `finalized`.
 
 ## Planned DB Credential Rotation
 

@@ -49,7 +49,7 @@ The restore source may provide PostgreSQL data, selected Kubernetes manifests, a
 4. Re-run `./dev-tools/deploy/preflight.py <environment>` and require the bootstrap, secret, JWT/JWKS, bridge, Redis, external-binding, and service-discovery checks to pass for the new boundary before progressing.
 5. Replace or clear Coordination Redis, prove it is empty, invalidate all restored gameplay and Account sessions, and advance or recreate every gameplay-region epoch and fence.
 6. Run the offline durable-participant and external-effect convergence sequence, then the post-restore hardening flow from `design/architecture/system-architecture-post-restore-hardening.md`.
-7. Refresh the environment secret-compliance record, complete every pre-release recovery control, record approval, and advance the recovery record to `ready_to_reopen`. The gated transition adds quarantine-release and controlled-reopen evidence while finalizing that same record.
+7. Refresh the environment secret-compliance record, complete every pre-release recovery control, record approval in the durable recovery controller, and advance it to `ready_to_reopen`. Reconcile `ready_to_reopen -> releasing -> finalized`; the controller must apply and observe the quarantine release before traffic opens, and the checked-in evidence projection is exported only afterward.
 
 Restored snapshot-era Secrets are not authoritative trust material for a fresh-boundary restore. Operators may use restored Secret objects only as temporary inputs to hardening or data recovery, and they must be replaced, rotated, reissued, or explicitly re-bound to the new environment boundary before player traffic reopens.
 
@@ -62,8 +62,8 @@ Before opening production to player traffic for the first time, or reopening it 
 3. Confirm a production-equivalent `cold_start_restore` drill exists for the same production environment boundary and completed within 30 days.
 4. Confirm the referenced recovery record proves empty Coordination Redis, environment-wide gameplay and Account session invalidation, every gameplay-region epoch/fence reset, safe dispositions for every declared and enabled durable participant and external-effect family, post-restore hardening, smoke validation, and controlled reopen.
 5. Confirm backup/recovery tool digests, recovery-contract fingerprint, schema lineage, service digests, participant inventory, and expected bindings match the boundary being opened.
-6. For `reopen`, confirm the actual-recovery record is `ready_to_reopen`, has `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and names the exact target boundary; the isolated baseline drill alone is insufficient.
-7. Record the authorized environment-specific evidence and require `PREFLIGHT-BACKUP-002=pass`. The gated transition then atomically finalizes the actual-recovery and traffic-open records before routing player traffic.
+6. For `reopen`, confirm the durable actual-recovery controller is `ready_to_reopen`, has `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and names the exact target boundary; the isolated baseline projection alone is insufficient.
+7. Record the runtime authorization in the durable recovery controller and require `PREFLIGHT-BACKUP-002=pass`. The controller then idempotently reconciles `ready_to_reopen -> releasing -> finalized`, applies and observes quarantine release, and only afterward permits player traffic; checked-in actual-recovery and traffic-open projections are exported after `finalized`.
 
 If production must be opened before the normal schedules have accumulated history, operators must create an explicit bootstrap backup, verification, and restore-drill record first. Opening traffic without proven recovery evidence is non-compliant.
 This is a traffic-open gate, not a routine steady-state rollout gate.
@@ -153,7 +153,7 @@ The drill evidence may be reused within the configured freshness window only whi
 2. **Run Operator Preflight**
    - Run `./dev-tools/deploy/preflight.py hobby-self-hosted`.
    - Treat required preflight checks as blocking for player-facing traffic.
-   - For first-live opens and reopen-after-restore events, require `PREFLIGHT-BACKUP-003=pass` before player traffic is opened.
+   - For first-live opens and reopen-after-restore events, require `PREFLIGHT-BACKUP-003=pass` before requesting controller release and opening player traffic.
    - Treat `PREFLIGHT-BACKUP-003` as a traffic-open gate for first-live and reopen events, not as a required check for ordinary steady-state hobby rollouts that do not change player-traffic status.
    - Store preflight report and optional waiver artifacts using the same evidence path contract: `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>.json` and `.../<deployment-ref>.waiver.json`.
 3. **Apply Manifests/Charts**

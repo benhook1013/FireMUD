@@ -52,7 +52,7 @@ Quarantine is a technical execution state, not an operator convention:
 - Gateway, TCP Proxy, normal Game Session workers, tick executors, automation, schedulers, outbound processors, asset publication, and other side-effecting workloads cannot accept or create normal work.
 - Restored manifests or helper scripts must not automatically restart normal workloads.
 - Only narrowly authorized recovery, validation, and hardening jobs may run before the recovery controller opens each later phase.
-- Reopen requires one explicit operator-authorized transition backed by a canonical recovery record in `ready_to_reopen`; the transition atomically releases quarantine and finalizes the record before player traffic flows.
+- Reopen requires one explicit operator-authorized request against the durable recovery controller in `ready_to_reopen`. The controller is the runtime authority and idempotently reconciles `ready_to_reopen -> releasing -> finalized`: it applies the quarantine release, observes that the release is active, advances to `finalized`, and only then permits player traffic. A failed or ambiguous apply remains fail-closed. Checked-in recovery and traffic-open evidence is an immutable exported projection produced after the controller reaches `finalized`; repository evidence is not part of the release transaction.
 
 ### Offline Convergence and External Reconciliation
 
@@ -74,8 +74,9 @@ Player-facing restore readiness requires a production-equivalent drill that:
 2. Restores the PostgreSQL artifact into an isolated environment with empty Coordination Redis and normal workloads held closed.
 3. Runs the offline convergence, session invalidation, epoch/fence reset, JWT and credential hardening, external-binding validation, and secret-compliance refresh paths.
 4. Starts workloads under quarantine and proves representative tenant, gameplay-region, command, external-effect, and login invariants.
-5. Produces one canonical recovery record linked to immutable backup, restore-tool, recovery-tool, service-digest, schema-lineage, and smoke evidence.
+5. Establishes one durable recovery-controller state linked to immutable backup, restore-tool, recovery-tool, service-digest, schema-lineage, and smoke evidence.
 6. Reopens only through the same gated transition production uses.
+7. Exports one canonical immutable recovery projection after the controller reaches `finalized`.
 
 Until this proof and its executable validators exist:
 
@@ -93,7 +94,7 @@ Full restore drills are not required for every ordinary release:
 
 - Run a full production-equivalent baseline drill at least every 30 days.
 - A rollback-compatible release may reuse current drill evidence when an automated compatibility result proves the backup/restore tool digests, database and migration lineage, durable workflow/reconciliation contract, Coordination Redis recovery contract, secret/binding contract, and complete enabled recovery-participant inventory remain restore-compatible.
-- A compatibility result records the baseline drill and recovery-record references, baseline and candidate recovery-contract fingerprints, changed dimensions, evaluator/tool version, status, rationale, and whether a new drill is required. Ordinary promotion/deployment evidence carries this small result or its immutable reference rather than duplicating the full recovery record.
+- A compatibility result records the baseline drill and exported recovery-projection references, baseline and candidate recovery-contract fingerprints, changed dimensions, evaluator/tool version, status, rationale, and whether a new drill is required. Ordinary promotion/deployment evidence carries this small result or its immutable reference rather than duplicating the full recovery projection.
 - Changes invalidate prior evidence only when they alter restore compatibility, a recovery semantic, a participant contract or inventory, a trust/binding contract, or the backup/restore/hardening/reconciliation path. A restore-compatible additive migration or routine credential value rotation does not force a full drill when its contract and hardening workflow are unchanged.
 - A production `roll-forward-only` release requires a release-candidate recovery drill. The drill takes its source artifact from the current production database lineage under representative writes, restores it with the candidate recovery tooling, applies the exact candidate service digests and migration path, and proves the candidate config/binding lineage through controlled reopen.
 - First-live and reopen-after-restore require environment-specific evidence for the actual boundary being opened; cadence evidence alone is insufficient.
@@ -134,7 +135,7 @@ Treat any readable `pg_dump` as a valid recovery point. A database snapshot can 
 - Enforce restore quarantine before any restored normal workload can start; remove immediate rollout restart from the player-facing restore path.
 - Implement the environment-wide cold-start controller, empty-Redis proof, epoch/fence reset, session invalidation, durable participant inventory, convergence steps, and controlled reopen transition.
 - Define external-effect reconciliation contracts for payments, communications, webhooks, and object-store publication.
-- Make release evidence carry and validate the cheap recovery-compatibility result; make preflight dereference and validate canonical recovery records, artifact digests, participant safe dispositions, recovery-contract fingerprints, and environment-wide scope rather than trusting timestamps or caller-supplied scope strings.
+- Make release evidence carry and validate the cheap recovery-compatibility result; make preflight dereference and validate the durable recovery-controller state and its finalized exported projections, artifact digests, participant safe dispositions, recovery-contract fingerprints, and environment-wide scope rather than trusting timestamps or caller-supplied scope strings.
 - Implement tiered evidence invalidation and require exact release-candidate drills for `roll-forward-only` promotion.
 - Keep the capability implementation state partial until a real backup-under-write, restore, convergence, hardening, smoke, and reopen sequence is proved.
 
