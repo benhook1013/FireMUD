@@ -46,7 +46,7 @@ Not every setting participates in every source. Each surfaced key must declare w
 
 Presets and bootstrap configuration use the same typed setting key space. A preset expands into a bundle of ordinary operator baseline values; it is not a second settings authority. An explicit bootstrap value overrides the selected preset value for the same key.
 
-Value precedence is separate from constraint evaluation. Schema and platform hard bounds always apply, and configured operator caps constrain tenant and game-instance values for keys that declare such caps. A later value source can never override a hard bound or operator cap.
+Value precedence is separate from constraint evaluation. Schema and platform hard bounds always apply, and configured operator caps constrain the final candidate value from every source for keys that declare such caps. A later value source can never override a hard bound or operator cap; bootstrap and runtime-default candidates are not exempt merely because the operator supplied them.
 
 - New tenant or game-instance writes that violate an applicable bound or cap are rejected.
 - If an operator later tightens a cap so an existing persisted override becomes invalid, the resolver disregards that invalid override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic suitable for operator and creator remediation.
