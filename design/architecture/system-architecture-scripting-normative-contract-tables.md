@@ -52,6 +52,7 @@ Additional required fields for plugin triggers:
 | --- | --- | --- |
 | `pluginId` | Yes (plugin triggers) | Required to distinguish plugin-triggered runs from core scripts when the same `scriptId` model is reused. |
 | `pluginVersionId` | Yes (plugin triggers) | Required for rollback safety, audit correlation, and version-fence drops. |
+| `pluginActivationEpoch` | Yes (plugin triggers) | Monotonic per `<tenantId, gameInstanceId, pluginId>` activation fence. Required with the exact version so same-version reactivation cannot make displaced work eligible again. |
 
 Additional required fields for scheduler/timer triggers:
 

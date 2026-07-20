@@ -86,12 +86,16 @@ Dry-run executions are privileged and must not destabilize production:
 
 Plugins are executed by the same runtime engine as scripts and must not rely on weaker rollback semantics:
 
-- Plugin enablement and active `pluginVersionId` selection are explicit per `(tenantId, gameInstanceId, pluginId)` and are controlled by operator control-plane APIs (typically via Logging & Admin driving Automation & Scripting registry APIs).
-- Plugin triggers must follow the same Trigger Identity rules, including `gameInstanceId` and (for gameplay/runtime triggers) `regionEpoch`. For plugin triggers, `pluginId` and `pluginVersionId` are required identity fields as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
-- Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
-  - On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
-  - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
-    - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
+- Plugin enablement and active version selection are explicit per `(tenantId, gameInstanceId, pluginId)` and are controlled by operator control-plane APIs (typically via Logging & Admin driving Automation & Scripting registry APIs). The Automation-owned state binds exact `pluginVersionId`, monotonic `pluginActivationEpoch`, and lifecycle state.
+- Every activation or switch, completed disable, forced drain, same-version reactivation, and revocation advances `pluginActivationEpoch`. Version equality never substitutes for epoch equality.
+- Plugin triggers must follow the same Trigger Identity rules, including `gameInstanceId` and (for gameplay/runtime triggers) `regionEpoch`. `pluginId`, `pluginVersionId`, and `pluginActivationEpoch` are required plugin identity fields as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+- Triggers, script work items, durable schedules/timer firings, remote follow-ups, staged commands, and tick commands produced by plugins carry `pluginId`, exact `pluginVersionId`, and `pluginActivationEpoch` in addition to the applicable script-patch fence.
+- Game Session maintains a local versioned projection of the Automation-owned plugin activation state. Projection updates apply monotonically by `pluginActivationEpoch`; the final tick path must not call Automation, Game Design, or policy services synchronously.
+- Every lifecycle transition installs the exact new epoch/state through an idempotent Game Session control-plane command and receives durable acknowledgement before Automation admits the new activation or reports disable, revocation, or forced-drain containment complete. Best-effort notifications and cache refresh are not this transition barrier.
+- Before final execution, Game Session compares both the embedded version and activation epoch with its local projection and verifies that the projected state permits that work to finish. Missing, stale, displaced, disabled, or revoked state fails closed. Rejection is recorded with bounded diagnostic identity, and the queue entry is removed or moved to bounded dead-letter retention.
+- Disable and revocation stop admission, advance the fence, and complete containment only after Game Session durably acknowledges the non-executable epoch/state. Cleanup of schedules, pending work, follow-ups, and tick commands is asynchronous and is not the correctness boundary.
+- Drain stops new admission under the current epoch and allows already admitted work a bounded completion window. Successful drain completion or forced timeout advances the epoch; timeout forces containment while cleanup continues asynchronously.
+- Activation validates exact publication and platform acceptance, capability grants, runtime compatibility, bindings, and fresh policy evidence. Control-plane mutation identities are bound to canonical operation digests so changed-request reuse is rejected.
 
 ### 9) Rollback Convergence Timeout Contract
 

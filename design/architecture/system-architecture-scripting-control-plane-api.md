@@ -497,7 +497,7 @@ Contract rules:
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
-Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. All mutating plugin operations must be idempotent and scoped to a running instance.
+Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. The authoritative row for `<tenantId, gameInstanceId, pluginId>` binds exact `pluginVersionId`, monotonic `pluginActivationEpoch`, and lifecycle state. All mutating plugin operations are scoped to a running instance and use a stable request identity bound to a canonical digest of the complete operation input; exact replay returns the recorded result and changed-input reuse is rejected.
 
 #### `GetPluginStatus`
 
@@ -513,6 +513,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`, `pluginId`
 - `activePluginVersionId` (nullable)
+- `pluginActivationEpoch`
 - `pendingPluginVersionId` (nullable)
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
 - `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
@@ -541,14 +542,14 @@ Request fields:
 
 Response fields:
 
-- repeated `events[]` with `eventId`, `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `pluginState`, `statusReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`
+- repeated `events[]` with `eventId`, `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `previousPluginActivationEpoch`, `pluginActivationEpoch`, `pluginState`, `statusReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`
 - `error`
 
 Contract rules:
 
 - This is append-only runtime lifecycle history, not a projection of design-time publication events.
 - `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, and scheduled policy reconciliation must append one event only when they materially change runtime plugin state or the active version.
-- Idempotent no-op retries against an already-applied target must not append duplicate events or advance the latest-row `lastChangedAt`.
+- Exact idempotent retries must not append duplicate events, advance `pluginActivationEpoch`, or update the latest-row `lastChangedAt`. Reusing `controlPlaneRequestId` with a different canonical operation digest fails deterministically.
 - Operators that need the current runtime truth still use `GetPluginStatus`; operators that need transition history use this read rather than inferring chronology from row timestamps.
 
 #### `GetPluginPolicyConvergence`
@@ -567,7 +568,7 @@ Response fields:
 - `failClosedCount`
 - `converged`
 - `evaluatedAtMs`
-- repeated `violations[]` with `gameInstanceId`, `pluginId`, `activePluginVersionId`, `reason`, and `lastChangedAtMs`
+- repeated `violations[]` with `gameInstanceId`, `pluginId`, `activePluginVersionId`, `pluginActivationEpoch`, `reason`, and `lastChangedAtMs`
 - `error`
 
 Current implementation note: Automation evaluates enabled runtime states against current Game Design publication metadata on demand. Reasons match the scheduled reconciler's fail-closed reasons, including `signer_policy_unavailable`, `signer_revoked`, `plugin_component_policy_blocked`, `component_policy_unavailable`, and `plugin_version_not_published`.
@@ -586,20 +587,21 @@ Inputs:
 
 Semantics:
 
-- Idempotent.
+- Digest-bound idempotent.
 - Validates that the target plugin version is `PUBLISHED` in the Game Design design-time lifecycle before any runtime mutation occurs. Non-published versions must fail deterministically with an application error (for example `PLUGIN_VERSION_NOT_PUBLISHED`).
-- Validates that the target bundle is allowed for the environment (signature verified, signer allowed, component policy satisfied).
+- Validates exact immutable platform-acceptance evidence, required capability grants, fresh signer/component policy, and environment eligibility. Publisher signature is one accepted provenance path under ADR 0108, not a substitute for platform acceptance or runtime policy.
 - Validates runtime-version compatibility before activation:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
 - Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle, supported built-in `COMMAND_ALIAS` bindings, and no instance-scoped binding conflicts against the currently pinned script patch plus already-enabled plugins before updating the runtime registry.
-- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
+- On success, advances `pluginActivationEpoch` and durably installs the exact new epoch/state at Game Session through an idempotent control-plane command before admitting work under the activation. Automation does not report activation complete until Game Session acknowledges the final-execution fence. If installation fails, activation remains non-admitting and retries the same transition identity. Durable plugin-owned schedules, pending Automation work, remote follow-ups, and Game Session commands are reconciled asynchronously; the version-and-epoch fence, not cleanup completion, prevents displaced work from mutating gameplay.
 
 Outputs:
 
 - `previousPluginVersionId` (nullable)
 - `activePluginVersionId`
+- `pluginActivationEpoch`
 - `controlPlaneRequestId`
 
 #### `DisablePlugin`
@@ -615,9 +617,10 @@ Inputs:
 
 Semantics:
 
-- Idempotent.
-- Transitions the plugin into a non-admitting state immediately.
+- Digest-bound idempotent.
+- Transitions the plugin into a non-admitting, non-executable state and advances `pluginActivationEpoch`. Containment is complete only after Game Session durably acknowledges that epoch/state; failure leaves Automation admission paused and the transition retryable rather than reporting a permissive success.
 - Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
+- Already admitted work becomes stale at the Game Session final fence immediately. Queue, schedule, follow-up, and work-item cleanup is asynchronous.
 - Emits `PluginVersionDisabled(newState=DISABLED)`.
 
 #### `DrainPlugin`
@@ -633,9 +636,18 @@ Inputs:
 
 Semantics:
 
-- Idempotent.
+- Digest-bound idempotent.
 - Transitions the plugin to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
+- Drain begins under the current `pluginActivationEpoch`. When bounded admitted work completes, the terminal disable transition advances the epoch. If the drain times out or policy requires immediate containment, a forced transition advances the epoch, rejects remaining old work at the final fence, and continues cleanup asynchronously.
 - Emits `PluginVersionDisabled(newState=DRAINING)` (or a dedicated draining event if introduced later).
+
+Final execution and projection rules:
+
+- Every plugin trigger, work item, schedule/timer firing, remote follow-up, staged command, and gameplay command carries `pluginId`, exact `pluginVersionId`, and `pluginActivationEpoch`.
+- Game Session applies activation projection updates monotonically by epoch and enforces version, epoch, and permitted lifecycle state immediately before final gameplay execution.
+- Lifecycle mutation uses a required idempotent Game Session fence-install command and acknowledgement. Asynchronous notification may refresh other projections but cannot replace this transition barrier.
+- The tick path uses the local projection and never performs a synchronous Automation, Game Design, or policy lookup.
+- Revocation follows the immediate-disable containment rule: stop admission, advance the epoch into a non-executable state, durably install and acknowledge that final fence at Game Session, and reconcile displaced work asynchronously.
 
 ### Automation & Scripting: Event Ingress Admission Contract (Normative)
 
