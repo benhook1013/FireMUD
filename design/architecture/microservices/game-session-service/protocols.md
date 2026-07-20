@@ -234,7 +234,7 @@ This structured payload should not be treated as the final platform abstraction 
 - recipient resolution owned by those targets/scopes,
 - and per-recipient presentation for emitters, ordinary listeners, and observer/interceptor roles.
 
-All communication actions should enter through Game Logic. Game Logic resolves gameplay context, communication type, target/scope, and gameplay interception/perception rules, then dispatches to Social & Groups or other owning services as needed for membership checks, moderation, persistence, and delivery fanout.
+World/gameplay communication enters Game Logic. Game Logic resolves gameplay context, communication type, target/scope, and gameplay interception/perception rules, then hands the bounded resolved plan to Social & Groups for its moderation, history, and social-audience responsibilities before Game Session performs connected-client transport delivery. Account messaging, ordinary guild/group channels, mail, and browser social interactions enter Social & Groups directly; an in-game command may adapt to that social surface without exposing private content to Game Logic or tenant-authored scripts. See [ADR 0134](../../decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md).
 
 For in-world communication, the command should usually target the room/area/etc. rather than precomputing the final recipient list in the sender path. That keeps room-local speech extensible for eavesdropping, spy skills, magical listening, and other target-owned delivery rules.
 

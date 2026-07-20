@@ -103,9 +103,9 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ## Communication Flow
 
-- Game Session channels authenticated communication commands through Game Logic, supplying the same gameplay identity and world context that guard `LOOK`.
+- Communication uses the explicit ingress classes in [ADR 0134](../../decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md). Game Session channels authenticated world/gameplay communication commands through Game Logic, supplying the same gameplay identity and world context that guard `LOOK`. Account messaging, ordinary guild/group channels, mail, and browser social interactions enter Social & Groups directly; an in-game command may adapt to those APIs without making the operation a Game Logic action.
 - `SendCommunication` is the current shared communication action rather than a permanent `say`-only API surface.
-- Game Logic validates message length and communication rules, resolves the communication target/scope, applies gameplay interception/perception rules, and dispatches to Social & Groups rather than rendering chat locally.
+- Game Logic validates message length and gameplay rules, resolves the communication target/scope, applies gameplay interception/perception rules, and emits a bounded resolved communication plan rather than rendering chat or opening player transports locally. Social & Groups applies relevant social-audience, moderation, history, and durable-delivery responsibilities; Game Session owns final connected-client transport delivery.
 - The longer-term communication model should generalize this flow from a `BroadcastSay`-style API to a communication-intent pathway with:
   - a game-configured communication type definition,
   - explicit target/scope objects such as room, area, region, group, or direct target,
@@ -115,7 +115,8 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - The first standard built-ins should be:
   - `say` targeting the current room,
   - `whisper` targeting one character in the current room,
-  - `tell` targeting one character directly outside room scope by default.
+  - gameplay `tell` targeting one character directly outside room scope by default.
+- Gameplay `tell` may remain on this path when game abilities, rules, or interception apply. Account-to-account direct messaging and mail are Social & Groups operations even when invoked through an in-game adapter. Tenant-authored DSL cannot reclassify private platform communication for gameplay-script inspection.
 - `shout` should remain a future built-in and should not be implemented until the game-settings model can describe topology-dependent scope such as region-wide versus map-wide propagation.
 - Observer perception should be determined by layered rules rather than by one owner alone:
   - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
@@ -135,6 +136,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
 - In particular, `whisper` and `tell` preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
 - When later slices land, prefer evolving this pathway with richer target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
+- Operator and platform-system communication enters through the service that owns the originating authorization and audit contract. It uses typed owner handoffs and enters Game Logic only when it deliberately creates a gameplay-world effect.
 
 ## Implementation Status
 

@@ -39,7 +39,9 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 - Those broader scope and routing semantics should be modeled explicitly rather than treating all verbs as cosmetic aliases of one generic room broadcast.
 - In particular, in-world communication should usually target a room, area, or other scope object and let that scope resolve listeners, overhearers, spies, magical observers, and similar mechanics.
 - The target-state observer model should be layered: communication type sets baseline observability, the target/scope resolves qualified listeners and observers, and recipient capabilities/effects determine whether a qualified observer gets full content, partial content, or only metadata.
-- Even for communication types that obviously need Social & Groups for membership, history, moderation, or fanout, the action should still enter through Game Logic first so gameplay interception, surveillance, magical listening, or similar mechanics can participate consistently.
+- World/gameplay communication enters Game Logic first so topology, gameplay perception, surveillance, magical listening, and similar mechanics can participate consistently. Game Logic produces a bounded resolved plan; Social & Groups applies relevant social audience, moderation, history, and durable social-delivery responsibilities; Game Session owns connected gameplay transport delivery.
+- Account messaging, ordinary guild/group channels, mail, and browser social interactions enter Social & Groups directly after authentication, membership, privacy, and moderation checks. In-game commands may adapt to those APIs without turning private platform communication into a Game Logic action or exposing it to tenant-authored scripts. Gameplay `tell` may remain distinct when its contract deliberately permits game rules or interception.
+- Operator and platform-system communication enters through the service that owns the originating authorization and audit contract. See [ADR 0134](../../decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md) for the canonical communication classes and owner handoffs.
 
 ## Document Map
 

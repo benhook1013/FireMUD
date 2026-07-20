@@ -147,6 +147,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0131](./adr-0131-compact-versioned-player-output-and-late-rendering.md) | Accepted | `EA-1` | `EA-1`, `EA-3`, `PO-2`, `SF-1` | Compact versioned late-rendering contract with mandatory text projection |
 | [ADR 0132](./adr-0132-future-compatible-localization-boundary.md) | Accepted | `EA-1` | `EA-3`, `AR-1` | Future-compatible localization boundary with deferred tooling selection |
 | [ADR 0133](./adr-0133-owner-local-moderation-enforcement.md) | Accepted | `PO-1` | `EA-2`, `AA-1`, `PO-4` | Owner-local moderation enforcement through acknowledged typed commands |
+| [ADR 0134](./adr-0134-explicit-communication-classes-and-owner-delivery.md) | Accepted | `EA-2` | `EA-2`, `GR-4`, `PO-1`, `SF-2` | Explicit gameplay, social-channel, and operator communication classes |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

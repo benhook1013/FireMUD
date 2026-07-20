@@ -69,8 +69,11 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 
 ## Delivery Semantics
 
-- In-game communication actions such as `say`, `whisper`, `tell`, guild chat, and mail originate in the Game Logic Service and incorporate context from the World Management and Entity Management services where needed.
-- The Game Logic Service invokes this service to deliver messages, run profanity checks, persist history, and log communications for audit and moderation.
+- Communication uses the explicit ingress classes in [ADR 0134](../../decisions/adr-0134-explicit-communication-classes-and-owner-delivery.md).
+- World/gameplay communication such as `say`, nearby `whisper`, gameplay `tell`, and future topology-aware `shout` enters Game Logic so world and entity context, game rules, perception, and interception can participate. Game Logic supplies a bounded resolved communication plan; Social & Groups applies its moderation, history, and relevant social-audience responsibilities; Game Session owns final connected-gameplay transport delivery.
+- Account messaging, ordinary guild/group channels, mail, and browser social interactions enter Social & Groups directly after authentication, membership, privacy, and moderation checks. An in-game command may adapt to these APIs without making the operation a Game Logic action. Tenant-authored DSL cannot reclassify private platform communication for script inspection.
+- Existing online `tell` may remain a gameplay action when abilities, game rules, or interception apply. Account direct messages and mail remain social operations even if presented through an in-game client.
+- Operator and platform-system communication enters through the service that owns the originating authorization and audit contract and uses typed handoffs to the applicable audience, history, and transport owners.
 - Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation.
 - The current gameplay-connected `say` slice should be treated as the first implemented communication action only. It proves the cross-service path, but it is not the final abstraction for all communication.
 - Future gameplay communication should preserve a distinction between:
@@ -80,4 +83,4 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
   - and per-recipient presentation/rendering metadata.
 - Later slices may allow world-topology-aware propagation rules such as area-local whispers, map-wide shouts, or continent-scoped announcements. Social & Groups should accept those semantics through explicit delivery metadata rather than inferring them from a room-chat alias alone.
 - The preferred target-state is a configurable communication envelope where a communication intent names a type definition plus one or more targets/scopes. Social & Groups should receive explicit resolved delivery metadata and presentation directives from the gameplay orchestration layer rather than re-deriving spatial context from a verb name alone.
-- Even when Social & Groups owns durable history, moderation, membership checks, or fanout for a communication type, the action should still enter through Game Logic so gameplay abilities, items, and perception/interception rules can participate consistently across all communication modes.
+- Only world/gameplay communication must enter Game Logic. Private platform and ordinary social-channel communication remains independent of Game Logic availability and tenant-authored gameplay semantics.
