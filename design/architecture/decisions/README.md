@@ -18,7 +18,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0002](./adr-0002-automation-handoff-reliability-and-success-semantics.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Durable automation-to-tick handoff and success semantics |
 | [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Reload backpressure, bounded retry, and timer behavior |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded by ADR 0007 | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
-| [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Accepted | `AA-3` | `EA-1`, `SF-1` | Internal tenant identity and player-facing world selector boundary |
+| [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Superseded | `AA-3` | `EA-1`, `SF-1` | Superseded tenant/world selector boundary |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn; superseded by ADR 0007 | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Historical client-carried gameplay shard routing proposal |
 | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) | Accepted | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Shard-unaware edge and unified client-visible close taxonomy |
 | [ADR 0008](./adr-0008-multi-cluster-gameplay-sharding-scope.md) | Accepted | `GR-1` | `PO-2`, `PO-3`, `SF-2` | Single-cluster gameplay execution and multi-cluster adoption gate |
@@ -176,6 +176,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0160](./adr-0160-authoritative-control-actions-during-observability-loss.md) | Accepted | `PO-4` | `PO-1`, `SF-1`, `SF-2` | Authoritative control actions during observability loss |
 | [ADR 0161](./adr-0161-attributable-script-breakers-and-tenant-first-fairness.md) | Accepted | `AS-1` | `PO-1`, `PO-4`, `GR-1`, `SF-2` | Attributable script breakers and tenant-first fairness |
 | [ADR 0162](./adr-0162-allowlisted-sensitive-trace-attributes.md) | Accepted | `PO-4` | `SF-1`, `PO-1`, `PO-3` | Allowlisted sensitive trace attributes |
+| [ADR 0163](./adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) | Accepted | `AA-3` | `AA-2`, `SF-1` | Snapshot-bound lobby selectors and stable realm identity |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

@@ -13,9 +13,10 @@ FireMUD separates **global identity** from **per-game state** so that one person
 
 - **Platform account (`accountId`)** – A global identity record managed by the Account Service. Each human player has a single platform account, which is the subject of authentication and JWT issuance.
 - **Tenant (`tenantId`)** – A hosted game world or project. Each tenant represents one game created on the platform and may have one or more running game instances. The Game Design Service owns `tenantId` issuance.
-- **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See [ADR 0005: Tenant Identifiers in Gameplay Protocol](./decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md) for the required slug stability rules.
+- **World slug (`worldSlug`)** – The globally unique stable human selector for the tenant/game, owned by Game Design and used in lobby flows. It resolves to `tenantId`; it is never durable authority. See [ADR 0163](./decisions/adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md).
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
   - A tenant may expose one or more **player-addressable realms**. Each realm is explicitly `OPEN` on exactly one admissible `gameInstanceId` or `CLOSED` with none through the authoritative realm-routing contract owned by Game Session.
+  - Every durable realm has opaque UUID `realmId`; its stable `realmSlug` is unique within the tenant and resolves to that identity.
   - One visible realm may be flagged as the public-production realm in the Game Session admission-pointer record. In v1, that flagged realm is the only realm that may be publicly discoverable to authenticated accounts that do not already hold tenant membership. The initial catalog uses the configured `production` realm as the bootstrap default, but callers must consume the explicit pointer flag rather than infer public-production behavior from a slug.
   - Additional realms are explicitly authorized non-production realms such as playtest forks. They are never public-discovery realms in v1 and require explicit access grants owned by Account Service and evaluated through the same runtime grant authority across bootstrap discovery and gameplay admission.
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
@@ -87,12 +88,13 @@ Realm routing is a control-plane/runtime contract, not merely a lobby rendering 
 The platform distinguishes between:
 
 - a **realm catalog** describing which realms are player-addressable for one tenant; and
-- an **admission pointer** describing whether one `{tenantId, worldSlug, realmSlug}` target is `OPEN` on one concrete `gameInstanceId` or `CLOSED` with no admission target.
+- an **admission pointer** describing whether one `{tenantId, realmId}` target is `OPEN` on one concrete `gameInstanceId` or `CLOSED` with no admission target.
 
 Minimum realm-catalog facts for one visible realm are:
 
 - `tenantId`
-- `tenantSlug`
+- `worldSlug`
+- `realmId`
 - `realmSlug`
 - bounded player-facing display metadata
 - whether the realm is visible
@@ -102,6 +104,7 @@ Minimum realm-catalog facts for one visible realm are:
 Minimum admission-pointer facts for one resolved realm are:
 
 - `tenantId`
+- `realmId`
 - `worldSlug`
 - `realmSlug`
 - `admissionState` (`OPEN` or `CLOSED`)
@@ -121,18 +124,18 @@ Contract rules:
 
 Required read contract:
 
-- `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admission lookup.
+- `GetAdmissionPointer(tenantId, realmId)` is the authoritative gameplay-admission lookup after selector resolution.
 - The authoritative owner of this pointer contract is the Game Session control plane.
 - Callers must treat missing required pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults. A complete `CLOSED` record is not an incomplete pointer.
 
 Pointer freshness and cutover rules:
 
-- `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}`.
+- `pointerVersion` is monotonic per `{tenantId, realmId}`.
 - Any `OPEN`/`CLOSED` transition, target-instance change, or execution-namespace change that materially changes the admitted runtime must advance `pointerVersion`. Catalog-only changes advance `catalogRevision` instead.
 - The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
 - Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
 - Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
-- The persistence key and uniqueness constraint are `{tenantId, worldSlug, realmSlug}`. Existing-route mutations require an expected positive version and use one atomic database conditional write; checking a version in memory before an unconditional update is not compare-and-set.
+- The persistence key and uniqueness constraint are `{tenantId, realmId}`. Existing-route mutations require an expected positive version and use one atomic database conditional write; checking a version in memory before an unconditional update is not compare-and-set.
 - The pointer, append-only audit event, idempotent request outcome, and prepared-cutover execution state commit atomically when held in the Game Session database.
 - The pointer governs new or renewed bindings. An already connected player remains authorized by the bound game instance and its runtime fences until the explicit bounded source drain ends; ordinary actions do not re-read pointer authority or eject the player merely because the pointer advanced.
 
@@ -144,7 +147,7 @@ Pointer freshness and cutover rules:
 - The same account can join multiple games. Each game is identified by a `tenantId`.
 - `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).
 - Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
-- Gameplay clients may select worlds using `tenantSlug` values returned by `WORLDS` in the lobby flow, but `tenantSlug` must never be used as a substitute for `tenantId` in APIs or persistence outside of lobby selection.
+- Gameplay clients may select worlds using `worldSlug` values returned by `WORLDS`, but the slug must never substitute for `tenantId`. Realm slugs similarly resolve to `realmId` before authoritative reads or writes.
 - Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
 - Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse the tenant-shared `playableStateNamespaceId` or use an isolated namespace; `gameInstanceId` identifies the runtime currently executing against that state rather than the durable state itself.
 - Friend lists and guild/group metadata are maintained by the Social & Groups Service. Tenant-local relationships are distinct tenant-qualified records; account-global relationships are genuinely tenant-free account pairs with explicit bilateral lifecycle. Each guild/group declares account membership or `{playableStateNamespaceId, characterId}` membership. Entity Management, not Social, owns any real guild container, item, currency, or mail attachment value.

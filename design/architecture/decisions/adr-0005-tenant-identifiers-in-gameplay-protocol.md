@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0163](./adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md).
 
 ## Context
 

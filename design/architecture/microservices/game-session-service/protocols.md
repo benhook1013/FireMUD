@@ -54,6 +54,8 @@ PLAY <world> [realm] [character]
 
 Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice. If `PLAY <world>` or `PLAY <world> <character>` is ambiguous, the response should guide the player toward `REALMS`, `CHARS`, or a more specific `PLAY` form rather than failing with a low-level backend-flavored error.
 
+World, realm, and character menu indices are bound to the exact connection-local response snapshot and catalog revision that produced them, with bounded expiry. A later catalog reorder never changes the meaning of an existing index; expired or invalidated indices require the player to list again. World and realm slugs resolve to UUID `tenantId` and `realmId`, then the admission pointer resolves `gameInstanceId`; clients never select a raw runtime ID as authority.
+
 ## Login and Play Flow
 
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:

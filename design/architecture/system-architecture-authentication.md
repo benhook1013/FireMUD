@@ -213,7 +213,7 @@ Any future hidden attach hints may include a target `{gameInstanceId, tenantId}`
 
 Admission-routing convergence rule:
 
-- `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, `POST /auth/connect-token`, and reconnect validation must all consume the same authoritative realm-catalog and `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
+- `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, `POST /auth/connect-token`, and reconnect validation resolve `worldSlug`/`realmSlug` and consume the same authoritative realm-catalog and `GetAdmissionPointer(tenantId, realmId)` contract described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
 - Those surfaces may expose different projections of the same routing truth, but they must not maintain separate interpretation rules for which realm maps to which admissible `gameInstanceId`.
 - If pointer state is missing, ambiguous, or no longer matches the selected realm target, the flow fails closed with admission-routing errors such as `ADMISSION_POINTER_UNAVAILABLE` or `CONNECT_SCOPE_MISMATCH` rather than silently rebinding the player to a different runtime target.
 
@@ -519,7 +519,7 @@ Realm discovery and routing contract:
 - Additional realms are access-controlled in v1. Unauthorized or hidden realms must not appear in discovery, and non-production realms such as playtest forks require explicit access grants.
 - Explicit access grants for non-public realms are sourced from Account Service runtime grant authority, not from Game Session-local configuration or frontend-cached state.
 - Connect-token issuance, `REALMS`, `CHARS`, and `PLAY` must all consume the same realm-routing state so clients never infer realm identity from transport-side hints alone.
-- Realm-routing state is split into the visible realm catalog plus the current admission pointer for one `{tenantId, worldSlug, realmSlug}` target. The realm catalog answers "is this realm visible and selectable for this caller?" while the admission pointer answers "which exact `gameInstanceId` is currently admissible for that realm?".
+- Realm-routing state is split into the visible selector/catalog projection and the current admission pointer for one `{tenantId, realmId}` target. The catalog answers "is this slug selectable for this caller?" while the pointer answers "which exact `gameInstanceId` is currently admissible for that durable realm?".
 - Clients may cache visible realm choices for presentation, but admission-critical flows must re-read current pointer truth before binding or minting connect scope.
 
 Lobby discovery source-of-truth contract:
