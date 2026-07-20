@@ -8,9 +8,10 @@ Design assets are versioned to enable rollback and collaborative workflows. This
 - Publishing a version creates an immutable snapshot identified by `version_id`.
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
-- To provide Git-style history, revisions are grouped under branches and commits stored in the database.
-- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics are deferred until explicitly specified; the first-slice model is optimistic concurrency plus deterministic replay order.
-- External Git synchronization is deferred until a validated package and conflict contract exists. Any future webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
+- FireMUD's target database-backed history may group revisions under branch and commit concepts without representing a Git repository or filesystem project.
+- The current proto and implementation expose revision and version operations but no branch, commit, or merge API. The first-slice concurrency model is optimistic concurrency plus deterministic replay order; any later database-backed branch and commit surface remains internal FireMUD history unless separately decided.
+- External Git synchronization, whole-game package round trips, and local project checkout are not part of the current target. External and AI-assisted tools submit authenticated typed revisions or purpose-specific batch operations through Game Design-owned APIs; no repository becomes a second content authority.
+- Stable authored identities, normalized references, typed versioned Draft APIs, immutable Published versions, and digest-attested assets preserve future options without promising a portable snapshot format. A future first-party copy or migration may be server-side orchestration rather than public package compatibility. See [ADR 0110](../../decisions/adr-0110-defer-whole-game-portability-and-external-authoring-formats.md).
 
 ### History and Provenance Across Services
 
@@ -128,7 +129,7 @@ Use the smallest canonical change vehicle that matches the desired outcome:
 | --- | --- | --- |
 | Change world/entity/assets or any publish-attested runtime design graph | `PublishVersion` | Script-only edits, plugin activation, template-default tweaks that do not change a published release |
 | Change only script/runtime automation logic for one existing `baseVersionId` | `PublishScriptPatchVersion` | Asset changes, world/entity template changes, base-version changes |
-| Publish a signed plugin bundle into immutable design-time history | `PublishPluginVersion` | Full design publish, runtime activation by itself |
+| Publish an accepted immutable plugin bundle into design-time history | `PublishPluginVersion` | Full design publish, runtime activation by itself |
 | Activate/deactivate one already published plugin version for matching runtime instances | `SetPluginActiveVersion` / related plugin runtime controls | Publishing unsigned or non-`PUBLISHED` plugin versions |
 | Change default launch wiring or operator defaults for future instance creation without changing an existing published release bundle | Game template update | Mutating already published release attestation or runtime state of existing launched instances |
 

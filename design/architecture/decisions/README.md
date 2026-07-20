@@ -123,6 +123,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0107](./adr-0107-explicit-opt-in-schedule-continuity-across-script-transitions.md) | Accepted | `AR-3` | `AS-1`, `AR-1`, `GR-1`, `SF-2` | Default-reset interval transitions with explicit stable-owner schedule continuity |
 | [ADR 0108](./adr-0108-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) | Accepted | `AS-1` | `AR-1`, `GR-4`, `SF-1` | One DSL runtime with distinct embedded-script and linked-plugin lifecycles, explicit acceptance, and typed-engine hot-path authority |
 | [ADR 0109](./adr-0109-materialized-starter-profiles-with-conservative-draft-upgrades.md) | Accepted | `AR-2` | `AR-1`, `GR-4` | Game-owned materialized starter profiles with preserved lineage and conservative creator-initiated Draft upgrades |
+| [ADR 0110](./adr-0110-defer-whole-game-portability-and-external-authoring-formats.md) | Accepted | `AR-1` | `SF-1`, `PO-3` | No current whole-game package or Git authoring target, with stable typed contracts preserving future options |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

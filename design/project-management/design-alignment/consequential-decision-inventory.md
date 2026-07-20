@@ -80,7 +80,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | --- | --- |
 | `AUTO-01` | Resolved baseline: ADR 0001 now delegates the endpoint-specific identity matrix to the canonical scripting contract table and includes runtime scope plus dry-run separation. |
 | `SET-01` | Resolved target: values follow defaults, preset, bootstrap, supported runtime-default, tenant, and game-instance precedence while hard bounds and operator caps apply separately as constraints. The current effective-settings implementation does not yet resolve the complete accepted model. |
-| `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
+| `CONTENT-05` | Resolved target: first-party authoring uses typed Game Design/domain APIs; whole-game packages, round-trip JSON, filesystem projects, Git synchronization, and a promised portable snapshot remain outside the target until a concrete migration, portability, offline-tooling, or whole-game-distribution need is accepted. |
 | `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
 | `SESSION-08` | Resolved target: healthy uninterrupted play is independent of internal JWT lifetime; immutable continuity expiry limits reuse of an old binding after transport loss, disconnected resume uses the stricter continuity and configured windows, and transcript retention or Redis presence never grants authority. Current `PLAY` admission does not yet enforce these deadlines. |
 | `SEC-02` | Resolved target: planned Account JWT rotation prepublishes and converges the new public key before signer promotion, retains old verification through token expiry, then prunes; compromise/restore uses an environment-wide hard cutover. Current shared-HMAC issuance and validation fail the accepted player-facing readiness gate. |
@@ -104,11 +104,11 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
-| 4 | Publishing, settings, and authored behavior | 17 | 36 | `in-progress` |
+| 4 | Publishing, settings, and authored behavior | 18 | 36 | `in-progress` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **97** | **183** | `in-progress` |
+| **Total** | | **98** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -246,7 +246,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 - [x] `CONTENT-03` — `revised` on 2026-07-20; [ADR 0108](../../architecture/decisions/adr-0108-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)
 - [x] `CONTENT-04` — `revised` on 2026-07-20; [ADR 0109](../../architecture/decisions/adr-0109-materialized-starter-profiles-with-conservative-draft-upgrades.md)
-- [ ] `CONTENT-05`
+- [x] `CONTENT-05` — `deferred` on 2026-07-20; [ADR 0110](../../architecture/decisions/adr-0110-defer-whole-game-portability-and-external-authoring-formats.md)
 - [ ] `CMD-02`
 - [ ] `SET-02`
 - [ ] `LLM-01`

@@ -8,7 +8,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 - **Room & Region Editor** – create regions, zones and rooms with exits and environmental settings. The editor saves data through the Game Design Service, which calls the World Management Service’s design APIs to update versioned world records for the target `tenantId` and draft `version_id`.
 - **Entity Designer** – define NPCs, items and equipment with validation rules. Entities are stored as versioned records in the Entity Management Service and associated with draft or published versions by `version_id` during design and publish workflows.
-- **Import/Export (deferred)** – bulk JSON import/export is not part of the canonical initial slice. Designers edit drafts through the web UI and service-owned design APIs; any future import/export contract must be specified explicitly before the docs present it as a supported capability.
+- **External authoring boundary** – whole-game package import/export, round-trip JSON, and filesystem projects are not supported authoring surfaces. Designers, AI-assisted features, and other external tools edit Drafts through authenticated service-owned typed APIs or purpose-specific batch operations. A future first-party server-side clone may create an ordinary new Draft without exposing a public package format; readable tenant recovery export does not imply re-import. See [ADR 0110](../../decisions/adr-0110-defer-whole-game-portability-and-external-authoring-formats.md).
 
 Current item-authoring note:
 

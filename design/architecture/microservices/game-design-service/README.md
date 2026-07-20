@@ -88,11 +88,13 @@ Compatibility contract requirement:
 
 ### Canonical Authoring Boundary
 
-The initial supported authoring package for first-party game content is the Game Design Service's own revision and commit model, not a filesystem project format. Designers edit through the web UI and service-owned APIs; Game Design persists revisions, applies them to domain-owned Draft templates, and publishes immutable versions or script-only patches from that canonical history.
+First-party game authoring uses the Game Design Service's revision and version model, not a filesystem project format. Designers edit through the web UI and service-owned typed APIs; Game Design persists revisions, applies them to domain-owned Draft templates, and publishes immutable versions or script-only patches from that canonical history.
 
-Implementations must not introduce ad hoc import/export, Git checkout, or local package semantics for first-party content. Any future external authoring package must be specified as a separate contract before it is exposed, including stable ID preservation, cross-service reference validation, asset inclusion, plugin inclusion, conflict handling, and mapping back into Game Design revisions and commits. Until that contract exists, "version control integration" means Game Design's database-backed branches, commits, provenance, and optional synchronization hooks described in [Version Control for Design Assets](version-control.md), not a second source of truth.
+Whole-game package import or export, round-trip JSON authoring, filesystem projects, and external Git synchronization are not part of the current target, and FireMUD does not promise a future portable snapshot format. AI-assisted and other external tools use authenticated typed Draft APIs or purpose-specific batch APIs rather than writing databases, object storage, or runtime state directly. Database-backed branch, commit, and provenance terminology does not imply Git repository compatibility or synchronization.
 
-Plugin bundles are the only supported file-based content package in the initial slice. They are independently signed, immutable artifacts governed by [modding-framework.md](./modding-framework.md), and they do not replace or extend the first-party revision package format.
+This boundary does not make later portability impossible. Stable authored identities, normalized references, service-owned versioned Draft APIs, immutable Published versions, and content-addressed or digest-attested assets preserve useful options without creating a public package contract. A future first-party clone or copy may orchestrate authoritative reads and ordinary Draft writes entirely on the server without exposing a round-trip format.
+
+Starter profiles and content packs remain curated Draft-materialization mechanisms. Linked-plugin bundles remain immutable platform-attested artifacts governed by [modding-framework.md](./modding-framework.md). Readable tenant recovery export and platform backup/disaster recovery keep their own contracts; neither implies that exported data is re-importable game content. See [ADR 0110](../../decisions/adr-0110-defer-whole-game-portability-and-external-authoring-formats.md).
 
 ## Key Features
 
@@ -111,8 +113,8 @@ Plugin bundles are the only supported file-based content package in the initial 
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
-- Import/export of design assets is deferred until a canonical contract exists for ID remapping, cross-service reference validation, asset/plugin inclusion, and conflict handling.
-- Version control integration for design assets.
+- Database-backed revision, version, and provenance history for design assets.
+- No whole-game import/export, round-trip filesystem project, or external Git-synchronization surface.
 - In-game modding and plugin framework for runtime customization.
 
 ### Data Model
