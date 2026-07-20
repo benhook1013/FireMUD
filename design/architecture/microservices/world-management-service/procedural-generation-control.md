@@ -61,7 +61,12 @@ Attestation rule for derived world artifacts:
 
 Procedural-generation control surfaces are split by ownership and persistence scope:
 
-- Design-time generation-input APIs are owned by Game Design workflows and mutate version-scoped generation design rows in World Management only for Draft versions.
+- World Management owns one pure generator engine and the validation and persistence of every generated topology graph. Generator implementations do not persist data or invoke other services.
+- Design-time generation ingress is a typed Draft-target API callable only through authenticated Game Design workflows. Game Design is the sole authority for creator intent and Draft revision orchestration; World Management validates and persists the World-owned Draft rows.
+- Runtime generation ingress is a separate typed instance-target API callable only through approved world-lifecycle or gameplay command paths and persists only instance rows.
+- Ingress identity and the target union derive generation namespace and behavior. A caller-supplied free mode enum is not trusted as authority, and Published template rows are immutable.
+- Automation & Scripting may populate topology after it has been persisted through canonical binding or runtime-command paths, but it does not generate or persist topology.
+- Design-time generation-input APIs mutate version-scoped generation design rows in World Management only for Draft versions.
 - Operational runtime-default APIs are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
 
 Operational runtime-default API:

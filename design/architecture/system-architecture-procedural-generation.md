@@ -2,7 +2,7 @@
 
 This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. For long-lived overworld or static areas, generated layouts are typically treated as structural scaffolding that designers or LLM-assisted tools can refine with names, descriptions, and quests. For short-lived dungeon instances generated at runtime, the layouts are usually consumed as-is without additional authoring.
 
-Implemented generators include `SimpleDungeonGenerator` and `OverworldMapGenerator`.
+The target design includes `SimpleDungeonGenerator` and `OverworldMapGenerator`. The current implementation has a `SimpleDungeonGenerator` and registry in Automation & Scripting, contrary to the target ownership; it does not yet implement the World-owned engine, typed generation ingress, or `OverworldMapGenerator` described here.
 
 Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
 
@@ -15,21 +15,21 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 - 🧱 **Design Templates** – Offer scaffolds for designers to expand on.
 - 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions.
 
-Generation flows fall into two categories:
+Generation flows share one pure generator engine owned by World Management but use two separate typed ingress contracts:
 
-- **Design-time/template generation** – invoked from Game Design workflows to produce
+- **Design-time/template generation** – invoked only from Game Design workflows to produce
   versioned world scaffolding that is saved into template tables keyed by
   `(tenantId, versionId)` and later published like any other design asset.
 - **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven
   commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
   flows never modify template tables for Published versions.
 
-All generator invocations are explicitly **mode-aware**. Callers must specify a `generationMode` value:
+The authenticated endpoint and its typed target union determine the namespace and persistence semantics:
 
-- `DESIGN_TEMPLATE` – used only by Game Design Service design-time workflows to populate or reshape template graphs keyed by `(tenantId, versionId)` on Draft versions.
-- `RUNTIME_INSTANCE` – used by World Management and Game Session for world creation and runtime instancing to create instance records keyed by `(tenantId, gameInstanceId)`; this mode is not permitted to write any template rows regardless of version state.
+- the design ingress accepts a Draft target keyed by `(tenantId, versionId, DraftScopeTarget)` and only Game Design may orchestrate it;
+- the runtime ingress accepts an instance target keyed by `(tenantId, gameInstanceId, InstanceScopeTarget)` and only approved world-lifecycle or gameplay command paths may invoke it.
 
-World Management enforces this boundary: any attempt to invoke a generator in `RUNTIME_INSTANCE` mode that would modify template tables, or to write template rows for a Published version in `DESIGN_TEMPLATE` mode, is rejected with a hard validation error. Template writes must always originate from Game Design Service design-time APIs targeting Draft versions.
+Callers do not supply a free `generationMode` as an authority selector. World Management derives the mode from the authenticated ingress and target, rejects cross-namespace combinations, validates generator output, and persists it. Design ingress may write only Draft template rows; Published rows are immutable. Runtime ingress may write only instance rows. See [ADR 0113](decisions/adr-0113-separate-generation-ingress-with-one-world-owned-engine.md).
 
 ---
 
@@ -60,7 +60,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context. Automation & Scripting must not execute generators or return topology graphs for persistence.
+Procedural generators are invoked by the World Management Service, which calls its one pure generator engine using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records according to the typed ingress. Game Design owns Draft generation intent and revision orchestration but not topology persistence. Automation & Scripting must not execute generators, return topology graphs for persistence, or persist topology.
 
 - When invoked from Game Design workflows for **design templates**, results are
   persisted as template rows keyed by `(tenantId, versionId)` and become part of

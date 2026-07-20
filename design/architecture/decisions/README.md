@@ -126,6 +126,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0110](./adr-0110-defer-whole-game-portability-and-external-authoring-formats.md) | Accepted | `AR-1` | `SF-1`, `PO-3` | No current whole-game package or Git authoring target, with stable typed contracts preserving future options |
 | [ADR 0111](./adr-0111-typed-bounded-gameplay-effect-extension.md) | Accepted | `GR-4` | `GR-3`, `AR-1`, `AR-3`, `SF-1`, `AS-1` | Typed release-pinned gameplay effects with bounded target plans and domain-owned mutation authority |
 | [ADR 0112](./adr-0112-bounded-pull-settings-distribution-with-freshness-classes.md) | Accepted | `AR-2` | `SF-2`, `GR-1` | Pull-based typed settings snapshots with monotonic revisions, freshness classes, and class-specific stale behavior |
+| [ADR 0113](./adr-0113-separate-generation-ingress-with-one-world-owned-engine.md) | Accepted | `AR-1` | `AR-1`, `AR-3`, `GR-2`, `AS-1` | Separate typed design and runtime generation ingress backed by one World-owned pure engine |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

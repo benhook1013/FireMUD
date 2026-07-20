@@ -197,11 +197,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `PROC-01` - Separate design-template and runtime-instance generation authority
 
 - **Capability:** Primary `AR-1.1` World, entity, rule, and content authoring. Secondary `GR-2.1`, `AR-3.2`, and `AS-1.3`.
-- **Decision / status / importance:** Generation is mode-aware: Game Design Service alone writes draft template rows in `DESIGN_TEMPLATE`; runtime generation creates `RUNTIME_INSTANCE` output and never writes templates. Published templates are immutable, and template and instance keys remain distinct. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** World Management owns one pure generator engine, output validation, and topology persistence. Design generation and runtime generation use separate typed ingress and targets: Game Design alone orchestrates Draft revision intent, while approved lifecycle/gameplay paths request instance generation. The authenticated ingress derives the namespace; callers cannot select authority with a free mode enum. Published templates remain immutable, and Automation may populate but not generate or persist topology. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-procedural-generation.md](../../architecture/system-architecture-procedural-generation.md) `§ Generation Pipeline:`, `§ Output and Metadata (Common)`, `§ Integration Guidelines`, and `§ Service Responsibilities`; [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 2. World and Entity Design` and `§ 4. Publish and Start a Game Instance`.
-- **Strongest alternative:** Use one mutable generator path that can write either design templates or live runtime state based on caller intent.
-- **ADR recommendation:** Yes. Make the mode and write-authority boundary explicit alongside `CONTENT-01` and `CONTENT-03`.
-- **Human consultation:** Yes; creators and runtime owners must approve the boundary and its authoring ergonomics.
+- **Strongest alternative:** Use one generic endpoint with a caller-supplied mode, or keep separate generator implementations in Game Design, World Management, or Automation.
+- **ADR recommendation:** [ADR 0113](../../architecture/decisions/adr-0113-separate-generation-ingress-with-one-world-owned-engine.md) records the revised ownership and typed-ingress boundary.
+- **Human consultation:** Completed through human-led adversarial review; the shared engine, separate authority contracts, and removal of Automation-owned topology generation were explicitly accepted on 2026-07-20.
 
 #### `PROC-02` - Request-bounded generation replay and explicit regeneration
 
