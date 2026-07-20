@@ -111,14 +111,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 
 ### Frontend, Protocol, Authoring, And Observability
 
-#### `FRONT-01` - Dedicated first-party web application after the Telnet-first proof
+#### `FRONT-01` - Independently released stateless first-party frontend
 
-- **Capability:** Primary `EA-3.1` Player web/mobile applications. Secondary `PO-3.1`, `PO-2.2`, and `EA-3.4`.
-- **Decision / status / importance:** The long-term player browser is a dedicated first-party web application rather than a web surface hosted by Gateway. The first hosted proof is the TCP/Telnet `LOGIN -> PLAY -> LOOK` path; browser discovery, bootstrap, and reconnect are sequenced after that proof. Status `proposed/deferred`; `H/med`.
+- **Capability:** Primary `EA-3.1` Player web applications. Secondary `PO-3.1`, `PO-2.2`, and `EA-3.4`.
+- **Decision / status / importance:** FireMUD requires one independently released stateless first-party frontend boundary now. The supported preview/self-hosted baseline is an unprivileged static container/Service under one public site, with CDN/object-store delivery an optional later optimization of the same artifact. Gateway remains the sole API/gameplay ingress and owns no UI. Browser bearer tokens remain short-lived and memory-only; no stateful BFF is accepted without a separate server-session, SSR, or measured aggregation decision. Telnet-first proof is complete; native mobile is not promised. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Hosting Direction`, `§ Build Tooling`, and `§ End-to-End Testing`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ PR Preview Environment` and `§ Staging Environment for Playtesting`; [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 2. Join a Game for the First Time` and `§ 4. Player Login and Gameplay`.
-- **Strongest alternative:** Make the browser the first end-to-end proof or keep player web rendering inside Gateway as a permanent architecture.
-- **ADR recommendation:** Yes before committing hosted web routing, preview ownership, or browser-specific release guarantees; otherwise cross-reference `OPS-06`.
-- **Human consultation:** Yes; product, frontend, and operations owners must agree on sequencing and hosting ownership.
+- **Strongest alternative:** Serve the SPA from Gateway, require external CDN/object storage from the first deployment, or introduce a stateful BFF now. These respectively couple releases, burden hobby deployment, or add a new browser-session and availability boundary without a current need.
+- **ADR:** [ADR 0144](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md) records the accepted artifact, static-host, public-route, browser-token, BFF, and browser-proof contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The Vite starter exists, but no production image, deployment, route split, release/rollback, runtime config, security/cache proof, or complete browser journey does.
 
 #### `LLM-01` - Human-controlled, sandboxed, draft-only authoring assistance
 

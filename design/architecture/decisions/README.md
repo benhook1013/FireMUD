@@ -157,6 +157,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0141](./adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) | Accepted | `EA-2` | `PO-1`, `AA-1` | Fixed safety restriction categories with independent owner-local lifecycles |
 | [ADR 0142](./adr-0142-bounded-moderation-appeal-cases.md) | Accepted | `PO-1` | `PO-1`, `EA-2`, `AA-1` | Bounded moderation appeal cases with Account-authenticated web handoff |
 | [ADR 0143](./adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) | Accepted | `AA-1` | `PO-1`, `EA-3` | Stripe-only v1 hosting billing with creator monetization deferred |
+| [ADR 0144](./adr-0144-stateless-first-party-frontend-application-boundary.md) | Accepted | `EA-3` | `PO-3`, `PO-2` | Independently released stateless first-party frontend application boundary |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

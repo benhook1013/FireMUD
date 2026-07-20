@@ -4,12 +4,13 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ## Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP and WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
+**Spring Cloud Gateway** is the sole public API and gameplay ingress for external HTTP and WebSocket clients. It is not the first-party frontend file host. Under [ADR 0144](./decisions/adr-0144-stateless-first-party-frontend-application-boundary.md), one public site-routing layer sends frontend documents and compiled files to the independently released stateless frontend boundary, `/auth/**`, `/api/**`, and `/ws/game/**` to Gateway, and `/assets/**` to the approved published-asset delivery origin. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for API and gameplay HTTP/WebSocket traffic) and the TCP Proxy Service (for Telnet/TCP) form the public application edge. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
 - For admin APIs the Gateway forwards JWTs to backend services without validating them. Player login and session binding are processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow and the [Tenant Authorization Contract](./system-architecture-authentication.md#tenant-authorization-contract) for how downstream services enforce tenant access.
 - Supports both HTTP and WebSocket protocols
+- Contains no frontend HTML, JavaScript, CSS, SPA fallback, UI runtime configuration, UI release lifecycle, or product-specific browser orchestration
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no cookie-based session affinity is required. The gateway does not own gameplay lease state or shard-mapping state (those are owned by Game Session and stored in Coordination Redis). `/ws/game/**` routes to a stable Game Session service surface; lease ownership and any shard coordination remain internal to the Game Session layer per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`.
 - Auto‑scaling policies handle high concurrency
@@ -23,6 +24,8 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
 > Internal synchronous RPCs use **gRPC**; asynchronous contracts (for example audit/saga events and lifecycle signals) use dedicated event flows documented in [System Architecture Overview](./system-architecture-overview.md#asynchronous-and-event-flows).
 > See [System Architecture Overview](./system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
+
+Gateway also owns no server-held browser session or general browser API aggregation layer. The static frontend calls the existing Account and domain-service routes through Gateway using the canonical short-lived token contracts. A future BFF requires a separate accepted decision and must never proxy `/ws/game/**` or become domain or authorization authority.
 
 - Initial routes are loaded on startup from a canonical `routes.yml` via `spring.config.import`.
 - Baseline route targets use in-environment DNS names by default and may be overridden explicitly with environment variables when a deployment needs different upstream targets.

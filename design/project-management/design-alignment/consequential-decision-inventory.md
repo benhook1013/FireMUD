@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 19 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 20 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **135** | **183** | `in-progress` |
+| **Total** | | **136** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -295,7 +295,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 5 P2 And P3
 
-- [ ] `FRONT-01`
+- [x] `FRONT-01` — `revised` on 2026-07-20; [ADR 0144](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md)
 - [ ] `MCP-01`
 
 ### Packet 6: Operations And Delivery
