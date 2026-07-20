@@ -2,6 +2,10 @@
 
 Design assets are versioned to enable rollback and collaborative workflows. This document outlines how the Game Design Service integrates version control semantics.
 
+## Implementation Status
+
+External Git synchronization and canonical multi-branch merge semantics are not implemented. Current authoring uses Game Design-owned revision APIs with optimistic concurrency and deterministic replay order.
+
 ## Approach
 
 - Each asset revision already stores author and timestamp metadata.
@@ -9,8 +13,8 @@ Design assets are versioned to enable rollback and collaborative workflows. This
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
 - To provide Git-style history, revisions are grouped under branches and commits stored in the database.
-- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics are deferred until explicitly specified; the first-slice model is optimistic concurrency plus deterministic replay order.
-- External Git synchronization is deferred until a validated package and conflict contract exists. Any future webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
+- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics require an explicit validated conflict contract.
+- Any future external Git webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
 
 ### History and Provenance Across Services
 

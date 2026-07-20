@@ -4,7 +4,7 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 
 ## Review And Status
 
-- CodeRabbit automatically reviews repository PRs and pauses after one reviewed commit. Request `@coderabbitai full review` only after all current and outdated findings are resolved and the PR reaches a meaningful checkpoint.
+- CodeRabbit automatically performs the initial review when a qualifying PR opens; automatic incremental reviews are disabled. Request `@coderabbitai full review` for every subsequent review checkpoint only after all current and outdated findings are resolved and no review is active or rate-limited.
 - For "check PR", "check review", or merge-readiness, inspect unresolved non-outdated review threads and the latest completed CodeRabbit review summary before CI and mergeability. Verify summary-only duplicate and outside-diff findings even when they have no unresolved thread. Report current and outdated unresolved counts separately; current threads remain authoritative for inline conversation state, not the complete finding inventory.
 - Before calling a PR review-complete or merge-ready, run `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>` and use its live thread counts and explicit-review verdict.
 - Resolve a CodeRabbit thread only after verifying its exact finding is fixed in `HEAD`. Do not resolve threads to hide open work, request a review while one is active or rate-limited, or request a review solely to self-resolve already-fixed feedback.
