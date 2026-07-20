@@ -398,13 +398,22 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
           entityId);
       return null;
     }
+    PlayableStateScope playableStateScope;
+    try {
+      playableStateScope = resolvePlayableStateScope(context, command);
+    } catch (IllegalArgumentException ex) {
+      LOG.debug(
+          "Skipping script event publish because playable state scope is not explicit: {}",
+          ex.getMessage());
+      return null;
+    }
     return new PublishingScope(
         Long.toString(tenantId),
         Long.toString(gameInstanceId),
         scopeRegion.regionId(),
         scopeRegion.regionEpoch(),
         entityId,
-        resolvePlayableStateScope(context, command),
+        playableStateScope,
         scriptPatchVersion,
         resolveRoutingBundle(context, command));
   }
