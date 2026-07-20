@@ -114,14 +114,13 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
   - Replay source and retention window.
   - Eventual-consistency SLO for `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts`.
 
-### 11) Pin-State Degraded Override Governance
+### 11) Pin-State Unavailability Governance
 
-- Admission decisions must fail closed with `pin_state_unavailable` when bounded-staleness pin refresh cannot reach an authoritative source.
-- Any degraded override that allows admission while authoritative pin state is unavailable must be:
-  - explicit and time-bounded,
-  - scoped at least to `(tenantId, gameInstanceId)`,
-  - authorized and audited with `controlPlaneRequestId`, `actor`, and `reason`,
-  - automatically reverted to fail-closed behavior at TTL expiry.
+- Admission may use a bounded-fresh observation of Game Session's authoritative `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)` tuple and may attempt a bounded authoritative refresh when that observation expires.
+- If authoritative state remains absent or stale, new Automation admission must fail closed with `pin_state_unavailable`; it must not substitute a last-known patch or epoch.
+- There is no operator stale-pin override. Recovery restores the authoritative read or projection path, or explicitly repins after authority is available.
+- This failure closes affected script and plugin-trigger admission, not ordinary gameplay by default. Already-admitted work remains subject to the exact patch-and-epoch fences at persistence, handoff, and execution.
+- Any future availability exception requires a new ADR. The only acceptable direction is a short-lived capability issued while Game Session has authoritative state and bound to the exact tenant, instance, patch, pin epoch, and expiry; a generic operator flag, stale-cache grace period, or audit-only bypass is insufficient.
 
 ### 12) Dead-Letter Replay Version-Fence Safety
 

@@ -172,7 +172,7 @@ Admission and scheduler decisions must use a bounded-staleness view of pinned sc
 - If pin data for a scope is stale beyond max age, the service must refresh from authoritative control-plane APIs or events before admitting new work.
 - If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason`.
 - If fresh authoritative pin data is available and does not match the request’s `scriptPatchVersion` or plugin version, the request must still fail closed.
-- Any override of this fail-closed behavior must be explicit, time-bounded, operator-audited, and auto-expire back to fail-closed mode.
+- There is no operator override that admits work from stale pin state. Recovery restores the authoritative read or projection path, or explicitly repins after authority is available.
 
 Plugin signer-policy admission follows the same fail-closed principle. If signer policy for a scope is stale beyond max age and cannot be refreshed, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable`.
 

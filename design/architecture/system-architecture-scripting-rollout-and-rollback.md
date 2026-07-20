@@ -75,12 +75,9 @@ Convergence timeout semantics (required):
 
 ## Pin-State Degraded Operations Policy (Required)
 
-`pin_state_unavailable` is fail-closed by default. Any override mode must be explicit and tightly constrained:
+`pin_state_unavailable` is fail-closed. Automation may attempt a bounded refresh from Game Session, but it must not admit new work from a stale last-known patch or pin epoch. No operator stale-pin override exists.
 
-- Override must be activated by an authenticated operator action with `controlPlaneRequestId`, `actor`, `reason`, and a bounded TTL.
-- Override scope must be explicit (`tenantId` + `gameInstanceId` minimum).
-- Override must emit control-plane audit and event records so post-incident reconciliation can prove exactly when fail-closed behavior was bypassed.
-- On TTL expiry, fail-closed behavior (`pin_state_unavailable`) must resume automatically.
+Operators recover by restoring the authoritative Game Session read or projection-delivery path, repairing the affected control-plane path, or explicitly repinning once authority is available. The failure pauses affected script and plugin-trigger admission while ordinary gameplay may continue when its normal dependencies and execution fences remain healthy. A future exact-pin capability exception requires a new ADR; TTL, operator audit, and narrow scope alone do not make stale state authoritative.
 
 Notes:
 

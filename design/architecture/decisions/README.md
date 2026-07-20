@@ -118,6 +118,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0102](./adr-0102-database-authoritative-temporal-coordinated-world-lifecycle.md) | Accepted | `AR-3` | `SF-2`, `GR-2`, `PO-1` | Database-authoritative fenced world lifecycle with Temporal coordination and all-owner cleanup convergence |
 | [ADR 0103](./adr-0103-epoch-fenced-script-rollback-without-routine-gameplay-pause.md) | Accepted | `AR-3` | `AS-1`, `GR-1`, `SF-2`, `PO-1`, `AA-2` | Script-epoch-fenced rollback with scoped Automation pause and uninterrupted ordinary gameplay |
 | [ADR 0104](./adr-0104-stage-aware-script-dead-letter-recovery.md) | Accepted | `AS-1` | `PO-1`, `AR-3`, `SF-2`, `GR-1` | Stage-aware dead-letter recovery with frozen-input retry and stored-dispatch continuation |
+| [ADR 0105](./adr-0105-no-degraded-script-admission-without-authoritative-pin.md) | Accepted | `AR-3` | `AS-1`, `SF-1`, `PO-1` | Fail-closed Automation admission without a stale-pin operator override |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
