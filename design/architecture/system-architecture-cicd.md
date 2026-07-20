@@ -178,7 +178,9 @@ Staging and production deployments rely on environment-specific overlays (for ex
 
 ### Rollback Strategy
 
-Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image digest set. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good digest set and verifies post-deploy health checks.
+Multi-replica staging and production workloads use an explicit conservative Kubernetes `RollingUpdate` baseline, normally `maxUnavailable: 0` and `maxSurge: 1`. The canonical playbook introduces one candidate at a time, observes readiness, smoke, and applicable SLO signals, and pauses or aborts progression on a hard failure rather than relying on readiness alone.
+
+For an already proved `rollback-compatible` release, automation may restore the exact predeclared known-good digest set when the compatibility evidence remains current and the failure matches the rollout policy. A `roll-forward-only` release may pause automatically but never reapplies old binaries automatically. High-risk changes use a bounded canary when production has enough replicas and representative traffic to make that cohort meaningful. Hobby and very small deployments retain an explicit simple rolling or recreate strategy. FireMUD does not require a permanent Argo Rollouts, Flagger, or equivalent controller until measured scale or policy complexity justifies it.
 
 ---
 

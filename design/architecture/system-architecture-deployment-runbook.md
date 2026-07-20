@@ -168,10 +168,13 @@ The drill evidence may be reused within the configured freshness window only whi
 
 ## Canary or Phased Rollouts
 
-For higher-risk changes:
+For ordinary multi-replica changes:
 
-- Deploy to a non-production environment and run extended smoke, load, and gameplay tests.
-- Use Kubernetes deployment strategies (for example `RollingUpdate` with conservative surge/unavailable settings) to minimize impact.
+- Resolve the exact candidate and predeclared known-good digest sets and verify rollback classification before apply.
+- Use the explicit conservative rolling strategy, automated smoke/SLO observation, and pause-on-hard-failure behavior.
+- Permit automatic known-good restoration only for a still-valid `rollback-compatible` release; a `roll-forward-only` failure stops for forward remediation.
+
+For higher-risk changes, add a bounded candidate cohort and observation window when replica count and representative traffic make the canary meaningful. Failure stops broader progression; success does not bypass preflight, promotion, recovery, or post-apply evidence gates. A one-replica or very small deployment follows the documented simple strategy instead of claiming nominal canary proof.
 
 ## Rollback
 
