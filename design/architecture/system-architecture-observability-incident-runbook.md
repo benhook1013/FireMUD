@@ -92,10 +92,10 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ### Alertmanager operator fallback
 
-- Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
-- During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
-- Also check the supported backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, and `recovery_participant_convergence_blocked`) so backup and recovery incidents do not disappear when Alertmanager routing is impaired.
-- If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
+- Treat routed alert state as unavailable; do not reconstruct a second active-alert authority from Prometheus conditions.
+- If Prometheus remains reachable, use bounded recording-rule values as diagnostic snapshots for player SLO, backup/recovery, and runtime conditions. Confirm their observation time and treat expired values as `unknown`.
+- Use authoritative service health, command/tick/recovery status, moderation records, and admission controls for safety actions rather than inferring authority from telemetry.
+- Ensure Logging & Admin clearly shows `Alertmanager unavailable`, labels any Prometheus snapshot as diagnostic rather than routed alerts, and relies on the independent deadman path for total monitoring failure.
 
 ### Alertmanager recovery and verification
 

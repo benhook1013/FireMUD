@@ -346,94 +346,15 @@ Player SLO owner mapping (normative):
 - Command latency alerts (`CommandLatencyP99HighGateway`, `CommandLatencyP99HighTcpProxy`): `owner="gameplay"` (in-session runtime performance domain).
 - Chat delivery latency alerts (`ChatDeliveryLatencyP99High`): `owner="gameplay"` (player-facing runtime behavior domain).
 
-### Alert Fallback Recording Rules
+### Alert-State Degradation Without a Second Authority
 
-When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
+Alertmanager owns current alert-routing state while healthy; it is not game, moderation, recovery, or safety authority. Logging & Admin may render that routed state with its observation timestamp and canonical ownership/runbook labels.
 
-- **Redis coordination tail-loss SLO breaches**
-  - Recording rules based on bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that expose both `redis_coordination_tail_loss_budget_ms{scope}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`). Exact tenant/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
-- **Tick execution safety ratios**
-  - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
-- **Login success ratio**
-  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
-- **Command p99 latency**
-  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and preserving the bounded `command` label for the core-command SLO set, based on `command_end_to_end_latency_ms_bucket`.
-- **Entry-path availability**
-  - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by `service` and `path`, based on `entrypath_connection_attempts_total`.
-- **Chat delivery latency**
-  - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
-- **Backup health**
-  - Recording rules mirroring missed backup, missed verification, stale restore proof, invalid artifact lineage, unreadable artifacts, and blocked recovery-participant convergence.
-  - Canonical fallback recordings should expose at least:
-    - `backup_pipeline_recent_backup_slo_breached`
-    - `backup_pipeline_recent_verification_slo_breached`
-    - `backup_pipeline_recent_restore_drill_slo_breached`
-    - `backup_artifact_lineage_invalid`
-    - `backup_artifact_restore_unreadable`
-    - `recovery_participant_convergence_blocked`
-- **Tick state and recovery progress**
-  - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
-- **Maintenance mode visibility**
-  - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,scope,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
-- **Cross-region follow-ups**
-  - Aggregate recording rules for `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` so scaling and recovery views can show drain pressure explicitly without violating the metrics-cardinality policy. Per-region drilldown belongs on durable control-plane reads such as runtime ownership status, not raw Prometheus labels.
+When Alertmanager is unavailable, Logging & Admin displays an explicit `alert routing unavailable` state. If Prometheus remains reachable, it may also show a bounded diagnostic snapshot of selected canonical recording-rule values. That snapshot is labelled diagnostic and time-bound; it is never merged into a second authoritative active-alert list and requires no duplicate-suppression or alert-family equivalence engine.
 
-Logging & Admin should:
+Diagnostic values include `observed_at` and freshness. After the configured budget, five minutes by default, their state becomes `unknown`; stale values must not appear current. If Prometheus is also unavailable, the UI reports observability state unavailable and relies on the independent deadman path for external paging.
 
-- Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
-- Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
-- Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
-- When command convergence is involved, alerts should link operators to the durable `GetCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
-
-#### Logging & Admin Alert-State Contract (Normative)
-
-When Logging & Admin renders alert state, it must expose enough metadata for operators to understand whether they are seeing authoritative Alertmanager data or degraded fallback data:
-
-- Required alert-state fields:
-  - `source` with values `alertmanager` or `prometheus-fallback`.
-  - `observed_at` timestamp for when the underlying alert or fallback condition was last confirmed.
-  - `status_freshness` or equivalent UI text derived from `observed_at` so stale fallback data is visibly different from current state.
-  - Canonical alert identity fields (`service`, `component` when present, `severity`, `owner`, `runbook`).
-- Precedence rules:
-  - When Alertmanager is healthy, Logging & Admin must treat Alertmanager as the source of truth and suppress duplicate fallback rendering for the same canonical condition.
-  - When Alertmanager is unhealthy or unreachable, Logging & Admin may render only the documented fallback rule set and must clearly mark those conditions as degraded approximations rather than routed alerts.
-- Duplicate-suppression rules:
-  - A fallback condition must not appear as a separate active issue when the matching Alertmanager alert is already healthy and visible.
-  - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `scope`, `path`, `command` as applicable).
-  - The canonical family registry is the shared alert snippet set under `design/observability/grafana/`; fallback implementations must use the same alert-family names there rather than inventing local equivalence tables.
-- Failure-mode rules:
-  - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
-  - Logging & Admin should preserve the last known `observed_at` timestamp for degraded views, but must not imply continued freshness after the freshness budget expires.
-  - Default freshness budget: treat fallback-derived alert state as stale after 5 minutes unless an environment documents a stricter budget for its Prometheus scrape and rule-evaluation cadence.
-
-Illustrative alert-state payload:
-
-```json
-{
-  "source": "prometheus-fallback",
-  "observed_at": "2026-03-19T10:42:00Z",
-  "status_freshness": "stale",
-  "service": "spring-cloud-gateway",
-  "component": "entrypath",
-  "severity": "P0",
-  "owner": "platform",
-  "runbook": "design/architecture/system-architecture-observability-incident-runbook.md#edge-path-outage",
-  "condition": "EntryPathAvailabilityLowGateway",
-  "labels": {
-    "path": "websocket",
-    "scope": "public-edge"
-  },
-  "degraded_reason": "Alertmanager unavailable; showing fallback Prometheus conditions"
-}
-```
-
-Illustrative interpretation:
-
-- `source="alertmanager"` means the condition is being rendered from routed Alertmanager state and any matching fallback condition should be suppressed.
-- `source="prometheus-fallback"` plus `status_freshness="stale"` means Logging & Admin is still showing the last known fallback-derived state, but operators should treat it as degraded information rather than current routed alert state.
-- If neither `alertmanager` nor `prometheus-fallback` can be refreshed within the freshness budget, the UI/API should switch to an explicit “alert state unavailable” presentation rather than continuing to render the example payload above as current.
-
-Fallback recording rules must be installed as part of the Prometheus ruleset for every prod-like environment. The reference starting point for these rules lives at `k8s/monitoring/prometheus-rules-firemud.yaml`; environment overlays may adjust thresholds but must preserve the metric names, labels, and alert label contract described in this document.
+Operational and safety actions use authoritative domain and control-plane state such as command status, tick ownership, moderation records, admission controls, and recovery records. Required audit records for operator or moderation mutations are durable domain evidence and are not best-effort observability. Elasticsearch indexing, metrics, dashboards, traces, and alert delivery remain enrichments rather than commit dependencies for those actions.
 
 ### Observability Stack Alerts
 

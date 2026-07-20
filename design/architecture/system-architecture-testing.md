@@ -212,9 +212,9 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - verify the external monitoring product opens the expected non-production incident without depending on Prometheus rule evaluation,
     - verify the mirrored Prometheus signal matches the external monitor state once Prometheus is healthy again.
   - In prod-like observability smoke, also verify the canonical Logging & Admin alert-state behavior:
-    - when Alertmanager is healthy, the UI/API reports `source="alertmanager"` (or an equivalent explicit source marker) and does not duplicate the same condition from fallback rules,
-    - when Alertmanager is intentionally made unavailable while Prometheus remains healthy, the UI/API reports `source="prometheus-fallback"` for the supported fallback set and marks the view as degraded,
-    - when both Alertmanager and Prometheus are unavailable, the UI/API reports alert-state unavailability instead of presenting stale fallback conditions as current.
+    - when Alertmanager is healthy, the UI/API presents its routed alert state without duplicating it from Prometheus rules,
+    - when Alertmanager is intentionally unavailable while Prometheus remains healthy, the UI/API reports routed-alert unavailability and labels any bounded Prometheus snapshot as diagnostic rather than active alerts,
+    - when a diagnostic snapshot exceeds its configured freshness budget, the UI/API reports it as `unknown`, and when both Alertmanager and Prometheus are unavailable it reports observability state unavailable.
 
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
