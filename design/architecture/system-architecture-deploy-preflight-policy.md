@@ -4,15 +4,16 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Purpose
 
-- Provide one deterministic preflight entrypoint used by both CI and operators.
+- Provide one deterministic policy catalogue, report contract, and CLI facade used by CI and operators.
 - Ensure secret contracts, digest pinning, and bridge/security invariants are enforced before apply.
-- Produce a reusable pass/fail artifact for deployment evidence.
+- Keep static CI, live pre-apply, and post-apply promotion/traffic-open evidence distinct.
+- Produce event-bound artifacts that identify the evaluated environment, candidate, policy version, phase, and expected-binding content.
 
 ## Implementation Notes
 
 `./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS path and resource-type contract, validates first-pass expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
 
-The current executable does not yet establish the accepted backup/recovery contract. `PREFLIGHT-BACKUP-001`, `PREFLIGHT-BACKUP-002`, and `PREFLIGHT-BACKUP-003` can validate caller-supplied timestamps, references, and selected field values without dereferencing a canonical recovery record, proving environment-wide artifact lineage, checking empty-Redis cold-start evidence, validating the complete recovery-participant inventory, or enforcing recovery-contract fingerprint compatibility. It also still requires the legacy `backupControlPlaneClientRef` in player-facing expected bindings even though routine online backup does not use tick pause. These checks must fail player-facing readiness until those validators and a production-equivalent drill exist; an evidence-shaped file is not proof.
+The current executable does not yet establish the accepted phased or backup/recovery contract. It does not bind reports to a policy-catalogue version, expected-binding content digest, authoritative environment/cluster identity, or a distinct post-apply observation. `PREFLIGHT-BACKUP-001`, `PREFLIGHT-BACKUP-002`, and `PREFLIGHT-BACKUP-003` can validate caller-supplied timestamps, references, and selected field values without dereferencing a canonical recovery record, proving environment-wide artifact lineage, checking empty-Redis cold-start evidence, validating the complete recovery-participant inventory, or enforcing recovery-contract fingerprint compatibility. It also still requires the legacy `backupControlPlaneClientRef` in player-facing expected bindings even though routine online backup does not use tick pause. These checks must fail player-facing readiness until those validators and a production-equivalent drill exist; an evidence-shaped file is not proof.
 
 The current executable does not yet enforce `PREFLIGHT-JWT-002` or `PREFLIGHT-JWT-ROTATION-001`: it does not prove Account-only asymmetric signing, absence of private-key mounts from validators, validator `kid`/JWKS behavior, or planned and compromise rotation drills. That is a missing security gate, not only evidence depth. Until it is implemented and passes with current environment evidence, player-facing JWT readiness remains blocked even if the older mounted-path checks pass. Other expected-binding checks still validate repository manifests and declared binding refs rather than complete live state; a successful static report without traffic-open evidence is not enough to open player-facing traffic.
 
@@ -42,11 +43,26 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 `hobby-self-hosted` deployments may use different packaging/manifests, but they must evaluate the same player-facing policy IDs that apply to their environment class and produce the same evidence shape.
 
+The CLI is a facade over modular validators rather than one permanent monolithic script. Every validator uses the canonical policy catalogue, policy IDs, applicability rules, enforcement categories, and report schema.
+
+## Phased Evaluation and Enforcement Categories
+
+Preflight has three ordered phases:
+
+1. `static-ci` validates repository inputs, schemas, digest pinning, declared sharing, and deterministic renders without claiming target-environment observation.
+2. `live-pre-apply` binds the run to the target environment and cluster identity and compares declared expected bindings with the exact candidate render and observed resources before apply.
+3. `post-apply` verifies the actual deployed state plus promotion or traffic-open evidence before the protected transition.
+
+A later phase may reference earlier evidence, but a static pass never authorizes apply, promotion, or player traffic. Reports across phases bind to one deployment event, target identity, candidate identity, policy-catalogue version, and expected-binding content digest.
+
+Every policy ID declares one enforcement category: `advisory`, `apply-blocking`, or `non-waivable-promotion-traffic-open`. Apply-blocking checks may accept a valid event-scoped waiver. A waiver may authorize isolated repair or a quarantined drill, but cannot authorize a transition protected by a non-waivable check.
+
 ## Enforcement Boundaries
 
-- Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
-- Operator pre-apply execution (`preflight.py`) enforces resolved-manifest and target-environment checks: required secret/key contracts, Account-only private-key distribution, validator JWKS configuration, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation. Traffic-open JWT rotation evidence is evaluated when the run declares the relevant event.
-- Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
+- Overlay PR CI (`validate-kustomize-overlays.yml`) supplies `static-ci` evidence: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
+- Operator pre-apply execution supplies `live-pre-apply` evidence from resolved manifests and the observed target environment: required secret/key contracts, Account-only private-key distribution, validator JWKS configuration, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
+- Post-apply validation observes the deployed candidate and evaluates the applicable promotion, recovery, and traffic-open evidence.
+- Deployment apply is blocked on failed applicable `apply-blocking` checks unless a valid event-scoped waiver covers the exact check. Promotion and traffic opening remain blocked on any failed applicable non-waivable check.
 
 ## Environment Applicability
 
@@ -97,6 +113,12 @@ Policy applicability:
 Canonical source:
 
 - `design/operations/environments/<environment>/expected-bindings.yaml`
+
+This manifest declares intended ownership; it is not live proof. Every phase records the content digest of the exact bytes consumed. Live phases also bind the active cluster/environment identity and compare declared, rendered, and observed resource identities. Repeated cluster-local names are acceptable only when observation proves they belong to distinct environment boundaries.
+
+The policy catalogue owns a binding-type shareability matrix. Production PostgreSQL and Redis authorities, JWT signing/JWKS trust, certificate issuers and workload private identities, production-capable registry credentials, backup/asset write principals, and operator-control identities are environment-exclusive. `shared: true` is accepted only for a class the matrix marks shareable or conditionally shareable, with matching declarations, rationale, and required isolation evidence in every participating environment. It cannot override an environment-exclusive class.
+
+Optional asset storage, outbound communications, non-default object storage, webhooks, and similar integrations appear as required bindings only when their canonical enablement input is active. Disabled integrations do not require placeholder targets or credentials.
 
 Minimum required keys:
 
@@ -258,6 +280,9 @@ The report artifact must include:
   - `manifestRef` / `chartVersion` for hobby/self-hosted deployments.
 - `checkResults[]` with `policyId`, `status`, `message`
 - `expectedBindingsRef` for player-facing environments
+- `expectedBindingsDigest` for the exact manifest bytes consumed
+- `policyCatalogVersion` and evaluation `phase`
+- target environment and cluster identity for live phases
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
 
@@ -298,12 +323,12 @@ CI and manual operator runs must produce the same report shape so audit tooling 
   - a normalized manifest/chart reference token for hobby/self-hosted deployments.
 - Naming rule: `<deployment-ref>` and similar artifact tokens must use lowercase ASCII plus digits and `-`, and should be stable across re-runs of the same deployment event so evidence does not fork accidentally.
 - Retention requirement: keep preflight reports and waivers for at least as long as release/rollback audit history is retained.
-- Waiver records must include: approver identity, incident/change ticket, scope (policy IDs waived), expiration (deployment event only), and timestamp.
+- Waiver records must include: authorized approver identity, incident/change ticket, rationale, exact policy IDs and phase, target environment, deployment event identity, issue timestamp, and event-bounded expiration.
 
 ## Failure Handling
 
-- Any failed required check blocks deployment.
-- Waivers are break-glass only, must be explicit, and must include approver + incident/change ticket in the report.
+- Any failed applicable apply-blocking check blocks deployment; any failed applicable non-waivable check blocks promotion or traffic opening.
+- Waivers are break-glass only and fail closed when malformed, expired, unauthorized, prohibited for the policy category, or mismatched to the event, phase, environment, or policy ID.
 - Waivers expire after the specific deployment event and must not silently carry forward.
 - `PREFLIGHT-BACKUP-001` whenever `newDrillRequired=true` (including every `roll-forward-only` promotion), plus `PREFLIGHT-BACKUP-002` for first-live or post-rewind reopen, are non-waivable readiness gates. A waiver may authorize an isolated drill or salvage action, but not the player-facing promotion/open transition those gates protect.
 

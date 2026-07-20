@@ -82,23 +82,23 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** ADR 0015 is the accepted authority. Remaining work is implementation and production-equivalent proof; a separate accepted decision is required before `scoped_reset_restore` can become player-facing.
 - **Human consultation:** Yes; security, database, platform, and operations owners must approve the trust-reset and player-impact policy.
 
-#### `PREFLIGHT-01` - One deterministic fail-closed deployment preflight
+#### `PREFLIGHT-01` - One phased deterministic preflight authority
 
 - **Capability:** Primary `PO-3.1` Packaging, CI/CD, deployment, and infrastructure topology. Secondary `PO-3.2`, `PO-4.4`, and `SF-1.1`.
-- **Decision / status / importance:** Use one deterministic preflight policy, report shape, and policy-ID set for CI and operator apply across `staging`, `production`, and `hobby-self-hosted`. Apply is blocked unless all applicable checks pass or an event-scoped waiver contains an approver, ticket, rationale, and expiration; a static report alone cannot authorize traffic opening. Status `proposed/deferred`; `H/hard`.
+- **Decision / status / importance:** Use one versioned policy catalogue, policy-ID namespace, report contract, and CLI facade over modular validators. Evaluate distinct `static-ci`, environment-bound `live-pre-apply`, and observed `post-apply` phases; static success never authorizes a later transition. Checks are advisory, apply-blocking, or non-waivable promotion/traffic-open. Waivers are validated and event-, environment-, phase-, and policy-bound. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-deploy-preflight-policy.md](../../architecture/system-architecture-deploy-preflight-policy.md) `§ Bootstrap Contract`, `§ Authoritative Entrypoint`, `§ Enforcement Boundaries`, `§ Environment Applicability`, `§ Required Policy Checks`, `§ Evidence Contract`, `§ Evidence Storage and Retention`, and `§ Failure Handling`; [system-architecture-deployment-runbook.md](../../architecture/system-architecture-deployment-runbook.md) `§ Overlay Deployment Flow (Staging and Production)` and `§ Hobby Manifest/Chart Deployment Flow (Hobby / Self-Hosted)`.
-- **Strongest alternative:** Maintain separate CI, operator, and environment-specific checks with manual interpretation of their outputs.
-- **ADR recommendation:** Yes. Establish the single preflight authority and its relationship to deployment apply, break-glass, and traffic-open gates.
-- **Human consultation:** Yes; operators and release owners must define waiver authority and the minimum checks for each environment class.
+- **Strongest alternative:** Use one undifferentiated preflight pass, or independent CI/operator scripts with manual interpretation and unrelated evidence formats.
+- **ADR:** [ADR 0147](../../architecture/decisions/adr-0147-phased-environment-bound-deployment-preflight-and-expected-bindings.md) records the phased authority, modular validators, enforcement classes, and waiver boundary together with inseparable `PREFLIGHT-02`.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Canonical playbooks generate the evidence chain without routine manual transcription.
 
-#### `PREFLIGHT-02` - Explicit expected-binding and environment-isolation contract
+#### `PREFLIGHT-02` - Declared expected bindings with live environment proof
 
 - **Capability:** Primary `PO-3.2` Environment, configuration, secret, certificate, and service-discovery delivery. Secondary `PO-3.4`, `SF-1.3`, and `PO-4.4`.
-- **Decision / status / importance:** Treat `design/operations/environments/<environment>/expected-bindings.yaml` and its `bindingRef` as the canonical declaration of internal and external bindings. Undeclared cross-environment reuse fails preflight; a shared binding is valid only with `shared: true` and a written rationale. Status `proposed/deferred`; `H/hard`.
+- **Decision / status / importance:** Treat `expected-bindings.yaml` as the portable canonical declaration of intended bindings, content-digest it in evidence, and compare it with the exact render plus live environment/cluster and provider identities. Binding-type policy determines shareability; production state and trust are never shareable, and `shared: true` cannot override that. Optional integrations require bindings only when enabled. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [system-architecture-deploy-preflight-policy.md](../../architecture/system-architecture-deploy-preflight-policy.md) `§ Canonical Expected-Binding Inputs`, `§ Required Policy Checks`, and `§ Failure Handling`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ Canonical Environment Classes` and `§ Kubernetes Characteristics`; [environment-and-secrets-overview.md](../../architecture/infrastructure/environment-and-secrets-overview.md) `§ Secret Governance Tiers` and `§ Player-Facing Environment Bootstrap Requirements`.
-- **Strongest alternative:** Rely on cluster-local names, default configuration, or operator knowledge to determine whether a binding is safe to reuse.
-- **ADR recommendation:** Yes. Define the binding manifest as the isolation proof and specify how shared infrastructure is reviewed and attested.
-- **Human consultation:** Yes; security and platform operators must approve the allowable shared-resource exceptions.
+- **Strongest alternative:** Derive all bindings directly from provider-specific IaC and live APIs, or treat the declaration and cluster-local names as sufficient proof.
+- **ADR:** [ADR 0147](../../architecture/decisions/adr-0147-phased-environment-bound-deployment-preflight-and-expected-bindings.md) records the intent-versus-proof boundary, manifest digest, live identity comparison, sharing matrix, and conditional integration rules together with inseparable `PREFLIGHT-01`.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The portable manifest is retained for hobby/self-hosting, while live observation establishes deployment proof.
 
 #### `PROMO-01` - Git-reviewed promotion evidence is the current trust root
 
